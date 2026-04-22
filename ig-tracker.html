@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRIND OS — IG Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --surface2: #1a1a1a;
+    --border: #2a2a2a;
+    --accent: #e8ff47;
+    --accent2: #ff6b35;
+    --accent3: #7b61ff;
+    --text: #f0f0f0;
+    --muted: #666;
+    --success: #4ade80;
+    --danger: #f87171;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* GRAIN OVERLAY */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.4;
+  }
+
+  /* HEADER */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: rgba(10,10,10,0.95);
+    backdrop-filter: blur(10px);
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px;
+    letter-spacing: 3px;
+    color: var(--accent);
+  }
+
+  .logo span { color: var(--muted); font-size: 14px; letter-spacing: 1px; font-family: 'DM Mono', monospace; }
+
+  .xp-bar-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    max-width: 300px;
+    margin: 0 24px;
+  }
+
+  .level-badge {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    background: var(--accent);
+    color: #000;
+    padding: 2px 10px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  .xp-bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: var(--border);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+
+  .xp-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 99px;
+    transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .xp-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* TABS */
+  nav {
+    display: flex;
+    gap: 2px;
+    padding: 16px 24px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab {
+    padding: 10px 20px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* MAIN */
+  main { padding: 24px; max-width: 900px; margin: 0 auto; }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* STREAK BANNER */
+  .streak-banner {
+    background: linear-gradient(135deg, #1a1a00, #2a2200);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    animation: slideIn 0.4s ease;
+  }
+
+  .streak-fire { font-size: 32px; }
+  .streak-text h3 { font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--accent); letter-spacing: 1px; }
+  .streak-text p { font-size: 13px; color: var(--muted); }
+
+  /* STATS GRID */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    transition: transform 0.2s, border-color 0.2s;
+    animation: slideIn 0.4s ease;
+  }
+
+  .stat-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+
+  .stat-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 36px;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  .stat-value.accent { color: var(--accent); }
+  .stat-value.orange { color: var(--accent2); }
+  .stat-value.purple { color: var(--accent3); }
+
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  /* SECTION TITLE */
+  .section-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 20px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* HABIT TRACKER */
+  .habits-grid {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .habit-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
+  }
+
+  .habit-row:hover { border-color: var(--accent3); }
+  .habit-row.done { background: #0d1a0d; border-color: var(--success); }
+
+  .habit-check {
+    width: 28px;
+    height: 28px;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+
+  .habit-row.done .habit-check {
+    background: var(--success);
+    border-color: var(--success);
+    color: #000;
+  }
+
+  .habit-info { flex: 1; }
+  .habit-name { font-size: 14px; font-weight: 500; }
+  .habit-xp { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--accent); }
+  .habit-row.done .habit-name { text-decoration: line-through; color: var(--muted); }
+
+  /* LOG FORM */
+  .log-form {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+
+  .form-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    letter-spacing: 2px;
+    margin-bottom: 16px;
+    color: var(--accent);
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .form-group label {
+    display: block;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    border-color: var(--accent);
+  }
+
+  .form-group select option { background: var(--bg); }
+
+  .btn {
+    padding: 12px 24px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 16px;
+    letter-spacing: 2px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #000;
+  }
+
+  .btn-primary:hover { background: #fff; transform: translateY(-1px); }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); }
+
+  /* POSTS TABLE */
+  .posts-list { display: grid; gap: 10px; }
+
+  .post-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+    animation: slideIn 0.3s ease;
+  }
+
+  .post-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .post-date { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
+  .post-topic {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 99px;
+    background: var(--accent3);
+    color: #fff;
+  }
+  .post-title { font-size: 13px; font-weight: 500; margin-top: 4px; }
+
+  .post-metrics { display: flex; gap: 12px; flex-wrap: wrap; }
+  .metric-pill {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+  }
+  .metric-pill .icon { font-size: 14px; }
+  .metric-pill.saves { color: var(--accent); }
+  .metric-pill.shares { color: var(--accent2); }
+  .metric-pill.views { color: var(--muted); }
+  .metric-pill.comments { color: var(--accent3); }
+
+  .post-score {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px;
+    color: var(--accent);
+    text-align: right;
+  }
+
+  .post-score-label { font-size: 10px; color: var(--muted); font-family: 'DM Mono', monospace; text-align: right; }
+
+  /* ACHIEVEMENTS */
+  .achievements-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+  }
+
+  .achievement {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    transition: all 0.2s;
+  }
+
+  .achievement.unlocked {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, #1a1a00, #111);
+  }
+
+  .achievement.locked { opacity: 0.4; filter: grayscale(1); }
+
+  .achievement-icon { font-size: 32px; margin-bottom: 8px; }
+  .achievement-name { font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1px; margin-bottom: 4px; }
+  .achievement-desc { font-size: 11px; color: var(--muted); }
+
+  /* TOAST */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 14px 20px;
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+    z-index: 1000;
+    transform: translateY(100px);
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    max-width: 280px;
+  }
+
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast-title { font-size: 15px; margin-bottom: 2px; }
+  .toast-sub { color: var(--muted); font-size: 11px; }
+
+  /* ANIMATIONS */
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.3); }
+    100% { transform: scale(1); }
+  }
+
+  .pop { animation: pop 0.3s ease; }
+
+  /* EMPTY STATE */
+  .empty-state {
+    text-align: center;
+    padding: 48px;
+    color: var(--muted);
+  }
+
+  .empty-state .big-icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-state p { font-family: 'DM Mono', monospace; font-size: 13px; }
+
+  /* PROGRESS RINGS */
+  .progress-ring-container {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .ring-wrap { text-align: center; }
+  .ring-label { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); margin-top: 8px; }
+
+  svg.ring { transform: rotate(-90deg); }
+  .ring-bg { fill: none; stroke: var(--border); stroke-width: 6; }
+  .ring-fill { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+  /* SCROLLBAR */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+  /* MOBILE */
+  @media (max-width: 600px) {
+    header { flex-wrap: wrap; gap: 10px; }
+    .xp-bar-container { order: 3; width: 100%; max-width: 100%; margin: 0; }
+    .post-card { grid-template-columns: 1fr; }
+    .form-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">GRIND OS <span>// IG TRACKER</span></div>
+  <div class="xp-bar-container">
+    <div class="level-badge" id="levelBadge">LV 1</div>
+    <div class="xp-bar-wrap"><div class="xp-bar-fill" id="xpBar" style="width:0%"></div></div>
+    <div class="xp-label" id="xpLabel">0 / 100 XP</div>
+  </div>
+</header>
+
+<nav>
+  <button class="tab active" onclick="switchTab('dashboard')">Dashboard</button>
+  <button class="tab" onclick="switchTab('log')">Log Post</button>
+  <button class="tab" onclick="switchTab('posts')">Posts</button>
+  <button class="tab" onclick="switchTab('achievements')">Trophies</button>
+</nav>
+
+<main>
+
+  <!-- DASHBOARD -->
+  <div class="page active" id="page-dashboard">
+    <div class="streak-banner">
+      <div class="streak-fire">🔥</div>
+      <div class="streak-text">
+        <h3 id="streakTitle">0 DAY STREAK</h3>
+        <p id="streakSub">Log a post today to start your streak</p>
+      </div>
+    </div>
+
+    <div class="stats-grid" id="statsGrid">
+      <div class="stat-card">
+        <div class="stat-label">Total Posts</div>
+        <div class="stat-value accent" id="statPosts">0</div>
+        <div class="stat-sub">logged</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Views</div>
+        <div class="stat-value" id="statViews">0</div>
+        <div class="stat-sub">across all posts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Saves</div>
+        <div class="stat-value accent" id="statSaves">0</div>
+        <div class="stat-sub">highest signal</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Shares</div>
+        <div class="stat-value orange" id="statShares">0</div>
+        <div class="stat-sub">free reach</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Score</div>
+        <div class="stat-value purple" id="statAvgScore">—</div>
+        <div class="stat-sub">per post</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Best Post</div>
+        <div class="stat-value accent" id="statBest">—</div>
+        <div class="stat-sub" id="statBestSub">score</div>
+      </div>
+    </div>
+
+    <div class="section-title">TODAY'S HABITS</div>
+
+    <div class="habits-grid" id="habitsGrid"></div>
+
+    <div class="section-title">DAILY GOALS</div>
+    <div class="progress-ring-container" id="progressRings"></div>
+  </div>
+
+  <!-- LOG POST -->
+  <div class="page" id="page-log">
+    <div class="log-form">
+      <div class="form-title">+ LOG NEW POST</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Topic / Format</label>
+          <select id="inputTopic">
+            <option value="educational">Educational</option>
+            <option value="meme">Meme</option>
+            <option value="storytime">Storytime</option>
+            <option value="tutorial">Tutorial</option>
+            <option value="motivation">Motivation</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Views</label>
+          <input type="number" id="inputViews" placeholder="0" min="0">
+        </div>
+        <div class="form-group">
+          <label>Saves ⭐</label>
+          <input type="number" id="inputSaves" placeholder="0" min="0">
+        </div>
+        <div class="form-group">
+          <label>Shares 🔁</label>
+          <input type="number" id="inputShares" placeholder="0" min="0">
+        </div>
+        <div class="form-group">
+          <label>Comments 💬</label>
+          <input type="number" id="inputComments" placeholder="0" min="0">
+        </div>
+        <div class="form-group">
+          <label>Likes ❤️</label>
+          <input type="number" id="inputLikes" placeholder="0" min="0">
+        </div>
+        <div class="form-group">
+          <label>Profile Visits</label>
+          <input type="number" id="inputVisits" placeholder="0" min="0">
+        </div>
+        <div class="form-group">
+          <label>New Followers</label>
+          <input type="number" id="inputFollowers" placeholder="0" min="0">
+        </div>
+        <div class="form-group">
+          <label>Watch % (avg)</label>
+          <input type="number" id="inputWatch" placeholder="0" min="0" max="100">
+        </div>
+        <div class="form-group">
+          <label>Non-Follower Reach %</label>
+          <input type="number" id="inputNonFollow" placeholder="0" min="0" max="100">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Hook Used (first line of text/audio)</label>
+        <input type="text" id="inputHook" placeholder="e.g. Day 1 of helping people survive the system...">
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Notes</label>
+        <textarea id="inputNotes" rows="2" placeholder="What felt different? What to replicate?"></textarea>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn btn-primary" onclick="logPost()">SUBMIT POST</button>
+        <div id="scorePreview" style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- POSTS -->
+  <div class="page" id="page-posts">
+    <div class="section-title">POST LOG</div>
+    <div class="posts-list" id="postsList">
+      <div class="empty-state">
+        <div class="big-icon">📭</div>
+        <p>No posts logged yet.<br>Head to Log Post to add your first.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACHIEVEMENTS -->
+  <div class="page" id="page-achievements">
+    <div class="section-title">TROPHIES</div>
+    <div class="achievements-grid" id="achievementsGrid"></div>
+  </div>
+
+</main>
+
+<div class="toast" id="toast">
+  <div class="toast-title" id="toastTitle"></div>
+  <div class="toast-sub" id="toastSub"></div>
+</div>
+
+<script>
+// ============ DATA ============
+const STORAGE_KEY = 'grindos_data';
+
+function loadData() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return getDefaultData();
+  try { return JSON.parse(raw); } catch { return getDefaultData(); }
+}
+
+function saveData(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+
+function getDefaultData() {
+  return {
+    posts: [],
+    xp: 0,
+    habitsDoneToday: [],
+    lastHabitDate: '',
+    streak: 0,
+    lastPostDate: ''
+  };
+}
+
+let data = loadData();
+
+// ============ HABITS ============
+const HABITS = [
+  { id: 'filmed',   name: 'Filmed a new Reel',        xp: 30 },
+  { id: 'posted',   name: 'Posted content today',     xp: 20 },
+  { id: 'analyzed', name: 'Analyzed yesterday\'s post', xp: 15 },
+  { id: 'engaged',  name: 'Replied to all comments',  xp: 10 },
+  { id: 'hooked',   name: 'Wrote 3 hook variations',  xp: 15 },
+  { id: 'research', name: 'Studied 1 viral Reel',     xp: 10 },
+];
+
+// ============ ACHIEVEMENTS ============
+const ACHIEVEMENTS = [
+  { id: 'first_post',   icon: '🌱', name: 'First Blood',       desc: 'Log your first post',              check: d => d.posts.length >= 1 },
+  { id: 'five_posts',   icon: '📦', name: 'Content Machine',   desc: 'Log 5 posts',                      check: d => d.posts.length >= 5 },
+  { id: 'ten_posts',    icon: '🔟', name: 'Double Digits',     desc: 'Log 10 posts',                     check: d => d.posts.length >= 10 },
+  { id: 'first_save',   icon: '⭐', name: 'Save Worthy',       desc: 'Get your first save',              check: d => d.posts.some(p => p.saves >= 1) },
+  { id: 'ten_saves',    icon: '💎', name: 'Value Creator',     desc: 'Get 10 saves on one post',         check: d => d.posts.some(p => p.saves >= 10) },
+  { id: 'viral_share',  icon: '🚀', name: 'Going Viral',       desc: 'Get 10 shares on one post',        check: d => d.posts.some(p => p.shares >= 10) },
+  { id: 'streak3',      icon: '🔥', name: 'On Fire',           desc: '3-day post streak',                check: d => d.streak >= 3 },
+  { id: 'streak7',      icon: '💪', name: 'Week Warrior',      desc: '7-day post streak',                check: d => d.streak >= 7 },
+  { id: 'lv5',          icon: '⚡', name: 'Level 5',           desc: 'Reach level 5',                    check: d => getLevel(d.xp) >= 5 },
+  { id: 'hundred_views',icon: '👁️', name: 'Seen',              desc: 'Get 100 views on one post',        check: d => d.posts.some(p => p.views >= 100) },
+  { id: 'nonfollower',  icon: '🌐', name: 'Reach Breaker',     desc: 'Post with 80%+ non-follower reach',check: d => d.posts.some(p => p.nonFollow >= 80) },
+  { id: 'perfect_day',  icon: '🏆', name: 'Perfect Day',       desc: 'Complete all 6 habits in one day', check: d => d.habitsDoneToday.length >= 6 },
+];
+
+// ============ XP / LEVEL ============
+function getLevel(xp) { return Math.floor(xp / 100) + 1; }
+function getXPProgress(xp) { return xp % 100; }
+function getXPForNext(xp) { return 100; }
+
+function addXP(amount, reason) {
+  data.xp += amount;
+  saveData(data);
+  updateXPBar();
+  showToast(`+${amount} XP`, reason);
+}
+
+function updateXPBar() {
+  const lv = getLevel(data.xp);
+  const prog = getXPProgress(data.xp);
+  document.getElementById('levelBadge').textContent = `LV ${lv}`;
+  document.getElementById('xpBar').style.width = `${prog}%`;
+  document.getElementById('xpLabel').textContent = `${prog} / 100 XP`;
+}
+
+// ============ SCORE ============
+function calcScore(p) {
+  if (!p.views || p.views === 0) return 0;
+  const raw = (p.saves * 3) + (p.shares * 3) + (p.comments * 2) + (p.likes * 1) + (p.visits * 1);
+  return Math.round((raw / p.views) * 100);
+}
+
+// ============ TABS ============
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const tabs = ['dashboard','log','posts','achievements'];
+    t.classList.toggle('active', tabs[i] === tab);
+  });
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + tab).classList.add('active');
+  if (tab === 'dashboard') renderDashboard();
+  if (tab === 'posts') renderPosts();
+  if (tab === 'achievements') renderAchievements();
+}
+
+// ============ HABITS ============
+function renderHabits() {
+  const today = new Date().toDateString();
+  if (data.lastHabitDate !== today) {
+    data.habitsDoneToday = [];
+    data.lastHabitDate = today;
+    saveData(data);
+  }
+
+  const grid = document.getElementById('habitsGrid');
+  grid.innerHTML = '';
+  HABITS.forEach(h => {
+    const done = data.habitsDoneToday.includes(h.id);
+    const row = document.createElement('div');
+    row.className = 'habit-row' + (done ? ' done' : '');
+    row.innerHTML = `
+      <div class="habit-check">${done ? '✓' : ''}</div>
+      <div class="habit-info">
+        <div class="habit-name">${h.name}</div>
+        <div class="habit-xp">+${h.xp} XP</div>
+      </div>
+    `;
+    row.onclick = () => toggleHabit(h.id, h.xp, h.name);
+    grid.appendChild(row);
+  });
+}
+
+function toggleHabit(id, xp, name) {
+  const today = new Date().toDateString();
+  if (data.lastHabitDate !== today) { data.habitsDoneToday = []; data.lastHabitDate = today; }
+
+  if (data.habitsDoneToday.includes(id)) {
+    data.habitsDoneToday = data.habitsDoneToday.filter(h => h !== id);
+    data.xp = Math.max(0, data.xp - xp);
+  } else {
+    data.habitsDoneToday.push(id);
+    data.xp += xp;
+    showToast(`+${xp} XP`, name + ' ✓');
+  }
+  saveData(data);
+  updateXPBar();
+  renderHabits();
+  renderProgressRings();
+  checkAchievements();
+}
+
+// ============ PROGRESS RINGS ============
+function renderProgressRings() {
+  const container = document.getElementById('progressRings');
+  const done = data.habitsDoneToday.length;
+  const total = HABITS.length;
+  const totalXPToday = data.habitsDoneToday.reduce((a, id) => {
+    const h = HABITS.find(h => h.id === id);
+    return a + (h ? h.xp : 0);
+  }, 0);
+
+  const rings = [
+    { label: 'Habits', value: done, max: total, color: '#e8ff47' },
+    { label: 'XP Today', value: totalXPToday, max: 100, color: '#ff6b35' },
+  ];
+
+  container.innerHTML = rings.map(r => {
+    const pct = Math.min(r.value / r.max, 1);
+    const radius = 36;
+    const circ = 2 * Math.PI * radius;
+    const offset = circ * (1 - pct);
+    return `
+      <div class="ring-wrap">
+        <svg class="ring" width="88" height="88" viewBox="0 0 88 88">
+          <circle class="ring-bg" cx="44" cy="44" r="${radius}"/>
+          <circle class="ring-fill" cx="44" cy="44" r="${radius}"
+            stroke="${r.color}"
+            stroke-dasharray="${circ}"
+            stroke-dashoffset="${offset}"
+          />
+          <text x="44" y="44" text-anchor="middle" dominant-baseline="central"
+            fill="${r.color}" font-family="Bebas Neue,sans-serif" font-size="18"
+            transform="rotate(90 44 44)">${r.value}</text>
+        </svg>
+        <div class="ring-label">${r.label} ${r.value}/${r.max}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ============ LOG POST ============
+['inputViews','inputSaves','inputShares','inputComments','inputLikes','inputVisits'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', updateScorePreview);
+});
+
+function updateScorePreview() {
+  const p = {
+    views: +document.getElementById('inputViews').value || 0,
+    saves: +document.getElementById('inputSaves').value || 0,
+    shares: +document.getElementById('inputShares').value || 0,
+    comments: +document.getElementById('inputComments').value || 0,
+    likes: +document.getElementById('inputLikes').value || 0,
+    visits: +document.getElementById('inputVisits').value || 0,
+  };
+  const score = calcScore(p);
+  document.getElementById('scorePreview').textContent = score > 0 ? `Score preview: ${score}` : '';
+}
+
+function logPost() {
+  const views = +document.getElementById('inputViews').value || 0;
+  const saves = +document.getElementById('inputSaves').value || 0;
+  const shares = +document.getElementById('inputShares').value || 0;
+  const comments = +document.getElementById('inputComments').value || 0;
+  const likes = +document.getElementById('inputLikes').value || 0;
+  const visits = +document.getElementById('inputVisits').value || 0;
+  const followers = +document.getElementById('inputFollowers').value || 0;
+  const watch = +document.getElementById('inputWatch').value || 0;
+  const nonFollow = +document.getElementById('inputNonFollow').value || 0;
+  const topic = document.getElementById('inputTopic').value;
+  const hook = document.getElementById('inputHook').value;
+  const notes = document.getElementById('inputNotes').value;
+
+  const post = {
+    id: Date.now(),
+    date: new Date().toLocaleDateString('en-GB'),
+    topic, views, saves, shares, comments, likes, visits, followers, watch, nonFollow, hook, notes
+  };
+
+  post.score = calcScore(post);
+  data.posts.unshift(post);
+
+  // Streak logic
+  const today = new Date().toDateString();
+  const yesterday = new Date(Date.now() - 86400000).toDateString();
+  if (data.lastPostDate === yesterday) { data.streak++; }
+  else if (data.lastPostDate !== today) { data.streak = 1; }
+  data.lastPostDate = today;
+
+  // XP for posting
+  const xpEarned = 25 + Math.min(post.score, 50);
+  data.xp += xpEarned;
+  saveData(data);
+  updateXPBar();
+  showToast(`+${xpEarned} XP`, `Post logged! Score: ${post.score}`);
+  checkAchievements();
+  renderDashboard();
+
+  // Reset form
+  ['inputViews','inputSaves','inputShares','inputComments','inputLikes','inputVisits','inputFollowers','inputWatch','inputNonFollow'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('inputHook').value = '';
+  document.getElementById('inputNotes').value = '';
+  document.getElementById('scorePreview').textContent = '';
+
+  switchTab('dashboard');
+}
+
+// ============ RENDER POSTS ============
+function renderPosts() {
+  const list = document.getElementById('postsList');
+  if (!data.posts.length) {
+    list.innerHTML = `<div class="empty-state"><div class="big-icon">📭</div><p>No posts logged yet.<br>Head to Log Post to add your first.</p></div>`;
+    return;
+  }
+  list.innerHTML = data.posts.map(p => `
+    <div class="post-card">
+      <div>
+        <div class="post-meta">
+          <span class="post-date">${p.date}</span>
+          <span class="post-topic">${p.topic}</span>
+        </div>
+        <div class="post-title">${p.hook || '(no hook recorded)'}</div>
+        <div class="post-metrics" style="margin-top:8px">
+          <span class="metric-pill views">👁 ${p.views}</span>
+          <span class="metric-pill saves">⭐ ${p.saves}</span>
+          <span class="metric-pill shares">🔁 ${p.shares}</span>
+          <span class="metric-pill comments">💬 ${p.comments}</span>
+          ${p.nonFollow ? `<span class="metric-pill" style="color:var(--success)">🌐 ${p.nonFollow}% non-flw</span>` : ''}
+          ${p.watch ? `<span class="metric-pill" style="color:var(--accent3)">⏱ ${p.watch}% watch</span>` : ''}
+        </div>
+        ${p.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:6px;font-style:italic">"${p.notes}"</div>` : ''}
+      </div>
+      <div>
+        <div class="post-score">${p.score}</div>
+        <div class="post-score-label">SCORE</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ============ ACHIEVEMENTS ============
+function checkAchievements() {
+  const unlocked = ACHIEVEMENTS.filter(a => a.check(data));
+  const prev = JSON.parse(localStorage.getItem('grindos_trophies') || '[]');
+  unlocked.forEach(a => {
+    if (!prev.includes(a.id)) {
+      showToast(`🏆 ${a.name}`, a.desc);
+      prev.push(a.id);
+    }
+  });
+  localStorage.setItem('grindos_trophies', JSON.stringify(prev));
+}
+
+function renderAchievements() {
+  const grid = document.getElementById('achievementsGrid');
+  grid.innerHTML = ACHIEVEMENTS.map(a => {
+    const unlocked = a.check(data);
+    return `
+      <div class="achievement ${unlocked ? 'unlocked' : 'locked'}">
+        <div class="achievement-icon">${a.icon}</div>
+        <div class="achievement-name">${a.name}</div>
+        <div class="achievement-desc">${a.desc}</div>
+        ${unlocked ? '<div style="font-size:10px;color:var(--accent);font-family:DM Mono,monospace;margin-top:6px">UNLOCKED ✓</div>' : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+// ============ STREAK & STATS ============
+function renderStats() {
+  const posts = data.posts;
+  document.getElementById('statPosts').textContent = posts.length;
+  document.getElementById('statViews').textContent = posts.reduce((a,p) => a + p.views, 0).toLocaleString();
+  document.getElementById('statSaves').textContent = posts.reduce((a,p) => a + p.saves, 0);
+  document.getElementById('statShares').textContent = posts.reduce((a,p) => a + p.shares, 0);
+
+  if (posts.length) {
+    const avg = Math.round(posts.reduce((a,p) => a + p.score, 0) / posts.length);
+    const best = Math.max(...posts.map(p => p.score));
+    const bestPost = posts.find(p => p.score === best);
+    document.getElementById('statAvgScore').textContent = avg;
+    document.getElementById('statBest').textContent = best;
+    document.getElementById('statBestSub').textContent = bestPost?.topic || 'score';
+  }
+
+  const streak = data.streak;
+  document.getElementById('streakTitle').textContent = `${streak} DAY STREAK`;
+  document.getElementById('streakSub').textContent = streak === 0
+    ? 'Log a post today to start your streak'
+    : streak < 3 ? 'Keep going! 3 days to earn On Fire 🔥'
+    : streak < 7 ? `${7 - streak} more days for Week Warrior 💪`
+    : 'Incredible consistency! 🏆';
+}
+
+function renderDashboard() {
+  renderStats();
+  renderHabits();
+  renderProgressRings();
+}
+
+// ============ TOAST ============
+let toastTimer;
+function showToast(title, sub) {
+  const el = document.getElementById('toast');
+  document.getElementById('toastTitle').textContent = title;
+  document.getElementById('toastSub').textContent = sub;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ============ INIT ============
+updateXPBar();
+renderDashboard();
+</script>
+</body>
+</html>
