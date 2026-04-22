@@ -698,7 +698,7 @@ const ACHIEVEMENTS = [
   { id: 'streak3',      icon: '🔥', name: 'On Fire',           desc: '3-day post streak',                check: d => d.streak >= 3 },
   { id: 'streak7',      icon: '💪', name: 'Week Warrior',      desc: '7-day post streak',                check: d => d.streak >= 7 },
   { id: 'lv5',          icon: '⚡', name: 'Level 5',           desc: 'Reach level 5',                    check: d => getLevel(d.xp) >= 5 },
-  { id: 'hundred_views',icon: '👁️', name: 'Seen',              desc: 'Get 100 views on one post',        check: d => d.posts.some(p => p.views >= 100) },
+  { id: 'hundred_views',icon: '👁️', name: 'Seen',              desc: 'Views Craver',        check: d => d.posts.some(p => p.views >= 1000) },
   { id: 'nonfollower',  icon: '🌐', name: 'Reach Breaker',     desc: 'Post with 80%+ non-follower reach',check: d => d.posts.some(p => p.nonFollow >= 80) },
   { id: 'perfect_day',  icon: '🏆', name: 'Perfect Day',       desc: 'Complete all 6 habits in one day', check: d => d.habitsDoneToday.length >= 6 },
 ];
