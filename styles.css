@@ -1,0 +1,278 @@
+/* ── global reset ─────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── index.html body / heading ────────────────────────────── */
+body.home {
+  font-family: system-ui, sans-serif;
+  background: #0a0a0a;
+  color: #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: 2rem;
+  padding: 2rem 1rem;
+}
+
+body.home h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* ── nav buttons (KS02 Tracker, Progress & Schedule) ─────── */
+.nav-btn {
+  background: #fff;
+  color: #0a0a0a;
+  border: none;
+  padding: 0.75rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.nav-btn:hover {
+  opacity: 0.85;
+}
+
+/* ── data slot panel ──────────────────────────────────────── */
+.hub-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.slot-panel {
+  border-top: 1px solid #1a1a1a;
+  padding-top: 1.5rem;
+  width: 300px;
+  max-width: 90vw;
+}
+
+.slot-panel-label {
+  font-size: 0.6rem;
+  color: #444;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.75rem;
+  text-align: center;
+}
+
+#slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.65rem;
+}
+
+.slot-add-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.slot-name-input {
+  flex: 1;
+  background: #111;
+  border: 1px solid #222;
+  border-radius: 5px;
+  color: #aaa;
+  font-size: 0.75rem;
+  padding: 0.4rem 0.6rem;
+  outline: none;
+}
+
+.slot-add-btn {
+  background: #16163a;
+  color: #818cf8;
+  border: 1px solid #2a2a6a;
+  font-size: 0.72rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.import-label {
+  cursor: pointer;
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.import-label-inner {
+  background: #111;
+  color: #555;
+  border: 1px solid #222;
+  font-size: 0.72rem;
+  padding: 0.38rem 0.75rem;
+  border-radius: 5px;
+  display: block;
+  text-align: center;
+}
+
+.file-input-hidden {
+  display: none;
+}
+
+.slot-empty-msg {
+  color: #333;
+  font-size: 0.68rem;
+  text-align: center;
+  padding: 0.5rem 0;
+}
+
+.slot-item {
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 5px;
+  padding: 0.45rem 0.65rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.slot-item.active {
+  border-color: #fff;
+}
+
+.slot-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.slot-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.slot-name {
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+
+.slot-edit-btn {
+  background: none;
+  border: none;
+  color: #2e2e2e;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.slot-meta {
+  color: #2e2e2e;
+  font-size: 0.58rem;
+  margin-top: 0.1rem;
+}
+
+.slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.slot-active-lbl {
+  color: #34d399;
+  font-size: 0.58rem;
+  font-weight: 700;
+}
+
+.slot-load-btn {
+  background: none;
+  border: none;
+  color: #818cf8;
+  cursor: pointer;
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 0;
+}
+
+.slot-export-btn {
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  font-size: 0.6rem;
+  padding: 0;
+}
+
+.slot-del-btn {
+  background: none;
+  border: none;
+  color: #4a1a1a;
+  cursor: pointer;
+  font-size: 0.62rem;
+  padding: 0;
+}
+
+.rename-input {
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 0.72rem;
+  padding: 1px 5px;
+  width: 110px;
+  outline: none;
+}
+
+.rename-confirm {
+  background: none;
+  border: none;
+  color: #34d399;
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0;
+  font-weight: 700;
+}
+
+/* ── shared utilities (sir-ks02.html, progress.html) ──────── */
+.h-screen-nav {
+  height: calc(100vh - 52px);
+}
+
+.max-h-screen-nav {
+  max-height: calc(100vh - 52px);
+}
+
+.max-h-screen-nav-sm {
+  max-height: calc(100vh - 96px);
+}
+
+/* horizontal drag-reorder indicator */
+.divider-bar {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 1px;
+  margin: 2px 4px;
+}
+
+/* vertical tab drag-reorder indicator */
+.divider-bar-v {
+  width: 2px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 1px;
+  margin: 4px 2px;
+  align-self: stretch;
+}
+
+.min-h-row {
+  min-height: 44px;
+}

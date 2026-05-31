@@ -4,50 +4,217 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Track</title>
-  <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      font-family: system-ui, sans-serif;
-      background: #0a0a0a;
-      color: #f0f0f0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      gap: 2rem;
-    }
-
-    h1 {
-      font-size: 2.5rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-    }
-
-    button {
-      background: #fff;
-      color: #0a0a0a;
-      border: none;
-      padding: 0.75rem 2rem;
-      font-size: 1rem;
-      font-weight: 600;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: opacity 0.15s;
-    }
-
-    button:hover {
-      opacity: 0.85;
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="home">
   <h1>Track</h1>
-  <button onclick="alert('Hello!')">Get Started</button>
+  <div class="hub-container">
+    <button class="nav-btn" onclick="window.location.href='sir-ks02.html'">KS02 Tracker</button>
+    <button class="nav-btn" onclick="window.location.href='progress.html'">Progress &amp; Schedule</button>
+  </div>
+
+  <div class="slot-panel">
+    <span class="slot-panel-label">DATA SLOTS</span>
+
+    <div id="slot-list"></div>
+
+    <div class="slot-add-row">
+      <input id="new-slot-name" placeholder="New slot name…"
+        onkeydown="if(event.key==='Enter')createSlot()"
+        class="slot-name-input">
+      <button onclick="createSlot()" class="slot-add-btn">+ NEW</button>
+    </div>
+
+    <label class="import-label">
+      <span class="import-label-inner">↑ Import Slot</span>
+      <input type="file" accept=".json" onchange="importSlot(event)" class="file-input-hidden">
+    </label>
+
+  </div>
+
+  <script>
+    function getDB() { try { return JSON.parse(localStorage.getItem('track_db')||'{}'); } catch { return {}; } }
+    function saveDB(db) { localStorage.setItem('track_db', JSON.stringify(db)); }
+
+    function renderSlots() {
+      const db = getDB();
+      const slots = db.slots || [];
+      const activeId = db.activeSlotId;
+      const container = document.getElementById('slot-list');
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (!slots.length) {
+        const el = document.createElement('div');
+        el.className = 'slot-empty-msg';
+        el.textContent = 'No slots — open a tracker to auto-create one.';
+        container.appendChild(el);
+        return;
+      }
+
+      slots.forEach(slot => {
+        const isActive = slot.id === activeId;
+        const div = document.createElement('div');
+        div.className = 'slot-item' + (isActive ? ' active' : '');
+
+        const info = document.createElement('div');
+        info.className = 'slot-item-info';
+
+        const nameRow = document.createElement('div');
+        nameRow.className = 'slot-name-row';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = slot.name;
+        nameSpan.className = 'slot-name';
+
+        const editBtn = document.createElement('button');
+        editBtn.textContent = '✎';
+        editBtn.className = 'slot-edit-btn';
+        editBtn.onclick = () => startRename(slot.id, slot.name, nameRow);
+
+        nameRow.append(nameSpan, editBtn);
+
+        const meta = document.createElement('div');
+        const mms = (slot.mms||[]).length;
+        const kolbs = (slot.kolbs||[]).length;
+        const goals = (slot.goals||[]).length;
+        meta.textContent = `${slot.createdAt||''} · ${goals}G · ${mms}MM · ${kolbs}K`;
+        meta.className = 'slot-meta';
+
+        info.append(nameRow, meta);
+
+        const acts = document.createElement('div');
+        acts.className = 'slot-actions';
+
+        if (isActive) {
+          const lbl = document.createElement('span');
+          lbl.textContent = 'ACTIVE';
+          lbl.className = 'slot-active-lbl';
+          acts.appendChild(lbl);
+        } else {
+          const loadBtn = document.createElement('button');
+          loadBtn.textContent = 'LOAD';
+          loadBtn.className = 'slot-load-btn';
+          loadBtn.onclick = () => activateSlot(slot.id);
+          acts.appendChild(loadBtn);
+        }
+
+        const expBtn = document.createElement('button');
+        expBtn.textContent = 'Export';
+        expBtn.title = 'Export slot';
+        expBtn.className = 'slot-export-btn';
+        expBtn.onclick = () => exportSlot(slot.id);
+        acts.appendChild(expBtn);
+
+        if (slots.length > 1) {
+          const delBtn = document.createElement('button');
+          delBtn.textContent = '✕';
+          delBtn.title = 'Delete slot';
+          delBtn.className = 'slot-del-btn';
+          delBtn.onclick = () => deleteSlot(slot.id);
+          acts.appendChild(delBtn);
+        }
+
+        div.append(info, acts);
+        container.appendChild(div);
+      });
+    }
+
+    function startRename(id, currentName, nameRow) {
+      const input = document.createElement('input');
+      input.value = currentName;
+      input.className = 'rename-input';
+      const ok = document.createElement('button');
+      ok.textContent = '✓';
+      ok.className = 'rename-confirm';
+      const doRename = () => {
+        const name = input.value.trim() || currentName;
+        const db = getDB();
+        db.slots = (db.slots||[]).map(s => s.id===id ? {...s, name} : s);
+        saveDB(db);
+        renderSlots();
+      };
+      input.onkeydown = e => { if (e.key==='Enter') doRename(); if (e.key==='Escape') renderSlots(); };
+      ok.onclick = doRename;
+      nameRow.innerHTML = '';
+      nameRow.append(input, ok);
+      input.focus();
+      input.select();
+    }
+
+    function activateSlot(id) {
+      const db = getDB();
+      db.activeSlotId = id;
+      saveDB(db);
+      renderSlots();
+    }
+
+    function deleteSlot(id) {
+      const db = getDB();
+      const slots = db.slots || [];
+      if (slots.length <= 1) return;
+      if (!confirm('Delete this slot and all its data? This cannot be undone.')) return;
+      db.slots = slots.filter(s => s.id !== id);
+      if (db.activeSlotId === id) db.activeSlotId = db.slots[0].id;
+      saveDB(db);
+      renderSlots();
+    }
+
+    function exportSlot(id) {
+      const db = getDB();
+      const slot = (db.slots||[]).find(s => s.id === id);
+      if (!slot) return;
+      const blob = new Blob([JSON.stringify(slot, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (slot.name||'slot').replace(/\s+/g,'_') + '_' + new Date().toISOString().slice(0,10) + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function createSlot() {
+      const input = document.getElementById('new-slot-name');
+      const name = input.value.trim();
+      if (!name) return;
+      const createdAt = new Date().toISOString().slice(0,10);
+      const slot = {id:'slot-'+Date.now(), name, createdAt, sessions:[], mms:[], kolbs:[], mgChanges:[], goals:[], saActions:[], saEntries:[]};
+      const db = getDB();
+      db.slots = [...(db.slots||[]), slot];
+      saveDB(db);
+      input.value = '';
+      renderSlots();
+    }
+
+    function importSlot(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (typeof data !== 'object' || Array.isArray(data)) throw new Error();
+          const createdAt = new Date().toISOString().slice(0,10);
+          const slot = {
+            id: 'slot-'+Date.now(),
+            name: (data.name||'Imported')+' (import)',
+            createdAt,
+            sessions: data.sessions||[], mms: data.mms||[], kolbs: data.kolbs||[],
+            mgChanges: data.mgChanges||[], goals: data.goals||[],
+            saActions: data.saActions||[], saEntries: data.saEntries||[]
+          };
+          const db = getDB();
+          db.slots = [...(db.slots||[]), slot];
+          saveDB(db);
+          renderSlots();
+        } catch { alert('Invalid slot file'); }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    }
+
+
+    renderSlots();
+  </script>
 </body>
 </html>
