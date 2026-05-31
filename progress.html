@@ -278,6 +278,14 @@
       );
     }
 
+    function updateNoteInTask(nodes, taskId, noteId, fields) {
+      return nodes.map(n =>
+        n.id === taskId
+          ? { ...n, notes: (n.notes || []).map(nt => nt.id === noteId ? { ...nt, ...fields } : nt) }
+          : { ...n, children: updateNoteInTask(n.children || [], taskId, noteId, fields) }
+      );
+    }
+
     function addNoteToTask(nodes, id, note) {
       return nodes.map(n =>
         n.id === id
@@ -292,6 +300,30 @@
           ? { ...n, notes: (n.notes || []).filter(nt => nt.id !== noteId) }
           : { ...n, children: removeNoteFromTask(n.children || [], id, noteId) }
       );
+    }
+
+    function addNoteToSaAction(actions, id, note) {
+      return actions.map(a => a.id === id ? { ...a, notes: [...(a.notes || []), note] } : a);
+    }
+    function removeNoteFromSaAction(actions, id, noteId) {
+      return actions.map(a => a.id === id ? { ...a, notes: (a.notes || []).filter(n => n.id !== noteId) } : a);
+    }
+
+    function addChildAndTransferNotes(goals, parentId, child) {
+      return goals.map(g => {
+        if (g.id === parentId) {
+          const isFirst = (g.children || []).length === 0;
+          const parentNotes = g.notes || [];
+          const newChild = isFirst && parentNotes.length > 0
+            ? { ...child, notes: [...parentNotes] } : child;
+          return {
+            ...g,
+            children: [...(g.children || []), newChild],
+            ...(isFirst && parentNotes.length > 0 ? { notes: [] } : {}),
+          };
+        }
+        return { ...g, children: addChildAndTransferNotes(g.children || [], parentId, child) };
+      });
     }
 
     function getSCTextBlocks(link) {
@@ -1093,7 +1125,7 @@
     // ── GoalNode ──────────────────────────────────────────────────────────────
 
     function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId }) {
-      const { onToggle, onAddChild, onDelete, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, allGoals, mms, sirDoneMap } = handlers;
+      const { onToggle, onAddChild, onDelete, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, allGoals, mms, sirDoneMap } = handlers;
       const [hov, setHov]             = useState(false);
       const [showMMPicker, setShowMMPicker] = useState(false);
       const [editing, setEditing]     = useState(false);
@@ -1107,6 +1139,10 @@
       const [subGoalTitle, setSubGoalTitle]   = useState('');
       const [pickingLink, setPickingLink]     = useState(false);
       const [pickingGoalLink, setPickingGoalLink] = useState(false);
+      const [showNotePanel, setShowNotePanel] = useState(false);
+      const [noteDraftTitle, setNoteDraftTitle] = useState('');
+      const [noteDraftDetail, setNoteDraftDetail] = useState('');
+      const [editingNoteId, setEditingNoteId] = useState(null);
       const editRef    = useRef(null);
       const kidRef     = useRef(null);
       const subGoalRef = useRef(null);
@@ -1612,7 +1648,75 @@
               </span>
             )}
             {hoverActions}
+            {!isParent && (
+              <button onClick={() => setShowNotePanel(v => !v)} title="add note"
+                className={`flex-shrink-0 text-[11px] px-0.5 py-0.5 rounded transition-opacity transition-colors ${
+                  (node.notes || []).length > 0 ? 'text-indigo-400 opacity-100' : `text-gray-600 hover:text-indigo-400 ${hov ? 'opacity-100' : 'opacity-0'}`
+                }`}>✎</button>
+            )}
           </div>
+          {!isParent && (node.notes || []).length > 0 && (
+            <div style={{ paddingLeft: indent + 22 }} className="flex flex-wrap gap-1 pb-0.5 pr-2">
+              {(node.notes || []).map(nt => (
+                <span key={nt.id}
+                  className="text-[10px] bg-gray-800/80 border border-indigo-500/40 rounded px-1.5 py-0.5 text-indigo-300 cursor-default leading-tight">
+                  📌 {nt.title}
+                </span>
+              ))}
+            </div>
+          )}
+          {!isParent && showNotePanel && (
+            <div style={{ paddingLeft: indent + 18 }} className="pr-2 mb-1">
+              <div className="bg-gray-900 border border-indigo-700/60 rounded shadow-lg">
+                <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+                  <span className="text-[9px] text-indigo-500 uppercase tracking-widest font-semibold">Notes</span>
+                  <button className="text-gray-500 hover:text-white text-xs leading-none" onClick={() => { setShowNotePanel(false); setEditingNoteId(null); setNoteDraftTitle(''); setNoteDraftDetail(''); }}>×</button>
+                </div>
+                {(node.notes || []).length > 0 && (
+                  <div className="px-2 pb-1 flex flex-col gap-1 max-h-32 overflow-y-auto">
+                    {(node.notes || []).map(nt => (
+                      <div key={nt.id}
+                        className={`bg-gray-800/70 border rounded px-2 py-1 relative group/note cursor-pointer ${editingNoteId === nt.id ? 'border-indigo-500' : 'border-indigo-900/50'}`}
+                        onDoubleClick={e => { e.stopPropagation(); setNoteDraftTitle(nt.title); setNoteDraftDetail(nt.detail || ''); setEditingNoteId(nt.id); }}>
+                        <p className="text-[11px] font-semibold text-indigo-200 leading-tight">{nt.title}</p>
+                        {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
+                        <button
+                          className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                          onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { onRemoveNote(node.id, nt.id); if (editingNoteId === nt.id) { setEditingNoteId(null); setNoteDraftTitle(''); setNoteDraftDetail(''); } } }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="border-t border-gray-700/50 mx-2 mt-0.5" />
+                <input value={noteDraftTitle} onChange={e => setNoteDraftTitle(e.target.value)}
+                  placeholder="Title..."
+                  className="w-full bg-transparent text-sm font-semibold text-white px-2 pt-1.5 pb-0.5 outline-none placeholder-gray-600" />
+                <div className="border-t border-gray-700/50 mx-2" />
+                <textarea value={noteDraftDetail} onChange={e => setNoteDraftDetail(e.target.value)}
+                  placeholder="Details..." rows={2}
+                  className="w-full bg-transparent text-[11px] text-gray-300 px-2 py-1 resize-none outline-none placeholder-gray-600" />
+                <div className="flex justify-end px-2 pb-2">
+                  <button
+                    className="text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white rounded px-3 py-0.5 font-semibold transition-colors disabled:opacity-40"
+                    disabled={!noteDraftTitle.trim()}
+                    onMouseDown={e => e.stopPropagation()}
+                    onClick={e => {
+                      e.stopPropagation();
+                      if (!noteDraftTitle.trim()) return;
+                      if (editingNoteId) {
+                        onUpdateNote(node.id, editingNoteId, { title: noteDraftTitle.trim(), detail: noteDraftDetail.trim() });
+                        setEditingNoteId(null);
+                      } else {
+                        onAddNote(node.id, { id: uid(), title: noteDraftTitle.trim(), detail: noteDraftDetail.trim(), createdAt: Date.now() });
+                        setShowNotePanel(false);
+                      }
+                      setNoteDraftTitle('');
+                      setNoteDraftDetail('');
+                    }}>{editingNoteId ? 'Save' : 'Done'}</button>
+                </div>
+              </div>
+            </div>
+          )}
           {isParent && prog && (
             <div style={{ paddingLeft: indent + 22 }} className="pr-2 mb-1">
               <ProgressBar done={prog.done} total={prog.total} slim />
@@ -1662,7 +1766,7 @@
 
       const handlers = {
         onToggle:           id              => setGoals(prev => toggleLeaf(prev, id)),
-        onAddChild:         (pid, child)    => setGoals(prev => addChild(prev, pid, child)),
+        onAddChild:         (pid, child)    => setGoals(prev => addChildAndTransferNotes(prev, pid, child)),
         onAddSubGoal:       (pid, subGoal)  => setGoals(prev => addSubGoalAndMigrateTasks(prev, pid, subGoal)),
         onDelete:           id              => setGoals(prev => deleteNode(prev, id)),
         onUpdateTitle:      (id, title)     => setGoals(prev => updateTitle(prev, id, title)),
@@ -1672,6 +1776,9 @@
         allGoals: goals,
         onAddLinkedTask:    (parentId, linkedTaskId) => setGoals(prev => addLinkedTask(prev, parentId, linkedTaskId)),
         onUnlinkTask:       id              => setGoals(prev => deleteNode(prev, id)),
+        onAddNote:          (taskId, note)   => setGoals(prev => addNoteToTask(prev, taskId, note)),
+        onRemoveNote:       (taskId, noteId) => setGoals(prev => removeNoteFromTask(prev, taskId, noteId)),
+        onUpdateNote:       (taskId, noteId, fields) => setGoals(prev => updateNoteInTask(prev, taskId, noteId, fields)),
         mms,
         sirDoneMap,
       };
@@ -2029,7 +2136,7 @@
 
       const handlers = {
         onToggle:          id              => setGoals(prev => toggleLeaf(prev, id)),
-        onAddChild:        (pid, child)    => setGoals(prev => addChild(prev, pid, child)),
+        onAddChild:        (pid, child)    => setGoals(prev => addChildAndTransferNotes(prev, pid, child)),
         onAddSubGoal:      (pid, subGoal)  => setGoals(prev => addSubGoalAndMigrateTasks(prev, pid, subGoal)),
         onDelete:          id              => setGoals(prev => deleteNode(prev, id)),
         onUpdateTitle:     (id, title)     => setGoals(prev => updateTitle(prev, id, title)),
@@ -2042,6 +2149,9 @@
         onNestGoal:         (draggedId, targetId) => { setGoals(prev => nestGoalIntoGoal(prev, draggedId, targetId)); setActiveGoalId(targetId); },
         onPromoteSubGoal:   subGoalId       => setGoals(prev => promoteSubGoalToUltimate(prev, subGoalId)),
         onAddLinkedSubGoal: (parentId, linkedGoalId) => setGoals(prev => addLinkedSubGoal(prev, parentId, linkedGoalId)),
+        onAddNote:         (taskId, note)   => setGoals(prev => addNoteToTask(prev, taskId, note)),
+        onRemoveNote:      (taskId, noteId) => setGoals(prev => removeNoteFromTask(prev, taskId, noteId)),
+        onUpdateNote:      (taskId, noteId, fields) => setGoals(prev => updateNoteInTask(prev, taskId, noteId, fields)),
         mms,
         sirDoneMap,
       };
@@ -2240,6 +2350,9 @@
       const [editDur, setEditDur]             = useState(60);
       const newTitleRef = useRef(null);
       const subTitleRef = useRef(null);
+      const [openNotePanel, setOpenNotePanel] = useState(null);
+      const [saNoteDrafts, setSaNoteDrafts]   = useState({});
+      const [editingNoteIds, setEditingNoteIds] = useState({});
 
       useEffect(() => { if (adding && newTitleRef.current) newTitleRef.current.focus(); }, [adding]);
       useEffect(() => { if (addingSubTo && subTitleRef.current) subTitleRef.current.focus(); }, [addingSubTo]);
@@ -2259,10 +2372,20 @@
       function addSubAction(parentId, parentColor) {
         const v = subTitle.trim();
         if (!v) return;
-        setSaActions(prev => [...prev, {
-          id: uid(), title: v, emoji: subEmoji.trim() || '◆', color: parentColor,
-          time: subTime, duration: Number(subDur) || 60, parentId, createdAt: Date.now(),
-        }]);
+        const existingSubs = saActions.filter(a => a.parentId === parentId);
+        const isFirst = existingSubs.length === 0;
+        const parentAction = saActions.find(a => a.id === parentId);
+        const parentNotes = isFirst ? (parentAction?.notes || []) : [];
+        setSaActions(prev => {
+          const newSub = {
+            id: uid(), title: v, emoji: subEmoji.trim() || '◆', color: parentColor,
+            time: subTime, duration: Number(subDur) || 60, parentId, createdAt: Date.now(),
+            ...(parentNotes.length > 0 ? { notes: [...parentNotes] } : {}),
+          };
+          return prev.map(a =>
+            a.id === parentId && parentNotes.length > 0 ? { ...a, notes: [] } : a
+          ).concat([newSub]);
+        });
         setSubTitle(''); setSubEmoji(''); setSubTime('09:00'); setSubDur(60); setAddingSubTo(null);
       }
 
@@ -2415,6 +2538,12 @@
                           )}
                           <button onClick={() => startEdit(action, isDir)}
                             className="text-gray-600 hover:text-gray-300 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60">✎</button>
+                          {!isDir && (
+                            <button
+                              onClick={() => setOpenNotePanel(prev => prev === action.id ? null : action.id)}
+                              title="add note"
+                              className={`text-[11px] px-0.5 py-0.5 rounded transition-colors ${(action.notes || []).length > 0 ? 'text-indigo-400' : 'text-gray-600 hover:text-indigo-400'}`}>📌</button>
+                          )}
                           <button onClick={() => deleteAction(action.id)}
                             className="text-gray-600 hover:text-red-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60">×</button>
                           <button onClick={() => setExpanded(prev => ({ ...prev, [action.id]: !isExpanded }))}
@@ -2424,6 +2553,15 @@
                         </div>
                         {isDir && action.description && (
                           <div className="text-[11px] text-gray-500 mt-0.5 leading-snug">{action.description}</div>
+                        )}
+                        {!isDir && (action.notes || []).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {(action.notes || []).map(nt => (
+                              <span key={nt.id} className="text-[10px] bg-gray-800/80 border border-indigo-500/40 rounded px-1.5 py-0.5 text-indigo-300 cursor-default leading-tight">
+                                📌 {nt.title}
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </>
@@ -2474,6 +2612,10 @@
                                     <span className="text-[10px] text-gray-600 flex-shrink-0">{sub.duration || 60}min</span>
                                     <button onClick={() => startEdit(sub)}
                                       className="text-gray-600 hover:text-gray-300 text-[10px] px-1 py-0.5 rounded hover:bg-gray-700/60">✎</button>
+                                    <button
+                                      onClick={() => setOpenNotePanel(prev => prev === sub.id ? null : sub.id)}
+                                      title="add note"
+                                      className={`text-[11px] px-0.5 py-0.5 rounded transition-colors ${(sub.notes || []).length > 0 ? 'text-indigo-400' : 'text-gray-600 hover:text-indigo-400'}`}>📌</button>
                                     <button onClick={() => deleteAction(sub.id)}
                                       className="text-gray-600 hover:text-red-400 text-[10px] px-1 py-0.5 rounded hover:bg-gray-700/60">×</button>
                                   </>
@@ -2481,6 +2623,70 @@
                               </div>
                               {!isEditingSub && (
                                 <div className="pl-6">{renderScheduledDates({ ...sub, color: action.color })}</div>
+                              )}
+                              {!isEditingSub && (sub.notes || []).length > 0 && (
+                                <div className="pl-6 flex flex-wrap gap-1 mt-0.5">
+                                  {(sub.notes || []).map(nt => (
+                                    <span key={nt.id} className="text-[10px] bg-gray-800/80 border border-indigo-500/40 rounded px-1.5 py-0.5 text-indigo-300 cursor-default leading-tight">
+                                      📌 {nt.title}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {!isEditingSub && openNotePanel === sub.id && (
+                                <div className="pl-6 mt-1">
+                                  <div className="bg-gray-900 border border-indigo-700/60 rounded shadow-lg">
+                                    <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+                                      <span className="text-[9px] text-indigo-500 uppercase tracking-widest font-semibold">Notes</span>
+                                      <button className="text-gray-500 hover:text-white text-xs leading-none" onClick={() => { setOpenNotePanel(null); setEditingNoteIds(prev => ({ ...prev, [sub.id]: null })); setSaNoteDrafts(prev => ({ ...prev, [sub.id]: { title: '', detail: '' } })); }}>×</button>
+                                    </div>
+                                    {(sub.notes || []).length > 0 && (
+                                      <div className="px-2 pb-1 flex flex-col gap-1 max-h-32 overflow-y-auto">
+                                        {(sub.notes || []).map(nt => (
+                                          <div key={nt.id}
+                                            className={`bg-gray-800/70 border rounded px-2 py-1 relative group/note cursor-pointer ${editingNoteIds[sub.id] === nt.id ? 'border-indigo-500' : 'border-indigo-900/50'}`}
+                                            onDoubleClick={e => { e.stopPropagation(); setSaNoteDrafts(prev => ({ ...prev, [sub.id]: { title: nt.title, detail: nt.detail || '' } })); setEditingNoteIds(prev => ({ ...prev, [sub.id]: nt.id })); }}>
+                                            <p className="text-[11px] font-semibold text-indigo-200 leading-tight">{nt.title}</p>
+                                            {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
+                                            <button
+                                              className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                              onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setSaActions(prev => removeNoteFromSaAction(prev, sub.id, nt.id)); if (editingNoteIds[sub.id] === nt.id) { setEditingNoteIds(prev => ({ ...prev, [sub.id]: null })); setSaNoteDrafts(prev => ({ ...prev, [sub.id]: { title: '', detail: '' } })); } } }}>×</button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    <div className="border-t border-gray-700/50 mx-2 mt-0.5" />
+                                    <input value={(saNoteDrafts[sub.id] || {}).title || ''}
+                                      onChange={e => setSaNoteDrafts(prev => ({ ...prev, [sub.id]: { ...(prev[sub.id] || {}), title: e.target.value } }))}
+                                      placeholder="Title..."
+                                      className="w-full bg-transparent text-sm font-semibold text-white px-2 pt-1.5 pb-0.5 outline-none placeholder-gray-600" />
+                                    <div className="border-t border-gray-700/50 mx-2" />
+                                    <textarea value={(saNoteDrafts[sub.id] || {}).detail || ''}
+                                      onChange={e => setSaNoteDrafts(prev => ({ ...prev, [sub.id]: { ...(prev[sub.id] || {}), detail: e.target.value } }))}
+                                      placeholder="Details..." rows={2}
+                                      className="w-full bg-transparent text-[11px] text-gray-300 px-2 py-1 resize-none outline-none placeholder-gray-600" />
+                                    <div className="flex justify-end px-2 pb-2">
+                                      <button
+                                        className="text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white rounded px-3 py-0.5 font-semibold transition-colors disabled:opacity-40"
+                                        disabled={!((saNoteDrafts[sub.id] || {}).title || '').trim()}
+                                        onMouseDown={e => e.stopPropagation()}
+                                        onClick={e => {
+                                          e.stopPropagation();
+                                          const draft = saNoteDrafts[sub.id] || {};
+                                          if (!draft.title?.trim()) return;
+                                          const editId = editingNoteIds[sub.id];
+                                          if (editId) {
+                                            setSaActions(prev => prev.map(a => a.id === sub.id ? { ...a, notes: (a.notes || []).map(nt => nt.id === editId ? { ...nt, title: draft.title.trim(), detail: (draft.detail || '').trim() } : nt) } : a));
+                                            setEditingNoteIds(prev => ({ ...prev, [sub.id]: null }));
+                                          } else {
+                                            setSaActions(prev => addNoteToSaAction(prev, sub.id, { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() }));
+                                            setOpenNotePanel(null);
+                                          }
+                                          setSaNoteDrafts(prev => ({ ...prev, [sub.id]: { title: '', detail: '' } }));
+                                        }}>{editingNoteIds[sub.id] ? 'Save' : 'Done'}</button>
+                                    </div>
+                                  </div>
+                                </div>
                               )}
                             </div>
                           );
@@ -2522,9 +2728,64 @@
                         )}
                       </div>
                     ) : (
-                      /* Leaf root action: show scheduled dates + option to add sub-action */
+                      /* Leaf root action: show scheduled dates + option to add sub-action + notes */
                       <div className="flex flex-col gap-2">
                         {renderScheduledDates(action)}
+                        {openNotePanel === action.id && (
+                          <div className="mt-1">
+                            <div className="bg-gray-900 border border-indigo-700/60 rounded shadow-lg">
+                              <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+                                <span className="text-[9px] text-indigo-500 uppercase tracking-widest font-semibold">Notes</span>
+                                <button className="text-gray-500 hover:text-white text-xs leading-none" onClick={() => { setOpenNotePanel(null); setEditingNoteIds(prev => ({ ...prev, [action.id]: null })); setSaNoteDrafts(prev => ({ ...prev, [action.id]: { title: '', detail: '' } })); }}>×</button>
+                              </div>
+                              {(action.notes || []).length > 0 && (
+                                <div className="px-2 pb-1 flex flex-col gap-1 max-h-32 overflow-y-auto">
+                                  {(action.notes || []).map(nt => (
+                                    <div key={nt.id}
+                                      className={`bg-gray-800/70 border rounded px-2 py-1 relative group/note cursor-pointer ${editingNoteIds[action.id] === nt.id ? 'border-indigo-500' : 'border-indigo-900/50'}`}
+                                      onDoubleClick={e => { e.stopPropagation(); setSaNoteDrafts(prev => ({ ...prev, [action.id]: { title: nt.title, detail: nt.detail || '' } })); setEditingNoteIds(prev => ({ ...prev, [action.id]: nt.id })); }}>
+                                      <p className="text-[11px] font-semibold text-indigo-200 leading-tight">{nt.title}</p>
+                                      {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
+                                      <button
+                                        className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                        onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setSaActions(prev => removeNoteFromSaAction(prev, action.id, nt.id)); if (editingNoteIds[action.id] === nt.id) { setEditingNoteIds(prev => ({ ...prev, [action.id]: null })); setSaNoteDrafts(prev => ({ ...prev, [action.id]: { title: '', detail: '' } })); } } }}>×</button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="border-t border-gray-700/50 mx-2 mt-0.5" />
+                              <input value={(saNoteDrafts[action.id] || {}).title || ''}
+                                onChange={e => setSaNoteDrafts(prev => ({ ...prev, [action.id]: { ...(prev[action.id] || {}), title: e.target.value } }))}
+                                placeholder="Title..."
+                                className="w-full bg-transparent text-sm font-semibold text-white px-2 pt-1.5 pb-0.5 outline-none placeholder-gray-600" />
+                              <div className="border-t border-gray-700/50 mx-2" />
+                              <textarea value={(saNoteDrafts[action.id] || {}).detail || ''}
+                                onChange={e => setSaNoteDrafts(prev => ({ ...prev, [action.id]: { ...(prev[action.id] || {}), detail: e.target.value } }))}
+                                placeholder="Details..." rows={2}
+                                className="w-full bg-transparent text-[11px] text-gray-300 px-2 py-1 resize-none outline-none placeholder-gray-600" />
+                              <div className="flex justify-end px-2 pb-2">
+                                <button
+                                  className="text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white rounded px-3 py-0.5 font-semibold transition-colors disabled:opacity-40"
+                                  disabled={!((saNoteDrafts[action.id] || {}).title || '').trim()}
+                                  onMouseDown={e => e.stopPropagation()}
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    const draft = saNoteDrafts[action.id] || {};
+                                    if (!draft.title?.trim()) return;
+                                    const editId = editingNoteIds[action.id];
+                                    if (editId) {
+                                      setSaActions(prev => prev.map(a => a.id === action.id ? { ...a, notes: (a.notes || []).map(nt => nt.id === editId ? { ...nt, title: draft.title.trim(), detail: (draft.detail || '').trim() } : nt) } : a));
+                                      setEditingNoteIds(prev => ({ ...prev, [action.id]: null }));
+                                    } else {
+                                      setSaActions(prev => addNoteToSaAction(prev, action.id, { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() }));
+                                      setOpenNotePanel(null);
+                                    }
+                                    setSaNoteDrafts(prev => ({ ...prev, [action.id]: { title: '', detail: '' } }));
+                                  }}>{editingNoteIds[action.id] ? 'Save' : 'Done'}</button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         <button onClick={() => { setAddingSubTo(action.id); }}
                           className="text-[10px] text-gray-700 hover:text-gray-500 transition-colors text-left border-t border-gray-800/40 pt-2 mt-1">
                           + add sub-action (turns this into a directory)
@@ -2725,11 +2986,18 @@
       const [dayFocusDate,  setDayFocusDate]  = useState(new Date(today));
       const [openComments,     setOpenComments]     = useState(new Set());
       const [noteDrafts,       setNoteDrafts]       = useState({});
+      const [timelineEditingNoteIds, setTimelineEditingNoteIds] = useState({});
       const [viewingNote,      setViewingNote]      = useState(null);
       const [openSourcePicker, setOpenSourcePicker] = useState(new Set());
       const [sourcePickerMode, setSourcePickerMode] = useState({});
       const [viewingSource,    setViewingSource]    = useState(null);
       const [overlapFronts,    setOverlapFronts]    = useState({});
+
+      const [priorityMatrix, setPriorityMatrix] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('trackPriorityMatrix') || '{}'); } catch { return {}; }
+      });
+      const [matrixDragId,   setMatrixDragId]   = useState(null);
+      const [matrixDragOver, setMatrixDragOver] = useState(null);
 
       const sessionsByDate = useMemo(() => {
         const m = {};
@@ -2913,6 +3181,45 @@
       const entriesForDate = ds => saEntries.filter(e => e.date === ds);
       const mmEntriesForDate = ds => (mmEntries || []).filter(e => e.date === ds);
 
+      const blockMetaMap = useMemo(() => {
+        const map = {};
+        const walkGoals = (list) => list.forEach(g => {
+          map[g.id] = { title: g.title, color: '#6366f1' };
+          if (g.children?.length) walkGoals(g.children);
+        });
+        walkGoals(goals);
+        saEntries.forEach(e => {
+          const a = saActions.find(x => x.id === e.actionId);
+          if (a) map[e.id] = { title: `${a.emoji} ${a.title}`, color: a.color };
+        });
+        (mmEntries || []).forEach(e => {
+          const mm = (mms || []).find(m => m.id === e.mmId);
+          if (mm) map[e.id] = { title: mm.name, color: mm.color || '#6366f1' };
+        });
+        return map;
+      }, [goals, saEntries, saActions, mmEntries, mms]);
+
+      const matrixDayIds = useMemo(() => {
+        if (timelineMode !== 'day') return [];
+        const ds = toDateStr(dayFocusDate);
+        return [
+          ...tasksForDate(ds).map(t => t.id),
+          ...entriesForDate(ds).map(e => e.id),
+          ...mmEntriesForDate(ds).map(e => e.id),
+        ];
+      }, [timelineMode, dayFocusDate, goals, saEntries, mmEntries]);
+
+      const matrixByQuadrant = useMemo(() => {
+        const buckets = { ui: [], niu: [], uni: [], nuni: [] };
+        matrixDayIds.forEach(id => {
+          const pm = priorityMatrix[id];
+          const q  = pm?.quadrant || 'ui';
+          buckets[q].push({ id, order: pm?.order ?? 0 });
+        });
+        Object.values(buckets).forEach(arr => arr.sort((a, b) => a.order - b.order));
+        return buckets;
+      }, [matrixDayIds, priorityMatrix]);
+
       function computeOverlapInfo(blocks) {
         const n = blocks.length;
         const adj = Array.from({length: n}, () => []);
@@ -3000,6 +3307,7 @@
           const time = leaf.scheduledTime || `${String(h).padStart(2,'0')}:00`;
           return updateSchedule(g, leaf.id, dateStr, time);
         }, prev));
+        setOpenComments(prev => { const n = new Set(prev); targets.forEach(leaf => n.add(leaf.id)); return n; });
         setPickerDay(null);
         setSearch('');
       }
@@ -3009,13 +3317,17 @@
       }
 
       function assignSAToDate(action, dateStr) {
-        setSaEntries(prev => {
-          if (prev.some(e => e.actionId === action.id && e.date === dateStr)) return prev;
-          return [...prev, {
-            id: uid(), actionId: action.id, date: dateStr,
-            time: action.time || '09:00', duration: action.duration || 60, done: false,
-          }];
-        });
+        if (saEntries.some(e => e.actionId === action.id && e.date === dateStr)) {
+          setPickerDay(null);
+          setSearch('');
+          return;
+        }
+        const newEntryId = uid();
+        setSaEntries(prev => [...prev, {
+          id: newEntryId, actionId: action.id, date: dateStr,
+          time: action.time || '09:00', duration: action.duration || 60, done: false,
+        }]);
+        setOpenComments(prev => new Set(prev).add(newEntryId));
         setPickerDay(null);
         setSearch('');
       }
@@ -3050,6 +3362,45 @@
       const todayStr  = toDateStr(today);
       const weekLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${
         days[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+      useEffect(() => {
+        if (!matrixDayIds.length) return;
+        setPriorityMatrix(prev => {
+          let changed = false;
+          const next = { ...prev };
+          matrixDayIds.forEach((id, i) => {
+            if (!next[id]) {
+              next[id] = { quadrant: 'ui', order: Date.now() + i };
+              changed = true;
+            }
+          });
+          if (changed) {
+            localStorage.setItem('trackPriorityMatrix', JSON.stringify(next));
+            return next;
+          }
+          return prev;
+        });
+      }, [matrixDayIds]);
+
+      const handleMatrixDragStart = (id) => setMatrixDragId(id);
+
+      const handleMatrixDrop = (quadrant, targetId) => {
+        if (!matrixDragId) return;
+        setPriorityMatrix(prev => {
+          const next = { ...prev };
+          const inQ = (matrixByQuadrant[quadrant] || []).filter(x => x.id !== matrixDragId);
+          let insertIdx = targetId ? inQ.findIndex(x => x.id === targetId) : inQ.length;
+          if (insertIdx === -1) insertIdx = inQ.length;
+          const final = [...inQ.slice(0, insertIdx), { id: matrixDragId }, ...inQ.slice(insertIdx)];
+          final.forEach((item, idx) => {
+            next[item.id] = { ...(next[item.id] || {}), quadrant, order: idx * 100 };
+          });
+          localStorage.setItem('trackPriorityMatrix', JSON.stringify(next));
+          return next;
+        });
+        setMatrixDragId(null);
+        setMatrixDragOver(null);
+      };
 
       return (
         <div className="flex flex-col h-full">
@@ -3092,8 +3443,13 @@
             </div>
           </div>
 
-          {/* Single scroll container — handles both x (day cols) and y (time) */}
-          {schedView === 'timeline' && <div ref={containerRef} className="flex-1 overflow-auto relative select-none" onClick={() => setSelectedForResize(null)}>
+          {/* Timeline view — 65/35 split in day mode, full width in week mode */}
+          {schedView === 'timeline' && (
+            <div className="flex flex-1 overflow-hidden">
+              <div ref={containerRef}
+                className="overflow-auto relative select-none"
+                style={{ width: timelineMode === 'day' ? '65%' : '100%', flex: timelineMode === 'week' ? '1 1 0%' : undefined }}
+                onClick={() => setSelectedForResize(null)}>
 
             {/* Day header — sticky to top of scroll container */}
             <div ref={headerRef}
@@ -3510,18 +3866,20 @@
                             <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
                               <span className="text-[9px] text-indigo-500 uppercase tracking-widest font-semibold">Notes</span>
                               <button className="text-gray-500 hover:text-white text-xs leading-none"
-                                onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.delete(task.id); return n; }); }}
+                                onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.delete(task.id); return n; }); setTimelineEditingNoteIds(prev => ({ ...prev, [task.id]: null })); setNoteDrafts(prev => ({ ...prev, [task.id]: { title: '', detail: '' } })); }}
                                 onMouseDown={e => e.stopPropagation()}>×</button>
                             </div>
                             {(task.notes || []).length > 0 && (
                               <div className="px-2 pb-1 flex flex-col gap-1 max-h-36 overflow-y-auto">
                                 {(task.notes || []).map(nt => (
-                                  <div key={nt.id} className="bg-gray-800/70 border border-indigo-900/50 rounded px-2 py-1 relative group/note">
+                                  <div key={nt.id}
+                                    className={`bg-gray-800/70 border rounded px-2 py-1 relative group/note cursor-pointer ${timelineEditingNoteIds[task.id] === nt.id ? 'border-indigo-500' : 'border-indigo-900/50'}`}
+                                    onDoubleClick={e => { e.stopPropagation(); setNoteDrafts(prev => ({ ...prev, [task.id]: { title: nt.title, detail: nt.detail || '' } })); setTimelineEditingNoteIds(prev => ({ ...prev, [task.id]: nt.id })); }}>
                                     <p className="text-[11px] font-semibold text-indigo-200 leading-tight">{nt.title}</p>
                                     {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                     <button
-                                      className="absolute top-0.5 right-0.5 text-[10px] text-gray-600 hover:text-red-400 opacity-0 group-hover/note:opacity-100 leading-none px-0.5"
-                                      onClick={e => { e.stopPropagation(); setGoals(prev => removeNoteFromTask(prev, task.id, nt.id)); }}
+                                      className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                      onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setGoals(prev => removeNoteFromTask(prev, task.id, nt.id)); if (timelineEditingNoteIds[task.id] === nt.id) { setTimelineEditingNoteIds(prev => ({ ...prev, [task.id]: null })); setNoteDrafts(prev => ({ ...prev, [task.id]: { title: '', detail: '' } })); } } }}
                                       onMouseDown={e => e.stopPropagation()}
                                     >×</button>
                                   </div>
@@ -3553,11 +3911,17 @@
                                   e.stopPropagation();
                                   const draft = noteDrafts[task.id] || {};
                                   if (!draft.title?.trim()) return;
-                                  setGoals(prev => addNoteToTask(prev, task.id, { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() }));
+                                  const editId = timelineEditingNoteIds[task.id];
+                                  if (editId) {
+                                    setGoals(prev => updateNoteInTask(prev, task.id, editId, { title: draft.title.trim(), detail: (draft.detail || '').trim() }));
+                                    setTimelineEditingNoteIds(prev => ({ ...prev, [task.id]: null }));
+                                  } else {
+                                    setGoals(prev => addNoteToTask(prev, task.id, { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() }));
+                                  }
                                   setNoteDrafts(prev => ({ ...prev, [task.id]: { title: '', detail: '' } }));
                                 }}
                                 onMouseDown={e => e.stopPropagation()}
-                              >Done</button>
+                              >{timelineEditingNoteIds[task.id] ? 'Save' : 'Done'}</button>
                             </div>
                           </div>
                         )}
@@ -3684,7 +4048,7 @@
                             <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
                               <span className="text-[9px] uppercase tracking-widest font-semibold" style={{ color: action.color }}>Notes</span>
                               <button className="text-gray-500 hover:text-white text-xs leading-none"
-                                onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); }}
+                                onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: null })); setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: '', detail: '' } })); }}
                                 onMouseDown={e => e.stopPropagation()}>×</button>
                             </div>
                             {(() => {
@@ -3692,12 +4056,14 @@
                               return saEntryNotes.length > 0 && (
                                 <div className="px-2 pb-1 flex flex-col gap-1 max-h-36 overflow-y-auto">
                                   {saEntryNotes.map(nt => (
-                                    <div key={nt.id} className="bg-gray-800/70 border border-yellow-900/50 rounded px-2 py-1 relative group/note">
+                                    <div key={nt.id}
+                                      className={`bg-gray-800/70 border rounded px-2 py-1 relative group/note cursor-pointer ${timelineEditingNoteIds[entry.id] === nt.id ? 'border-yellow-500' : 'border-yellow-900/50'}`}
+                                      onDoubleClick={e => { e.stopPropagation(); setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: nt.title, detail: nt.detail || '' } })); setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: nt.id })); }}>
                                       <p className="text-[11px] font-semibold text-yellow-200 leading-tight">{nt.title}</p>
                                       {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                       <button
-                                        className="absolute top-0.5 right-0.5 text-[10px] text-gray-600 hover:text-red-400 opacity-0 group-hover/note:opacity-100 leading-none px-0.5"
-                                        onClick={e => { e.stopPropagation(); setSaEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; if (nt.id === en.id+'_n0') return {...en, noteTitle: undefined, noteDetail: undefined}; return {...en, notes: (en.notes||[]).filter(n => n.id !== nt.id)}; })); }}
+                                        className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                        onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setSaEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; if (nt.id === en.id+'_n0') return {...en, noteTitle: undefined, noteDetail: undefined}; return {...en, notes: (en.notes||[]).filter(n => n.id !== nt.id)}; })); if (timelineEditingNoteIds[entry.id] === nt.id) { setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: null })); setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: '', detail: '' } })); } } }}
                                         onMouseDown={e => e.stopPropagation()}
                                       >×</button>
                                     </div>
@@ -3730,12 +4096,18 @@
                                   e.stopPropagation();
                                   const draft = noteDrafts[entry.id] || {};
                                   if (!draft.title?.trim()) return;
-                                  const newNote = { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() };
-                                  setSaEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; const existing = en.notes || (en.noteTitle ? [{id: en.id+'_n0', title: en.noteTitle, detail: en.noteDetail||'', createdAt: 0}] : []); return {...en, notes: [...existing, newNote], noteTitle: undefined, noteDetail: undefined}; }));
+                                  const editId = timelineEditingNoteIds[entry.id];
+                                  if (editId) {
+                                    setSaEntries(prev => prev.map(en => en.id !== entry.id ? en : { ...en, notes: (en.notes || []).map(nt => nt.id === editId ? { ...nt, title: draft.title.trim(), detail: (draft.detail || '').trim() } : nt) }));
+                                    setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: null }));
+                                  } else {
+                                    const newNote = { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() };
+                                    setSaEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; const existing = en.notes || (en.noteTitle ? [{id: en.id+'_n0', title: en.noteTitle, detail: en.noteDetail||'', createdAt: 0}] : []); return {...en, notes: [...existing, newNote], noteTitle: undefined, noteDetail: undefined}; }));
+                                  }
                                   setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: '', detail: '' } }));
                                 }}
                                 onMouseDown={e => e.stopPropagation()}
-                              >Done</button>
+                              >{timelineEditingNoteIds[entry.id] ? 'Save' : 'Done'}</button>
                             </div>
                           </div>
                         )}
@@ -3899,8 +4271,8 @@
                                       <p className="text-[11px] font-semibold leading-tight" style={{ color: col+'dd' }}>{nt.title}</p>
                                       {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                       <button
-                                        className="absolute top-0.5 right-0.5 text-[10px] text-gray-600 hover:text-red-400 opacity-0 group-hover/note:opacity-100 leading-none px-0.5"
-                                        onClick={e => { e.stopPropagation(); setMmEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; if (nt.id === en.id+'_n0') return {...en, noteTitle: undefined, noteDetail: undefined}; return {...en, notes: (en.notes||[]).filter(n => n.id !== nt.id)}; })); }}
+                                        className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                        onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) setMmEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; if (nt.id === en.id+'_n0') return {...en, noteTitle: undefined, noteDetail: undefined}; return {...en, notes: (en.notes||[]).filter(n => n.id !== nt.id)}; })); }}
                                         onMouseDown={e => e.stopPropagation()}
                                       >×</button>
                                     </div>
@@ -4152,7 +4524,60 @@
                 );
               })}
             </div>
-          </div>}
+              </div>
+
+              {/* Eisenhower Matrix Panel — day mode only */}
+              {timelineMode === 'day' && (
+                <div className="flex-shrink-0 border-l border-gray-800 flex flex-col overflow-hidden" style={{ width: '35%' }}>
+                  <div className="flex-shrink-0 px-3 py-2 border-b border-gray-800">
+                    <span className="text-xs font-bold text-gray-400 tracking-widest uppercase">Task Priority</span>
+                  </div>
+                  <div className="flex-1 min-h-0 grid grid-cols-2 grid-rows-2 overflow-hidden">
+                    {[
+                      { key: 'ui',   label: 'DO NOW',    sub: 'Urgent · Important',      hdr: '#7f1d1d', color: '#ef4444' },
+                      { key: 'niu',  label: 'SCHEDULE',  sub: 'Not Urgent · Important',  hdr: '#1e3a5f', color: '#3b82f6' },
+                      { key: 'uni',  label: 'DELEGATE',  sub: 'Urgent · Not Important',  hdr: '#451a03', color: '#f59e0b' },
+                      { key: 'nuni', label: 'ELIMINATE', sub: 'Not Urgent · Not Imp.',   hdr: '#1f2937', color: '#6b7280' },
+                    ].map(({ key, label, sub, hdr, color }) => (
+                      <div key={key}
+                        className={`flex flex-col overflow-hidden border-gray-800 ${key === 'niu' || key === 'nuni' ? 'border-l' : ''} ${key === 'uni' || key === 'nuni' ? 'border-t' : ''}`}
+                        onDragOver={e => { e.preventDefault(); if (matrixDragOver?.targetId !== null || matrixDragOver?.quadrant !== key) setMatrixDragOver({ quadrant: key, targetId: null }); }}
+                        onDrop={e => { e.stopPropagation(); handleMatrixDrop(key, null); }}>
+                        <div className="flex-shrink-0 px-2 py-1" style={{ backgroundColor: hdr }}>
+                          <div className="text-[10px] font-bold text-white tracking-widest">{label}</div>
+                          <div className="text-[9px] text-gray-400 leading-tight">{sub}</div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-1 flex flex-col gap-0.5">
+                          {(matrixByQuadrant[key] || []).map(({ id }) => {
+                            const meta = blockMetaMap[id];
+                            if (!meta) return null;
+                            const isOver = matrixDragOver?.quadrant === key && matrixDragOver?.targetId === id;
+                            return (
+                              <div key={id}
+                                draggable
+                                onDragStart={e => { e.stopPropagation(); handleMatrixDragStart(id); }}
+                                onDragOver={e => { e.preventDefault(); e.stopPropagation(); setMatrixDragOver({ quadrant: key, targetId: id }); }}
+                                onDrop={e => { e.stopPropagation(); handleMatrixDrop(key, id); }}
+                                onDragEnd={() => { setMatrixDragId(null); setMatrixDragOver(null); }}
+                                className={`flex items-center gap-1.5 px-1.5 py-1 rounded text-[11px] cursor-grab select-none transition-all ${isOver ? 'bg-white/10 outline outline-1 outline-dashed outline-white/40' : 'bg-gray-900/60 hover:bg-gray-800/60'}`}
+                                style={{ borderLeft: `3px solid ${meta.color}` }}>
+                                <span className="truncate text-gray-200 flex-1 leading-tight">{meta.title}</span>
+                              </div>
+                            );
+                          })}
+                          {(matrixByQuadrant[key] || []).length === 0 && (
+                            <div className="flex-1 flex items-center justify-center pointer-events-none">
+                              <span className="text-[10px] text-gray-700">drop here</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Calendar view */}
           {schedView === 'calendar' && (
