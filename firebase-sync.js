@@ -118,24 +118,32 @@
     $msg().textContent = 'LOADING…';
     $email().textContent = user.email;
 
+    // Break reload loops: if this page just reloaded to apply remote data, skip re-comparison
+    const RELOAD_FLAG = 'fb_reloaded';
+    if (sessionStorage.getItem(RELOAD_FLAG) === location.pathname) {
+      sessionStorage.removeItem(RELOAD_FLAG);
+      hideOverlay();
+      listenForRemoteChanges();
+      return;
+    }
+
     try {
       const snap   = await db.collection('users').doc(_uid).get();
       const remote = snap.exists ? snap.data()?.data : null;
       const local  = localStorage.getItem(DB_KEY);
 
       if (remote) {
-        // Decide whether remote or local data is authoritative
+        // Only prefer remote if local is empty OR remote has strictly more slots
         let useRemote = !local || local === '{}';
         if (!useRemote) {
           try {
             const r = JSON.parse(remote);
             const l = JSON.parse(local);
-            useRemote = (r.slots || []).length >= (l.slots || []).length;
+            useRemote = (r.slots || []).length > (l.slots || []).length;
           } catch { useRemote = true; }
         }
         if (useRemote && remote !== local) {
-          // Write Firestore data into localStorage then reload so the app
-          // initialises with the correct data (avoids patching React state)
+          sessionStorage.setItem(RELOAD_FLAG, location.pathname);
           _origSet.call(localStorage, DB_KEY, remote);
           location.reload();
           return;
