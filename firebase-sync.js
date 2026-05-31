@@ -1,0 +1,164 @@
+(function () {
+  'use strict';
+
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyCsRHjUpuIaDDs4iXHl3BboEYFgpxHpgak",
+    authDomain: "track-sync-2ee32.firebaseapp.com",
+    projectId: "track-sync-2ee32",
+    storageBucket: "track-sync-2ee32.firebasestorage.app",
+    messagingSenderId: "614881325342",
+    appId: "1:614881325342:web:20c960bc58cbffecd9d90f"
+  };
+
+  const DB_KEY = 'track_db';
+
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const auth = firebase.auth();
+  const db   = firebase.firestore();
+
+  // ── Loading overlay ────────────────────────────────────────────────────────
+  const overlay = document.createElement('div');
+  overlay.id = 'fb-overlay';
+  overlay.style.cssText = [
+    'position:fixed', 'inset:0', 'background:#080d18',
+    'z-index:9999', 'display:flex', 'flex-direction:column',
+    'align-items:center', 'justify-content:center',
+    'font-family:monospace', 'gap:14px'
+  ].join(';');
+  overlay.innerHTML = `
+    <div style="color:#6366f1;font-size:24px;font-weight:900;letter-spacing:.2em">TRACK</div>
+    <div id="fb-msg"   style="color:#4b5563;font-size:11px;letter-spacing:.12em">CONNECTING…</div>
+    <button id="fb-btn" style="display:none;padding:11px 30px;background:#4f46e5;color:#fff;
+      border:none;border-radius:8px;font-size:13px;cursor:pointer;font-family:monospace;font-weight:bold">
+      Sign in with Google
+    </button>
+    <div id="fb-email" style="color:#374151;font-size:10px"></div>
+  `;
+  document.documentElement.appendChild(overlay);
+
+  const $msg   = () => document.getElementById('fb-msg');
+  const $btn   = () => document.getElementById('fb-btn');
+  const $email = () => document.getElementById('fb-email');
+
+  // ── Patch localStorage so every write to track_db syncs to Firestore ───────
+  const _origSet = Storage.prototype.setItem;
+  let _uid = null;
+  let _writeTimer = null;
+
+  Storage.prototype.setItem = function (key, value) {
+    _origSet.call(this, key, value);
+    if (key === DB_KEY && _uid) {
+      clearTimeout(_writeTimer);
+      _writeTimer = setTimeout(() => {
+        db.collection('users').doc(_uid)
+          .set({ data: value })
+          .catch(e => console.warn('[Track sync] write error', e));
+      }, 700);
+    }
+  };
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function hideOverlay() {
+    const el = document.getElementById('fb-overlay');
+    if (!el) return;
+    el.style.transition = 'opacity .25s';
+    el.style.opacity = '0';
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 270);
+  }
+
+  function showSignInButton(hint) {
+    $msg().textContent = hint || 'SIGN IN TO SYNC';
+    const b = $btn();
+    b.style.display = 'block';
+    b.onclick = () => {
+      b.disabled = true;
+      b.textContent = 'Opening…';
+      auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())
+        .catch(() => {
+          b.disabled = false;
+          b.textContent = 'Sign in with Google';
+          $msg().textContent = 'Sign-in failed — try again';
+        });
+    };
+  }
+
+  function showSyncBanner() {
+    if (document.getElementById('fb-sync-banner')) return;
+    const el = document.createElement('div');
+    el.id = 'fb-sync-banner';
+    el.style.cssText = [
+      'position:fixed', 'bottom:14px', 'right:14px',
+      'background:#1e293b', 'border:1px solid #6366f1',
+      'color:#a5b4fc', 'padding:9px 14px', 'border-radius:8px',
+      'font-size:11px', 'font-family:monospace', 'z-index:9998',
+      'cursor:pointer', 'letter-spacing:.04em'
+    ].join(';');
+    el.textContent = '↻ Updated from another device — tap to reload';
+    el.onclick = () => location.reload();
+    document.body.appendChild(el);
+  }
+
+  // ── Real-time listener (after sign-in) ────────────────────────────────────
+  function listenForRemoteChanges() {
+    let lastSeen = localStorage.getItem(DB_KEY);
+    db.collection('users').doc(_uid).onSnapshot(snap => {
+      if (!snap.exists || snap.metadata.hasPendingWrites) return;
+      const remote = snap.data()?.data;
+      if (!remote || remote === lastSeen) return;
+      lastSeen = remote;
+      if (remote === localStorage.getItem(DB_KEY)) return;
+      _origSet.call(localStorage, DB_KEY, remote);
+      showSyncBanner();
+    });
+  }
+
+  // ── Main: called when Firebase confirms user is signed in ──────────────────
+  async function onSignedIn(user) {
+    _uid = user.uid;
+    $msg().textContent = 'LOADING…';
+    $email().textContent = user.email;
+
+    try {
+      const snap   = await db.collection('users').doc(_uid).get();
+      const remote = snap.exists ? snap.data()?.data : null;
+      const local  = localStorage.getItem(DB_KEY);
+
+      if (remote) {
+        // Decide whether remote or local data is authoritative
+        let useRemote = !local || local === '{}';
+        if (!useRemote) {
+          try {
+            const r = JSON.parse(remote);
+            const l = JSON.parse(local);
+            useRemote = (r.slots || []).length >= (l.slots || []).length;
+          } catch { useRemote = true; }
+        }
+        if (useRemote && remote !== local) {
+          // Write Firestore data into localStorage then reload so the app
+          // initialises with the correct data (avoids patching React state)
+          _origSet.call(localStorage, DB_KEY, remote);
+          location.reload();
+          return;
+        }
+      } else if (local && local !== '{}') {
+        // First sign-in on this device — push local data up
+        db.collection('users').doc(_uid).set({ data: local })
+          .catch(e => console.warn('[Track sync] initial push error', e));
+      }
+    } catch (e) {
+      console.warn('[Track sync] load error', e);
+    }
+
+    hideOverlay();
+    listenForRemoteChanges();
+  }
+
+  // ── Auth state listener ────────────────────────────────────────────────────
+  auth.onAuthStateChanged(user => {
+    if (user) {
+      onSignedIn(user);
+    } else {
+      showSignInButton();
+    }
+  });
+})();
