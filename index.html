@@ -110,6 +110,27 @@
         expBtn.onclick = () => exportSlot(slot.id);
         acts.appendChild(expBtn);
 
+        const expDumpsBtn = document.createElement('button');
+        expDumpsBtn.textContent = '↓ Dumps';
+        expDumpsBtn.title = 'Export source dumps only';
+        expDumpsBtn.className = 'slot-export-btn';
+        expDumpsBtn.onclick = () => exportDumps(slot.id);
+        acts.appendChild(expDumpsBtn);
+
+        const impDumpsLabel = document.createElement('label');
+        impDumpsLabel.className = 'import-label';
+        impDumpsLabel.title = 'Import source dumps only';
+        const impDumpsSpan = document.createElement('span');
+        impDumpsSpan.textContent = '↑ Dumps';
+        impDumpsSpan.className = 'import-label-inner';
+        const impDumpsInput = document.createElement('input');
+        impDumpsInput.type = 'file';
+        impDumpsInput.accept = '.json';
+        impDumpsInput.className = 'file-input-hidden';
+        impDumpsInput.onchange = e => importDumps(e, slot.id);
+        impDumpsLabel.append(impDumpsSpan, impDumpsInput);
+        acts.appendChild(impDumpsLabel);
+
         if (slots.length > 1) {
           const delBtn = document.createElement('button');
           delBtn.textContent = '✕';
@@ -190,6 +211,46 @@
       renderSlots();
     }
 
+    function exportDumps(id) {
+      const db = getDB();
+      const slot = (db.slots||[]).find(s => s.id === id);
+      if (!slot) return;
+      const payload = { sourceDumps: slot.sourceDumps || [] };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (slot.name||'slot').replace(/\s+/g,'_') + '_dumps_' + new Date().toISOString().slice(0,10) + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function importDumps(e, slotId) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          const incoming = data.sourceDumps;
+          if (!Array.isArray(incoming) || !incoming.length) {
+            alert('No source dump data found in file');
+            return;
+          }
+          const db = getDB();
+          db.slots = (db.slots||[]).map(s =>
+            s.id === slotId
+              ? { ...s, sourceDumps: [...(s.sourceDumps||[]), ...incoming] }
+              : s
+          );
+          saveDB(db);
+          alert('Source dumps imported (' + incoming.length + ' entries)');
+        } catch { alert('Invalid file'); }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    }
+
     function importSlot(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -205,7 +266,13 @@
             createdAt,
             sessions: data.sessions||[], mms: data.mms||[], kolbs: data.kolbs||[],
             mgChanges: data.mgChanges||[], goals: data.goals||[],
-            saActions: data.saActions||[], saEntries: data.saEntries||[]
+            saActions: data.saActions||[], saEntries: data.saEntries||[],
+            sourceDumps: data.sourceDumps||[],
+            linChanges: data.linChanges||[],
+            linDayTitles: data.linDayTitles||{},
+            pos: data.pos||{},
+            levelTemplates: data.levelTemplates||{},
+            mgSchedule: data.mgSchedule||{}
           };
           const db = getDB();
           db.slots = [...(db.slots||[]), slot];

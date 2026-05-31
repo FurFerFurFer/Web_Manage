@@ -32,12 +32,17 @@
       border:none;border-radius:8px;font-size:13px;cursor:pointer;font-family:monospace;font-weight:bold">
       Sign in with Google
     </button>
+    <button id="fb-skip" style="display:none;padding:7px 20px;background:transparent;color:#4b5563;
+      border:1px solid #1e293b;border-radius:8px;font-size:11px;cursor:pointer;font-family:monospace;margin-top:4px">
+      Skip — use offline (local only)
+    </button>
     <div id="fb-email" style="color:#374151;font-size:10px"></div>
   `;
   document.documentElement.appendChild(overlay);
 
   const $msg   = () => document.getElementById('fb-msg');
   const $btn   = () => document.getElementById('fb-btn');
+  const $skip  = () => document.getElementById('fb-skip');
   const $email = () => document.getElementById('fb-email');
 
   // ── Patch localStorage so every write to track_db syncs to Firestore ───────
@@ -80,6 +85,9 @@
           $msg().textContent = 'Sign-in failed — try again';
         });
     };
+    const s = $skip();
+    s.style.display = 'block';
+    s.onclick = () => hideOverlay();
   }
 
   function showSyncBanner() {
