@@ -234,6 +234,18 @@
         .map(g => ({ ...g, children: deleteNode(g.children || [], id) }));
     }
 
+    function deleteNodeKeepChildren(goals, id) {
+      const result = [];
+      for (const g of goals) {
+        if (g.id === id) {
+          result.push(...(g.children || []));
+        } else {
+          result.push({ ...g, children: deleteNodeKeepChildren(g.children || [], id) });
+        }
+      }
+      return result;
+    }
+
     function updateTitle(goals, id, title) {
       return goals.map(g =>
         g.id === id ? { ...g, title }
@@ -460,6 +472,89 @@
       }
       const updated = remove(goals);
       return promoted ? [...updated, promoted] : goals;
+    }
+
+    function containsId(nodes, id) {
+      for (const n of nodes) {
+        if (n.id === id) return true;
+        if (containsId(n.children || [], id)) return true;
+      }
+      return false;
+    }
+
+    function nestSubGoalIntoSubGoal(goals, draggedId, targetId) {
+      if (draggedId === targetId) return goals;
+      const draggedNode = (function find(nodes) {
+        for (const n of nodes) { if (n.id === draggedId) return n; const f = find(n.children||[]); if (f) return f; }
+      })(goals);
+      if (draggedNode && containsId(draggedNode.children || [], targetId)) return goals;
+      let dragged = null;
+      function removeDragged(nodes) {
+        return nodes
+          .filter(n => { if (n.id === draggedId) { dragged = n; return false; } return true; })
+          .map(n => ({ ...n, children: removeDragged(n.children || []) }));
+      }
+      const withoutDragged = removeDragged(goals);
+      if (!dragged) return goals;
+      function insertIntoTarget(nodes) {
+        return nodes.map(n => {
+          if (n.id === targetId) {
+            const existingSubGoals = (n.children || []).filter(c => c.isSubGoal);
+            const existingTasks    = (n.children || []).filter(c => !c.isSubGoal);
+            const hasData = (n.toLearn || []).length > 0
+              || Object.keys(n.mmTargets || {}).length > 0
+              || existingTasks.length > 0;
+            if (existingSubGoals.length === 0 && hasData) {
+              const defaultSubGoal = {
+                id: uid(), title: 'default', isSubGoal: true,
+                completed: false, createdAt: Date.now(),
+                children: [...existingTasks],
+                toLearn: [...(n.toLearn || [])],
+                mmTargets: { ...(n.mmTargets || {}) },
+              };
+              return { ...n, children: [defaultSubGoal, { ...dragged, isSubGoal: true }], toLearn: [], mmTargets: {} };
+            }
+            return { ...n, children: [...(n.children || []), { ...dragged, isSubGoal: true }] };
+          }
+          return { ...n, children: insertIntoTarget(n.children || []) };
+        });
+      }
+      return insertIntoTarget(withoutDragged);
+    }
+
+    function nestTaskIntoTask(goals, draggedId, targetId) {
+      if (draggedId === targetId) return goals;
+      const draggedNode = (function find(nodes) {
+        for (const n of nodes) { if (n.id === draggedId) return n; const f = find(n.children||[]); if (f) return f; }
+      })(goals);
+      if (draggedNode && containsId(draggedNode.children || [], targetId)) return goals;
+      let dragged = null;
+      function removeDragged(nodes) {
+        return nodes
+          .filter(n => { if (n.id === draggedId) { dragged = n; return false; } return true; })
+          .map(n => ({ ...n, children: removeDragged(n.children || []) }));
+      }
+      const withoutDragged = removeDragged(goals);
+      if (!dragged) return goals;
+      function insertIntoTarget(nodes) {
+        return nodes.map(n => {
+          if (n.id === targetId) {
+            const existingChildren = n.children || [];
+            const targetNotes = n.notes || [];
+            const isFirstChild = existingChildren.length === 0 && targetNotes.length > 0;
+            const newDragged = isFirstChild
+              ? { ...dragged, notes: [...(dragged.notes || []), ...targetNotes] }
+              : dragged;
+            return {
+              ...n,
+              children: [...existingChildren, newDragged],
+              ...(isFirstChild ? { notes: [] } : {}),
+            };
+          }
+          return { ...n, children: insertIntoTarget(n.children || []) };
+        });
+      }
+      return insertIntoTarget(withoutDragged);
     }
 
     function addLinkedSubGoal(goals, parentId, linkedGoalId) {
@@ -1125,7 +1220,7 @@
     // ── GoalNode ──────────────────────────────────────────────────────────────
 
     function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId }) {
-      const { onToggle, onAddChild, onDelete, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, allGoals, mms, sirDoneMap } = handlers;
+      const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, allGoals, mms, sirDoneMap } = handlers;
       const [hov, setHov]             = useState(false);
       const [showMMPicker, setShowMMPicker] = useState(false);
       const [editing, setEditing]     = useState(false);
@@ -1143,6 +1238,9 @@
       const [noteDraftTitle, setNoteDraftTitle] = useState('');
       const [noteDraftDetail, setNoteDraftDetail] = useState('');
       const [editingNoteId, setEditingNoteId] = useState(null);
+      const [subGoalDragOver, setSubGoalDragOver] = useState(false);
+      const [taskDragOver, setTaskDragOver] = useState(false);
+      const [pendingDelete, setPendingDelete] = useState(false);
       const editRef    = useRef(null);
       const kidRef     = useRef(null);
       const subGoalRef = useRef(null);
@@ -1200,6 +1298,13 @@
               title="Drag to promote to ultimate goal"
               className="text-gray-600 hover:text-violet-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 cursor-grab select-none">⠿</span>
           )}
+          {!isGoalType && (
+            <span
+              draggable
+              onDragStart={e => { e.dataTransfer.setData('application/task-id', node.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); }}
+              title="Drag to nest into another task"
+              className="text-gray-600 hover:text-indigo-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 cursor-grab select-none">⠿</span>
+          )}
           <button onClick={() => setShowDate(v => !v)} title="Set date"
             className="text-gray-600 hover:text-indigo-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60">◷</button>
           <button
@@ -1213,7 +1318,11 @@
           {linkedRefId
             ? <button onClick={() => onUnlinkTask(linkedRefId)} title="Unlink task"
                 className="text-gray-600 hover:text-sky-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60">↩</button>
-            : <button onClick={() => { if (window.confirm(`Delete "${node.title}"?`)) onDelete(node.id); }} title="Delete"
+            : <button onClick={() => {
+                const hasChildren = (node.children || []).filter(c => !c.isLink).length > 0;
+                if (hasChildren) { setPendingDelete(true); }
+                else { if (window.confirm(`Delete "${node.title}"?`)) onDelete(node.id); }
+              }} title="Delete"
                 className="text-gray-600 hover:text-red-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60">×</button>
           }
         </div>
@@ -1267,8 +1376,11 @@
       if (isGoalLike) {
         return (<>
           <div
-            className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`}`}
+            className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`} ${subGoalDragOver ? 'ring-2 ring-violet-500' : taskDragOver ? 'ring-2 ring-indigo-500' : ''}`}
             style={!inDetailView && depth === 0 && goalColor ? { borderTopColor: goalColor, borderTopWidth: 3 } : undefined}
+            onDragOver={e => { const types = e.dataTransfer.types; if (node.isSubGoal && types.includes('application/subgoal-id')) { e.preventDefault(); e.stopPropagation(); setSubGoalDragOver(true); } else if (types.includes('application/task-id')) { e.preventDefault(); e.stopPropagation(); setTaskDragOver(true); } }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) { setSubGoalDragOver(false); setTaskDragOver(false); } }}
+            onDrop={e => { const sgId = e.dataTransfer.getData('application/subgoal-id'); const tId = e.dataTransfer.getData('application/task-id'); if (node.isSubGoal && sgId && sgId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestSubGoal(sgId, node.id); } else if (tId && tId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestTask(tId, node.id); } setSubGoalDragOver(false); setTaskDragOver(false); }}
           >
             <div
               className="flex items-start gap-3 p-4"
@@ -1495,8 +1607,11 @@
         const subGoalChildren = (node.children || []).filter(c => c.isSubGoal);
         return (<>
           <div
-            className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`}`}
+            className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`} ${subGoalDragOver && node.isSubGoal ? 'ring-2 ring-violet-500' : ''}`}
             style={!inDetailView && depth === 0 && goalColor ? { borderTopColor: goalColor, borderTopWidth: 3 } : undefined}
+            onDragOver={e => { if (node.isSubGoal && e.dataTransfer.types.includes('application/subgoal-id')) { e.preventDefault(); e.stopPropagation(); setSubGoalDragOver(true); } }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setSubGoalDragOver(false); }}
+            onDrop={e => { if (!node.isSubGoal) return; const draggedId = e.dataTransfer.getData('application/subgoal-id'); if (draggedId && draggedId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestSubGoal(draggedId, node.id); } setSubGoalDragOver(false); }}
           >
             <div
               className="flex items-start gap-3 p-4"
@@ -1609,9 +1724,12 @@
         <div>
           <div
             style={{ paddingLeft: indent }}
-            className={`flex items-center gap-1.5 py-0.5 px-1 rounded transition-colors ${hov ? 'bg-gray-800/50' : ''}`}
+            className={`flex items-center gap-1.5 py-0.5 px-1 rounded transition-colors ${hov ? 'bg-gray-800/50' : ''} ${taskDragOver ? 'ring-1 ring-indigo-500 bg-indigo-950/30' : ''}`}
             onMouseEnter={() => setHov(true)}
             onMouseLeave={() => setHov(false)}
+            onDragOver={e => { if (e.dataTransfer.types.includes('application/task-id')) { e.preventDefault(); e.stopPropagation(); setTaskDragOver(true); } }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setTaskDragOver(false); }}
+            onDrop={e => { const draggedId = e.dataTransfer.getData('application/task-id'); if (draggedId && draggedId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestTask(draggedId, node.id); } setTaskDragOver(false); }}
           >
             {isParent ? (
               <button onClick={() => setCollapsed(c => !c)}
@@ -1741,6 +1859,33 @@
             onClose={() => setPickingLink(false)}
           />
         )}
+        {pendingDelete && (
+          <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center"
+               onClick={() => setPendingDelete(false)}>
+            <div className="bg-gray-800 border border-gray-600 rounded-xl p-5 w-80 shadow-xl"
+                 onClick={e => e.stopPropagation()}>
+              <p className="text-white font-medium mb-1">Delete "{node.title}"?</p>
+              <p className="text-gray-400 text-sm mb-4">This task has {(node.children || []).filter(c => !c.isLink).length} child task(s).</p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => { onDeleteKeepChildren(node.id); setPendingDelete(false); }}
+                  className="w-full text-left px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm">
+                  Delete only this task <span className="text-gray-500">(keep children)</span>
+                </button>
+                <button
+                  onClick={() => { onDelete(node.id); setPendingDelete(false); }}
+                  className="w-full text-left px-3 py-2 rounded-lg bg-red-900/60 hover:bg-red-800 text-red-200 text-sm">
+                  Delete this task and all children
+                </button>
+                <button
+                  onClick={() => setPendingDelete(false)}
+                  className="w-full text-center px-3 py-2 rounded-lg bg-gray-700/50 hover:bg-gray-700 text-gray-400 text-sm">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </>);
     }
 
@@ -1768,7 +1913,8 @@
         onToggle:           id              => setGoals(prev => toggleLeaf(prev, id)),
         onAddChild:         (pid, child)    => setGoals(prev => addChildAndTransferNotes(prev, pid, child)),
         onAddSubGoal:       (pid, subGoal)  => setGoals(prev => addSubGoalAndMigrateTasks(prev, pid, subGoal)),
-        onDelete:           id              => setGoals(prev => deleteNode(prev, id)),
+        onDelete:               id              => setGoals(prev => deleteNode(prev, id)),
+        onDeleteKeepChildren:   id              => setGoals(prev => deleteNodeKeepChildren(prev, id)),
         onUpdateTitle:      (id, title)     => setGoals(prev => updateTitle(prev, id, title)),
         onUpdateDate:       (id, date)      => setGoals(prev => updateDate(prev, id, date)),
         onUpdateToLearn:    (id, mmIds)     => setGoals(prev => updateGoalToLearn(prev, id, mmIds)),
@@ -2138,7 +2284,8 @@
         onToggle:          id              => setGoals(prev => toggleLeaf(prev, id)),
         onAddChild:        (pid, child)    => setGoals(prev => addChildAndTransferNotes(prev, pid, child)),
         onAddSubGoal:      (pid, subGoal)  => setGoals(prev => addSubGoalAndMigrateTasks(prev, pid, subGoal)),
-        onDelete:          id              => setGoals(prev => deleteNode(prev, id)),
+        onDelete:              id              => setGoals(prev => deleteNode(prev, id)),
+        onDeleteKeepChildren:  id              => setGoals(prev => deleteNodeKeepChildren(prev, id)),
         onUpdateTitle:     (id, title)     => setGoals(prev => updateTitle(prev, id, title)),
         onUpdateDate:      (id, date)      => setGoals(prev => updateDate(prev, id, date)),
         onUpdateToLearn:   (id, mmIds)     => setGoals(prev => updateGoalToLearn(prev, id, mmIds)),
@@ -2148,6 +2295,8 @@
         onUnlinkTask:       id              => setGoals(prev => deleteNode(prev, id)),
         onNestGoal:         (draggedId, targetId) => { setGoals(prev => nestGoalIntoGoal(prev, draggedId, targetId)); setActiveGoalId(targetId); },
         onPromoteSubGoal:   subGoalId       => setGoals(prev => promoteSubGoalToUltimate(prev, subGoalId)),
+        onNestSubGoal:      (draggedId, targetId) => setGoals(prev => nestSubGoalIntoSubGoal(prev, draggedId, targetId)),
+        onNestTask:         (draggedId, targetId) => setGoals(prev => nestTaskIntoTask(prev, draggedId, targetId)),
         onAddLinkedSubGoal: (parentId, linkedGoalId) => setGoals(prev => addLinkedSubGoal(prev, parentId, linkedGoalId)),
         onAddNote:         (taskId, note)   => setGoals(prev => addNoteToTask(prev, taskId, note)),
         onRemoveNote:      (taskId, noteId) => setGoals(prev => removeNoteFromTask(prev, taskId, noteId)),
