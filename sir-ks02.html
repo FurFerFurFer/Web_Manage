@@ -3126,22 +3126,6 @@
                           {(()=>{const unrated=type2mms.filter(m=>!m.rating||typeof m.rating!=="number"||m.rating<1||m.rating>10);return(<div className="flex items-stretch mt-1 min-h-row"><div className="w-16 shrink-0 flex flex-col items-center justify-center border border-gray-700 rounded-l bg-gray-900 px-2 py-2"><span className="text-xs font-bold text-gray-500">0</span><span className="text-gray-600 text-center leading-tight mt-0.5 w-full truncate text-[9px]">unrated</span></div><div className="flex-1 border border-l-0 border-gray-700 rounded-r flex flex-wrap gap-1.5 items-center px-3 py-2 bg-gray-900/30">{unrated.length===0&&<span className="text-gray-700 italic text-[10px]">empty</span>}{unrated.map(mm=>(<button key={mm.id} onClick={()=>openMM(mm.id,"mg")} className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-all hover:brightness-110" style={{backgroundColor:mmColor(mm.id)+"22",border:`1px solid ${mmColor(mm.id)}55`,color:mmColor(mm.id)}}><div className="w-1.5 h-1.5 rounded-full shrink-0" style={{backgroundColor:mmColor(mm.id)}}/>{mm.name}</button>))}</div></div>);})()}
                         </div>
                       </div>
-                      <div className="mt-4 pt-4 border-t border-gray-800">
-                        <button
-                          onClick={()=>{
-                            const db=JSON.parse(localStorage.getItem('track_db')||'{}');
-                            const slots=db.slots||[];
-                            const defSlot=slots.find(s=>s.name==='Default');
-                            if(!defSlot){alert('No slot named "Default" found.');return;}
-                            if(!defSlot.levelTemplates||!Object.keys(defSlot.levelTemplates).length){alert('"Default" slot has no MG levels defined yet.');return;}
-                            if(!confirm('Copy MG level templates from "Default" to all other slots? This will overwrite their existing level data.')) return;
-                            db.slots=slots.map(s=>s.id===defSlot.id?s:{...s,levelTemplates:defSlot.levelTemplates});
-                            localStorage.setItem('track_db',JSON.stringify(db));
-                            alert('Done — MG levels copied to all slots. Reload any open trackers to see the updated levels.');
-                          }}
-                          className="w-full bg-indigo-900 hover:bg-indigo-800 text-indigo-200 text-xs font-bold py-2 rounded border border-indigo-700"
-                        >↓ Copy "Default" MG Levels → All Slots</button>
-                      </div>
                     </div>
                   )}
                   {mgLevelsTab==="schedule"&&(
