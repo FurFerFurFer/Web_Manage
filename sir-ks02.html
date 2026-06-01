@@ -1013,7 +1013,7 @@
       );
     }
 
-    function MMDetail({mm,mms,mgChanges,kolbs,mmColor,sirSessionsMap,initialMode,
+    function MMDetail({mm,mms,mgChanges,kolbs,mmColor,sirSessionsMap,initialMode,levelTemplates,
       onBack,onNavigate,onSaveParents,onDetachChild,onAddComment,onRemoveComment,onToggleComment,
       onAddLink,onRemoveLink,onNewKolb,onDupeKolb,onDelete,onSetRating,onChangeType,onRename,onUpdateExplanation,onOpenLin,
       sourceDumps,onAddDumpURLLink,onRemoveDumpURLLink,onGoToSourceDump,
@@ -1128,6 +1128,7 @@
               <button key={t} onClick={()=>setConfirmTypeChange(t)} className="text-xs px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 ml-1">→ {t==="anchor"?"Anchor":`T${t}`}</button>
             ))}
             {mm.ksStage&&<span className={`text-xs px-2 py-0.5 rounded ${STAGE_COLORS[mm.ksStage]||""}`}>{mm.ksStage==="sir"?"SIR":mm.ksStage==="finished"?"FINISHED":`S${mm.ksStage}`}</span>}
+            {mm.type==="2"&&mm.rating!=null&&<span className="text-xs px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 font-bold tracking-wide">LV {mm.rating}</span>}
           </div>
 
           <div className="flex gap-1 mb-4">
@@ -1253,6 +1254,9 @@
                 </div>
                 {mm.rating!=null&&(
                   <div className="mt-1 text-[10px] text-indigo-300">{mm.rating}/10</div>
+                )}
+                {mmKolbs.length>0&&(
+                  <div className="mt-1 text-[10px] text-indigo-400">{mmKolbs.length} Kolb{mmKolbs.length!==1?'s':''} on this focus</div>
                 )}
               </div>
               <button onClick={onNewKolb} className="w-full bg-indigo-700 hover:bg-indigo-600 text-white py-2 rounded text-xs font-bold mb-4">+ NEW KOLB → UPDATE MG</button>
@@ -2468,7 +2472,7 @@
       );
     }
 
-    function ScheduleFocusTab({ type2mms, mgChanges, mgSchedule, openMM }) {
+    function ScheduleFocusTab({ type2mms, mgChanges, mgSchedule, openMM, kolbs }) {
       const [selDate, setSelDate] = React.useState(today());
       const latestChange = Object.fromEntries(
         type2mms.map(mm => {
@@ -2498,6 +2502,7 @@
             {sortedMMs.map(mm => {
               const mgText = mm.currentMG || latestChange[mm.id]?.newMG || '';
               const active = activeMGs.includes(mm.id);
+              const sessionCount = (kolbs||[]).filter(k => k.mmId === mm.id).length;
               return (
                 <button key={mm.id} onClick={() => openMM(mm.id, "mg")}
                   className={`w-full text-left border rounded-lg p-4 transition-colors group ${active ? 'border-emerald-700 bg-emerald-950/30 hover:border-emerald-500' : 'border-gray-800 bg-gray-900/50 hover:border-gray-600'}`}>
@@ -2512,6 +2517,8 @@
                         : <div className="text-xs text-gray-600 italic">No MG yet</div>}
                       {latestChange[mm.id] &&
                         <div className="text-[10px] text-gray-600 mt-1">Updated {latestChange[mm.id].date}</div>}
+                      {sessionCount > 0 &&
+                        <div className="text-[10px] text-indigo-400 mt-1">{sessionCount} Kolb{sessionCount !== 1 ? 's' : ''} on this focus</div>}
                     </div>
                     <span className="text-gray-600 group-hover:text-gray-400 text-xs transition-colors shrink-0">→</span>
                   </div>
@@ -2763,13 +2770,25 @@
       function updateMMExplanation(mmId,text){setMms(p=>p.map(m=>m.id===mmId?{...m,explanation:text}:m));}
       function changeMMType(mmId,newType){
         if (newType==="anchor"){
+          const linkedKolbIds=kolbs.filter(k=>k.mmId===mmId).map(k=>k.id);
+          const currentMM=mms.find(m=>m.id===mmId);
           setKolbs(p=>p.map(k=>k.mmId===mmId?{...k,mmId:null}:k));
-          setMms(p=>p.map(m=>m.id===mmId?{...m,type:"anchor",currentMG:"",ksStage:null}:m));
+          setMms(p=>p.map(m=>m.id===mmId?{...m,type:"anchor",currentMG:"",ksStage:null,_savedKolbIds:linkedKolbIds,_savedKsStage:currentMM?.ksStage,_savedCurrentMG:currentMM?.currentMG}:m));
         } else if (newType==="1"){
-          setKolbs(p=>p.map(k=>k.mmId===mmId?{...k,mmId:null}:k));
-          setMms(p=>p.map(m=>m.id===mmId?{...m,type:"1",currentMG:""}:m));
+          const mm=mms.find(m=>m.id===mmId);
+          const currentLinkedKolbIds=kolbs.filter(k=>k.mmId===mmId).map(k=>k.id);
+          const savedKolbIds=mm?._savedKolbIds||[];
+          const savedKsStage=mm?._savedKsStage;
+          const savedCurrentMG=mm?._savedCurrentMG;
+          setKolbs(p=>p.map(k=>k.mmId===mmId?{...k,mmId:null}:savedKolbIds.includes(k.id)?{...k,mmId}:k));
+          setMms(p=>p.map(m=>m.id===mmId?{...m,type:"1",currentMG:"",ksStage:savedKsStage!=null?savedKsStage:m.ksStage,_savedKolbIds:savedKolbIds.length>0?savedKolbIds:currentLinkedKolbIds,_savedKsStage:savedKsStage!=null?savedKsStage:m.ksStage,_savedCurrentMG:savedCurrentMG!=null?savedCurrentMG:m.currentMG}:m));
         } else {
-          setMms(p=>p.map(m=>m.id===mmId?{...m,type:"2"}:m));
+          const mm=mms.find(m=>m.id===mmId);
+          const savedKolbIds=mm?._savedKolbIds||[];
+          const savedKsStage=mm?._savedKsStage;
+          const savedCurrentMG=mm?._savedCurrentMG;
+          if (savedKolbIds.length>0){setKolbs(p=>p.map(k=>savedKolbIds.includes(k.id)?{...k,mmId}:k.mmId===mmId?{...k,mmId:null}:k));}
+          setMms(p=>p.map(m=>m.id===mmId?{...m,type:"2",ksStage:savedKsStage!=null?savedKsStage:m.ksStage,currentMG:savedCurrentMG!=null?savedCurrentMG:m.currentMG,_savedKolbIds:undefined,_savedKsStage:undefined,_savedCurrentMG:undefined}:m));
         }
       }
       function saveKolb(form,mmId){
@@ -2803,7 +2822,7 @@
       const currentMM=selectedMM?mmMap[selectedMM]:null;
 
       const mmDetailProps={
-        mms,mgChanges,kolbs,mmColor,sirSessionsMap,
+        mms,mgChanges,kolbs,mmColor,sirSessionsMap,levelTemplates,
         onBack:()=>setSelectedMM(null),onNavigate:(id,mode)=>openMM(id,mode||selectedMMMode),
         onSaveParents:saveParents,onDetachChild:detachChild,
         onAddComment:addComment,onRemoveComment:removeComment,onToggleComment:toggleComment,
@@ -3136,7 +3155,7 @@
                     </div>
                   )}
                   {mgLevelsTab==="schedule"&&(
-                    <ScheduleFocusTab type2mms={type2mms} mgChanges={mgChanges} mgSchedule={mgSchedule} openMM={openMM}/>
+                    <ScheduleFocusTab type2mms={type2mms} mgChanges={mgChanges} mgSchedule={mgSchedule} openMM={openMM} kolbs={kolbs}/>
                   )}
                 </div>
               )}

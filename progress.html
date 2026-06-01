@@ -2999,7 +2999,7 @@
 
     // ── MGPanel ───────────────────────────────────────────────────────────────
 
-    function MGPanel({ mms, mgChanges, mgSchedule, setMgSchedule }) {
+    function MGPanel({ mms, mgChanges, mgSchedule, setMgSchedule, kolbs }) {
       const t2mms = (mms || []).filter(m => String(m.type) === '2');
       const today = toDateStr(new Date());
       const [selDate, setSelDate] = useState(today);
@@ -3060,6 +3060,7 @@
                 ? getMGTextForDay(mm.id, selDate, mgChanges)
                 : (mm.currentMG || latestChange[mm.id]?.newMG || '');
               const active = activeMGs.includes(mm.id);
+              const sessionCount = (kolbs||[]).filter(k => k.mmId === mm.id).length;
               return (
                 <div key={mm.id} className={`border rounded-lg p-4 transition-colors ${active ? 'border-emerald-700 bg-emerald-950/30' : 'border-gray-800 bg-gray-900/50'}`}>
                   <div className="flex items-start justify-between gap-3">
@@ -3078,6 +3079,7 @@
                           : latestChange[mm.id];
                         return relevantChange ? <div className="text-[10px] text-gray-600 mt-1">Updated {relevantChange.date}</div> : null;
                       })()}
+                      {sessionCount > 0 && <div className="text-[10px] text-indigo-400 mt-1">{sessionCount} Kolb{sessionCount !== 1 ? 's' : ''} on this focus</div>}
                     </div>
                     <button
                       onClick={() => !isPast && toggleMGDay(selDate, mm.id, mgSchedule, setMgSchedule)}
@@ -4848,6 +4850,7 @@
       const [saEntries,  setSaEntries]  = useState(() => _readP('saEntries',  []));
       const [mmEntries,  setMmEntries]  = useState(() => _readP('mmEntries',  []));
       const [mms]                       = useState(() => _readMMs());
+      const [kolbs]                     = useState(() => _readP('kolbs', []));
       const [sessions]                  = useState(() => _readSessions());
       const [mgChanges]                 = useState(() => _readMGChanges());
       const [sourceDumps]               = useState(() => _readP('sourceDumps', []));
@@ -5037,6 +5040,7 @@
                 mgChanges={mgChanges}
                 mgSchedule={mgSchedule}
                 setMgSchedule={setMgSchedule}
+                kolbs={kolbs}
               />
             </div>
           )}
