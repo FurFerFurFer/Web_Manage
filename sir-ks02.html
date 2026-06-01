@@ -2857,7 +2857,7 @@
       return (
         <div className="min-h-screen bg-gray-950 text-gray-100 font-mono text-sm select-none">
           <div className="flex items-center justify-between px-3 py-3 bg-gray-900 border-b border-gray-800">
-            <span className="text-white font-bold tracking-widest text-xs hidden sm:block">SIR × KS02 × MG</span>
+            <a href="index.html" className="text-gray-600 hover:text-gray-300 transition-colors text-xs">← TRACK</a>
             <div className="flex gap-1">
               {[["calendar","CAL"],["ks02","KS02"],["mg","MG"],["ks03","KS03"],["kolb","KOLB"],["srch","SRCH"]].map(([v,l])=>(
                 <button key={v} onClick={()=>{setView(v);setSelectedMM(null);setSelectedKolbId(null);setKs02SelectedStage(null);}}
