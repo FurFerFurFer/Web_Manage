@@ -1,16 +1,36 @@
 (function () {
-  var STORAGE_KEY = 'track_global_notes';
   var state = { view: 'collapsed', activeId: null };
   var panelW = 320, panelH = 420;
   var saveTimer = null;
 
+  function _twDB() { try { return JSON.parse(localStorage.getItem('track_db') || '{}'); } catch { return {}; } }
+  function _twSlot() { var db = _twDB(), id = db.activeSlotId; return (db.slots || []).find(function(s) { return s.id === id; }) || (db.slots || [])[0] || null; }
+
   function loadNotes() {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}').notes || []; } catch { return []; }
+    var s = _twSlot(); return (s && s.notes) ? s.notes : [];
   }
 
   function saveNotes(notes) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notes: notes }));
+    var db = _twDB(), id = db.activeSlotId;
+    db.slots = (db.slots || []).map(function(s) { return s.id === id ? Object.assign({}, s, { notes: notes }) : s; });
+    localStorage.setItem('track_db', JSON.stringify(db));
   }
+
+  (function migrate() {
+    var old = localStorage.getItem('track_global_notes');
+    if (!old) return;
+    try {
+      var oldNotes = JSON.parse(old).notes || [];
+      if (!oldNotes.length) { localStorage.removeItem('track_global_notes'); return; }
+      var db = _twDB(), id = db.activeSlotId;
+      db.slots = (db.slots || []).map(function(s) {
+        if (s.id !== id) return s;
+        return Object.assign({}, s, { notes: (s.notes || []).concat(oldNotes) });
+      });
+      localStorage.setItem('track_db', JSON.stringify(db));
+      localStorage.removeItem('track_global_notes');
+    } catch(e) {}
+  })();
 
   function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);

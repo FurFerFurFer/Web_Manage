@@ -203,7 +203,7 @@
       const name = input.value.trim();
       if (!name) return;
       const createdAt = new Date().toISOString().slice(0,10);
-      const slot = {id:'slot-'+Date.now(), name, createdAt, sessions:[], mms:[], kolbs:[], mgChanges:[], goals:[], saActions:[], saEntries:[]};
+      const slot = {id:'slot-'+Date.now(), name, createdAt, sessions:[], mms:[], kolbs:[], mgChanges:[], goals:[], saActions:[], saEntries:[], notes:[]};
       const db = getDB();
       db.slots = [...(db.slots||[]), slot];
       saveDB(db);
