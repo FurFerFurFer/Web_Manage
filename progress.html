@@ -3134,6 +3134,7 @@
       const [timelineMode,  setTimelineMode]  = useState('week'); // 'week' | 'day'
       const [dayFocusDate,  setDayFocusDate]  = useState(new Date(today));
       const [openComments,     setOpenComments]     = useState(new Set());
+      const [openMMComments,   setOpenMMComments]   = useState(new Set());
       const [noteDrafts,       setNoteDrafts]       = useState({});
       const [timelineEditingNoteIds, setTimelineEditingNoteIds] = useState({});
       const [viewingNote,      setViewingNote]      = useState(null);
@@ -4342,13 +4343,19 @@
                           {timelineMode === 'day' && (
                             <div className="absolute top-0.5 right-4 z-10 flex items-center gap-0.5" onMouseDown={e => e.stopPropagation()}>
                               <button
+                                className={`text-xs leading-none px-1.5 py-0.5 rounded font-medium transition-colors ${(mm.comments||[]).filter(c=>!c.done).length > 0 ? 'text-amber-300 bg-amber-900/30 hover:bg-amber-800/40' : 'text-gray-500 hover:text-gray-300'}`}
+                                onClick={e=>{e.stopPropagation();setOpenMMComments(prev=>{const n=new Set(prev);n.has(entry.id)?n.delete(entry.id):n.add(entry.id);return n;});setOpenComments(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setOpenSourcePicker(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setViewingNote(null);setViewingSource(null);}}
+                                onMouseDown={e=>e.stopPropagation()}
+                                title="view unticked comments"
+                              >comment</button>
+                              <button
                                 className={`text-[13px] leading-none px-0.5 py-0.5 rounded transition-colors ${entry.sourcePins?.length > 0 ? 'text-emerald-400' : 'text-gray-400 hover:text-emerald-400'}`}
-                                onClick={e => { e.stopPropagation(); setOpenSourcePicker(prev => { const n = new Set(prev); n.has(entry.id) ? n.delete(entry.id) : n.add(entry.id); return n; }); setSourcePickerMode(prev => ({...prev, [entry.id]: 'text'})); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setViewingNote(null); setViewingSource(null); }}
+                                onClick={e => { e.stopPropagation(); setOpenSourcePicker(prev => { const n = new Set(prev); n.has(entry.id) ? n.delete(entry.id) : n.add(entry.id); return n; }); setSourcePickerMode(prev => ({...prev, [entry.id]: 'text'})); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setOpenMMComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setViewingNote(null); setViewingSource(null); }}
                                 title="add source"
                               >⊕</button>
                               <button
                                 className={`text-[13px] leading-none px-0.5 py-0.5 rounded transition-colors ${(entry.notes||[]).length > 0 || entry.noteTitle ? 'text-indigo-400' : 'text-gray-400 hover:text-indigo-400'}`}
-                                onClick={e=>{e.stopPropagation();setOpenComments(prev=>{const n=new Set(prev);n.has(entry.id)?n.delete(entry.id):n.add(entry.id);return n;});setOpenSourcePicker(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setViewingNote(null);setViewingSource(null);}}
+                                onClick={e=>{e.stopPropagation();setOpenComments(prev=>{const n=new Set(prev);n.has(entry.id)?n.delete(entry.id):n.add(entry.id);return n;});setOpenSourcePicker(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setOpenMMComments(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setViewingNote(null);setViewingSource(null);}}
                                 title="add note"
                               >✎</button>
                             </div>
@@ -4462,6 +4469,32 @@
                                 onMouseDown={e => e.stopPropagation()}
                               >Done</button>
                             </div>
+                          </div>
+                        )}
+                        {timelineMode === 'day' && openMMComments.has(entry.id) && (
+                          <div style={{top:(top+height)+'px',left:'3px',right:'3px',position:'absolute',zIndex:30,borderColor:col+'99'}}
+                            className="bg-gray-900 border rounded-b shadow-xl"
+                            onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+                            <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+                              <span className="text-[9px] uppercase tracking-widest font-semibold" style={{color:col}}>Comments</span>
+                              <button className="text-gray-500 hover:text-white text-xs leading-none"
+                                onClick={e=>{e.stopPropagation();setOpenMMComments(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});}}
+                                onMouseDown={e=>e.stopPropagation()}>×</button>
+                            </div>
+                            {(()=>{
+                              const unticked=(mm.comments||[]).filter(c=>!c.done);
+                              return unticked.length>0
+                                ? <div className="px-2 pb-2 flex flex-col gap-1 max-h-40 overflow-y-auto">
+                                    {unticked.map(c=>(
+                                      <div key={c.id} className="flex items-start gap-1.5 bg-gray-800/70 rounded px-2 py-1"
+                                        style={{border:`1px solid ${col}30`}}>
+                                        <span className="text-amber-400 text-[10px] mt-0.5">○</span>
+                                        <p className="text-[11px] text-gray-300 leading-tight">{c.text}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                : <div className="px-2 pb-2 text-[10px] text-gray-600 italic">No unticked comments</div>;
+                            })()}
                           </div>
                         )}
                         {viewingNote?.taskId === entry.id && !commentOpen && !openSourcePicker.has(entry.id) && (
