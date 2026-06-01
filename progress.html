@@ -3522,11 +3522,6 @@
       }
 
       function assignSAToDate(action, dateStr) {
-        if (saEntries.some(e => e.actionId === action.id && e.date === dateStr)) {
-          setPickerDay(null);
-          setSearch('');
-          return;
-        }
         const newEntryId = uid();
         setSaEntries(prev => [...prev, {
           id: newEntryId, actionId: action.id, date: dateStr,
@@ -3542,12 +3537,10 @@
         setSaEntries(prev => {
           let next = [...prev];
           children.forEach(child => {
-            if (!next.some(e => e.actionId === child.id && e.date === dateStr)) {
-              next.push({
-                id: uid(), actionId: child.id, date: dateStr,
-                time: child.time || '09:00', duration: child.duration || 60, done: false,
-              });
-            }
+            next.push({
+              id: uid(), actionId: child.id, date: dateStr,
+              time: child.time || '09:00', duration: child.duration || 60, done: false,
+            });
           });
           return next;
         });
@@ -3556,10 +3549,7 @@
       }
 
       function assignMMToDate(mm, dateStr) {
-        setMmEntries(prev => {
-          if (prev.some(e => e.mmId === mm.id && e.date === dateStr)) return prev;
-          return [...prev, { id: uid(), mmId: mm.id, date: dateStr, time: '09:00', duration: 60, done: false }];
-        });
+        setMmEntries(prev => [...prev, { id: uid(), mmId: mm.id, date: dateStr, time: '09:00', duration: 60, done: false }]);
         setPickerDay(null);
         setSearch('');
       }
@@ -3904,6 +3894,29 @@
                 const isToday  = ds === todayStr;
                 const dayTasks = tasksForDate(ds);
                 const dayEntries = entriesForDate(ds);
+                const dayMmEntries = mmEntriesForDate(ds);
+
+                const _saCount = {};
+                dayEntries.forEach(e => { _saCount[e.actionId] = (_saCount[e.actionId] || 0) + 1; });
+                const _saIdx = {};
+                const saSuffixMap = {};
+                dayEntries.forEach(e => {
+                  if (_saCount[e.actionId] > 1) {
+                    _saIdx[e.actionId] = (_saIdx[e.actionId] || 0) + 1;
+                    saSuffixMap[e.id] = ` #${_saIdx[e.actionId]}`;
+                  }
+                });
+
+                const _mmCount = {};
+                dayMmEntries.forEach(e => { _mmCount[e.mmId] = (_mmCount[e.mmId] || 0) + 1; });
+                const _mmIdx = {};
+                const mmSuffixMap = {};
+                dayMmEntries.forEach(e => {
+                  if (_mmCount[e.mmId] > 1) {
+                    _mmIdx[e.mmId] = (_mmIdx[e.mmId] || 0) + 1;
+                    mmSuffixMap[e.id] = ` #${_mmIdx[e.mmId]}`;
+                  }
+                });
 
                 const dayBlockDescs = [
                   ...dayTasks.map(t => {
@@ -3914,7 +3927,7 @@
                     const [th, tm] = (e.time || '09:00').split(':').map(Number);
                     return { id: e.id, top: (th + tm/60 - START_HOUR) * PX_PER_HOUR, height: Math.max(22, ((e.duration||60)/60) * PX_PER_HOUR) };
                   }),
-                  ...mmEntriesForDate(ds).map(e => {
+                  ...dayMmEntries.map(e => {
                     const [th, tm] = (e.time || '09:00').split(':').map(Number);
                     return { id: e.id, top: (th + tm/60 - START_HOUR) * PX_PER_HOUR, height: Math.max(22, ((e.duration||60)/60) * PX_PER_HOUR) };
                   }),
@@ -4208,7 +4221,7 @@
                             <div className="flex-1 min-w-0">
                               <div className={`text-xs font-semibold truncate leading-tight ${entry.done ? 'line-through opacity-60' : ''}`}
                                 style={{ color: entry.done ? '#6b7280' : action.color }}>
-                                {action.emoji} {action.title}
+                                {action.emoji} {action.title}{saSuffixMap[entry.id] || ''}
                               </div>
                               {height >= 32 && (
                                 <div className="text-[10px] leading-tight opacity-50">
@@ -4350,7 +4363,7 @@
                     })}
 
                     {/* MM entry blocks */}
-                    {mmEntriesForDate(ds).map(entry => {
+                    {dayMmEntries.map(entry => {
                       const mm = (mms || []).find(m => m.id === entry.mmId);
                       if (!mm) return null;
                       const dur = (ghost && ghost._resize && ghost.type === 'mmEntry' && ghost.id === entry.id) ? (ghost.duration || entry.duration || 60) : (entry.duration || 60);
@@ -4390,7 +4403,7 @@
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-semibold truncate leading-tight"
                                 style={{color:entry.done?'#6b7280':col}}>
-                                ◎ {mm.name}
+                                ◎ {mm.name}{mmSuffixMap[entry.id] || ''}
                               </div>
                               {height >= 32 && (
                                 <div className="text-[10px] leading-tight opacity-50">
