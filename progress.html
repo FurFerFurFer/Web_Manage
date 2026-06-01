@@ -3170,6 +3170,7 @@
       const daysRef         = useRef(null);
       const searchRef       = useRef(null);
       const shiftScrollRef  = useRef(0);
+      const touchRef        = useRef(null); // { type, item, offsetY, startX, startY, moved }
 
       useEffect(() => { ghostRef.current = ghost; }, [ghost]);
 
@@ -3230,11 +3231,11 @@
       }, []);
 
       useEffect(() => {
-        function onMouseMove(e) {
+        function handlePointerMove(clientX, clientY) {
           // Handle resize drag
           if (resizeRef.current) {
             const { type, id, edge, startY, startDuration, startTotalMin } = resizeRef.current;
-            const deltaY = e.clientY - startY;
+            const deltaY = clientY - startY;
             const deltaMins = Math.round((deltaY / PX_PER_HOUR * 60) / 15) * 15;
             if (edge === 'bottom') {
               const newDuration = Math.max(15, startDuration + deltaMins);
@@ -3258,7 +3259,7 @@
 
           // Y → 15-min snapped time (subtract sticky header height)
           const headerH  = headerRef.current ? headerRef.current.offsetHeight : 0;
-          const relY     = e.clientY - rect.top + el.scrollTop - dragRef.current.offsetY - headerH;
+          const relY     = clientY - rect.top + el.scrollTop - dragRef.current.offsetY - headerH;
           let totalMin   = Math.round(((relY / PX_PER_HOUR) * 60 + START_HOUR * 60) / 15) * 15;
           totalMin       = Math.max(START_HOUR * 60, Math.min((END_HOUR - 1) * 60, totalMin));
           const hh       = Math.floor(totalMin / 60);
@@ -3268,7 +3269,7 @@
           // X → day column (account for horizontal scroll + sticky time col)
           const currDays = daysRef.current;
           if (!currDays) return;
-          const relX   = e.clientX - rect.left + el.scrollLeft - TIME_COL_W;
+          const relX   = clientX - rect.left + el.scrollLeft - TIME_COL_W;
           const colW   = (el.scrollWidth - TIME_COL_W) / currDays.length;
           const dayIdx = Math.max(0, Math.min(currDays.length - 1, Math.floor(relX / colW)));
           const newDate = toDateStr(currDays[dayIdx]);
@@ -3281,7 +3282,7 @@
           }
         }
 
-        function onMouseUp() {
+        function handlePointerUp() {
           // Commit resize
           if (resizeRef.current) {
             const { type, id, previewDuration, previewTime } = resizeRef.current;
@@ -3311,11 +3312,62 @@
           setGhost(null);
         }
 
+        function onMouseMove(e) { handlePointerMove(e.clientX, e.clientY); }
+        function onMouseUp()    { handlePointerUp(); }
+
+        function onTouchMove(e) {
+          const t = e.touches[0];
+          if (resizeRef.current) {
+            e.preventDefault();
+            handlePointerMove(t.clientX, t.clientY);
+            return;
+          }
+          if (!touchRef.current) return;
+          const dx = Math.abs(t.clientX - touchRef.current.startX);
+          const dy = Math.abs(t.clientY - touchRef.current.startY);
+          if (!touchRef.current.moved && (dx > 8 || dy > 8)) {
+            touchRef.current.moved = true;
+            const { type, item, offsetY } = touchRef.current;
+            if (type === 'goal') {
+              dragRef.current = { type: 'goal', taskId: item.id, offsetY };
+              const g = { type:'goal', taskId:item.id, date:item.scheduledDate, time:item.scheduledTime||'09:00', duration:item.duration||60 };
+              ghostRef.current = g; setGhost(g);
+            } else if (type === 'entry') {
+              dragRef.current = { type: 'entry', entryId: item.id, offsetY };
+              const g = { type:'entry', entryId:item.id, date:item.date, time:item.time||'09:00', duration:item.duration||60 };
+              ghostRef.current = g; setGhost(g);
+            } else if (type === 'mmEntry') {
+              dragRef.current = { type: 'mmEntry', entryId: item.id, offsetY };
+              const g = { type:'mmEntry', entryId:item.id, date:item.date, time:item.time||'09:00', duration:item.duration||60 };
+              ghostRef.current = g; setGhost(g);
+            }
+          }
+          if (touchRef.current.moved) {
+            e.preventDefault();
+            handlePointerMove(t.clientX, t.clientY);
+          }
+        }
+
+        function onTouchEnd() {
+          if (touchRef.current && !touchRef.current.moved) {
+            const { type, item } = touchRef.current;
+            setSelectedForResize(prev => prev && prev.id === item.id ? null : { type, id: item.id });
+            dragRef.current = null; ghostRef.current = null; setGhost(null);
+          } else {
+            handlePointerUp();
+          }
+          touchRef.current = null;
+        }
+
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup',   onMouseUp);
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
+        document.addEventListener('touchend',  onTouchEnd);
         return () => {
           document.removeEventListener('mousemove', onMouseMove);
           document.removeEventListener('mouseup',   onMouseUp);
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend',  onTouchEnd);
         };
       }, []);
 
@@ -3444,12 +3496,13 @@
       function startResize(e, item, edge, type) {
         e.preventDefault();
         e.stopPropagation();
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
         const timeStr = type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00');
         const [th, tm] = timeStr.split(':').map(Number);
         const startTotalMin = th * 60 + tm;
         const startDuration = item.duration || 60;
         const id = item.id;
-        resizeRef.current = { type, id, edge, startY: e.clientY, startDuration, startTotalMin };
+        resizeRef.current = { type, id, edge, startY: clientY, startDuration, startTotalMin };
       }
 
       function assignToDate(task, dateStr) {
@@ -3933,13 +3986,15 @@
                             : 'bg-indigo-900 text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
                           } ${isSelected ? 'ring-2 ring-white/60' : ''}`}
                           onMouseDown={e => startDrag(e, task)}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(task.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'goal', id: task.id }); }}
                         >
                           {isSelected && (
-                            <div className="absolute top-0 left-0 right-0 h-1.5 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
-                              onMouseDown={e => startResize(e, task, 'top', 'goal')} />
+                            <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
+                              onMouseDown={e => startResize(e, task, 'top', 'goal')}
+                              onTouchStart={e => startResize(e, task, 'top', 'goal')} />
                           )}
                           <div className="flex items-start gap-1 h-full">
                             {isLeaf && (
@@ -4006,8 +4061,9 @@
                             onMouseDown={e => e.stopPropagation()}
                           >×</button>
                           {isSelected && (
-                            <div className="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
-                              onMouseDown={e => startResize(e, task, 'bottom', 'goal')} />
+                            <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
+                              onMouseDown={e => startResize(e, task, 'bottom', 'goal')}
+                              onTouchStart={e => startResize(e, task, 'bottom', 'goal')} />
                           )}
                         </div>
                         {commentOpen && (
@@ -4129,13 +4185,15 @@
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
                           } ${entry.done ? 'opacity-50' : ''} ${isSelected ? 'ring-2 ring-white/60' : ''}`}
                           onMouseDown={e => startDragEntry(e, entry)}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'entry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(entry.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'entry', id: entry.id }); }}
                         >
                           {isSelected && (
-                            <div className="absolute top-0 left-0 right-0 h-1.5 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
-                              onMouseDown={e => startResize(e, entry, 'top', 'entry')} />
+                            <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
+                              onMouseDown={e => startResize(e, entry, 'top', 'entry')}
+                              onTouchStart={e => startResize(e, entry, 'top', 'entry')} />
                           )}
                           <div className="flex items-start gap-1 h-full">
                             <input
@@ -4188,8 +4246,9 @@
                             onMouseDown={e => e.stopPropagation()}
                           >×</button>
                           {isSelected && (
-                            <div className="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
-                              onMouseDown={e => startResize(e, entry, 'bottom', 'entry')} />
+                            <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
+                              onMouseDown={e => startResize(e, entry, 'bottom', 'entry')}
+                              onTouchStart={e => startResize(e, entry, 'bottom', 'entry')} />
                           )}
                         </div>
                         {commentOpen && (
@@ -4313,12 +4372,14 @@
                             backgroundColor: col+'14', borderColor: entry.done ? col+'40' : col+'99' }}
                           className={`rounded px-1.5 py-0.5 overflow-hidden group border ${dragged?'opacity-20 cursor-grabbing':'cursor-grab'} ${entry.done?'opacity-50':''} ${isSelected?'ring-2 ring-white/60':''}`}
                           onMouseDown={e => startDragMMEntry(e, entry)}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'mmEntry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; }}
                           onClick={e=>e.stopPropagation()}
                           onDoubleClick={e=>{e.stopPropagation();handleDblClickBlock(entry.id);}}
                           onContextMenu={e=>{e.preventDefault();e.stopPropagation();setSelectedForResize({type:'mmEntry',id:entry.id});}}>
                           {isSelected && (
-                            <div className="absolute top-0 left-0 right-0 h-1.5 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
-                              onMouseDown={e=>startResize(e,entry,'top','mmEntry')} />
+                            <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
+                              onMouseDown={e=>startResize(e,entry,'top','mmEntry')}
+                              onTouchStart={e=>startResize(e,entry,'top','mmEntry')} />
                           )}
                           <div className="flex items-start gap-1 h-full">
                             <input type="checkbox" checked={entry.done}
@@ -4405,8 +4466,9 @@
                             onClick={e=>{e.stopPropagation();if(window.confirm('Remove this MM session?'))setMmEntries(prev=>prev.filter(e=>e.id!==entry.id));}}
                             onMouseDown={e=>e.stopPropagation()}>×</button>
                           {isSelected && (
-                            <div className="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
-                              onMouseDown={e=>startResize(e,entry,'bottom','mmEntry')} />
+                            <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
+                              onMouseDown={e=>startResize(e,entry,'bottom','mmEntry')}
+                              onTouchStart={e=>startResize(e,entry,'bottom','mmEntry')} />
                           )}
                         </div>
                         {commentOpen && (
