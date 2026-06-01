@@ -4821,6 +4821,25 @@
       );
     }
 
+    function computeLinActiveDays(linChanges) {
+      const days = new Set();
+      linChanges.forEach(lc => {
+        if ((lc.items || []).some(it => it.change?.type !== 'stageRevert'))
+          days.add(lc.date);
+      });
+      return days;
+    }
+
+    function calcStreak(activeDays) {
+      const prev = d => { const dt = new Date(d); dt.setDate(dt.getDate()-1); return dt.toISOString().split('T')[0]; };
+      const todayStr = new Date().toISOString().split('T')[0];
+      let cursor = activeDays.has(todayStr) ? todayStr : prev(todayStr);
+      if (!activeDays.has(cursor)) return 0;
+      let n = 0;
+      while (activeDays.has(cursor)) { n++; cursor = prev(cursor); }
+      return n;
+    }
+
     // ── App ───────────────────────────────────────────────────────────────────
 
     function App() {
@@ -4833,6 +4852,7 @@
       const [mgChanges]                 = useState(() => _readMGChanges());
       const [sourceDumps]               = useState(() => _readP('sourceDumps', []));
       const [mgSchedule, setMgSchedule] = useState(() => _readP('mgSchedule', {}));
+      const [linChanges] = useState(() => _readP('linChanges', []));
       const [tab, setTab] = useState(() => window.location.hash.slice(1) || 'progress');
 
       useEffect(() => { _writeP('goals',      goals);      }, [goals]);
@@ -4877,6 +4897,11 @@
                 : allLeaves.length > 0   ? Math.round(toActionFrac * 100)
                 : mmTotal > 0            ? Math.round(toLearnFrac * 100)
                 : 0;
+
+      const streak = useMemo(
+        () => calcStreak(computeLinActiveDays(linChanges)),
+        [linChanges]
+      );
 
       return (
         <div className="h-screen bg-gray-950 text-gray-300 font-mono flex flex-col text-xs overflow-hidden">
@@ -4939,20 +4964,28 @@
               MG
             </button>
 
-            {allLeaves.length > 0 && (
-              <div className="flex items-center gap-3 ml-auto px-4">
-                <span className="text-gray-600">{doneLeaves.length}/{allLeaves.length}</span>
-                <div className="w-28 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${pct}%`, backgroundColor: pct === 100 ? '#10b981' : '#6366f1' }}
-                  />
+            <div className="flex items-center gap-4 ml-auto">
+              {streak > 0 && (
+                <div className="streak-fire">
+                  <span className="streak-fire-num">{streak}</span>
+                  <span className="streak-fire-label">DAY</span>
                 </div>
-                <span className={`w-8 text-right tabular-nums ${pct === 100 ? 'text-emerald-400' : 'text-gray-600'}`}>
-                  {pct}%
-                </span>
-              </div>
-            )}
+              )}
+              {allLeaves.length > 0 && (
+                <div className="flex items-center gap-3 px-4">
+                  <span className="text-gray-600">{doneLeaves.length}/{allLeaves.length}</span>
+                  <div className="w-28 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${pct}%`, backgroundColor: pct === 100 ? '#10b981' : '#6366f1' }}
+                    />
+                  </div>
+                  <span className={`w-8 text-right tabular-nums ${pct === 100 ? 'text-emerald-400' : 'text-gray-600'}`}>
+                    {pct}%
+                  </span>
+                </div>
+              )}
+            </div>
           </header>
 
           {/* Tab: PROGRESS */}

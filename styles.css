@@ -276,3 +276,45 @@ body.home h1 {
 .min-h-row {
   min-height: 44px;
 }
+
+/* ── streak fire counter (progress.html header) ──────────── */
+.streak-fire {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0 1rem;
+  border-right: 1px solid #1f2937;
+  animation: streak-glow 2s ease-in-out infinite;
+}
+
+@keyframes streak-glow {
+  0%, 100% { filter: drop-shadow(0 0 3px rgba(255, 80, 0, 0.4)); }
+  50%       { filter: drop-shadow(0 0 8px rgba(255, 160, 0, 0.75)); }
+}
+
+.streak-fire-num {
+  font-family: monospace;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  line-height: 1;
+  background: linear-gradient(to top, #ff2200, #ff6600, #ffaa00, #ffdd00);
+  background-size: 100% 200%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: fire-rise 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes fire-rise {
+  0%   { background-position: 0% 100%; }
+  100% { background-position: 0% 0%;   }
+}
+
+.streak-fire-label {
+  font-size: 0.5625rem;
+  font-family: monospace;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  color: #6b3a1f;
+}
