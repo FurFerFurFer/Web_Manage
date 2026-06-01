@@ -106,6 +106,24 @@
     document.body.appendChild(el);
   }
 
+  // ── Merge local notes into remote payload before overwriting local storage ─
+  function _mergeNotes(remoteStr, localStr) {
+    try {
+      var r = JSON.parse(remoteStr);
+      var l = JSON.parse(localStr || '{}');
+      var lSlots = l.slots || [];
+      r.slots = (r.slots || []).map(function(rs) {
+        var ls = lSlots.find(function(s) { return s.id === rs.id; });
+        if (!ls || !ls.notes || !ls.notes.length) return rs;
+        var seen = {};
+        (rs.notes || []).forEach(function(n) { seen[n.id] = true; });
+        var extra = ls.notes.filter(function(n) { return !seen[n.id]; });
+        return extra.length ? Object.assign({}, rs, { notes: (rs.notes || []).concat(extra) }) : rs;
+      });
+      return JSON.stringify(r);
+    } catch(e) { return remoteStr; }
+  }
+
   // ── Real-time listener (after sign-in) ────────────────────────────────────
   function listenForRemoteChanges() {
     let lastSeen = localStorage.getItem(DB_KEY);
@@ -115,7 +133,7 @@
       if (!remote || remote === lastSeen) return;
       lastSeen = remote;
       if (remote === localStorage.getItem(DB_KEY)) return;
-      _origSet.call(localStorage, DB_KEY, remote);
+      _origSet.call(localStorage, DB_KEY, _mergeNotes(remote, localStorage.getItem(DB_KEY)));
       showSyncBanner();
     });
   }
@@ -152,7 +170,7 @@
         }
         if (useRemote && remote !== local) {
           sessionStorage.setItem(RELOAD_FLAG, location.pathname);
-          _origSet.call(localStorage, DB_KEY, remote);
+          _origSet.call(localStorage, DB_KEY, _mergeNotes(remote, localStorage.getItem(DB_KEY)));
           location.reload();
           return;
         }

@@ -11,8 +11,10 @@
   }
 
   function saveNotes(notes) {
-    var db = _twDB(), id = db.activeSlotId;
-    db.slots = (db.slots || []).map(function(s) { return s.id === id ? Object.assign({}, s, { notes: notes }) : s; });
+    var db = _twDB();
+    var slot = _twSlot();
+    if (!slot) return;
+    db.slots = (db.slots || []).map(function(s) { return s.id === slot.id ? Object.assign({}, s, { notes: notes }) : s; });
     localStorage.setItem('track_db', JSON.stringify(db));
   }
 
