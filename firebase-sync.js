@@ -10,7 +10,8 @@
     appId: "1:614881325342:web:20c960bc58cbffecd9d90f"
   };
 
-  const DB_KEY = 'track_db';
+  const DB_KEY    = 'track_db';
+  const DB_TS_KEY = 'track_db_ts';
 
   firebase.initializeApp(FIREBASE_CONFIG);
   const auth = firebase.auth();
@@ -49,14 +50,18 @@
   const _origSet = Storage.prototype.setItem;
   let _uid = null;
   let _writeTimer = null;
+  let _lastWrittenToFirestore = null; // tracks last value we pushed, to skip own-write snapshots
 
   Storage.prototype.setItem = function (key, value) {
     _origSet.call(this, key, value);
     if (key === DB_KEY && _uid) {
       clearTimeout(_writeTimer);
       _writeTimer = setTimeout(() => {
+        const ts = Date.now();
+        _origSet.call(localStorage, DB_TS_KEY, String(ts));
+        _lastWrittenToFirestore = value;
         db.collection('users').doc(_uid)
-          .set({ data: value })
+          .set({ data: value, ts })
           .catch(e => console.warn('[Track sync] write error', e));
       }, 700);
     }
@@ -107,13 +112,15 @@
   }
 
   // ── Real-time listener (after sign-in) ────────────────────────────────────
-  function listenForRemoteChanges() {
-    let lastSeen = localStorage.getItem(DB_KEY);
+  // knownRemote: value already seen in onSignedIn so the first snapshot is skipped
+  function listenForRemoteChanges(knownRemote) {
+    let lastSeen = knownRemote !== undefined ? knownRemote : localStorage.getItem(DB_KEY);
     db.collection('users').doc(_uid).onSnapshot(snap => {
       if (!snap.exists || snap.metadata.hasPendingWrites) return;
       const remote = snap.data()?.data;
       if (!remote || remote === lastSeen) return;
       lastSeen = remote;
+      if (remote === _lastWrittenToFirestore) return; // confirmation of our own write — skip
       if (remote === localStorage.getItem(DB_KEY)) return;
       _origSet.call(localStorage, DB_KEY, remote);
       showSyncBanner();
@@ -136,29 +143,54 @@
     }
 
     try {
-      const snap   = await db.collection('users').doc(_uid).get();
-      const remote = snap.exists ? snap.data()?.data : null;
-      const local  = localStorage.getItem(DB_KEY);
+      const snap      = await db.collection('users').doc(_uid).get();
+      const remoteData = snap.exists ? snap.data()?.data : null;
+      const remoteTs   = snap.exists ? (snap.data()?.ts || 0) : 0;
+      const local      = localStorage.getItem(DB_KEY);
+      const localTs    = parseInt(localStorage.getItem(DB_TS_KEY) || '0', 10);
 
-      if (remote) {
-        // Only prefer remote if local is empty OR remote has strictly more slots
+      if (remoteData) {
+        // Determine which version is newer
         let useRemote = !local || local === '{}';
         if (!useRemote) {
           try {
-            const r = JSON.parse(remote);
-            const l = JSON.parse(local);
-            useRemote = (r.slots || []).length > (l.slots || []).length;
+            if (remoteTs > 0 && localTs > 0) {
+              // Both sides have timestamps — trust the newer one
+              useRemote = remoteTs > localTs;
+            } else {
+              // Fallback: prefer remote only if it has strictly more slots
+              const r = JSON.parse(remoteData);
+              const l = JSON.parse(local);
+              useRemote = (r.slots || []).length > (l.slots || []).length;
+            }
           } catch { useRemote = true; }
         }
-        if (useRemote && remote !== local) {
+
+        if (useRemote && remoteData !== local) {
+          _origSet.call(localStorage, DB_TS_KEY, String(remoteTs));
           sessionStorage.setItem(RELOAD_FLAG, location.pathname);
-          _origSet.call(localStorage, DB_KEY, remote);
+          _origSet.call(localStorage, DB_KEY, remoteData);
           location.reload();
           return;
         }
+
+        // Local is preferred but remote differs — push local up so other devices get it,
+        // and seed the listener with the remote value so the first snapshot is skipped.
+        if (!useRemote && local && local !== remoteData) {
+          db.collection('users').doc(_uid)
+            .set({ data: local, ts: localTs || Date.now() })
+            .catch(e => console.warn('[Track sync] push local error', e));
+        }
+
+        // Pass remoteData so the initial onSnapshot for this already-seen value is skipped
+        hideOverlay();
+        listenForRemoteChanges(remoteData);
+        return;
       } else if (local && local !== '{}') {
         // First sign-in on this device — push local data up
-        db.collection('users').doc(_uid).set({ data: local })
+        const ts = localTs || Date.now();
+        _origSet.call(localStorage, DB_TS_KEY, String(ts));
+        db.collection('users').doc(_uid).set({ data: local, ts })
           .catch(e => console.warn('[Track sync] initial push error', e));
       }
     } catch (e) {
