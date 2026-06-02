@@ -126,6 +126,24 @@
       if (dirty) localStorage.setItem('track_db', JSON.stringify(db));
     })();
 
+    (function migrateMilestones() {
+      const db = _getTrackDB();
+      if (!db.slots) return;
+      let dirty = false;
+      function walk(nodes, depth = 0) {
+        return nodes.map(n => {
+          const updated = { ...n, children: walk(n.children || [], depth + 1) };
+          if ((depth === 0 || n.isSubGoal) && !Array.isArray(n.milestones)) {
+            dirty = true;
+            updated.milestones = [];
+          }
+          return updated;
+        });
+      }
+      db.slots = db.slots.map(s => ({ ...s, goals: walk(s.goals || []) }));
+      if (dirty) localStorage.setItem('track_db', JSON.stringify(db));
+    })();
+
     (function migrateChildrenArray() {
       const db = _getTrackDB();
       if (!db.slots) return;
@@ -159,13 +177,24 @@
 
     function uid() { return Math.random().toString(36).slice(2, 10); }
 
+    function isMilestoneNode(node) {
+      return node?.taskType === 'milestone';
+    }
+
+    function isCountableLeaf(node) {
+      return !isMilestoneNode(node) && (node.children || []).length === 0;
+    }
+
     function isComplete(node, allGoals) {
       if (node.isLink) {
         const orig = allGoals && findNode(allGoals, node.linkedTaskId);
         return orig ? isComplete(orig, allGoals) : false;
       }
-      if ((node.children || []).length === 0) return node.completed;
-      return (node.children || []).every(c => isComplete(c, allGoals));
+      if (isMilestoneNode(node) && (node.children || []).length === 0) return true;
+      if ((node.children || []).length === 0) return !!node.completed;
+      const progress = countProgress(node, allGoals ? id => findNode(allGoals, id) : null);
+      if (progress.total === 0) return false;
+      return progress.done >= progress.total;
     }
 
     function countProgress(node, resolveLink) {
@@ -174,6 +203,8 @@
         if (!orig) return { done: 0, total: 0 };
         return countProgress(orig, resolveLink);
       }
+      if (isMilestoneNode(node) && (node.children || []).length === 0)
+        return { done: 0, total: 0 };
       if ((node.children || []).length === 0)
         return { done: node.completed ? 1 : 0, total: 1 };
       return (node.children || []).reduce((acc, c) => {
@@ -184,7 +215,7 @@
 
     function toggleLeaf(goals, id) {
       return goals.map(g =>
-        g.id === id && (g.children || []).length === 0
+        g.id === id && isCountableLeaf(g)
           ? { ...g, completed: !g.completed }
           : { ...g, children: toggleLeaf(g.children || [], id) }
       );
@@ -192,18 +223,27 @@
 
     function toggleRoutineSched(goals, id) {
       return goals.map(g =>
-        g.id === id && (g.children || []).length === 0
+        g.id === id && isCountableLeaf(g)
           ? { ...g, schedDone: !g.schedDone }
           : { ...g, children: toggleRoutineSched(g.children || [], id) }
       );
     }
 
     function addChild(goals, parentId, child) {
-      return goals.map(g =>
-        g.id === parentId
-          ? { ...g, children: [...g.children, child] }
-          : { ...g, children: addChild(g.children || [], parentId, child) }
-      );
+      function walk(nodes, insideMilestone = false) {
+        return nodes.map(g => {
+          const nextInsideMilestone = insideMilestone || isMilestoneNode(g);
+          if (g.id === parentId) {
+            if (
+              isMilestoneNode(child) &&
+              (nextInsideMilestone || parentHasMilestoneChild(g, child.milestoneId, child.id, goals))
+            ) return g;
+            return { ...g, children: [...(g.children || []), child] };
+          }
+          return { ...g, children: walk(g.children || [], nextInsideMilestone) };
+        });
+      }
+      return walk(goals);
     }
 
     function addSubGoalAndMigrateTasks(goals, parentId, subGoal) {
@@ -216,12 +256,14 @@
             children:  [...existingTasks],
             toLearn:   [...(g.toLearn   || [])],
             mmTargets: { ...(g.mmTargets || {}) },
+            milestones: [...(g.milestones || [])],
           };
           return {
             ...g,
             children:  [...existingSubGoals, newSubGoal],
             toLearn:   [],
             mmTargets: {},
+            milestones: [],
           };
         }
         return { ...g, children: addSubGoalAndMigrateTasks(g.children || [], parentId, subGoal) };
@@ -270,8 +312,184 @@
     function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
     function getLeaves(node) {
+      if (isMilestoneNode(node) && (node.children || []).length === 0) return [];
       if ((node.children || []).length === 0) return [node];
       return (node.children || []).flatMap(c => getLeaves(c));
+    }
+
+    function parentHasMilestoneChild(parent, milestoneId, excludeId = null, allGoals = null) {
+      const seen = new Set();
+      return (parent?.children || []).some(child => {
+        if (!child || child.id === excludeId) return false;
+        let node = child;
+        if (child.isLink) {
+          node = allGoals && findNode(allGoals, child.linkedTaskId);
+          if (!node || seen.has(node.id)) return false;
+          seen.add(node.id);
+        }
+        return node.id !== excludeId && isMilestoneNode(node) && node.milestoneId === milestoneId;
+      });
+    }
+
+    function findNodePath(nodes, id, path = []) {
+      for (const n of nodes) {
+        const next = [...path, n];
+        if (n.id === id) return next;
+        const found = findNodePath(n.children || [], id, next);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    function addMilestoneType(goals, ownerId, title) {
+      return goals.map(g => {
+        if (g.id === ownerId) {
+          return { ...g, milestones: [...(g.milestones || []), { id: uid(), title, createdAt: Date.now() }] };
+        }
+        return { ...g, children: addMilestoneType(g.children || [], ownerId, title) };
+      });
+    }
+
+    function renameMilestoneType(goals, ownerId, milestoneId, title) {
+      function updateBlockTitles(nodes) {
+        return nodes.map(n => ({
+          ...n,
+          title: isMilestoneNode(n) && n.milestoneId === milestoneId ? title : n.title,
+          children: updateBlockTitles(n.children || []),
+        }));
+      }
+      return goals.map(g => {
+        if (g.id === ownerId) {
+          return {
+            ...g,
+            milestones: (g.milestones || []).map(m => m.id === milestoneId ? { ...m, title } : m),
+            children: updateBlockTitles(g.children || []),
+          };
+        }
+        return { ...g, children: renameMilestoneType(g.children || [], ownerId, milestoneId, title) };
+      });
+    }
+
+    function deleteMilestoneType(goals, ownerId, milestoneId) {
+      function convertBlocks(nodes) {
+        return nodes.map(n => {
+          const converted = isMilestoneNode(n) && n.milestoneId === milestoneId;
+          return {
+            ...n,
+            taskType: converted ? 'task' : n.taskType,
+            milestoneId: converted ? null : n.milestoneId,
+            children: convertBlocks(n.children || []),
+          };
+        });
+      }
+      return goals.map(g => {
+        if (g.id === ownerId) {
+          return {
+            ...g,
+            milestones: (g.milestones || []).filter(m => m.id !== milestoneId),
+            children: convertBlocks(g.children || []),
+          };
+        }
+        return { ...g, children: deleteMilestoneType(g.children || [], ownerId, milestoneId) };
+      });
+    }
+
+    function reorderMilestoneType(goals, ownerId, milestoneId, dir) {
+      return goals.map(g => {
+        if (g.id === ownerId) {
+          const milestones = [...(g.milestones || [])];
+          const idx = milestones.findIndex(m => m.id === milestoneId);
+          const nextIdx = idx + dir;
+          if (idx < 0 || nextIdx < 0 || nextIdx >= milestones.length) return g;
+          const [moved] = milestones.splice(idx, 1);
+          milestones.splice(nextIdx, 0, moved);
+          return { ...g, milestones };
+        }
+        return { ...g, children: reorderMilestoneType(g.children || [], ownerId, milestoneId, dir) };
+      });
+    }
+
+    function normalizeMilestonePeriod(startDate, endDate) {
+      const clean = d => d && d >= MILESTONE_CAL_START && d <= MILESTONE_CAL_END ? d : null;
+      const start = clean(startDate);
+      const end = clean(endDate);
+      if (!start && !end) return { startDate: null, endDate: null };
+      if (start && !end) return { startDate: start, endDate: start };
+      if (!start && end) return { startDate: end, endDate: end };
+      return start <= end
+        ? { startDate: start, endDate: end }
+        : { startDate: end, endDate: start };
+    }
+
+    function withMilestonePeriod(milestone, startDate, endDate) {
+      const next = { ...milestone };
+      if (startDate && endDate) {
+        next.startDate = startDate;
+        next.endDate = endDate;
+      } else {
+        delete next.startDate;
+        delete next.endDate;
+      }
+      return next;
+    }
+
+    function updateMilestonePeriod(goals, ownerId, milestoneId, startDate, endDate) {
+      const period = normalizeMilestonePeriod(startDate, endDate);
+      return goals.map(g => {
+        if (g.id === ownerId) {
+          return {
+            ...g,
+            milestones: (g.milestones || []).map(m =>
+              m.id === milestoneId ? withMilestonePeriod(m, period.startDate, period.endDate) : m
+            ),
+          };
+        }
+        return { ...g, children: updateMilestonePeriod(g.children || [], ownerId, milestoneId, period.startDate, period.endDate) };
+      });
+    }
+
+    function collectMilestoneOwners(node, allGoals) {
+      const out = [];
+      const seen = new Set();
+      function walk(n) {
+        if (!n) return;
+        if (n.isLink) {
+          const orig = allGoals && findNode(allGoals, n.linkedTaskId);
+          if (orig) walk(orig);
+          return;
+        }
+        const subGoals = (n.children || []).filter(c => c.isSubGoal);
+        if (subGoals.length === 0) {
+          if (!seen.has(n.id)) {
+            seen.add(n.id);
+            out.push(n);
+          }
+          return;
+        }
+        subGoals.forEach(walk);
+      }
+      walk(node);
+      return out;
+    }
+
+    function collectMilestoneBlocks(owner, milestoneId, allGoals) {
+      const out = [];
+      const seen = new Set();
+      function walk(n) {
+        if (!n) return;
+        if (n.isLink) {
+          const orig = allGoals && findNode(allGoals, n.linkedTaskId);
+          if (orig && !seen.has(orig.id)) {
+            seen.add(orig.id);
+            walk(orig);
+          }
+          return;
+        }
+        if (isMilestoneNode(n) && n.milestoneId === milestoneId) out.push(n);
+        (n.children || []).forEach(walk);
+      }
+      (owner.children || []).forEach(walk);
+      return out;
     }
 
     function updateSchedule(goals, id, date, time) {
@@ -322,20 +540,28 @@
     }
 
     function addChildAndTransferNotes(goals, parentId, child) {
-      return goals.map(g => {
-        if (g.id === parentId) {
-          const isFirst = (g.children || []).length === 0;
-          const parentNotes = g.notes || [];
-          const newChild = isFirst && parentNotes.length > 0
-            ? { ...child, notes: [...parentNotes] } : child;
-          return {
-            ...g,
-            children: [...(g.children || []), newChild],
-            ...(isFirst && parentNotes.length > 0 ? { notes: [] } : {}),
-          };
-        }
-        return { ...g, children: addChildAndTransferNotes(g.children || [], parentId, child) };
-      });
+      function walk(nodes, insideMilestone = false) {
+        return nodes.map(g => {
+          const nextInsideMilestone = insideMilestone || isMilestoneNode(g);
+          if (g.id === parentId) {
+            if (
+              isMilestoneNode(child) &&
+              (nextInsideMilestone || parentHasMilestoneChild(g, child.milestoneId, child.id, goals))
+            ) return g;
+            const isFirst = (g.children || []).length === 0;
+            const parentNotes = g.notes || [];
+            const newChild = isFirst && parentNotes.length > 0
+              ? { ...child, notes: [...parentNotes] } : child;
+            return {
+              ...g,
+              children: [...(g.children || []), newChild],
+              ...(isFirst && parentNotes.length > 0 ? { notes: [] } : {}),
+            };
+          }
+          return { ...g, children: walk(g.children || [], nextInsideMilestone) };
+        });
+      }
+      return walk(goals);
     }
 
     function getSCTextBlocks(link) {
@@ -382,6 +608,7 @@
       function walk(nodes, isTop) {
         for (const n of nodes) {
           if (n.isLink) continue;
+          if (isMilestoneNode(n)) { walk(n.children || [], false); continue; }
           if (!isTop && !n.isSubGoal) out.push(n);
           walk(n.children || [], false);
         }
@@ -438,6 +665,7 @@
           const existingTasks    = (g.children || []).filter(c => !c.isSubGoal);
           const hasData = (g.toLearn || []).length > 0
             || Object.keys(g.mmTargets || {}).length > 0
+            || (g.milestones || []).length > 0
             || existingTasks.length > 0;
 
           if (existingSubGoals.length === 0 && hasData) {
@@ -450,12 +678,14 @@
               children: [...existingTasks],
               toLearn: [...(g.toLearn || [])],
               mmTargets: { ...(g.mmTargets || {}) },
+              milestones: [...(g.milestones || [])],
             };
             return {
               ...g,
               children: [originalSubGoal, { ...dragged, isSubGoal: true }],
               toLearn: [],
               mmTargets: {},
+              milestones: [],
             };
           }
 
@@ -503,6 +733,7 @@
             const existingTasks    = (n.children || []).filter(c => !c.isSubGoal);
             const hasData = (n.toLearn || []).length > 0
               || Object.keys(n.mmTargets || {}).length > 0
+              || (n.milestones || []).length > 0
               || existingTasks.length > 0;
             if (existingSubGoals.length === 0 && hasData) {
               const defaultSubGoal = {
@@ -511,8 +742,9 @@
                 children: [...existingTasks],
                 toLearn: [...(n.toLearn || [])],
                 mmTargets: { ...(n.mmTargets || {}) },
+                milestones: [...(n.milestones || [])],
               };
-              return { ...n, children: [defaultSubGoal, { ...dragged, isSubGoal: true }], toLearn: [], mmTargets: {} };
+              return { ...n, children: [defaultSubGoal, { ...dragged, isSubGoal: true }], toLearn: [], mmTargets: {}, milestones: [] };
             }
             return { ...n, children: [...(n.children || []), { ...dragged, isSubGoal: true }] };
           }
@@ -524,9 +756,14 @@
 
     function nestTaskIntoTask(goals, draggedId, targetId) {
       if (draggedId === targetId) return goals;
-      const draggedNode = (function find(nodes) {
-        for (const n of nodes) { if (n.id === draggedId) return n; const f = find(n.children||[]); if (f) return f; }
-      })(goals);
+      const draggedPath = findNodePath(goals, draggedId);
+      const targetPath = findNodePath(goals, targetId);
+      const draggedNode = draggedPath?.[draggedPath.length - 1];
+      const targetNode = targetPath?.[targetPath.length - 1];
+      if (isMilestoneNode(draggedNode)) {
+        if ((targetPath || []).some(isMilestoneNode)) return goals;
+        if (targetNode && parentHasMilestoneChild(targetNode, draggedNode.milestoneId, draggedNode.id, goals)) return goals;
+      }
       if (draggedNode && containsId(draggedNode.children || [], targetId)) return goals;
       let dragged = null;
       function removeDragged(nodes) {
@@ -612,6 +849,8 @@
     const SIR_INTERVALS = [1, 3, 7, 14, 30];
     const PALETTE = ["#6366f1","#ec4899","#f59e0b","#10b981","#3b82f6","#8b5cf6","#14b8a6","#f97316","#06b6d4","#a3e635"];
     const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const MILESTONE_CAL_START = "2026-01-01";
+    const MILESTONE_CAL_END   = "2033-12-31";
     const getDIM      = (y,m) => new Date(y,m+1,0).getDate();
     const getFirstDay = (y,m) => new Date(y,m,1).getDay();
     const dStr        = (y,m,d) => `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
@@ -1010,6 +1249,7 @@
       const displayColor = full ? '#10b981' : goalColor;
 
       function collectLeaves(n) {
+        if (isMilestoneNode(n) && (n.children || []).length === 0) return [];
         if ((n.children || []).length === 0) return [{ id: n.id, done: n.completed }];
         return (n.children || []).flatMap(c => collectLeaves(c));
       }
@@ -1219,8 +1459,8 @@
 
     // ── GoalNode ──────────────────────────────────────────────────────────────
 
-    function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId }) {
-      const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, allGoals, mms, sirDoneMap } = handlers;
+    function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId, milestoneOwner, insideMilestone = false }) {
+      const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, onAddMilestoneType, onRenameMilestoneType, onDeleteMilestoneType, onReorderMilestoneType, allGoals, mms, sirDoneMap } = handlers;
       const [hov, setHov]             = useState(false);
       const [showMMPicker, setShowMMPicker] = useState(false);
       const [editing, setEditing]     = useState(false);
@@ -1230,8 +1470,13 @@
       const [addingKid, setAddingKid] = useState(false);
       const [kidTitle, setKidTitle]   = useState('');
       const [kidType, setKidType]     = useState('task');
+      const [kidMilestoneId, setKidMilestoneId] = useState('');
       const [addingSubGoal, setAddingSubGoal] = useState(false);
       const [subGoalTitle, setSubGoalTitle]   = useState('');
+      const [addingMilestone, setAddingMilestone] = useState(false);
+      const [milestoneTitle, setMilestoneTitle] = useState('');
+      const [editingMilestoneId, setEditingMilestoneId] = useState(null);
+      const [milestoneEditVal, setMilestoneEditVal] = useState('');
       const [pickingLink, setPickingLink]     = useState(false);
       const [pickingGoalLink, setPickingGoalLink] = useState(false);
       const [showNotePanel, setShowNotePanel] = useState(false);
@@ -1244,20 +1489,35 @@
       const editRef    = useRef(null);
       const kidRef     = useRef(null);
       const subGoalRef = useRef(null);
+      const milestoneRef = useRef(null);
+      const milestoneEditRef = useRef(null);
 
       useEffect(() => { if (editing  && editRef.current) editRef.current.focus(); }, [editing]);
       useEffect(() => { if (addingKid && kidRef.current)  kidRef.current.focus();  }, [addingKid]);
       useEffect(() => { if (addingSubGoal && subGoalRef.current) subGoalRef.current.focus(); }, [addingSubGoal]);
+      useEffect(() => { if (addingMilestone && milestoneRef.current) milestoneRef.current.focus(); }, [addingMilestone]);
+      useEffect(() => { if (editingMilestoneId && milestoneEditRef.current) milestoneEditRef.current.focus(); }, [editingMilestoneId]);
 
       const isParent = (node.children || []).length > 0;
       const isGoalType = depth === 0 || node.isSubGoal === true;
       const hasSubGoalKids = (node.children || []).some(c => c.isSubGoal);
       const isGoalLike = isGoalType && !hasSubGoalKids;
       const isGoalContainer = isGoalType && hasSubGoalKids;
+      const isMilestone = isMilestoneNode(node);
+      const currentMilestoneOwner = isGoalLike ? node : milestoneOwner;
+      const blockedMilestoneBranch = insideMilestone || isMilestone;
+      const availableMilestones = (currentMilestoneOwner?.milestones || [])
+        .filter(m => !parentHasMilestoneChild(node, m.id, null, allGoals));
       const mmAutoComplete = isGoalLike ? computeMMAutoComplete(node, mms || [], sirDoneMap) : null;
       const resolveLink = allGoals ? id => findNode(allGoals, id) : null;
       const done = mmAutoComplete !== null ? mmAutoComplete : isComplete(node, allGoals);
       const prog = isParent ? countProgress(node, resolveLink) : null;
+
+      useEffect(() => {
+        if (kidType === 'milestone' && !availableMilestones.some(m => m.id === kidMilestoneId)) {
+          setKidMilestoneId(availableMilestones[0]?.id || '');
+        }
+      }, [kidType, kidMilestoneId, availableMilestones.map(m => m.id).join('|')]);
 
       function commitEdit() {
         setEditing(false);
@@ -1267,15 +1527,26 @@
       }
 
       function commitKid() {
-        const v = kidTitle.trim();
-        if (v) onAddChild(node.id, {
-          id: uid(), title: v, children: [], completed: false,
-          createdAt: Date.now(), scheduledDate: null,
-          taskType: kidType,
-        });
+        if (kidType === 'milestone') {
+          const milestone = availableMilestones.find(m => m.id === kidMilestoneId);
+          if (!milestone || blockedMilestoneBranch || parentHasMilestoneChild(node, milestone.id, null, allGoals)) return;
+          onAddChild(node.id, {
+            id: uid(), title: milestone.title, children: [], completed: false,
+            createdAt: Date.now(), scheduledDate: null,
+            taskType: 'milestone', milestoneId: milestone.id,
+          });
+        } else {
+          const v = kidTitle.trim();
+          if (v) onAddChild(node.id, {
+            id: uid(), title: v, children: [], completed: false,
+            createdAt: Date.now(), scheduledDate: null,
+            taskType: kidType,
+          });
+        }
         setAddingKid(false);
         setKidTitle('');
         setKidType('task');
+        setKidMilestoneId('');
       }
 
       function commitSubGoal() {
@@ -1283,10 +1554,24 @@
         if (v) onAddSubGoal(node.id, {
           id: uid(), title: v, children: [], completed: false,
           createdAt: Date.now(), scheduledDate: null,
-          isSubGoal: true, toLearn: [], mmTargets: {},
+          isSubGoal: true, toLearn: [], mmTargets: {}, milestones: [],
         });
         setAddingSubGoal(false);
         setSubGoalTitle('');
+      }
+
+      function commitMilestoneType() {
+        const v = milestoneTitle.trim();
+        if (v) onAddMilestoneType(node.id, v);
+        setAddingMilestone(false);
+        setMilestoneTitle('');
+      }
+
+      function commitMilestoneRename() {
+        const v = milestoneEditVal.trim();
+        if (editingMilestoneId && v) onRenameMilestoneType(node.id, editingMilestoneId, v);
+        setEditingMilestoneId(null);
+        setMilestoneEditVal('');
       }
 
       const hoverActions = (
@@ -1301,7 +1586,12 @@
           {!isGoalType && (
             <span
               draggable
-              onDragStart={e => { e.dataTransfer.setData('application/task-id', node.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); }}
+              onDragStart={e => {
+                e.dataTransfer.setData('application/task-id', node.id);
+                if (isMilestone) e.dataTransfer.setData('application/milestone-task-id', node.id);
+                e.dataTransfer.effectAllowed = 'move';
+                e.stopPropagation();
+              }}
               title="Drag to nest into another task"
               className="text-gray-600 hover:text-indigo-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 cursor-grab select-none">⠿</span>
           )}
@@ -1343,19 +1633,37 @@
 
       const kidAddRow = addingKid && (
         <div className="flex items-center gap-2 py-1 pl-4 pr-2">
-          <input ref={kidRef} value={kidTitle} onChange={e => setKidTitle(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter')  commitKid();
-              if (e.key === 'Escape') { setAddingKid(false); setKidTitle(''); setKidType('task'); }
-            }}
-            placeholder="Sub-task name…"
-            className="flex-1 bg-gray-800 border border-emerald-600 rounded px-2 py-0.5 text-xs text-white outline-none placeholder-gray-600" />
+          {kidType === 'milestone' ? (
+            <select ref={kidRef} value={kidMilestoneId} onChange={e => setKidMilestoneId(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter')  commitKid();
+                if (e.key === 'Escape') { setAddingKid(false); setKidTitle(''); setKidType('task'); setKidMilestoneId(''); }
+              }}
+              className="flex-1 bg-gray-800 border border-cyan-600 rounded px-2 py-0.5 text-xs text-white outline-none">
+              {availableMilestones.length === 0 && <option value="">No milestones available</option>}
+              {availableMilestones.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
+            </select>
+          ) : (
+            <input ref={kidRef} value={kidTitle} onChange={e => setKidTitle(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter')  commitKid();
+                if (e.key === 'Escape') { setAddingKid(false); setKidTitle(''); setKidType('task'); setKidMilestoneId(''); }
+              }}
+              placeholder="Sub-task name…"
+              className="flex-1 bg-gray-800 border border-emerald-600 rounded px-2 py-0.5 text-xs text-white outline-none placeholder-gray-600" />
+          )}
           <button onClick={() => setKidType('task')}
             className={`text-xs px-1.5 py-0.5 rounded ${kidType === 'task' ? 'bg-emerald-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}>task</button>
           <button onClick={() => setKidType('routine')}
             className={`text-xs px-1.5 py-0.5 rounded ${kidType === 'routine' ? 'bg-amber-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}>routine</button>
-          <button onClick={commitKid} className="text-xs px-2 py-0.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded">add</button>
-          <button onClick={() => { setAddingKid(false); setKidTitle(''); setKidType('task'); }} className="text-xs text-gray-500 hover:text-gray-300">cancel</button>
+          {!blockedMilestoneBranch && (currentMilestoneOwner?.milestones || []).length > 0 && (
+            <button onClick={() => { setKidType('milestone'); setKidMilestoneId(availableMilestones[0]?.id || ''); }}
+              className={`text-xs px-1.5 py-0.5 rounded ${kidType === 'milestone' ? 'bg-cyan-800 text-white' : 'text-gray-500 hover:text-gray-300'}`}>milestone</button>
+          )}
+          <button onClick={commitKid}
+            disabled={kidType === 'milestone' && !availableMilestones.length}
+            className="text-xs px-2 py-0.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded disabled:opacity-40">add</button>
+          <button onClick={() => { setAddingKid(false); setKidTitle(''); setKidType('task'); setKidMilestoneId(''); }} className="text-xs text-gray-500 hover:text-gray-300">cancel</button>
         </div>
       );
 
@@ -1370,6 +1678,63 @@
             className="flex-1 bg-gray-800 border border-violet-600 rounded px-2 py-0.5 text-xs text-white outline-none placeholder-gray-600" />
           <button onClick={commitSubGoal} className="text-xs px-2 py-0.5 bg-violet-800 hover:bg-violet-700 text-white rounded">add</button>
           <button onClick={() => { setAddingSubGoal(false); setSubGoalTitle(''); }} className="text-xs text-gray-500 hover:text-gray-300">cancel</button>
+        </div>
+      );
+
+      const milestoneEditor = isGoalLike && (
+        <div className="border-t border-gray-800/70">
+          <div className="flex items-center justify-between px-4 py-1.5">
+            <span className="text-[10px] tracking-widest text-gray-600">MILESTONES</span>
+            <button onClick={() => setAddingMilestone(v => !v)}
+              className="text-[10px] text-gray-600 hover:text-cyan-400 transition-colors">+ milestone</button>
+          </div>
+          {addingMilestone && (
+            <div className="flex items-center gap-2 py-1 pl-4 pr-2">
+              <input ref={milestoneRef} value={milestoneTitle} onChange={e => setMilestoneTitle(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') commitMilestoneType();
+                  if (e.key === 'Escape') { setAddingMilestone(false); setMilestoneTitle(''); }
+                }}
+                placeholder="Milestone name..."
+                className="flex-1 bg-gray-800 border border-cyan-600 rounded px-2 py-0.5 text-xs text-white outline-none placeholder-gray-600" />
+              <button onClick={commitMilestoneType}
+                className="text-xs px-2 py-0.5 bg-cyan-800 hover:bg-cyan-700 text-white rounded">add</button>
+              <button onClick={() => { setAddingMilestone(false); setMilestoneTitle(''); }}
+                className="text-xs text-gray-500 hover:text-gray-300">cancel</button>
+            </div>
+          )}
+          {(node.milestones || []).length === 0 ? (
+            <div className="px-4 pb-2 text-[11px] text-gray-700 italic">No milestones yet.</div>
+          ) : (
+            <div className="px-4 pb-3 flex flex-col gap-1">
+              {(node.milestones || []).map((m, idx) => (
+                <div key={m.id} className="flex items-center gap-2 px-2 py-1 rounded bg-gray-900/50 border border-gray-800/70">
+                  <span className="w-5 text-[10px] text-gray-600 tabular-nums">{idx + 1}.</span>
+                  {editingMilestoneId === m.id ? (
+                    <input ref={milestoneEditRef} value={milestoneEditVal} onChange={e => setMilestoneEditVal(e.target.value)}
+                      onBlur={commitMilestoneRename}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') commitMilestoneRename();
+                        if (e.key === 'Escape') { setEditingMilestoneId(null); setMilestoneEditVal(''); }
+                      }}
+                      className="flex-1 bg-gray-800 border border-cyan-600 rounded px-1.5 py-0.5 text-xs text-white outline-none min-w-0" />
+                  ) : (
+                    <span onDoubleClick={() => { setEditingMilestoneId(m.id); setMilestoneEditVal(m.title); }}
+                      className="flex-1 text-xs text-cyan-300 truncate cursor-default"
+                      title={m.title}>{m.title}</span>
+                  )}
+                  <button onClick={() => onReorderMilestoneType(node.id, m.id, -1)}
+                    disabled={idx === 0}
+                    className="text-[10px] text-gray-600 hover:text-cyan-300 disabled:opacity-30">↑</button>
+                  <button onClick={() => onReorderMilestoneType(node.id, m.id, 1)}
+                    disabled={idx === (node.milestones || []).length - 1}
+                    className="text-[10px] text-gray-600 hover:text-cyan-300 disabled:opacity-30">↓</button>
+                  <button onClick={() => { if (window.confirm(`Delete milestone "${m.title}"? Matching blocks will become normal task containers.`)) onDeleteMilestoneType(node.id, m.id); }}
+                    className="text-[10px] text-gray-600 hover:text-red-400">×</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       );
 
@@ -1475,6 +1840,8 @@
               {subGoalAddRow}
             </div>
 
+            {milestoneEditor}
+
             {/* TO ACTION section */}
             <div className="border-t border-gray-800/70">
               <div className="flex items-center justify-between px-4 py-1.5">
@@ -1502,9 +1869,9 @@
                           <button onClick={() => onUnlinkTask(child.id)} className="hover:text-red-400 not-italic">×</button>
                         </div>
                       );
-                      return <GoalNode key={child.id} node={original} depth={1} handlers={handlers} linkedRefId={child.id} />;
+                      return <GoalNode key={child.id} node={original} depth={1} handlers={handlers} linkedRefId={child.id} milestoneOwner={node} />;
                     }
-                    return <GoalNode key={child.id} node={child} depth={1} handlers={handlers} />;
+                    return <GoalNode key={child.id} node={child} depth={1} handlers={handlers} milestoneOwner={node} />;
                   })}
                 </div>
               )}
@@ -1719,6 +2086,8 @@
       }
 
       const indent = (depth - 1) * 18;
+      const isNeutralMilestone = isMilestone && !isParent;
+      const displayDone = isNeutralMilestone ? false : done;
 
       return (<>
         <div>
@@ -1727,7 +2096,11 @@
             className={`flex items-center gap-1.5 py-0.5 px-1 rounded transition-colors ${hov ? 'bg-gray-800/50' : ''} ${taskDragOver ? 'ring-1 ring-indigo-500 bg-indigo-950/30' : ''}`}
             onMouseEnter={() => setHov(true)}
             onMouseLeave={() => setHov(false)}
-            onDragOver={e => { if (e.dataTransfer.types.includes('application/task-id')) { e.preventDefault(); e.stopPropagation(); setTaskDragOver(true); } }}
+            onDragOver={e => {
+              if (e.dataTransfer.types.includes('application/task-id') && !(blockedMilestoneBranch && e.dataTransfer.types.includes('application/milestone-task-id'))) {
+                e.preventDefault(); e.stopPropagation(); setTaskDragOver(true);
+              }
+            }}
             onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setTaskDragOver(false); }}
             onDrop={e => { const draggedId = e.dataTransfer.getData('application/task-id'); if (draggedId && draggedId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestTask(draggedId, node.id); } setTaskDragOver(false); }}
           >
@@ -1736,6 +2109,8 @@
                 className="text-gray-600 hover:text-gray-300 text-xs w-3.5 flex-shrink-0 leading-none">
                 {collapsed ? '▶' : '▼'}
               </button>
+            ) : isMilestone ? (
+              <span className="w-3.5 flex-shrink-0 text-cyan-500 text-[11px] leading-none" title="Milestone">◇</span>
             ) : (
               <input type="checkbox" checked={node.completed} onChange={() => onToggle(node.id)}
                 className={`flex-shrink-0 w-3.5 h-3.5 cursor-pointer ${node.taskType === 'routine' ? 'accent-amber-500' : 'accent-indigo-500'}`} />
@@ -1753,7 +2128,7 @@
                 onDoubleClick={() => { setEditing(true); setEditVal(node.title); }}
                 title={node.title}
                 className={`flex-1 text-xs select-none min-w-0 truncate cursor-default ${
-                  done ? 'line-through text-gray-600' : isParent ? 'text-gray-200 font-semibold' : node.taskType === 'routine' ? 'text-amber-600' : 'text-gray-400'
+                  displayDone ? 'line-through text-gray-600' : isMilestone ? 'text-cyan-300 font-semibold' : isParent ? 'text-gray-200 font-semibold' : node.taskType === 'routine' ? 'text-amber-600' : 'text-gray-400'
                 }`}
               >
                 {node.title}
@@ -1846,7 +2221,8 @@
           {isParent && !collapsed && (
             <div>
               {(node.children || []).map(child => (
-                <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers} />
+                <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers}
+                  milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} />
               ))}
             </div>
           )}
@@ -1903,7 +2279,7 @@
         if (!v) return;
         setGoals(prev => [...prev, {
           id: uid(), title: v, children: [], completed: false,
-          createdAt: Date.now(), scheduledDate: null, toLearn: [], mmTargets: {},
+          createdAt: Date.now(), scheduledDate: null, toLearn: [], mmTargets: {}, milestones: [],
         }]);
         setNewTitle('');
         setAdding(false);
@@ -1919,6 +2295,10 @@
         onUpdateDate:       (id, date)      => setGoals(prev => updateDate(prev, id, date)),
         onUpdateToLearn:    (id, mmIds)     => setGoals(prev => updateGoalToLearn(prev, id, mmIds)),
         onUpdateMmTargets:  (id, mmTargets) => setGoals(prev => updateGoalMmTargets(prev, id, mmTargets)),
+        onAddMilestoneType:     (id, title) => setGoals(prev => addMilestoneType(prev, id, title)),
+        onRenameMilestoneType:  (id, mid, title) => setGoals(prev => renameMilestoneType(prev, id, mid, title)),
+        onDeleteMilestoneType:  (id, mid) => setGoals(prev => deleteMilestoneType(prev, id, mid)),
+        onReorderMilestoneType: (id, mid, dir) => setGoals(prev => reorderMilestoneType(prev, id, mid, dir)),
         allGoals: goals,
         onAddLinkedTask:    (parentId, linkedTaskId) => setGoals(prev => addLinkedTask(prev, parentId, linkedTaskId)),
         onUnlinkTask:       id              => setGoals(prev => deleteNode(prev, id)),
@@ -2013,6 +2393,7 @@
       // Collect unique leaves — resolve links to originals, deduplicate by canonical ID
       function collectUniqueLeaves() {
         function walk(n) {
+          if (isMilestoneNode(n) && (n.children || []).length === 0) return [];
           if ((n.children || []).length === 0) {
             if (n.isLink) {
               const orig = goals && findNode(goals, n.linkedTaskId);
@@ -2087,12 +2468,12 @@
             <div className="flex gap-1">
               <button onClick={() => setViewType('subgoal')}
                 className={`px-3 py-1 text-[10px] rounded-full tracking-wider transition-colors ${
-                  viewType === 'subgoal' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}>
+                  activeView === 'subgoal' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}>
                 BY SUBGOAL
               </button>
               <button onClick={() => setViewType('unique')}
                 className={`px-3 py-1 text-[10px] rounded-full tracking-wider transition-colors ${
-                  viewType === 'unique' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}>
+                  activeView === 'unique' ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}>
                 UNIQUE TOTAL
               </button>
             </div>
@@ -2249,6 +2630,383 @@
       );
     }
 
+    // ── MilestonesPanel ───────────────────────────────────────────────────────
+
+    function MilestonesPanel({ goals, setGoals, selectedMilestone, setSelectedMilestone }) {
+      const selectedRowRef = useRef(null);
+      const calendarScrollRef = useRef(null);
+      const todayCellRef = useRef(null);
+      const todayStr = toDateStr(new Date());
+      const todayInMilestoneCalendar = todayStr >= MILESTONE_CAL_START && todayStr <= MILESTONE_CAL_END;
+
+      const groups = useMemo(() => (goals || []).map((goal, idx) => {
+        const owners = collectMilestoneOwners(goal, goals || []);
+        return { goal, color: PALETTE[idx % PALETTE.length], owners };
+      }).filter(g => g.owners.length > 0), [goals]);
+
+      const milestoneMonths = useMemo(() => {
+        const months = [];
+        for (let year = 2026; year <= 2033; year++) {
+          for (let month = 0; month < 12; month++) months.push({ year, month });
+        }
+        return months;
+      }, []);
+
+      const milestoneItems = useMemo(() => groups.flatMap((group, groupIdx) =>
+        group.owners.flatMap((owner, ownerIdx) =>
+          (owner.milestones || []).map((m, idx) => {
+            const blocks = collectMilestoneBlocks(owner, m.id, goals || []);
+            const progress = blocks.reduce((acc, b) => {
+              const p = countProgress(b, id => goals && findNode(goals, id));
+              return { done: acc.done + p.done, total: acc.total + p.total };
+            }, { done: 0, total: 0 });
+            const pct = progress.total ? Math.round(progress.done / progress.total * 100) : 0;
+            const full = progress.total > 0 && progress.done >= progress.total;
+            const progressColor = progress.total === 0 ? '#6b7280' : full ? '#10b981' : '#06b6d4';
+            return {
+              key: `${owner.id}|${m.id}`,
+              group,
+              owner,
+              milestone: m,
+              idx,
+              blocks,
+              tasks: blocks.flatMap(block => block.children || []),
+              progress,
+              pct,
+              progressColor,
+              chipColor: PALETTE[(groupIdx + ownerIdx + idx) % PALETTE.length],
+            };
+          })
+        )
+      ), [groups, goals]);
+
+      const milestoneItemMap = useMemo(
+        () => Object.fromEntries(milestoneItems.map(item => [item.key, item])),
+        [milestoneItems]
+      );
+      const milestoneKeyList = milestoneItems.map(item => item.key).join('|');
+      const selectedKey = selectedMilestone ? `${selectedMilestone.ownerId}|${selectedMilestone.milestoneId}` : null;
+      const selectedItem = selectedKey ? milestoneItemMap[selectedKey] : null;
+
+      const totalOwners = groups.reduce((sum, g) => sum + g.owners.length, 0);
+      const totalMilestones = groups.reduce((sum, g) =>
+        sum + g.owners.reduce((s, owner) => s + (owner.milestones || []).length, 0), 0);
+
+      useEffect(() => {
+        if (selectedKey && !milestoneItemMap[selectedKey]) {
+          setSelectedMilestone(null);
+        }
+      }, [selectedKey, milestoneKeyList]);
+
+      useEffect(() => {
+        if (selectedRowRef.current) {
+          selectedRowRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      }, [selectedKey]);
+
+      useEffect(() => {
+        if (!todayInMilestoneCalendar) return;
+        const id = requestAnimationFrame(() => {
+          const scroller = calendarScrollRef.current;
+          const todayCell = todayCellRef.current;
+          if (!scroller || !todayCell) return;
+          const scrollerRect = scroller.getBoundingClientRect();
+          const todayRect = todayCell.getBoundingClientRect();
+          scroller.scrollTop += todayRect.top - scrollerRect.top - (scroller.clientHeight / 2) + (todayRect.height / 2);
+        });
+        return () => cancelAnimationFrame(id);
+      }, []);
+
+      function chooseMilestone(ownerId, milestoneId) {
+        setSelectedMilestone({ ownerId, milestoneId });
+      }
+
+      function setMilestonePeriod(ownerId, milestoneId, startDate, endDate) {
+        setGoals(prev => updateMilestonePeriod(prev, ownerId, milestoneId, startDate, endDate));
+      }
+
+      function handleDateInput(ownerId, milestone, field, value) {
+        chooseMilestone(ownerId, milestone.id);
+        let startDate = field === 'start' ? value || null : milestone.startDate || null;
+        let endDate = field === 'end' ? value || null : milestone.endDate || null;
+        if (field === 'start' && value && endDate && value > endDate) endDate = value;
+        if (field === 'end' && value && startDate && value < startDate) startDate = value;
+        setMilestonePeriod(ownerId, milestone.id, startDate, endDate);
+      }
+
+      function clearMilestonePeriod(ownerId, milestoneId) {
+        chooseMilestone(ownerId, milestoneId);
+        setMilestonePeriod(ownerId, milestoneId, null, null);
+      }
+
+      function activeMilestonesForDate(dateStr) {
+        return milestoneItems.filter(item =>
+          item.milestone.startDate &&
+          item.milestone.endDate &&
+          dateStr >= item.milestone.startDate &&
+          dateStr <= item.milestone.endDate
+        );
+      }
+
+      function renderMilestoneTask(task, depth = 0, keyPrefix = '') {
+        if (task.isLink) {
+          const original = goals && findNode(goals, task.linkedTaskId);
+          if (!original) {
+            return (
+              <div key={`${keyPrefix}-${task.id}`} style={{ paddingLeft: depth * 16 }}
+                className="flex items-center gap-2 py-0.5 text-[11px] text-gray-700 italic">
+                <span className="w-3 h-3 flex-shrink-0" />
+                <span>Linked task deleted</span>
+              </div>
+            );
+          }
+          return renderMilestoneTask(original, depth, `${keyPrefix}-${task.id}`);
+        }
+
+        const children = (task.children || []).filter(c => !isMilestoneNode(c));
+        const isLeaf = isCountableLeaf(task);
+        const progress = !isLeaf && children.length > 0 ? countProgress(task, id => goals && findNode(goals, id)) : null;
+        const done = isLeaf ? !!task.completed : progress && progress.total > 0 && progress.done >= progress.total;
+        const markerColor = done ? '#10b981' : task.taskType === 'routine' ? '#f59e0b' : '#6b7280';
+
+        return (
+          <React.Fragment key={`${keyPrefix}-${task.id}`}>
+            <div style={{ paddingLeft: depth * 16 }}
+              className="flex items-center gap-2 py-0.5 min-w-0">
+              <span className="w-3 h-3 rounded-sm flex-shrink-0"
+                style={{
+                  backgroundColor: done ? markerColor : 'transparent',
+                  border: `1px solid ${markerColor}`,
+                }} />
+              <span className={`text-[11px] flex-1 truncate ${done ? 'line-through text-gray-600' : isLeaf ? 'text-gray-400' : 'text-gray-300 font-semibold'}`}>
+                {task.title}
+              </span>
+              {progress && (
+                <span className={`text-[9px] font-mono tabular-nums flex-shrink-0 ${done ? 'text-emerald-500' : 'text-gray-600'}`}>
+                  {progress.done}/{progress.total}
+                </span>
+              )}
+            </div>
+            {children.map(child => renderMilestoneTask(child, depth + 1, `${keyPrefix}-${task.id}`))}
+          </React.Fragment>
+        );
+      }
+
+      function renderCalendarMonth({ year, month }) {
+        const firstDay = getFirstDay(year, month);
+        const daysInMonth = getDIM(year, month);
+        const trailing = (7 - ((firstDay + daysInMonth) % 7)) % 7;
+        return (
+          <div key={`${year}-${month}`} className="border border-gray-800 bg-gray-900/40 rounded-lg overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+              <span className="text-xs font-bold tracking-widest text-gray-300">{MONTH_NAMES[month]} {year}</span>
+              <span className="text-[10px] text-gray-700 font-mono">{daysInMonth}</span>
+            </div>
+            <div className="grid grid-cols-7 border-b border-gray-800 bg-gray-950">
+              {["Su","Mo","Tu","We","Th","Fr","Sa"].map(day => (
+                <div key={day} className="text-center text-[10px] text-gray-600 py-1">{day}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-px bg-gray-800">
+              {Array(firstDay).fill(null).map((_, i) => (
+                <div key={`empty-start-${i}`} className="min-h-[92px] bg-gray-950/70" />
+              ))}
+              {Array(daysInMonth).fill(null).map((_, i) => {
+                const day = i + 1;
+                const ds = dStr(year, month, day);
+                const isToday = ds === todayStr;
+                const active = activeMilestonesForDate(ds);
+                const selectedActive = selectedItem &&
+                  selectedItem.milestone.startDate &&
+                  selectedItem.milestone.endDate &&
+                  ds >= selectedItem.milestone.startDate &&
+                  ds <= selectedItem.milestone.endDate;
+                const tint = active[0]?.chipColor || '#080d18';
+                return (
+                  <div key={ds}
+                    ref={isToday ? todayCellRef : null}
+                    className="min-h-[92px] p-1.5 flex flex-col cursor-default"
+                    style={{
+                      backgroundColor: active.length ? `${tint}12` : '#080d18',
+                      outline: selectedActive ? `1px solid ${selectedItem.chipColor}` : isToday ? '1px solid #6366f1' : 'none',
+                      outlineOffset: '-1px',
+                    }}>
+                    <div className={`text-[10px] mb-1 flex-shrink-0 ${selectedActive ? 'text-white font-bold' : isToday ? 'text-indigo-300 font-bold' : active.length ? 'text-gray-300' : 'text-gray-600'}`}>
+                      {day}
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5">
+                      {active.map(item => {
+                        const chipSelected = item.key === selectedKey;
+                        const displayName = `${item.milestone.title} - ${item.owner.title}`;
+                        return (
+                          <button key={item.key}
+                            onClick={e => { e.stopPropagation(); chooseMilestone(item.owner.id, item.milestone.id); }}
+                            title={`${item.group.goal.title} / ${displayName}`}
+                            className={`w-full text-left rounded px-1 py-0.5 text-[9px] leading-tight truncate border transition-colors ${chipSelected ? 'bg-white/10' : 'hover:bg-white/5'}`}
+                            style={{
+                              borderColor: `${item.chipColor}${chipSelected ? 'ff' : '88'}`,
+                              color: item.chipColor,
+                              backgroundColor: chipSelected ? `${item.chipColor}2b` : `${item.chipColor}17`,
+                            }}>
+                            {displayName}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              {Array(trailing).fill(null).map((_, i) => (
+                <div key={`empty-end-${i}`} className="min-h-[92px] bg-gray-950/70" />
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex-1 min-h-0 flex overflow-hidden">
+          <div className="min-w-0 overflow-y-auto border-r border-gray-800 p-4" style={{ flex: '0 0 40%' }}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-gray-700 tracking-widest text-xs">
+                MILESTONES
+              </div>
+              <div className="text-[10px] text-gray-600 font-mono">
+                {totalMilestones} milestone{totalMilestones !== 1 ? 's' : ''} · {totalOwners} leaf subgoal{totalOwners !== 1 ? 's' : ''}
+              </div>
+            </div>
+
+            {!groups.length ? (
+              <div className="h-full flex items-center justify-center">
+                <div className="text-center text-gray-700">
+                  <div className="text-3xl mb-3">◇</div>
+                  <div className="text-sm">No milestones yet.</div>
+                  <div className="text-xs mt-1">Add milestones inside a leaf subgoal in Progress.</div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {groups.map(group => (
+                  <div key={group.goal.id} className="border border-gray-800 bg-gray-900/50 rounded-lg overflow-hidden">
+                    <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-800">
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: group.color }} />
+                      <span className="text-sm font-bold text-gray-200 truncate">{group.goal.title}</span>
+                      <span className="ml-auto text-[10px] text-gray-600 font-mono">{group.owners.length} leaf</span>
+                    </div>
+                    <div className="flex flex-col divide-y divide-gray-800/70">
+                      {group.owners.map(owner => (
+                        <div key={owner.id} className="px-4 py-3">
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <span className="text-xs font-semibold text-gray-300 truncate">{owner.title}</span>
+                            <span className="text-[10px] text-gray-600 font-mono">{(owner.milestones || []).length}</span>
+                          </div>
+                          {(owner.milestones || []).length === 0 ? (
+                            <div className="text-[11px] text-gray-700 italic">No milestones defined.</div>
+                          ) : (
+                            <div className="flex flex-col gap-1.5">
+                              {(owner.milestones || []).map(m => {
+                                const item = milestoneItemMap[`${owner.id}|${m.id}`];
+                                const isSelected = item?.key === selectedKey;
+                                const dateLabel = m.startDate && m.endDate
+                                  ? m.startDate === m.endDate ? m.startDate : `${m.startDate} to ${m.endDate}`
+                                  : 'no dates';
+                                return (
+                                  <div key={m.id}
+                                    ref={isSelected ? selectedRowRef : null}
+                                    onClick={() => chooseMilestone(owner.id, m.id)}
+                                    className={`rounded border cursor-pointer transition-colors ${
+                                      isSelected
+                                        ? 'border-cyan-500/80 bg-cyan-950/20'
+                                        : 'border-transparent bg-gray-950/30 hover:border-gray-700'
+                                    }`}>
+                                    <div className="flex items-center gap-3 px-2 py-1.5">
+                                      <span className="w-5 text-[10px] text-gray-600 tabular-nums flex-shrink-0">{(item?.idx || 0) + 1}.</span>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <span className="text-xs font-semibold truncate" style={{ color: item?.chipColor || '#06b6d4' }}>{m.title}</span>
+                                          {item?.blocks.length > 1 && <span className="text-[9px] text-gray-600 flex-shrink-0">{item.blocks.length} blocks</span>}
+                                          <span className="text-[9px] text-gray-700 truncate">{dateLabel}</span>
+                                        </div>
+                                        <div className="h-1 bg-gray-800 rounded-full overflow-hidden mt-1">
+                                          <div className="h-full rounded-full transition-all duration-500"
+                                            style={{ width: `${item?.pct || 0}%`, backgroundColor: item?.progressColor || '#6b7280' }} />
+                                        </div>
+                                      </div>
+                                      <span className="text-[10px] font-mono tabular-nums flex-shrink-0" style={{ color: item?.progressColor || '#6b7280' }}>
+                                        {item?.progress.done || 0}/{item?.progress.total || 0}
+                                      </span>
+                                    </div>
+                                    <div className="ml-9 mr-2 pb-2 flex flex-wrap items-center gap-2">
+                                      <label className="flex items-center gap-1 text-[10px] text-gray-600">
+                                        <span>start</span>
+                                        <input type="date"
+                                          min={MILESTONE_CAL_START}
+                                          max={MILESTONE_CAL_END}
+                                          value={m.startDate || ''}
+                                          onClick={e => e.stopPropagation()}
+                                          onChange={e => handleDateInput(owner.id, m, 'start', e.target.value)}
+                                          className="bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-[10px] text-gray-300 outline-none focus:border-cyan-500" />
+                                      </label>
+                                      <label className="flex items-center gap-1 text-[10px] text-gray-600">
+                                        <span>end</span>
+                                        <input type="date"
+                                          min={MILESTONE_CAL_START}
+                                          max={MILESTONE_CAL_END}
+                                          value={m.endDate || ''}
+                                          onClick={e => e.stopPropagation()}
+                                          onChange={e => handleDateInput(owner.id, m, 'end', e.target.value)}
+                                          className="bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-[10px] text-gray-300 outline-none focus:border-cyan-500" />
+                                      </label>
+                                      {(m.startDate || m.endDate) && (
+                                        <button
+                                          onClick={e => { e.stopPropagation(); clearMilestonePeriod(owner.id, m.id); }}
+                                          className="text-[10px] text-gray-600 hover:text-red-400 transition-colors">
+                                          clear
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div className="ml-9 mr-2 pb-2 border-l border-gray-800/70 pl-2">
+                                      {(item?.tasks || []).length === 0 ? (
+                                        <div className="py-0.5 text-[11px] text-gray-700 italic">No tasks inside yet.</div>
+                                      ) : (
+                                        <div className="flex flex-col gap-0.5">
+                                          {item.tasks.map(task => renderMilestoneTask(task, 0, m.id))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div ref={calendarScrollRef} className="min-w-0 overflow-y-auto p-4" style={{ flex: '0 0 60%' }}>
+            <div className="sticky top-0 z-10 -mx-4 -mt-4 px-4 pt-4 pb-3 bg-gray-950/95 border-b border-gray-900">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-gray-700 tracking-widest text-xs">CALENDAR 2026-2033</div>
+                <div className="min-w-0 text-right">
+                  <div className="text-[10px] text-gray-600 font-mono truncate">
+                    {selectedItem ? `${selectedItem.milestone.title} - ${selectedItem.owner.title}` : 'NO SELECTION'}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-4 pt-4">
+              {milestoneMonths.map(renderCalendarMonth)}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // ── GoalTabsPanel ─────────────────────────────────────────────────────────
 
     function GoalTabsPanel({ goals, setGoals, mms, sirDoneMap }) {
@@ -2273,7 +3031,7 @@
       function addGoal() {
         const v = newTitle.trim();
         if (!v) return;
-        const newGoal = { id: uid(), title: v, children: [], completed: false, createdAt: Date.now(), scheduledDate: null, toLearn: [], mmTargets: {} };
+        const newGoal = { id: uid(), title: v, children: [], completed: false, createdAt: Date.now(), scheduledDate: null, toLearn: [], mmTargets: {}, milestones: [] };
         setGoals(prev => [...prev, newGoal]);
         setActiveGoalId(newGoal.id);
         setNewTitle('');
@@ -2290,6 +3048,10 @@
         onUpdateDate:      (id, date)      => setGoals(prev => updateDate(prev, id, date)),
         onUpdateToLearn:   (id, mmIds)     => setGoals(prev => updateGoalToLearn(prev, id, mmIds)),
         onUpdateMmTargets: (id, mmTargets) => setGoals(prev => updateGoalMmTargets(prev, id, mmTargets)),
+        onAddMilestoneType:     (id, title) => setGoals(prev => addMilestoneType(prev, id, title)),
+        onRenameMilestoneType:  (id, mid, title) => setGoals(prev => renameMilestoneType(prev, id, mid, title)),
+        onDeleteMilestoneType:  (id, mid) => setGoals(prev => deleteMilestoneType(prev, id, mid)),
+        onReorderMilestoneType: (id, mid, dir) => setGoals(prev => reorderMilestoneType(prev, id, mid, dir)),
         allGoals: goals,
         onAddLinkedTask:    (parentId, linkedTaskId) => setGoals(prev => addLinkedTask(prev, parentId, linkedTaskId)),
         onUnlinkTask:       id              => setGoals(prev => deleteNode(prev, id)),
@@ -3099,7 +3861,7 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps }) {
+    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone }) {
       const PX_PER_HOUR = 64;
       const START_HOUR  = 4;
       const END_HOUR    = 23;
@@ -3376,12 +4138,51 @@
       }, [pickerDay]);
 
       const allTasks   = flattenAll(goals);
-      const inProgress = allTasks.filter(t => !isComplete(t));
+      const inProgress = allTasks.filter(t => !isMilestoneNode(t) && getLeaves(t).length > 0 && !isComplete(t));
       const filtered   = search.trim()
-        ? inProgress.filter(t => t.title.toLowerCase().includes(search.toLowerCase()))
+        ? inProgress.filter(t => (t.title || '').toLowerCase().includes(search.toLowerCase()))
         : inProgress;
+      const selectedMilestoneSchedule = useMemo(() => {
+        if (!selectedMilestone) return null;
+        const owner = findNode(goals || [], selectedMilestone.ownerId);
+        if (!owner) return null;
+        const milestone = (owner.milestones || []).find(m => m.id === selectedMilestone.milestoneId);
+        if (!milestone) return null;
 
-      const tasksForDate = ds => allTasks.filter(t => t.scheduledDate === ds);
+        const taskMap = new Map();
+        collectMilestoneBlocks(owner, milestone.id, goals || []).forEach(block => {
+          flattenAll(block.children || []).forEach(task => {
+            const target = task.isLink ? findNode(goals || [], task.linkedTaskId) : task;
+            if (!target || isMilestoneNode(target) || getLeaves(target).length === 0 || isComplete(target, goals || [])) return;
+            if (!taskMap.has(target.id)) taskMap.set(target.id, target);
+          });
+        });
+
+        return { owner, milestone, tasks: [...taskMap.values()] };
+      }, [goals, selectedMilestone]);
+
+      function taskMatchesSearch(task) {
+        return !search.trim() || (task.title || '').toLowerCase().includes(search.toLowerCase());
+      }
+
+      function getPickerTaskGroups(dateStr) {
+        const activeMilestone = selectedMilestoneSchedule &&
+          selectedMilestoneSchedule.milestone.startDate &&
+          selectedMilestoneSchedule.milestone.endDate &&
+          dateStr >= selectedMilestoneSchedule.milestone.startDate &&
+          dateStr <= selectedMilestoneSchedule.milestone.endDate;
+        const activeTasks = activeMilestone
+          ? selectedMilestoneSchedule.tasks.filter(taskMatchesSearch)
+          : [];
+        const activeIds = new Set(activeTasks.map(t => t.id));
+        return {
+          activeMilestone,
+          activeTasks,
+          normalTasks: filtered.filter(t => !activeIds.has(t.id)),
+        };
+      }
+
+      const tasksForDate = ds => allTasks.filter(t => t.scheduledDate === ds && !(isMilestoneNode(t) && getLeaves(t).length === 0));
       const entriesForDate = ds => saEntries.filter(e => e.date === ds);
       const mmEntriesForDate = ds => (mmEntries || []).filter(e => e.date === ds);
 
@@ -3506,7 +4307,7 @@
       }
 
       function assignToDate(task, dateStr) {
-        const targets = (task.children || []).length === 0 ? [task] : getLeaves(task);
+        const targets = isCountableLeaf(task) ? [task] : getLeaves(task);
         setGoals(prev => targets.reduce((g, leaf, i) => {
           const h    = Math.min(9 + i, 21);
           const time = leaf.scheduledTime || `${String(h).padStart(2,'0')}:00`;
@@ -3747,64 +4548,89 @@
                       );
                     })()}
 
-                    {pickerDay === ds && (
-                      <>
-                        <div className="fixed inset-0 z-20" onClick={() => { setPickerDay(null); setMmPickerDay(null); setSearch(''); }} />
-                        <div className="absolute top-full left-0 mt-1 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-30 overflow-hidden">
-                          <div className="p-2 border-b border-gray-800">
-                            <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
-                              onKeyDown={e => { if (e.key === 'Escape') { setPickerDay(null); setSearch(''); } }}
-                              placeholder="filter tasks..."
-                              className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none placeholder-gray-600 focus:border-indigo-600" />
-                          </div>
-                          <div className="max-h-64 overflow-y-auto">
-                            {/* Goal tasks */}
-                            {filtered.length > 0 && (
-                              <>
-                                {saActions.length > 0 && (
-                                  <div className="px-3 py-1 text-[9px] text-gray-600 tracking-widest border-b border-gray-800/50">GOALS</div>
-                                )}
-                                {filtered.map(t => (
-                                  <button key={t.id} onClick={() => assignToDate(t, ds)}
-                                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center justify-between gap-2 transition-colors">
-                                    <span className="text-gray-300 truncate">{t.title}</span>
-                                    {(t.children || []).length > 0 && (
-                                      <span className="text-gray-600 flex-shrink-0">+{getLeaves(t).length}</span>
-                                    )}
-                                  </button>
-                                ))}
-                              </>
-                            )}
-                            {/* Supporting actions */}
-                            {saActions.filter(a => !a.parentId).length > 0 && (
-                              <>
-                                {filtered.length > 0 && <div className="border-t border-gray-800/50" />}
-                                <div className="px-3 py-1 text-[9px] text-gray-600 tracking-widest border-b border-gray-800/50">ACTIONS</div>
-                                {saActions.filter(a => !a.parentId).map(action => {
-                                  const hasChildren = saActions.some(a => a.parentId === action.id);
-                                  const childCount  = saActions.filter(a => a.parentId === action.id).length;
-                                  return (
-                                    <button key={action.id}
-                                      onClick={() => hasChildren ? assignDirectoryToDate(action, ds) : assignSAToDate(action, ds)}
-                                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors">
-                                      <span className="flex-shrink-0 leading-none">{action.emoji}</span>
-                                      <span className="flex-1 truncate" style={{ color: action.color }}>{action.title}</span>
-                                      {hasChildren
-                                        ? <span className="text-gray-600 flex-shrink-0 text-[10px]">+{childCount} all</span>
-                                        : <span className="text-gray-600 flex-shrink-0 font-mono text-[10px]">{formatTime12(action.time)}</span>
-                                      }
+                    {pickerDay === ds && (() => {
+                      const { activeTasks, normalTasks } = getPickerTaskGroups(ds);
+                      const rootActions = saActions.filter(a => !a.parentId);
+                      const hasGoalTasks = activeTasks.length > 0 || normalTasks.length > 0;
+                      return (
+                        <>
+                          <div className="fixed inset-0 z-20" onClick={() => { setPickerDay(null); setMmPickerDay(null); setSearch(''); }} />
+                          <div className="absolute top-full left-0 mt-1 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-30 overflow-hidden">
+                            <div className="p-2 border-b border-gray-800">
+                              <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Escape') { setPickerDay(null); setSearch(''); } }}
+                                placeholder="filter tasks..."
+                                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none placeholder-gray-600 focus:border-indigo-600" />
+                            </div>
+                            <div className="max-h-64 overflow-y-auto">
+                              {/* Active milestone tasks */}
+                              {activeTasks.length > 0 && (
+                                <>
+                                  <div className="px-3 py-1 text-[9px] text-cyan-400 tracking-widest border-b border-cyan-900/50 bg-cyan-950/20">ACTIVE MILESTONE</div>
+                                  {activeTasks.map(t => (
+                                    <button key={`active-${t.id}`} onClick={() => assignToDate(t, ds)}
+                                      className="w-full text-left px-3 py-1.5 text-xs bg-cyan-950/30 hover:bg-cyan-900/45 flex items-center justify-between gap-2 transition-colors border-b border-cyan-900/30">
+                                      <span className="flex items-center gap-2 min-w-0">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0" />
+                                        <span className="text-cyan-100 truncate">{t.title}</span>
+                                      </span>
+                                      {(t.children || []).length > 0 && (
+                                        <span className="text-cyan-500 flex-shrink-0">+{getLeaves(t).length}</span>
+                                      )}
                                     </button>
-                                  );
-                                })}
-                              </>
-                            )}
-                            {filtered.length === 0 && saActions.filter(a => !a.parentId).length === 0 && (
-                              <div className="px-3 py-3 text-xs text-gray-600 text-center">nothing to add</div>
-                            )}
+                                  ))}
+                                </>
+                              )}
+                              {/* Goal tasks */}
+                              {normalTasks.length > 0 && (
+                                <>
+                                  {(rootActions.length > 0 || activeTasks.length > 0) && (
+                                    <div className="px-3 py-1 text-[9px] text-gray-600 tracking-widest border-b border-gray-800/50">
+                                      {activeTasks.length > 0 ? 'OTHER GOALS' : 'GOALS'}
+                                    </div>
+                                  )}
+                                  {normalTasks.map(t => (
+                                    <button key={t.id} onClick={() => assignToDate(t, ds)}
+                                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center justify-between gap-2 transition-colors">
+                                      <span className="text-gray-300 truncate">{t.title}</span>
+                                      {(t.children || []).length > 0 && (
+                                        <span className="text-gray-600 flex-shrink-0">+{getLeaves(t).length}</span>
+                                      )}
+                                    </button>
+                                  ))}
+                                </>
+                              )}
+                              {/* Supporting actions */}
+                              {rootActions.length > 0 && (
+                                <>
+                                  {hasGoalTasks && <div className="border-t border-gray-800/50" />}
+                                  <div className="px-3 py-1 text-[9px] text-gray-600 tracking-widest border-b border-gray-800/50">ACTIONS</div>
+                                  {rootActions.map(action => {
+                                    const hasChildren = saActions.some(a => a.parentId === action.id);
+                                    const childCount  = saActions.filter(a => a.parentId === action.id).length;
+                                    return (
+                                      <button key={action.id}
+                                        onClick={() => hasChildren ? assignDirectoryToDate(action, ds) : assignSAToDate(action, ds)}
+                                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors">
+                                        <span className="flex-shrink-0 leading-none">{action.emoji}</span>
+                                        <span className="flex-1 truncate" style={{ color: action.color }}>{action.title}</span>
+                                        {hasChildren
+                                          ? <span className="text-gray-600 flex-shrink-0 text-[10px]">+{childCount} all</span>
+                                          : <span className="text-gray-600 flex-shrink-0 font-mono text-[10px]">{formatTime12(action.time)}</span>
+                                        }
+                                      </button>
+                                    );
+                                  })}
+                                </>
+                              )}
+                              {!hasGoalTasks && rootActions.length === 0 && (
+                                <div className="px-3 py-3 text-xs text-gray-600 text-center">nothing to add</div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </>
-                    )}
+                        </>
+                      );
+                    })()}
 
                     {mmPickerDay === ds && (() => {
                       const dueMMIds = new Set(
@@ -3983,7 +4809,7 @@
                       const top      = (dth + dtm / 60 - START_HOUR) * PX_PER_HOUR;
                       const height   = Math.max(22, (dur / 60) * PX_PER_HOUR);
                       const done     = task.taskType === 'routine' ? (task.schedDone || false) : isComplete(task);
-                      const isLeaf   = (task.children || []).length === 0;
+                      const isLeaf   = isCountableLeaf(task);
                       const dragged  = ghost && ghost.type === 'goal' && ghost.taskId === task.id;
                       const isSelected = selectedForResize && selectedForResize.id === task.id;
                       const commentOpen = timelineMode === 'day' && openComments.has(task.id);
@@ -4932,6 +5758,7 @@
       const [mgSchedule, setMgSchedule] = useState(() => _readP('mgSchedule', {}));
       const [linChanges] = useState(() => _readP('linChanges', []));
       const [tab, setTab] = useState(() => window.location.hash.slice(1) || 'progress');
+      const [selectedMilestone, setSelectedMilestone] = useState(null);
 
       useEffect(() => { _writeP('goals',      goals);      }, [goals]);
       useEffect(() => { _writeP('saActions',  saActions);  }, [saActions]);
@@ -4952,7 +5779,7 @@
 
       const sirDoneMap = useMemo(() => buildSirDoneMap(sessions), [sessions]);
 
-      const allLeaves  = flattenAll(goals).filter(n => (n.children || []).length === 0);
+      const allLeaves  = flattenAll(goals).filter(isCountableLeaf);
       const doneLeaves = allLeaves.filter(n => {
         const ac = computeMMAutoComplete(n, mms, sirDoneMap);
         return ac !== null ? ac : n.completed;
@@ -5000,6 +5827,16 @@
               }`}
             >
               PROGRESS
+            </button>
+            <button
+              onClick={() => setTab('milestones')}
+              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
+                tab === 'milestones'
+                  ? 'border-cyan-500 text-cyan-300'
+                  : 'border-transparent text-gray-600 hover:text-gray-400'
+              }`}
+            >
+              MILESTONES
             </button>
             <button
               onClick={() => setTab('schedule')}
@@ -5073,6 +5910,17 @@
             </div>
           )}
 
+          {/* Tab: MILESTONES */}
+          {tab === 'milestones' && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <MilestonesPanel
+                goals={goals} setGoals={setGoals}
+                selectedMilestone={selectedMilestone}
+                setSelectedMilestone={setSelectedMilestone}
+              />
+            </div>
+          )}
+
           {/* Tab: SCHEDULE */}
           {tab === 'schedule' && (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -5083,6 +5931,7 @@
                 sessions={sessions}
                 mgChanges={mgChanges} mgSchedule={mgSchedule} setMgSchedule={setMgSchedule}
                 sourceDumps={sourceDumps}
+                selectedMilestone={selectedMilestone}
               />
             </div>
           )}
