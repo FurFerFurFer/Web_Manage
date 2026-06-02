@@ -182,12 +182,13 @@
     }
 
     function isCountableLeaf(node) {
-      return !isMilestoneNode(node) && (node.children || []).length === 0;
+      return !node?.isLink && !isMilestoneNode(node) && (node.children || []).length === 0;
     }
 
     function isComplete(node, allGoals) {
+      if (!node) return false;
       if (node.isLink) {
-        const orig = allGoals && findNode(allGoals, node.linkedTaskId);
+        const orig = resolveLinkedTask(node, allGoals);
         return orig ? isComplete(orig, allGoals) : false;
       }
       if (isMilestoneNode(node) && (node.children || []).length === 0) return true;
@@ -198,6 +199,7 @@
     }
 
     function countProgress(node, resolveLink) {
+      if (!node) return { done: 0, total: 0 };
       if (node.isLink) {
         const orig = resolveLink && resolveLink(node.linkedTaskId);
         if (!orig) return { done: 0, total: 0 };
@@ -311,10 +313,15 @@
 
     function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
-    function getLeaves(node) {
+    function getLeaves(node, allGoals = null) {
+      if (!node) return [];
+      if (node.isLink) {
+        const orig = resolveLinkedTask(node, allGoals);
+        return orig ? getLeaves(orig, allGoals) : [];
+      }
       if (isMilestoneNode(node) && (node.children || []).length === 0) return [];
       if ((node.children || []).length === 0) return [node];
-      return (node.children || []).flatMap(c => getLeaves(c));
+      return (node.children || []).flatMap(c => getLeaves(c, allGoals));
     }
 
     function parentHasMilestoneChild(parent, milestoneId, excludeId = null, allGoals = null) {
@@ -601,6 +608,11 @@
         if (g.children?.length) { const f = findNode(g.children, id); if (f) return f; }
       }
       return null;
+    }
+
+    function resolveLinkedTask(node, allGoals) {
+      if (!node?.isLink) return node || null;
+      return allGoals ? findNode(allGoals, node.linkedTaskId) : null;
     }
 
     function getSelectableTasks(goals) {
@@ -1242,13 +1254,17 @@
 
     // ── GoalProgressViz ──────────────────────────────────────────────────────
 
-    function GoalProgressViz({ node, goalColor }) {
-      const { done, total } = countProgress(node);
+    function GoalProgressViz({ node, goalColor, goals }) {
+      const resolveLink = goals ? id => findNode(goals, id) : null;
+      const { done, total } = countProgress(node, resolveLink);
       const pct = total === 0 ? 0 : Math.round((done / total) * 100);
       const full = done === total && total > 0;
       const displayColor = full ? '#10b981' : goalColor;
 
       function collectLeaves(n) {
+        const resolved = resolveLinkedTask(n, goals);
+        if (!resolved) return [];
+        if (resolved !== n) return collectLeaves(resolved);
         if (isMilestoneNode(n) && (n.children || []).length === 0) return [];
         if ((n.children || []).length === 0) return [{ id: n.id, done: n.completed }];
         return (n.children || []).flatMap(c => collectLeaves(c));
@@ -1862,7 +1878,7 @@
                 <div className="px-4 pb-3 flex flex-col gap-0.5">
                   {(node.children || []).map(child => {
                     if (child.isLink) {
-                      const original = allGoals ? findNode(allGoals, child.linkedTaskId) : null;
+                      const original = resolveLinkedTask(child, allGoals);
                       if (!original) return (
                         <div key={child.id} className="flex items-center gap-2 px-1 py-0.5 text-xs text-gray-600 italic">
                           <span>Linked task deleted</span>
@@ -1946,7 +1962,7 @@
             </div>
             {depth === 0 && !inDetailView && (
               <div className="border-t border-gray-800/70">
-                <GoalProgressViz node={node} goalColor={goalColor} />
+                <GoalProgressViz node={node} goalColor={goalColor} goals={allGoals} />
               </div>
             )}
           </div>
@@ -2045,7 +2061,7 @@
                 <div className="px-4 pb-3 flex flex-col gap-2">
                   {subGoalChildren.map(child => {
                     if (child.isLink) {
-                      const original = allGoals ? findNode(allGoals, child.linkedTaskId) : null;
+                      const original = resolveLinkedTask(child, allGoals);
                       if (!original) return (
                         <div key={child.id} className="flex items-center gap-2 px-1 py-0.5 text-xs text-gray-600 italic">
                           <span>Linked goal deleted</span>
@@ -2061,7 +2077,7 @@
             </div>
             {depth === 0 && !inDetailView && (
               <div className="border-t border-gray-800/70">
-                <GoalProgressViz node={node} goalColor={goalColor} />
+                <GoalProgressViz node={node} goalColor={goalColor} goals={allGoals} />
               </div>
             )}
           </div>
@@ -2220,10 +2236,22 @@
           {kidAddRow}
           {isParent && !collapsed && (
             <div>
-              {(node.children || []).map(child => (
-                <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers}
-                  milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} />
-              ))}
+              {(node.children || []).map(child => {
+                if (child.isLink) {
+                  const original = resolveLinkedTask(child, allGoals);
+                  if (!original) return (
+                    <div key={child.id} style={{ paddingLeft: indent + 18 }}
+                      className="flex items-center gap-2 py-0.5 text-xs text-gray-600 italic">
+                      <span>Linked task deleted</span>
+                      <button onClick={() => onUnlinkTask(child.id)} className="hover:text-red-400 not-italic">×</button>
+                    </div>
+                  );
+                  return <GoalNode key={child.id} node={original} depth={depth + 1} handlers={handlers}
+                    linkedRefId={child.id} milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} />;
+                }
+                return <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers}
+                  milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} />;
+              })}
             </div>
           )}
         </div>
@@ -2363,7 +2391,8 @@
     function GoalProgressPanel({ node, goalColor, mms, sirDoneMap, goals }) {
       const [viewType, setViewType] = React.useState('subgoal');
 
-      const prog = countProgress(node);
+      const resolveLink = goals ? id => findNode(goals, id) : null;
+      const prog = countProgress(node, resolveLink);
       const pct  = prog.total ? Math.round(prog.done / prog.total * 100) : 0;
       const full = prog.done === prog.total && prog.total > 0;
       const displayColor = full ? '#10b981' : goalColor;
@@ -2371,7 +2400,9 @@
 
       const isGoalLike      = !((node.children || []).some(c => c.isSubGoal));
       const isGoalContainer = !isGoalLike;
-      const subGoals        = isGoalContainer ? (node.children || []).filter(c => c.isSubGoal) : [];
+      const subGoals        = isGoalContainer
+        ? (node.children || []).filter(c => c.isSubGoal).map(c => resolveLinkedTask(c, goals)).filter(Boolean)
+        : [];
 
       function collectToLearn(n) {
         const sgs = (n.children || []).filter(c => c.isSubGoal);
@@ -2393,14 +2424,11 @@
       // Collect unique leaves — resolve links to originals, deduplicate by canonical ID
       function collectUniqueLeaves() {
         function walk(n) {
+          const resolved = resolveLinkedTask(n, goals);
+          if (!resolved) return [];
+          if (resolved !== n) return walk(resolved);
           if (isMilestoneNode(n) && (n.children || []).length === 0) return [];
-          if ((n.children || []).length === 0) {
-            if (n.isLink) {
-              const orig = goals && findNode(goals, n.linkedTaskId);
-              return orig ? [orig] : [];
-            }
-            return [n];
-          }
+          if ((n.children || []).length === 0) return [n];
           return (n.children || []).flatMap(c => walk(c));
         }
         const all = walk(node);
@@ -2517,7 +2545,7 @@
                 <div className="text-[10px] tracking-widest text-gray-600 mb-3">SUBGOALS</div>
                 <div className="flex flex-col gap-3">
                   {subGoals.map(sg => {
-                    const sp = countProgress(sg);
+                    const sp = countProgress(sg, resolveLink);
                     const spPct = sp.total ? Math.round(sp.done / sp.total * 100) : 0;
                     const spFull = sp.done === sp.total && sp.total > 0;
                     const spColor = spFull ? '#10b981' : goalColor;
@@ -2750,7 +2778,7 @@
 
       function renderMilestoneTask(task, depth = 0, keyPrefix = '') {
         if (task.isLink) {
-          const original = goals && findNode(goals, task.linkedTaskId);
+          const original = resolveLinkedTask(task, goals);
           if (!original) {
             return (
               <div key={`${keyPrefix}-${task.id}`} style={{ paddingLeft: depth * 16 }}
@@ -3091,7 +3119,7 @@
             )}
             {goals.map((g, idx) => {
               const color = PALETTE[idx % PALETTE.length];
-              const p = countProgress(g);
+              const p = countProgress(g, id => findNode(goals, id));
               const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
               const isActive = g.id === activeGoalId;
               const t = dragTabTarget;
@@ -4137,8 +4165,8 @@
         if (pickerDay && searchRef.current) searchRef.current.focus();
       }, [pickerDay]);
 
-      const allTasks   = flattenAll(goals);
-      const inProgress = allTasks.filter(t => !isMilestoneNode(t) && getLeaves(t).length > 0 && !isComplete(t));
+      const allTasks   = flattenAll(goals).filter(t => !t.isLink);
+      const inProgress = allTasks.filter(t => !isMilestoneNode(t) && getLeaves(t, goals).length > 0 && !isComplete(t, goals));
       const filtered   = search.trim()
         ? inProgress.filter(t => (t.title || '').toLowerCase().includes(search.toLowerCase()))
         : inProgress;
@@ -4153,7 +4181,7 @@
         collectMilestoneBlocks(owner, milestone.id, goals || []).forEach(block => {
           flattenAll(block.children || []).forEach(task => {
             const target = task.isLink ? findNode(goals || [], task.linkedTaskId) : task;
-            if (!target || isMilestoneNode(target) || getLeaves(target).length === 0 || isComplete(target, goals || [])) return;
+            if (!target || isMilestoneNode(target) || getLeaves(target, goals || []).length === 0 || isComplete(target, goals || [])) return;
             if (!taskMap.has(target.id)) taskMap.set(target.id, target);
           });
         });
@@ -4182,7 +4210,7 @@
         };
       }
 
-      const tasksForDate = ds => allTasks.filter(t => t.scheduledDate === ds && !(isMilestoneNode(t) && getLeaves(t).length === 0));
+      const tasksForDate = ds => allTasks.filter(t => t.scheduledDate === ds && !(isMilestoneNode(t) && getLeaves(t, goals).length === 0));
       const entriesForDate = ds => saEntries.filter(e => e.date === ds);
       const mmEntriesForDate = ds => (mmEntries || []).filter(e => e.date === ds);
 
@@ -4307,7 +4335,7 @@
       }
 
       function assignToDate(task, dateStr) {
-        const targets = isCountableLeaf(task) ? [task] : getLeaves(task);
+        const targets = isCountableLeaf(task) ? [task] : getLeaves(task, goals);
         setGoals(prev => targets.reduce((g, leaf, i) => {
           const h    = Math.min(9 + i, 21);
           const time = leaf.scheduledTime || `${String(h).padStart(2,'0')}:00`;
@@ -4575,7 +4603,7 @@
                                         <span className="text-cyan-100 truncate">{t.title}</span>
                                       </span>
                                       {(t.children || []).length > 0 && (
-                                        <span className="text-cyan-500 flex-shrink-0">+{getLeaves(t).length}</span>
+                                        <span className="text-cyan-500 flex-shrink-0">+{getLeaves(t, goals).length}</span>
                                       )}
                                     </button>
                                   ))}
@@ -4594,7 +4622,7 @@
                                       className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center justify-between gap-2 transition-colors">
                                       <span className="text-gray-300 truncate">{t.title}</span>
                                       {(t.children || []).length > 0 && (
-                                        <span className="text-gray-600 flex-shrink-0">+{getLeaves(t).length}</span>
+                                        <span className="text-gray-600 flex-shrink-0">+{getLeaves(t, goals).length}</span>
                                       )}
                                     </button>
                                   ))}
@@ -4808,7 +4836,7 @@
                       const [dth, dtm] = dispTime.split(':').map(Number);
                       const top      = (dth + dtm / 60 - START_HOUR) * PX_PER_HOUR;
                       const height   = Math.max(22, (dur / 60) * PX_PER_HOUR);
-                      const done     = task.taskType === 'routine' ? (task.schedDone || false) : isComplete(task);
+                      const done     = task.taskType === 'routine' ? (task.schedDone || false) : isComplete(task, goals);
                       const isLeaf   = isCountableLeaf(task);
                       const dragged  = ghost && ghost.type === 'goal' && ghost.taskId === task.id;
                       const isSelected = selectedForResize && selectedForResize.id === task.id;
