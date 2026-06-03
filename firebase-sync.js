@@ -174,14 +174,6 @@
           return;
         }
 
-        // Local is preferred but remote differs — push local up so other devices get it,
-        // and seed the listener with the remote value so the first snapshot is skipped.
-        if (!useRemote && local && local !== remoteData) {
-          db.collection('users').doc(_uid)
-            .set({ data: local, ts: localTs || Date.now() })
-            .catch(e => console.warn('[Track sync] push local error', e));
-        }
-
         // Pass remoteData so the initial onSnapshot for this already-seen value is skipped
         hideOverlay();
         listenForRemoteChanges(remoteData);
