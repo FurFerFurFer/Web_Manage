@@ -172,6 +172,7 @@
     delBtn.title = 'Delete note';
     delBtn.textContent = '🗑';
     delBtn.onclick = function () {
+      if (!window.confirm('Delete this note?')) return;
       var n2 = loadNotes().filter(function (x) { return x.id !== state.activeId; });
       saveNotes(n2);
       state.activeId = null;
