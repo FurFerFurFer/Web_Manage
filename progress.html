@@ -806,6 +806,19 @@
       return insertIntoTarget(withoutDragged);
     }
 
+    function reorderSibling(nodes, draggedId, targetId, insertBefore) {
+      const di = nodes.findIndex(n => n.id === draggedId);
+      const ti = nodes.findIndex(n => n.id === targetId);
+      if (di !== -1 && ti !== -1) {
+        const arr = [...nodes];
+        const [moved] = arr.splice(di, 1);
+        const newTi = arr.findIndex(n => n.id === targetId);
+        arr.splice(insertBefore ? newTi : newTi + 1, 0, moved);
+        return arr;
+      }
+      return nodes.map(n => ({ ...n, children: reorderSibling(n.children || [], draggedId, targetId, insertBefore) }));
+    }
+
     function addLinkedSubGoal(goals, parentId, linkedGoalId) {
       return goals.map(g =>
         g.id === parentId
@@ -1476,7 +1489,7 @@
     // ── GoalNode ──────────────────────────────────────────────────────────────
 
     function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId, milestoneOwner, insideMilestone = false }) {
-      const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, onAddMilestoneType, onRenameMilestoneType, onDeleteMilestoneType, onReorderMilestoneType, allGoals, mms, sirDoneMap } = handlers;
+      const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, onArrangeTask, onAddMilestoneType, onRenameMilestoneType, onDeleteMilestoneType, onReorderMilestoneType, allGoals, mms, sirDoneMap } = handlers;
       const [hov, setHov]             = useState(false);
       const [showMMPicker, setShowMMPicker] = useState(false);
       const [editing, setEditing]     = useState(false);
@@ -1501,6 +1514,7 @@
       const [editingNoteId, setEditingNoteId] = useState(null);
       const [subGoalDragOver, setSubGoalDragOver] = useState(false);
       const [taskDragOver, setTaskDragOver] = useState(false);
+      const [arrangeDragOver, setArrangeDragOver] = useState(null);
       const [pendingDelete, setPendingDelete] = useState(false);
       const editRef    = useRef(null);
       const kidRef     = useRef(null);
@@ -1610,6 +1624,17 @@
               }}
               title="Drag to nest into another task"
               className="text-gray-600 hover:text-indigo-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 cursor-grab select-none">⠿</span>
+          )}
+          {!isGoalType && (
+            <span
+              draggable
+              onDragStart={e => {
+                e.dataTransfer.setData('application/arrange-id', node.id);
+                e.dataTransfer.effectAllowed = 'move';
+                e.stopPropagation();
+              }}
+              title="Drag to arrange among siblings"
+              className="text-gray-600 hover:text-green-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 cursor-grab select-none">⇅</span>
           )}
           <button onClick={() => setShowDate(v => !v)} title="Set date"
             className="text-gray-600 hover:text-indigo-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60">◷</button>
@@ -1757,11 +1782,11 @@
       if (isGoalLike) {
         return (<>
           <div
-            className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`} ${subGoalDragOver ? 'ring-2 ring-violet-500' : taskDragOver ? 'ring-2 ring-indigo-500' : ''}`}
+            className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`} ${subGoalDragOver ? 'ring-2 ring-violet-500' : taskDragOver ? 'ring-2 ring-indigo-500' : ''} ${arrangeDragOver === 'before' ? 'border-t-2 border-green-500' : arrangeDragOver === 'after' ? 'border-b-2 border-green-500' : ''}`}
             style={!inDetailView && depth === 0 && goalColor ? { borderTopColor: goalColor, borderTopWidth: 3 } : undefined}
-            onDragOver={e => { const types = e.dataTransfer.types; if (node.isSubGoal && types.includes('application/subgoal-id')) { e.preventDefault(); e.stopPropagation(); setSubGoalDragOver(true); } else if (types.includes('application/task-id')) { e.preventDefault(); e.stopPropagation(); setTaskDragOver(true); } }}
-            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) { setSubGoalDragOver(false); setTaskDragOver(false); } }}
-            onDrop={e => { const sgId = e.dataTransfer.getData('application/subgoal-id'); const tId = e.dataTransfer.getData('application/task-id'); if (node.isSubGoal && sgId && sgId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestSubGoal(sgId, node.id); } else if (tId && tId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestTask(tId, node.id); } setSubGoalDragOver(false); setTaskDragOver(false); }}
+            onDragOver={e => { const types = e.dataTransfer.types; if (types.includes('application/arrange-id')) { e.preventDefault(); e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setArrangeDragOver(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'); } else if (node.isSubGoal && types.includes('application/subgoal-id')) { e.preventDefault(); e.stopPropagation(); setSubGoalDragOver(true); } else if (types.includes('application/task-id')) { e.preventDefault(); e.stopPropagation(); setTaskDragOver(true); } }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) { setSubGoalDragOver(false); setTaskDragOver(false); setArrangeDragOver(null); } }}
+            onDrop={e => { const arrangeId = e.dataTransfer.getData('application/arrange-id'); if (arrangeId && arrangeId !== node.id) { e.preventDefault(); e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); onArrangeTask(arrangeId, node.id, e.clientY < rect.top + rect.height / 2); } else { const sgId = e.dataTransfer.getData('application/subgoal-id'); const tId = e.dataTransfer.getData('application/task-id'); if (node.isSubGoal && sgId && sgId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestSubGoal(sgId, node.id); } else if (tId && tId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestTask(tId, node.id); } } setSubGoalDragOver(false); setTaskDragOver(false); setArrangeDragOver(null); }}
           >
             <div
               className="flex items-start gap-3 p-4"
@@ -2109,16 +2134,32 @@
         <div>
           <div
             style={{ paddingLeft: indent }}
-            className={`flex items-center gap-1.5 py-0.5 px-1 rounded transition-colors ${hov ? 'bg-gray-800/50' : ''} ${taskDragOver ? 'ring-1 ring-indigo-500 bg-indigo-950/30' : ''}`}
+            className={`flex items-center gap-1.5 py-0.5 px-1 rounded transition-colors ${hov ? 'bg-gray-800/50' : ''} ${taskDragOver ? 'ring-1 ring-indigo-500 bg-indigo-950/30' : ''} ${arrangeDragOver === 'before' ? 'border-t-2 border-green-500' : arrangeDragOver === 'after' ? 'border-b-2 border-green-500' : ''}`}
             onMouseEnter={() => setHov(true)}
             onMouseLeave={() => setHov(false)}
             onDragOver={e => {
-              if (e.dataTransfer.types.includes('application/task-id') && !(blockedMilestoneBranch && e.dataTransfer.types.includes('application/milestone-task-id'))) {
+              const types = e.dataTransfer.types;
+              if (types.includes('application/arrange-id')) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setArrangeDragOver(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after');
+              } else if (types.includes('application/task-id') && !(blockedMilestoneBranch && types.includes('application/milestone-task-id'))) {
                 e.preventDefault(); e.stopPropagation(); setTaskDragOver(true);
               }
             }}
-            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setTaskDragOver(false); }}
-            onDrop={e => { const draggedId = e.dataTransfer.getData('application/task-id'); if (draggedId && draggedId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestTask(draggedId, node.id); } setTaskDragOver(false); }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) { setTaskDragOver(false); setArrangeDragOver(null); } }}
+            onDrop={e => {
+              const arrangeId = e.dataTransfer.getData('application/arrange-id');
+              if (arrangeId && arrangeId !== node.id) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                onArrangeTask(arrangeId, node.id, e.clientY < rect.top + rect.height / 2);
+              } else {
+                const draggedId = e.dataTransfer.getData('application/task-id');
+                if (draggedId && draggedId !== node.id) { e.preventDefault(); e.stopPropagation(); onNestTask(draggedId, node.id); }
+              }
+              setTaskDragOver(false); setArrangeDragOver(null);
+            }}
           >
             {isParent ? (
               <button onClick={() => setCollapsed(c => !c)}
@@ -2330,6 +2371,7 @@
         allGoals: goals,
         onAddLinkedTask:    (parentId, linkedTaskId) => setGoals(prev => addLinkedTask(prev, parentId, linkedTaskId)),
         onUnlinkTask:       id              => setGoals(prev => deleteNode(prev, id)),
+        onArrangeTask:      (draggedId, targetId, insertBefore) => setGoals(prev => reorderSibling(prev, draggedId, targetId, insertBefore)),
         onAddNote:          (taskId, note)   => setGoals(prev => addNoteToTask(prev, taskId, note)),
         onRemoveNote:       (taskId, noteId) => setGoals(prev => removeNoteFromTask(prev, taskId, noteId)),
         onUpdateNote:       (taskId, noteId, fields) => setGoals(prev => updateNoteInTask(prev, taskId, noteId, fields)),
@@ -3087,6 +3129,7 @@
         onPromoteSubGoal:   subGoalId       => setGoals(prev => promoteSubGoalToUltimate(prev, subGoalId)),
         onNestSubGoal:      (draggedId, targetId) => setGoals(prev => nestSubGoalIntoSubGoal(prev, draggedId, targetId)),
         onNestTask:         (draggedId, targetId) => setGoals(prev => nestTaskIntoTask(prev, draggedId, targetId)),
+        onArrangeTask:      (draggedId, targetId, insertBefore) => setGoals(prev => reorderSibling(prev, draggedId, targetId, insertBefore)),
         onAddLinkedSubGoal: (parentId, linkedGoalId) => setGoals(prev => addLinkedSubGoal(prev, parentId, linkedGoalId)),
         onAddNote:         (taskId, note)   => setGoals(prev => addNoteToTask(prev, taskId, note)),
         onRemoveNote:      (taskId, noteId) => setGoals(prev => removeNoteFromTask(prev, taskId, noteId)),
