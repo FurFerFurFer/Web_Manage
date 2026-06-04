@@ -4902,12 +4902,12 @@
                       return (
                         <React.Fragment key={task.id}>
                         <div
-                          style={{ top: top + 'px', height: height + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: getBlockZIndex(task.id) }}
+                          style={{ top: top + 'px', height: height + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: getBlockZIndex(task.id), ...(!done && { backgroundColor: '#4f46e530' }) }}
                           className={`rounded px-1.5 py-0.5 overflow-hidden group ${
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
                           } ${done
                             ? 'bg-emerald-900/90 border-2 border-emerald-500'
-                            : 'bg-indigo-900 text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
+                            : 'text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
                           } ${isSelected ? 'ring-2 ring-white/60' : ''}`}
                           onMouseDown={e => startDrag(e, task)}
                           onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; }}
