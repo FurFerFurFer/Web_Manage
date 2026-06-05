@@ -1982,9 +1982,11 @@
       );
     }
 
-    function SrchMMNode({node, depth, mmColor, onOpen, focusId, onClearFocus}) {
+    function SrchMMNode({node, depth, mmColor, onOpen, onArrange, focusId, onClearFocus}) {
       const {mm, children} = node;
       const [open, setOpen] = React.useState(true);
+      const [hov, setHov] = React.useState(false);
+      const [arrangeDragOver, setArrangeDragOver] = React.useState(null);
       const nodeRef = React.useRef(null);
       const isFocused = mm.id === focusId;
       React.useEffect(()=>{
@@ -1997,8 +1999,27 @@
       return (
         <div className="relative">
           <div ref={isFocused?nodeRef:null} style={{paddingLeft: depth * 16}}
-            className={`flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-800 cursor-pointer${isFocused?" bg-indigo-900/40 outline outline-1 outline-indigo-700/50":""}`}
-            onClick={() => onOpen(mm.id)}>
+            className={`flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-800 cursor-pointer${isFocused?" bg-indigo-900/40 outline outline-1 outline-indigo-700/50":""} ${arrangeDragOver==='before'?'border-t-2 border-green-500':arrangeDragOver==='after'?'border-b-2 border-green-500':''}`}
+            onClick={() => onOpen(mm.id)}
+            onMouseEnter={() => setHov(true)}
+            onMouseLeave={() => setHov(false)}
+            onDragOver={e => {
+              if (e.dataTransfer.types.includes('application/srch-arrange-id')) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setArrangeDragOver(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after');
+              }
+            }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setArrangeDragOver(null); }}
+            onDrop={e => {
+              const draggedId = Number(e.dataTransfer.getData('application/srch-arrange-id'));
+              if (draggedId && draggedId !== mm.id) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                onArrange(draggedId, mm.id, e.clientY < rect.top + rect.height / 2);
+              }
+              setArrangeDragOver(null);
+            }}>
             <div className="w-2 h-2 rounded-full shrink-0"
               style={{backgroundColor: mm.type==="1" ? "#ef4444" : mmColor(mm.id)}}/>
             <span className="text-sm">{mm.name}</span>
@@ -2010,6 +2031,18 @@
                 onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>
                 {open ? "▼" : "▶"} {children.length}
               </span>
+            )}
+            {hov && (
+              <span
+                draggable
+                onDragStart={e => {
+                  e.dataTransfer.setData('application/srch-arrange-id', String(mm.id));
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.stopPropagation();
+                }}
+                onClick={e => e.stopPropagation()}
+                title="Drag to arrange among siblings"
+                className="text-gray-600 hover:text-green-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 cursor-grab select-none ml-auto">⇅</span>
             )}
           </div>
           {open && children.length > 0 && (
@@ -2024,7 +2057,7 @@
                 pointerEvents: "none"
               }}/>
               {children.map((child, i) => (
-                <SrchMMNode key={`${child.mm.id}-${depth}-${i}`} node={child} depth={depth+1} mmColor={mmColor} onOpen={onOpen} focusId={focusId} onClearFocus={onClearFocus}/>
+                <SrchMMNode key={`${child.mm.id}-${depth}-${i}`} node={child} depth={depth+1} mmColor={mmColor} onOpen={onOpen} onArrange={onArrange} focusId={focusId} onClearFocus={onClearFocus}/>
               ))}
             </>
           )}
@@ -2032,7 +2065,7 @@
       );
     }
 
-    function SrchView({mms, mmColor, onOpen, focusId, onClearFocus}) {
+    function SrchView({mms, mmColor, onOpen, onArrange, focusId, onClearFocus}) {
       const [q, setQ] = useState("");
       React.useEffect(()=>{ if(focusId) setQ(""); },[focusId]);
 
@@ -2071,7 +2104,7 @@
           ) : (
             <div className="rounded border border-gray-800 bg-gray-900/30 px-2 py-1">
               {tree.map((n, i) => (
-                <SrchMMNode key={`${n.mm.id}-${i}`} node={n} depth={0} mmColor={mmColor} onOpen={onOpen} focusId={focusId} onClearFocus={onClearFocus}/>
+                <SrchMMNode key={`${n.mm.id}-${i}`} node={n} depth={0} mmColor={mmColor} onOpen={onOpen} onArrange={onArrange} focusId={focusId} onClearFocus={onClearFocus}/>
               ))}
             </div>
           )}
@@ -3347,7 +3380,25 @@
 
           {view==="srch"&&!selectedMM&&(
             <div className="overflow-y-auto h-screen-nav">
-              <SrchView mms={mms} mmColor={mmColor} onOpen={id=>openMM(id,"ks03")} focusId={srchFocusId} onClearFocus={()=>setSrchFocusId(null)}/>
+              <SrchView mms={mms} mmColor={mmColor} onOpen={id=>openMM(id,"ks03")} focusId={srchFocusId} onClearFocus={()=>setSrchFocusId(null)}
+                onArrange={(draggedId, targetId, insertBefore) => {
+                  setMms(prev => {
+                    const byId = Object.fromEntries(prev.map(m => [m.id, m]));
+                    const m1 = byId[draggedId], m2 = byId[targetId];
+                    if (!m1 || !m2) return prev;
+                    const vp1 = (m1.parentIds || []).filter(pid => byId[pid]);
+                    const vp2 = (m2.parentIds || []).filter(pid => byId[pid]);
+                    const areSiblings = (vp1.length === 0 && vp2.length === 0) || vp1.some(p => vp2.includes(p));
+                    if (!areSiblings) return prev;
+                    const di = prev.findIndex(m => m.id === draggedId);
+                    const ti = prev.findIndex(m => m.id === targetId);
+                    const arr = [...prev];
+                    const [moved] = arr.splice(di, 1);
+                    const newTi = arr.findIndex(m => m.id === targetId);
+                    arr.splice(insertBefore ? newTi : newTi + 1, 0, moved);
+                    return arr;
+                  });
+                }}/>
             </div>
           )}
           {view==="srch"&&selectedMM&&currentMM&&<MMDetail mm={currentMM} {...mmDetailProps} initialMode="ks03"/>}
