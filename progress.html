@@ -1488,7 +1488,7 @@
 
     // ── GoalNode ──────────────────────────────────────────────────────────────
 
-    function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId, milestoneOwner, insideMilestone = false }) {
+    function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId, milestoneOwner, insideMilestone = false, insideActiveMilestone = false }) {
       const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, onArrangeTask, onAddMilestoneType, onRenameMilestoneType, onDeleteMilestoneType, onReorderMilestoneType, allGoals, mms, sirDoneMap } = handlers;
       const [hov, setHov]             = useState(false);
       const [showMMPicker, setShowMMPicker] = useState(false);
@@ -1536,6 +1536,10 @@
       const isMilestone = isMilestoneNode(node);
       const currentMilestoneOwner = isGoalLike ? node : milestoneOwner;
       const blockedMilestoneBranch = insideMilestone || isMilestone;
+      const todayStr = toDateStr(new Date());
+      const milestoneDef = isMilestone ? (milestoneOwner?.milestones || []).find(m => m.id === node.milestoneId) : null;
+      const thisMilestoneIsActive = !!(milestoneDef?.startDate && milestoneDef?.endDate && todayStr >= milestoneDef.startDate && todayStr <= milestoneDef.endDate);
+      const nextInsideActiveMilestone = insideActiveMilestone || thisMilestoneIsActive;
       const availableMilestones = (currentMilestoneOwner?.milestones || [])
         .filter(m => !parentHasMilestoneChild(node, m.id, null, allGoals));
       const mmAutoComplete = isGoalLike ? computeMMAutoComplete(node, mms || [], sirDoneMap) : null;
@@ -2133,7 +2137,7 @@
       return (<>
         <div>
           <div
-            style={{ paddingLeft: indent }}
+            style={{ paddingLeft: indent, ...(insideActiveMilestone && !hov && !taskDragOver ? { backgroundColor: node.taskType === 'routine' ? 'rgba(245, 158, 11, 0.06)' : 'rgba(6, 182, 212, 0.04)' } : {}) }}
             className={`flex items-center gap-1.5 py-0.5 px-1 rounded transition-colors ${hov ? 'bg-gray-800/50' : ''} ${taskDragOver ? 'ring-1 ring-indigo-500 bg-indigo-950/30' : ''} ${arrangeDragOver === 'before' ? 'border-t-2 border-green-500' : arrangeDragOver === 'after' ? 'border-b-2 border-green-500' : ''}`}
             onMouseEnter={() => setHov(true)}
             onMouseLeave={() => setHov(false)}
@@ -2185,7 +2189,7 @@
                 onDoubleClick={() => { setEditing(true); setEditVal(node.title); }}
                 title={node.title}
                 className={`flex-1 text-xs select-none min-w-0 truncate cursor-default ${
-                  displayDone ? 'line-through text-gray-600' : isMilestone ? 'text-cyan-300 font-semibold' : isParent ? 'text-gray-200 font-semibold' : node.taskType === 'routine' ? 'text-amber-600' : 'text-gray-400'
+                  displayDone ? 'line-through text-gray-600' : isMilestone ? 'text-cyan-300 font-semibold' : isParent ? 'text-gray-200 font-semibold' : node.taskType === 'routine' ? (insideActiveMilestone ? 'text-amber-400' : 'text-amber-600') : (insideActiveMilestone ? 'text-gray-200' : 'text-gray-400')
                 }`}
               >
                 {node.title}
@@ -2288,10 +2292,10 @@
                     </div>
                   );
                   return <GoalNode key={child.id} node={original} depth={depth + 1} handlers={handlers}
-                    linkedRefId={child.id} milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} />;
+                    linkedRefId={child.id} milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} insideActiveMilestone={nextInsideActiveMilestone} />;
                 }
                 return <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers}
-                  milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} />;
+                  milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} insideActiveMilestone={nextInsideActiveMilestone} />;
               })}
             </div>
           )}
@@ -2818,7 +2822,7 @@
         );
       }
 
-      function renderMilestoneTask(task, depth = 0, keyPrefix = '') {
+      function renderMilestoneTask(task, depth = 0, keyPrefix = '', isActive = false) {
         if (task.isLink) {
           const original = resolveLinkedTask(task, goals);
           if (!original) {
@@ -2830,7 +2834,7 @@
               </div>
             );
           }
-          return renderMilestoneTask(original, depth, `${keyPrefix}-${task.id}`);
+          return renderMilestoneTask(original, depth, `${keyPrefix}-${task.id}`, isActive);
         }
 
         const children = (task.children || []).filter(c => !isMilestoneNode(c));
@@ -2840,6 +2844,9 @@
           ? (task.taskType === 'routine' ? !!task.schedDone : !!task.completed)
           : progress && progress.total > 0 && progress.done >= progress.total;
         const markerColor = done ? '#10b981' : task.taskType === 'routine' ? '#f59e0b' : '#6b7280';
+        const textClass = done ? 'line-through text-gray-600' : !isLeaf ? 'text-gray-300 font-semibold' :
+          isActive ? (task.taskType === 'routine' ? 'text-amber-400' : 'text-gray-200') :
+          (task.taskType === 'routine' ? 'text-amber-500' : 'text-gray-400');
 
         return (
           <React.Fragment key={`${keyPrefix}-${task.id}`}>
@@ -2850,7 +2857,7 @@
                   backgroundColor: done ? markerColor : 'transparent',
                   border: `1px solid ${markerColor}`,
                 }} />
-              <span className={`text-[11px] flex-1 truncate ${done ? 'line-through text-gray-600' : isLeaf ? 'text-gray-400' : 'text-gray-300 font-semibold'}`}>
+              <span className={`text-[11px] flex-1 truncate ${textClass}`}>
                 {task.title}
               </span>
               {progress && (
@@ -2859,7 +2866,7 @@
                 </span>
               )}
             </div>
-            {children.map(child => renderMilestoneTask(child, depth + 1, `${keyPrefix}-${task.id}`))}
+            {children.map(child => renderMilestoneTask(child, depth + 1, `${keyPrefix}-${task.id}`, isActive))}
           </React.Fragment>
         );
       }
@@ -2979,6 +2986,7 @@
                               {(owner.milestones || []).map(m => {
                                 const item = milestoneItemMap[`${owner.id}|${m.id}`];
                                 const isSelected = item?.key === selectedKey;
+                                const isActive = !!(m.startDate && m.endDate && todayStr >= m.startDate && todayStr <= m.endDate);
                                 const dateLabel = m.startDate && m.endDate
                                   ? m.startDate === m.endDate ? m.startDate : `${m.startDate} to ${m.endDate}`
                                   : 'no dates';
@@ -2990,7 +2998,8 @@
                                       isSelected
                                         ? 'border-cyan-500/80 bg-cyan-950/20'
                                         : 'border-transparent bg-gray-950/30 hover:border-gray-700'
-                                    }`}>
+                                    }`}
+                                    style={!isSelected && isActive ? { borderColor: `${item?.chipColor}60`, backgroundColor: `${item?.chipColor}08` } : undefined}>
                                     <div className="flex items-center gap-3 px-2 py-1.5">
                                       <span className="w-5 text-[10px] text-gray-600 tabular-nums flex-shrink-0">{(item?.idx || 0) + 1}.</span>
                                       <div className="flex-1 min-w-0">
@@ -3042,7 +3051,7 @@
                                         <div className="py-0.5 text-[11px] text-gray-700 italic">No tasks inside yet.</div>
                                       ) : (
                                         <div className="flex flex-col gap-0.5">
-                                          {item.tasks.map(task => renderMilestoneTask(task, 0, m.id))}
+                                          {item.tasks.map(task => renderMilestoneTask(task, 0, m.id, isActive))}
                                         </div>
                                       )}
                                     </div>
