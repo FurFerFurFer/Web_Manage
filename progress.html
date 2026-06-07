@@ -4228,11 +4228,29 @@
         ? inProgress.filter(t => (t.title || '').toLowerCase().includes(search.toLowerCase()))
         : inProgress;
       const selectedMilestoneSchedule = useMemo(() => {
-        if (!selectedMilestone) return null;
-        const owner = findNode(goals || [], selectedMilestone.ownerId);
-        if (!owner) return null;
-        const milestone = (owner.milestones || []).find(m => m.id === selectedMilestone.milestoneId);
-        if (!milestone) return null;
+        let owner, milestone;
+
+        if (selectedMilestone) {
+          owner = findNode(goals || [], selectedMilestone.ownerId);
+          if (!owner) return null;
+          milestone = (owner.milestones || []).find(m => m.id === selectedMilestone.milestoneId);
+          if (!milestone) return null;
+        } else {
+          const todayStr = toDateStr(new Date());
+          let found = false;
+          for (const goal of goals || []) {
+            if (found) break;
+            for (const o of collectMilestoneOwners(goal, goals || [])) {
+              if (found) break;
+              for (const m of o.milestones || []) {
+                if (m.startDate && m.endDate && todayStr >= m.startDate && todayStr <= m.endDate) {
+                  owner = o; milestone = m; found = true; break;
+                }
+              }
+            }
+          }
+          if (!found) return null;
+        }
 
         const taskMap = new Map();
         collectMilestoneBlocks(owner, milestone.id, goals || []).forEach(block => {
