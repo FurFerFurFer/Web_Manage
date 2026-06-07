@@ -198,19 +198,19 @@
       return progress.done >= progress.total;
     }
 
-    function countProgress(node, resolveLink) {
+    function countProgress(node, resolveLink, checkSchedDone = false) {
       if (!node) return { done: 0, total: 0 };
       if (node.isLink) {
         const orig = resolveLink && resolveLink(node.linkedTaskId);
         if (!orig) return { done: 0, total: 0 };
-        return countProgress(orig, resolveLink);
+        return countProgress(orig, resolveLink, checkSchedDone);
       }
       if (isMilestoneNode(node) && (node.children || []).length === 0)
         return { done: 0, total: 0 };
       if ((node.children || []).length === 0)
-        return { done: node.completed ? 1 : 0, total: 1 };
+        return { done: (checkSchedDone && node.taskType === 'routine' ? node.schedDone : node.completed) ? 1 : 0, total: 1 };
       return (node.children || []).reduce((acc, c) => {
-        const p = countProgress(c, resolveLink);
+        const p = countProgress(c, resolveLink, checkSchedDone);
         return { done: acc.done + p.done, total: acc.total + p.total };
       }, { done: 0, total: 0 });
     }
@@ -2835,8 +2835,10 @@
 
         const children = (task.children || []).filter(c => !isMilestoneNode(c));
         const isLeaf = isCountableLeaf(task);
-        const progress = !isLeaf && children.length > 0 ? countProgress(task, id => goals && findNode(goals, id)) : null;
-        const done = isLeaf ? !!task.completed : progress && progress.total > 0 && progress.done >= progress.total;
+        const progress = !isLeaf && children.length > 0 ? countProgress(task, id => goals && findNode(goals, id), true) : null;
+        const done = isLeaf
+          ? (task.taskType === 'routine' ? !!task.schedDone : !!task.completed)
+          : progress && progress.total > 0 && progress.done >= progress.total;
         const markerColor = done ? '#10b981' : task.taskType === 'routine' ? '#f59e0b' : '#6b7280';
 
         return (
