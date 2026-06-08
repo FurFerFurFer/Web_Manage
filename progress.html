@@ -5432,7 +5432,7 @@
                             <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
                               <span className="text-[9px] uppercase tracking-widest font-semibold" style={{ color: col }}>Notes</span>
                               <button className="text-gray-500 hover:text-white text-xs leading-none"
-                                onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); }}
+                                onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: null })); setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: '', detail: '' } })); }}
                                 onMouseDown={e => e.stopPropagation()}>×</button>
                             </div>
                             {(() => {
@@ -5440,12 +5440,14 @@
                               return mmEntryNotes.length > 0 && (
                                 <div className="px-2 pb-1 flex flex-col gap-1 max-h-36 overflow-y-auto">
                                   {mmEntryNotes.map(nt => (
-                                    <div key={nt.id} className="bg-gray-800/70 rounded px-2 py-1 relative group/note" style={{ border: `1px solid ${col}30` }}>
+                                    <div key={nt.id} className="bg-gray-800/70 rounded px-2 py-1 relative group/note cursor-pointer"
+                                      style={{ border: `1px solid ${timelineEditingNoteIds[entry.id] === nt.id ? col : col+'30'}` }}
+                                      onDoubleClick={e => { e.stopPropagation(); setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: nt.title, detail: nt.detail || '' } })); setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: nt.id })); }}>
                                       <p className="text-[11px] font-semibold leading-tight" style={{ color: col+'dd' }}>{nt.title}</p>
                                       {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                       <button
                                         className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
-                                        onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) setMmEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; if (nt.id === en.id+'_n0') return {...en, noteTitle: undefined, noteDetail: undefined}; return {...en, notes: (en.notes||[]).filter(n => n.id !== nt.id)}; })); }}
+                                        onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setMmEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; if (nt.id === en.id+'_n0') return {...en, noteTitle: undefined, noteDetail: undefined}; return {...en, notes: (en.notes||[]).filter(n => n.id !== nt.id)}; })); if (timelineEditingNoteIds[entry.id] === nt.id) { setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: null })); setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: '', detail: '' } })); } } }}
                                         onMouseDown={e => e.stopPropagation()}
                                       >×</button>
                                     </div>
@@ -5479,12 +5481,22 @@
                                   e.stopPropagation();
                                   const draft = noteDrafts[entry.id] || {};
                                   if (!draft.title?.trim()) return;
-                                  const newNote = { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() };
-                                  setMmEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; const existing = en.notes || (en.noteTitle ? [{id: en.id+'_n0', title: en.noteTitle, detail: en.noteDetail||'', createdAt: 0}] : []); return {...en, notes: [...existing, newNote], noteTitle: undefined, noteDetail: undefined}; }));
+                                  const editId = timelineEditingNoteIds[entry.id];
+                                  if (editId) {
+                                    setMmEntries(prev => prev.map(en => {
+                                      if (en.id !== entry.id) return en;
+                                      if (editId === en.id+'_n0') return { ...en, notes: [{ id: editId, title: draft.title.trim(), detail: (draft.detail||'').trim(), createdAt: 0 }], noteTitle: undefined, noteDetail: undefined };
+                                      return { ...en, notes: (en.notes||[]).map(n => n.id === editId ? { ...n, title: draft.title.trim(), detail: (draft.detail||'').trim() } : n) };
+                                    }));
+                                    setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: null }));
+                                  } else {
+                                    const newNote = { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() };
+                                    setMmEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; const existing = en.notes || (en.noteTitle ? [{id: en.id+'_n0', title: en.noteTitle, detail: en.noteDetail||'', createdAt: 0}] : []); return {...en, notes: [...existing, newNote], noteTitle: undefined, noteDetail: undefined}; }));
+                                  }
                                   setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: '', detail: '' } }));
                                 }}
                                 onMouseDown={e => e.stopPropagation()}
-                              >Done</button>
+                              >{timelineEditingNoteIds[entry.id] ? 'Save' : 'Done'}</button>
                             </div>
                           </div>
                         )}
