@@ -208,7 +208,7 @@
       if (isMilestoneNode(node) && (node.children || []).length === 0)
         return { done: 0, total: 0 };
       if ((node.children || []).length === 0)
-        return { done: (checkSchedDone && node.taskType === 'routine' ? node.schedDone : node.completed) ? 1 : 0, total: 1 };
+        return { done: node.completed ? 1 : 0, total: 1 };
       return (node.children || []).reduce((acc, c) => {
         const p = countProgress(c, resolveLink, checkSchedDone);
         return { done: acc.done + p.done, total: acc.total + p.total };
@@ -223,11 +223,17 @@
       );
     }
 
-    function toggleRoutineSched(goals, id) {
+    function toggleRoutineSchedForDate(goals, id, dateStr) {
       return goals.map(g =>
         g.id === id && isCountableLeaf(g)
-          ? { ...g, schedDone: !g.schedDone }
-          : { ...g, children: toggleRoutineSched(g.children || [], id) }
+          ? { ...g, routineDates: {
+                ...(g.routineDates || {}),
+                [dateStr]: {
+                  time: (g.routineDates?.[dateStr]?.time || '09:00'),
+                  done: !(g.routineDates?.[dateStr]?.done)
+                }
+              }}
+          : { ...g, children: toggleRoutineSchedForDate(g.children || [], id, dateStr) }
       );
     }
 
@@ -500,11 +506,20 @@
     }
 
     function updateSchedule(goals, id, date, time) {
-      return goals.map(g =>
-        g.id === id
-          ? { ...g, scheduledDate: date, scheduledTime: time }
-          : { ...g, children: updateSchedule(g.children || [], id, date, time) }
-      );
+      return goals.map(g => {
+        if (g.id === id) {
+          if (g.taskType === 'routine') {
+            if (date === null) return { ...g, routineDates: {} };
+            const prev = (g.routineDates || {})[date];
+            return { ...g, routineDates: {
+              ...(g.routineDates || {}),
+              [date]: { time: time || prev?.time || '09:00', done: prev?.done || false }
+            }};
+          }
+          return { ...g, scheduledDate: date, scheduledTime: time };
+        }
+        return { ...g, children: updateSchedule(g.children || [], id, date, time) };
+      });
     }
 
     function updateNote(nodes, id, fields) {
@@ -2841,7 +2856,7 @@
         const isLeaf = isCountableLeaf(task);
         const progress = !isLeaf && children.length > 0 ? countProgress(task, id => goals && findNode(goals, id), true) : null;
         const done = isLeaf
-          ? (task.taskType === 'routine' ? !!task.schedDone : !!task.completed)
+          ? !!task.completed
           : progress && progress.total > 0 && progress.done >= progress.total;
         const markerColor = done ? '#10b981' : task.taskType === 'routine' ? '#f59e0b' : '#6b7280';
         const textClass = done ? 'line-through text-gray-600' : !isLeaf ? 'text-gray-300 font-semibold' :
@@ -4285,7 +4300,12 @@
         };
       }
 
-      const tasksForDate = ds => allTasks.filter(t => t.scheduledDate === ds && !(isMilestoneNode(t) && getLeaves(t, goals).length === 0));
+      const tasksForDate = ds => allTasks.filter(t => {
+        const scheduled = t.taskType === 'routine'
+          ? (t.routineDates ? Object.prototype.hasOwnProperty.call(t.routineDates, ds) : t.scheduledDate === ds)
+          : t.scheduledDate === ds;
+        return scheduled && !(isMilestoneNode(t) && getLeaves(t, goals).length === 0);
+      });
       const entriesForDate = ds => saEntries.filter(e => e.date === ds);
       const mmEntriesForDate = ds => (mmEntries || []).filter(e => e.date === ds);
 
@@ -4423,6 +4443,16 @@
 
       function unschedule(taskId) {
         setGoals(prev => updateSchedule(prev, taskId, null, null));
+      }
+
+      function unscheduleRoutineDate(goals, id, dateStr) {
+        return goals.map(g => {
+          if (g.id === id) {
+            const { [dateStr]: _, ...rest } = g.routineDates || {};
+            return { ...g, routineDates: rest };
+          }
+          return { ...g, children: unscheduleRoutineDate(g.children || [], id, dateStr) };
+        });
       }
 
       function assignSAToDate(action, dateStr) {
@@ -4860,7 +4890,7 @@
 
                 const dayBlockDescs = [
                   ...dayTasks.map(t => {
-                    const [th, tm] = (t.scheduledTime || '09:00').split(':').map(Number);
+                    const [th, tm] = ((t.taskType === 'routine' ? t.routineDates?.[ds]?.time || t.scheduledTime : t.scheduledTime) || '09:00').split(':').map(Number);
                     return { id: t.id, top: (th + tm/60 - START_HOUR) * pxPerHour, height: Math.max(22, ((t.duration||60)/60) * pxPerHour) };
                   }),
                   ...dayEntries.map(e => {
@@ -4915,14 +4945,14 @@
 
                     {/* Goal task blocks */}
                     {dayTasks.map(task => {
-                      const time     = task.scheduledTime || '09:00';
+                      const time     = (task.taskType === 'routine' ? task.routineDates?.[ds]?.time || task.scheduledTime : task.scheduledTime) || '09:00';
                       const [th, tm] = time.split(':').map(Number);
                       const dur      = (ghost && ghost._resize && ghost.type === 'goal' && ghost.id === task.id) ? (ghost.duration || task.duration || 60) : (task.duration || 60);
                       const dispTime = (ghost && ghost._resize && ghost.type === 'goal' && ghost.id === task.id && ghost.time) ? ghost.time : time;
                       const [dth, dtm] = dispTime.split(':').map(Number);
                       const top      = (dth + dtm / 60 - START_HOUR) * pxPerHour;
                       const height   = Math.max(22, (dur / 60) * pxPerHour);
-                      const done     = task.taskType === 'routine' ? (task.schedDone || false) : isComplete(task, goals);
+                      const done     = task.taskType === 'routine' ? !!(task.routineDates?.[ds]?.done) : isComplete(task, goals);
                       const isLeaf   = isCountableLeaf(task);
                       const dragged  = ghost && ghost.type === 'goal' && ghost.taskId === task.id;
                       const isSelected = selectedForResize && selectedForResize.id === task.id;
@@ -4954,7 +4984,7 @@
                               <input
                                 type="checkbox"
                                 checked={done}
-                                onChange={() => setGoals(prev => task.taskType === 'routine' ? toggleRoutineSched(prev, task.id) : toggleLeaf(prev, task.id))}
+                                onChange={() => setGoals(prev => task.taskType === 'routine' ? toggleRoutineSchedForDate(prev, task.id, ds) : toggleLeaf(prev, task.id))}
                                 onClick={e => e.stopPropagation()}
                                 onMouseDown={e => e.stopPropagation()}
                                 className={`flex-shrink-0 cursor-pointer ${task.taskType === 'routine' ? 'accent-amber-500' : 'accent-emerald-400'}`}
@@ -5010,7 +5040,7 @@
                           )}
                           <button
                             className={`absolute top-0.5 right-0.5 text-[10px] ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none px-0.5`}
-                            onClick={e => { e.stopPropagation(); if (window.confirm('Remove from schedule?')) unschedule(task.id); }}
+                            onClick={e => { e.stopPropagation(); if (window.confirm('Remove from schedule?')) { task.taskType === 'routine' ? setGoals(prev => unscheduleRoutineDate(prev, task.id, ds)) : unschedule(task.id); } }}
                             onMouseDown={e => e.stopPropagation()}
                           >×</button>
                           {isSelected && (
