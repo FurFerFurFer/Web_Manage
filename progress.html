@@ -1034,7 +1034,7 @@
     function MindMapsBadge({ mm, sirDoneMap }) {
       const sirDone = mm.ksStage === 'sir' ? ((sirDoneMap || {})[mm.id] || 0) : 0;
       const stageLabel =
-        mm.ksStage === 'sir'       ? `SIR ${sirDone}/5`
+        mm.ksStage === 'sir'       ? (sirDone >= 5 ? 'FIN' : `SIR T${sirDone+1}`)
         : mm.ksStage === 'finished' ? 'FIN'
         : mm.ksStage               ? `S${mm.ksStage}`
         : null;
@@ -1114,7 +1114,7 @@
                     </React.Fragment>
                   );
                 })}
-                <span className="text-[9px] text-gray-600 ml-1">{sirDone}/5</span>
+                <span className="text-[9px] text-gray-600 ml-1">{sirDone >= 5 ? 'FIN' : `T${sirDone+1}`}</span>
               </div>
             )}
           </div>
@@ -1392,12 +1392,12 @@
                 <option value="2">S2</option>
                 <option value="3">S3</option>
                 <option value="4">S4</option>
-                <option value="sir">SIR (entered)</option>
-                <option value="sir1">SIR-1 (D1 done)</option>
-                <option value="sir2">SIR-2 (D3 done)</option>
-                <option value="sir3">SIR-3 (D7 done)</option>
-                <option value="sir4">SIR-4 (D14 done)</option>
-                <option value="sir5">SIR-5 (D30 done)</option>
+                <option value="sir">SIR T1 (entered)</option>
+                <option value="sir1">SIR T2 (D1 done)</option>
+                <option value="sir2">SIR T3 (D3 done)</option>
+                <option value="sir3">SIR T4 (D7 done)</option>
+                <option value="sir4">SIR T5 (D14 done)</option>
+                <option value="sir5">FIN (D30 done)</option>
               </select>
               {String(mm.type) === '2' && (
                 <div className="flex items-center gap-0.5">
@@ -3967,12 +3967,15 @@
       const HOURS       = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 
       const STAGE_COLORS_SCHED = {1:'#7c3aed',2:'#2563eb',3:'#0891b2',4:'#0d9488',sir:'#059669',sir1:'#059669',sir2:'#059669',sir3:'#059669',sir4:'#059669',sir5:'#059669',finished:'#4b5563'};
-      const stageLabel = s => s==='finished'?'FIN':s==='sir'?'SIR':s==='sir1'?'SIR-1':s==='sir2'?'SIR-2':s==='sir3'?'SIR-3':s==='sir4'?'SIR-4':s==='sir5'?'SIR-5':s?`S${s}`:null;
+      const stageLabel = s => s==='finished'?'FIN':s==='sir'?'SIR T1':s==='sir1'?'SIR T2':s==='sir2'?'SIR T3':s==='sir3'?'SIR T4':s==='sir4'?'SIR T5':s==='sir5'?'FIN':s?`S${s}`:null;
+      const sirStageLabel = (mm) => { if (mm.ksStage==='sir') { const d=(sirDoneMap[mm.id]||0); return d>=5?'FIN':`SIR T${d+1}`; } return stageLabel(mm.ksStage); };
 
       const ultimateMMs = useMemo(() => {
         const ids = new Set(goals.flatMap(g => g.toLearn || []));
         return (mms || []).filter(m => ids.has(m.id));
       }, [goals, mms]);
+
+      const sirDoneMap = useMemo(() => buildSirDoneMap(sessions), [sessions]);
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -4786,8 +4789,10 @@
                       const visibleMMs = (mms || []).filter(m =>
                         !search.trim() || m.name.toLowerCase().includes(search.toLowerCase())
                       );
-                      const dueMMs   = visibleMMs.filter(m => dueMMIds.has(m.id));
-                      const otherMMs = visibleMMs.filter(m => !dueMMIds.has(m.id));
+                      const _mmSortW = { '4':6, '3':7, '2':8, '1':9, finished:11 };
+                      const _mmW = mm => { if (mm.ksStage==='sir') { const d=sirDoneMap[mm.id]||0; return d>=5?1:d>=4?2:d>=3?3:d>=2?4:5; } return mm.ksStage==null?10:(_mmSortW[mm.ksStage]??10); };
+                      const dueMMs   = visibleMMs.filter(m => dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
+                      const otherMMs = visibleMMs.filter(m => !dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
                       return (
                         <>
                           <div className="fixed inset-0 z-20" onClick={() => { setMmPickerDay(null); setSearch(''); }} />
@@ -4803,7 +4808,7 @@
                                 <>
                                   <div className="px-3 py-1 text-[9px] text-emerald-600 tracking-widest border-b border-gray-800/50">SIR DUE TODAY</div>
                                   {dueMMs.map(mm => {
-                                    const stg = stageLabel(mm.ksStage);
+                                    const stg = sirStageLabel(mm);
                                     return (
                                       <button key={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
                                         className="w-full text-left px-3 py-1.5 text-xs hover:bg-emerald-950/40 flex items-center gap-2 transition-colors">
@@ -4819,7 +4824,7 @@
                                 <div className="border-t border-gray-800/50 my-0.5" />
                               )}
                               {otherMMs.map(mm => {
-                                const stg = stageLabel(mm.ksStage);
+                                const stg = sirStageLabel(mm);
                                 return (
                                   <button key={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
                                     className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors">
@@ -5344,7 +5349,7 @@
                       const dragged = ghost && ghost.type === 'mmEntry' && ghost.entryId === entry.id;
                       const isSelected = selectedForResize && selectedForResize.id === entry.id;
                       const col = mm.color || '#6366f1';
-                      const stg = stageLabel(mm.ksStage);
+                      const stg = sirStageLabel(mm);
                       const stgCol = mm.ksStage ? STAGE_COLORS_SCHED[mm.ksStage] : col;
                       const commentOpen = timelineMode === 'day' && openComments.has(entry.id);
                       if (top < -height || top >= TOTAL_H) return null;
