@@ -2206,6 +2206,9 @@
               {label:`Postpone T${currentRep.repIndex+1} session`,change:{type:"sirPostpone",oldValue:currentRep.date,newValue:null,sessionId:currentRep.id,repIndex:currentRep.repIndex}},
             );
           }
+          mySessions.filter(s=>s.done||s.skipped).forEach(s=>{
+            opts.push({label:`Revert → SIR T${s.repIndex+1}`,change:{type:"sirRevert",oldValue:"sir",newValue:"sir",repIndex:s.repIndex}});
+          });
           opts.push({label:"Revert → S4",change:{type:"stageRevert",oldValue:"sir",newValue:"4"}});
           opts.push({label:"Revert → S3",change:{type:"stageRevert",oldValue:"sir",newValue:"3"}});
           opts.push({label:"Revert → S2",change:{type:"stageRevert",oldValue:"sir",newValue:"2"}});
@@ -2213,7 +2216,11 @@
           return opts;
         }
         if(curStage==="finished") return [
-          {label:"Revert → SIR",change:{type:"stageRevert",oldValue:"finished",newValue:"sir"}},
+          {label:"Revert → SIR T1",change:{type:"sirRevert",oldValue:"finished",newValue:"sir",repIndex:0}},
+          {label:"Revert → SIR T2",change:{type:"sirRevert",oldValue:"finished",newValue:"sir",repIndex:1}},
+          {label:"Revert → SIR T3",change:{type:"sirRevert",oldValue:"finished",newValue:"sir",repIndex:2}},
+          {label:"Revert → SIR T4",change:{type:"sirRevert",oldValue:"finished",newValue:"sir",repIndex:3}},
+          {label:"Revert → SIR T5",change:{type:"sirRevert",oldValue:"finished",newValue:"sir",repIndex:4}},
           {label:"Revert → S4",change:{type:"stageRevert",oldValue:"finished",newValue:"4"}},
           {label:"Revert → S3",change:{type:"stageRevert",oldValue:"finished",newValue:"3"}},
           {label:"Revert → S2",change:{type:"stageRevert",oldValue:"finished",newValue:"2"}},
@@ -2274,7 +2281,7 @@
                 <div className="space-y-1">
                   {stageOptions().map((opt,i)=>(
                     <button key={i} onClick={()=>pickChange(opt.change)}
-                      className={`w-full text-left px-3 py-2 rounded text-xs font-medium ${opt.change.type==="stageRevert"||opt.change.type==="stageClear"?"bg-red-950 hover:bg-red-900 text-red-300 border border-red-900":"bg-gray-800 hover:bg-gray-700 text-gray-200"}`}>
+                      className={`w-full text-left px-3 py-2 rounded text-xs font-medium ${opt.change.type==="stageRevert"||opt.change.type==="stageClear"||opt.change.type==="sirRevert"?"bg-red-950 hover:bg-red-900 text-red-300 border border-red-900":"bg-gray-800 hover:bg-gray-700 text-gray-200"}`}>
                       {opt.label}
                     </button>
                   ))}
@@ -2809,6 +2816,22 @@
             if(["sir","finished"].includes(change.oldValue)&&!["sir","finished"].includes(newStage))
               setSessions(p=>p.filter(s=>s.mmId!==mmId));
             setMms(p=>p.map(m=>m.id===mmId?{...m,ksStage:newStage}:m));
+          } else if(t==="sirRevert"){
+            const ri=change.repIndex;
+            setMms(p=>p.map(m=>m.id===mmId?{...m,ksStage:"sir"}:m));
+            const existing=sessions.filter(s=>s.mmId===mmId);
+            if(existing.length===5){
+              setSessions(p=>p.map(s=>{
+                if(s.mmId!==mmId) return s;
+                if(s.repIndex<ri) return {...s,done:true,skipped:false};
+                return {...s,done:false,skipped:false,date:addDays(today(),SIR_INTERVALS[s.repIndex])};
+              }));
+            } else {
+              setSessions(p=>[...p.filter(s=>s.mmId!==mmId),...SIR_INTERVALS.map((iv,i)=>({
+                id:nid(),mmId,date:addDays(today(),iv),repIndex:i,
+                done:i<ri,skipped:false
+              }))]);
+            }
           } else if(t==="sirDone"){
             const sid=change.sessionId;
             const finishDate=today();
