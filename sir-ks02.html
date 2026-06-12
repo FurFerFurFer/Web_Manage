@@ -3465,14 +3465,23 @@
                   if (updated.mmId!==k.mmId){
                     const hasNewMG=updated.mmId&&mmMap[updated.mmId]?.type==="2"&&mgValue;
                     const targetMM=hasNewMG?mmMap[updated.mmId]:null;
+                    const affectedMmIds=new Set(mgChanges.filter(c=>c.kolbId===k.id&&c.mmId).map(c=>c.mmId));
+                    if (k.mmId) affectedMmIds.add(k.mmId);
                     setMgChanges(p=>{
-                      const moved=p.map(c=>c.kolbId===k.id&&c.mmId===k.mmId?{...c,mmId:updated.mmId}:c);
+                      const moved=p.map(c=>c.kolbId===k.id?{...c,mmId:updated.mmId}:c);
                       return hasNewMG?[...moved,{id:nid(),mmId:updated.mmId,kolbId:k.id,oldMG:targetMM.currentMG||"(none)",newMG:mgValue,experiment:updated.experiments||"",date:k.date}]:moved;
                     });
                     if (hasNewMG) setMms(p=>p.map(m=>m.id===updated.mmId?{...m,currentMG:mgValue}:m));
-                    if (k.mmId){
-                      const remaining=mgChanges.filter(c=>c.mmId===k.mmId&&c.kolbId!==k.id).sort((a,b)=>b.date.localeCompare(a.date));
-                      setMms(p=>p.map(m=>m.id===k.mmId?{...m,currentMG:remaining.length?remaining[0].newMG:""}:m));
+                    if (affectedMmIds.size){
+                      setMms(p=>p.map(m=>{
+                        if (!affectedMmIds.has(m.id)) return m;
+                        const remaining=mgChanges.filter(c=>c.mmId===m.id&&c.kolbId!==k.id).sort((a,b)=>b.date.localeCompare(a.date));
+                        if (m.id===k.mmId){
+                          const remKolbs=kolbs.filter(kb=>kb.mmId===k.mmId&&kb.id!==k.id).sort((a,b)=>b.date.localeCompare(a.date));
+                          return {...m,currentMG:remaining.length?remaining[0].newMG:"",rating:remKolbs.length&&remKolbs[0].level?Number(remKolbs[0].level):null};
+                        }
+                        return {...m,currentMG:remaining.length?remaining[0].newMG:""};
+                      }));
                     }
                   } else if (updated.mmId&&mmMap[updated.mmId]?.type==="2"&&mgValue&&updated.mmId===k.mmId){
                     setMgChanges(p=>p.map(c=>c.kolbId===k.id?{...c,newMG:mgValue,experiment:updated.experiments||""}:c));
