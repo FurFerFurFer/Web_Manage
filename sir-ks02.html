@@ -1001,7 +1001,16 @@
               <div><label className="text-xs text-gray-400 block mb-1">What experience to reflect on?</label>
                 <textarea value={form.experience} onChange={e=>f(e.target.value,"experience")} rows={3} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-xs resize-none"/></div>
               <div><label className="text-xs text-gray-400 block mb-1">What level are you on?</label>
-                <div className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-400 text-xs select-none">{form.level||'-'}</div></div>
+                <div className="flex gap-1 flex-wrap">
+                  {[1,2,3,4,5,6,7,8,9,10].map(n=>(
+                    <button key={n} onClick={()=>f(String(n)===form.level?"":String(n),"level")}
+                      className={`w-7 h-7 rounded text-xs font-bold transition ${String(n)===form.level?"bg-indigo-500 text-white":"bg-gray-800 text-gray-500 hover:bg-gray-700"}`}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                {form.level&&<div className="mt-1 text-[10px] text-indigo-300">{form.level}/10</div>}
+              </div>
               <div><label className="text-xs text-gray-400 block mb-1">What would an MG look like?</label>
                 <textarea value={form.mgLookLike} onChange={e=>f(e.target.value,"mgLookLike")} rows={2} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-xs resize-none"/></div>
             </div>)}
@@ -1336,7 +1345,7 @@
                 <div className="text-emerald-200 text-sm">{mm.currentMG||"No MG yet"}</div>
               </div>
               <div className="mb-4">
-                <div className="text-xs text-gray-500 mb-2 tracking-widest">MG RATING</div>
+                <div className="text-xs text-gray-500 mb-2 tracking-widest">MG RATING — CHOOSE MYSELF</div>
                 <div className="flex gap-1 flex-wrap">
                   {[1,2,3,4,5,6,7,8,9,10].map(n=>(
                     <button key={n} onClick={()=>onSetRating&&onSetRating(mm.id,mm.rating===n?null:n)}
@@ -1381,7 +1390,10 @@
               {mmKolbs.map(k=>(
                 <div key={k.id} className="bg-gray-900 border border-gray-800 rounded p-3 mb-2">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-indigo-300 font-bold">Kolb</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-indigo-300 font-bold">Kolb</span>
+                      {k.level&&<span className="text-[10px] font-bold bg-indigo-900 text-indigo-300 px-1.5 py-0.5 rounded">LV {k.level}</span>}
+                    </div>
                     <span className="text-xs text-gray-500">{k.date}</span>
                   </div>
                   {[["Experience",k.experience],["MG Look Like",k.mgLookLike],["Sequence",k.sequence],["Feelings",k.feelings],["Difficult/Well",k.difficultWell],["Challenges",k.challenges],["Triggers",k.triggers],["Why Acted",k.whyActed],["Habits",k.habits],["Other Parts",k.otherParts]].map(([l,v])=>v?(
@@ -1847,8 +1859,6 @@
       const STEP2=[["sequence","Sequence of events:",4],["feelings","How did you feel?",2],["difficultWell","Difficult vs went well?",2],["challenges","Response to challenges?",2],["triggers","Triggers?",2],["whyActed","Why did you act that way?",2]];
       const STEP3=[["habits","Habits/beliefs/tendencies?",3],["otherParts","Similar patterns elsewhere?",2]];
       const currentMM=mm;
-      const linkedMMForLevel=allT2.find(m=>m.id===form.mmId);
-      const displayLevel=linkedMMForLevel?.rating!=null?String(linkedMMForLevel.rating):'-';
 
       return (
         <div className="p-4 max-w-2xl mx-auto overflow-y-auto max-h-screen-nav">
@@ -1896,7 +1906,16 @@
             <div className="mb-2"><label className="text-xs text-gray-400 block mb-1">What experience to reflect on?</label>
               <textarea value={form.experience||""} onChange={e=>f(e.target.value,"experience")} rows={3} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-xs resize-none"/></div>
             <div className="mb-2"><label className="text-xs text-gray-400 block mb-1">What level are you on?</label>
-              <div className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-400 text-xs select-none">{displayLevel}</div></div>
+              <div className="flex gap-1 flex-wrap">
+                {[1,2,3,4,5,6,7,8,9,10].map(n=>(
+                  <button key={n} onClick={()=>f(String(n)===form.level?"":String(n),"level")}
+                    className={`w-7 h-7 rounded text-xs font-bold transition ${String(n)===form.level?"bg-indigo-500 text-white":"bg-gray-800 text-gray-500 hover:bg-gray-700"}`}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+              {form.level&&<div className="mt-1 text-[10px] text-indigo-300">{form.level}/10</div>}
+            </div>
             <div className="mb-2"><label className="text-xs text-gray-400 block mb-1">What would an MG look like?</label>
               <textarea value={form.mgLookLike||""} onChange={e=>f(e.target.value,"mgLookLike")} rows={2} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-xs resize-none"/></div>
           </div>
@@ -1928,12 +1947,11 @@
               <label className="text-xs text-emerald-300 font-bold block mb-1">4.2 MG ADD</label>
               <textarea value={form.mgAdd||""} onChange={e=>f(e.target.value,"mgAdd")} rows={3}
                 className="w-full bg-gray-800 border border-emerald-700 rounded px-3 py-2 text-white text-xs resize-none" placeholder="The actual marginal gain..."/>
-              {displayLevel!=='-'&&<div className="mt-2 px-3 py-2 bg-gray-900 border border-emerald-800 rounded text-xs text-emerald-400 pointer-events-none select-none">{displayLevel}x</div>}
             </div>
           </div>
 
           <div className="fixed bottom-0 left-0 right-0 p-4 bg-gray-950 border-t border-gray-800">
-            <button onClick={()=>onSave({...form,level:displayLevel!=='-'?displayLevel:''})} className="w-full max-w-2xl mx-auto block bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold">SAVE CHANGES</button>
+            <button onClick={()=>onSave({...form})} className="w-full max-w-2xl mx-auto block bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold">SAVE CHANGES</button>
           </div>
         </div>
       );
@@ -2944,9 +2962,12 @@
         const kid=nid();
         const mgValue=(form.mgAdd||form.experiments||"").trim();
         setKolbs(p=>[...p,{id:kid,mmId:mmId||null,...form,date:today()}]);
-        if (mmId){const mm=mmMap[mmId];if (mm&&mm.type==="2"&&mgValue){
-          setMgChanges(p=>[...p,{id:nid(),mmId,kolbId:kid,oldMG:mm.currentMG||"(none)",newMG:mgValue,experiment:form.experiments||"",date:today()}]);
-          setMms(p=>p.map(m=>m.id===mmId?{...m,currentMG:mgValue}:m));
+        if (mmId){const mm=mmMap[mmId];if (mm&&mm.type==="2"){
+          if (mgValue){
+            setMgChanges(p=>[...p,{id:nid(),mmId,kolbId:kid,oldMG:mm.currentMG||"(none)",newMG:mgValue,experiment:form.experiments||"",date:today()}]);
+            setMms(p=>p.map(m=>m.id===mmId?{...m,currentMG:mgValue}:m));
+          }
+          if (form.level){setMms(p=>p.map(m=>m.id===mmId?{...m,rating:Number(form.level)}:m));}
         }}
         setKolbModal(null);
       }
@@ -3393,6 +3414,9 @@
                     const mmChanges=mgChanges.filter(c=>c.mmId===updated.mmId).sort((a,b)=>b.date.localeCompare(a.date));
                     if (!mmChanges.length||mmChanges[0].kolbId===k.id)
                       setMms(p=>p.map(m=>m.id===updated.mmId?{...m,currentMG:mgValue}:m));
+                  }
+                  if (updated.mmId&&mmMap[updated.mmId]?.type==="2"&&updated.level){
+                    setMms(p=>p.map(m=>m.id===updated.mmId?{...m,rating:Number(updated.level)}:m));
                   }
                   setSelectedKolbId(k.id);
                 }}
