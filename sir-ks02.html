@@ -1011,8 +1011,20 @@
                 </div>
                 {form.level&&<div className="mt-1 text-[10px] text-indigo-300">{form.level}/10</div>}
               </div>
-              <div><label className="text-xs text-gray-400 block mb-1">What would an MG look like?</label>
-                <textarea value={form.mgLookLike} onChange={e=>f(e.target.value,"mgLookLike")} rows={2} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-xs resize-none"/></div>
+              {form.level&&levelTemplates&&(<div className="space-y-2">
+                <div className="bg-gray-900 border border-indigo-800 rounded px-3 py-2">
+                  <div className="text-[10px] text-gray-500 mb-1">NAME</div>
+                  <div className="text-xs text-white">{levelTemplates[form.level]?.name||<span className="text-gray-600 italic">—</span>}</div>
+                </div>
+                <div className="bg-gray-900 border border-gray-700 rounded px-3 py-2">
+                  <div className="text-[10px] text-gray-500 mb-1">EXPLANATION</div>
+                  <div className="text-xs text-gray-300">{levelTemplates[form.level]?.explanation||<span className="text-gray-600 italic">—</span>}</div>
+                </div>
+                <div className="bg-gray-900 border border-emerald-900 rounded px-3 py-2">
+                  <div className="text-[10px] text-gray-500 mb-1">PRE-WRITTEN MG ADD</div>
+                  <div className="text-xs text-emerald-400">{levelTemplates[form.level]?.mgTemplate||<span className="text-gray-600 italic">—</span>}</div>
+                </div>
+              </div>)}
             </div>)}
             {step===2&&(<div className="space-y-3">
               <div className="text-xs font-bold text-gray-300">STEP 2 — REFLECTION</div>
@@ -1852,7 +1864,7 @@
       );
     }
 
-    function KolbEditView({kolb,mm,hasMG,filteredT2,allT2,kolbLinkSearch,setKolbLinkSearch,mmColor,onBack,onSave}) {
+    function KolbEditView({kolb,mm,hasMG,filteredT2,allT2,kolbLinkSearch,setKolbLinkSearch,mmColor,levelTemplates,onBack,onSave}) {
       const [form,setForm]=useState({...kolb});
       const [dirty,setDirty]=useState(false);
       const f=(v,k)=>{setForm(p=>({...p,[k]:v}));setDirty(true);}
@@ -1916,8 +1928,20 @@
               </div>
               {form.level&&<div className="mt-1 text-[10px] text-indigo-300">{form.level}/10</div>}
             </div>
-            <div className="mb-2"><label className="text-xs text-gray-400 block mb-1">What would an MG look like?</label>
-              <textarea value={form.mgLookLike||""} onChange={e=>f(e.target.value,"mgLookLike")} rows={2} className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-xs resize-none"/></div>
+            {form.level&&levelTemplates&&(<div className="mb-2 space-y-2">
+              <div className="bg-gray-900 border border-indigo-800 rounded px-3 py-2">
+                <div className="text-[10px] text-gray-500 mb-1">NAME</div>
+                <div className="text-xs text-white">{levelTemplates[form.level]?.name||<span className="text-gray-600 italic">—</span>}</div>
+              </div>
+              <div className="bg-gray-900 border border-gray-700 rounded px-3 py-2">
+                <div className="text-[10px] text-gray-500 mb-1">EXPLANATION</div>
+                <div className="text-xs text-gray-300">{levelTemplates[form.level]?.explanation||<span className="text-gray-600 italic">—</span>}</div>
+              </div>
+              <div className="bg-gray-900 border border-emerald-900 rounded px-3 py-2">
+                <div className="text-[10px] text-gray-500 mb-1">PRE-WRITTEN MG ADD</div>
+                <div className="text-xs text-emerald-400">{levelTemplates[form.level]?.mgTemplate||<span className="text-gray-600 italic">—</span>}</div>
+              </div>
+            </div>)}
           </div>
 
           <div className="mb-4">
@@ -3400,7 +3424,7 @@
               <KolbEditView
                 kolb={k} mm={mm} hasMG={hasMG} filteredT2={filteredT2} allT2={type2mms}
                 kolbLinkSearch={kolbLinkSearch} setKolbLinkSearch={setKolbLinkSearch}
-                mmColor={mmColor}
+                mmColor={mmColor} levelTemplates={levelTemplates}
                 onBack={()=>setSelectedKolbId(null)}
                 onSave={(updated)=>{
                   const mgValue=(updated.mgAdd||updated.experiments||"").trim();
