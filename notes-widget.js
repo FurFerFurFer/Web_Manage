@@ -93,6 +93,8 @@
 
   function renderList() {
     var notes = loadNotes();
+    body.style.overflow = '';
+    body.style.padding  = '';
     headerTitle.innerHTML = '';
     var titleSpan = document.createElement('span');
     titleSpan.id = 'nw-header-title';
