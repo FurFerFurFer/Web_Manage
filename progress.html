@@ -4405,6 +4405,7 @@
       }
 
       function startDrag(e, task) {
+        if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
         const rect = e.currentTarget.getBoundingClientRect();
@@ -4418,6 +4419,7 @@
       }
 
       function startDragEntry(e, entry) {
+        if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
         const rect = e.currentTarget.getBoundingClientRect();
@@ -4431,6 +4433,7 @@
       }
 
       function startDragMMEntry(e, entry) {
+        if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
         const rect = e.currentTarget.getBoundingClientRect();
