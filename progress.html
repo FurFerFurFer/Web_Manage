@@ -4404,15 +4404,17 @@
         return info;
       }
 
-      function startDrag(e, task) {
+      function startDrag(e, task, dateStr) {
         if (e.button !== 0) return;
         e.preventDefault();
         e.stopPropagation();
         const rect = e.currentTarget.getBoundingClientRect();
         dragRef.current = { type: 'goal', taskId: task.id, offsetY: e.clientY - rect.top };
+        const date = task.taskType === 'routine' ? dateStr : task.scheduledDate;
+        const time = (task.taskType === 'routine' ? task.routineDates?.[dateStr]?.time : task.scheduledTime) || '09:00';
         const g = {
           type: 'goal', taskId: task.id,
-          date: task.scheduledDate, time: task.scheduledTime || '09:00', duration: task.duration || 60,
+          date, time, duration: task.duration || 60,
         };
         ghostRef.current = g;
         setGhost(g);
@@ -5013,7 +5015,7 @@
                             ? 'bg-emerald-900/90 border-2 border-emerald-500'
                             : 'text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
                           } ${isSelected ? 'ring-2 ring-white/60' : ''}`}
-                          onMouseDown={e => startDrag(e, task)}
+                          onMouseDown={e => startDrag(e, task, ds)}
                           onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(task.id); }}
