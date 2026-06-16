@@ -256,6 +256,11 @@
     btn.title = 'Notes';
     btn.innerHTML = '✎';
     btn.onclick = function () { state.view = 'list'; render(); };
+    btn.addEventListener('touchend', function(e) {
+      e.stopPropagation();
+      state.view = 'list';
+      render();
+    });
     document.body.appendChild(btn);
 
     panel = document.createElement('div');

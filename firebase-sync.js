@@ -108,6 +108,10 @@
     ].join(';');
     el.textContent = '↻ Updated from another device — tap to reload';
     el.onclick = () => location.reload();
+    el.addEventListener('touchend', function(e) {
+      e.stopPropagation();
+      location.reload();
+    });
     document.body.appendChild(el);
   }
 
