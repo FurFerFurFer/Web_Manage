@@ -4067,6 +4067,7 @@
       const touchRef        = useRef(null); // { type, item, offsetY, startX, startY, moved }
       const longPressTimerRef = useRef(null);
       const mouseDownRef      = useRef(null); // { type, id, startX, startY } — desktop click-to-arm
+      const lastTouchTimeRef  = useRef(0);    // timestamp of last touchend — blocks iOS synthetic mouse events
 
       useEffect(() => { ghostRef.current = ghost; }, [ghost]);
 
@@ -4270,6 +4271,7 @@
 
         function onTouchEnd() {
           if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+          lastTouchTimeRef.current = Date.now();
           const tr = touchRef.current;
           touchRef.current = null;
           if (!tr) {
@@ -4456,6 +4458,7 @@
 
       function startDrag(e, task, dateStr) {
         if (e.button !== 0) return;
+        if (Date.now() - lastTouchTimeRef.current < 500) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === task.id;
         if (!isArmed) {
@@ -4474,6 +4477,7 @@
 
       function startDragEntry(e, entry) {
         if (e.button !== 0) return;
+        if (Date.now() - lastTouchTimeRef.current < 500) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === entry.id;
         if (!isArmed) {
@@ -4490,6 +4494,7 @@
 
       function startDragMMEntry(e, entry) {
         if (e.button !== 0) return;
+        if (Date.now() - lastTouchTimeRef.current < 500) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === entry.id;
         if (!isArmed) {
