@@ -4240,12 +4240,13 @@
           if (!touchRef.current) return;
           const dx = Math.abs(t.clientX - touchRef.current.startX);
           const dy = Math.abs(t.clientY - touchRef.current.startY);
-          if (!touchRef.current.moved && (dx > 8 || dy > 8)) {
+          if (!touchRef.current.moved && (dx > 15 || dy > 15)) {
             if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+            touchRef.current.moved = true;                              // always mark moved
             const { type, item, offsetY } = touchRef.current;
             const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === item.id;
             if (isArmed) {
-              touchRef.current.moved = true;
+              touchRef.current.dragging = true;                         // only when armed
               if (type === 'goal') {
                 dragRef.current = { type: 'goal', taskId: item.id, offsetY };
                 const g = { type:'goal', taskId:item.id, date:item.scheduledDate, time:item.scheduledTime||'09:00', duration:item.duration||60 };
@@ -4261,7 +4262,7 @@
               }
             }
           }
-          if (touchRef.current.moved) {
+          if (touchRef.current.dragging) {                              // gate on dragging, not moved
             e.preventDefault();
             handlePointerMove(t.clientX, t.clientY);
           }
@@ -4269,8 +4270,15 @@
 
         function onTouchEnd() {
           if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-          if (touchRef.current && !touchRef.current.moved) {
-            const { type, item } = touchRef.current;
+          const tr = touchRef.current;
+          touchRef.current = null;
+          if (!tr) {
+            // Long press timer already fired and cleared touchRef — nothing to do
+            return;
+          }
+          if (!tr.moved) {
+            // Clean tap: arm / disarm
+            const { type, item } = tr;
             if (selectedForResizeRef.current && selectedForResizeRef.current.id === item.id) {
               setSelectedForResize(null);
             } else if (selectedForDragRef.current && selectedForDragRef.current.id === item.id) {
@@ -4280,10 +4288,13 @@
               setSelectedForResize(null);
             }
             dragRef.current = null; ghostRef.current = null; setGhost(null);
-          } else {
+          } else if (tr.dragging) {
+            // Drag ghost was created: commit it
             handlePointerUp();
+          } else {
+            // Moved past threshold but not armed (scroll or long-press drift): clean up silently
+            dragRef.current = null; ghostRef.current = null; setGhost(null);
           }
-          touchRef.current = null;
         }
 
         document.addEventListener('mousemove', onMouseMove);
@@ -5062,7 +5073,7 @@
                             : 'text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
                           } ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
                           onMouseDown={e => startDrag(e, task, ds)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'goal', id: task.id }); }, 600); }}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false, dragging:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'goal', id: task.id }); }, 600); }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(task.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'goal', id: task.id }); }}
@@ -5262,7 +5273,7 @@
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
                           } ${entry.done ? 'opacity-50' : ''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
                           onMouseDown={e => startDragEntry(e, entry)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'entry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'entry', id: entry.id }); }, 600); }}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'entry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false, dragging:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'entry', id: entry.id }); }, 600); }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(entry.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'entry', id: entry.id }); }}
@@ -5464,7 +5475,7 @@
                             backgroundColor: inCurrentMilestone ? '#22d3ee14' : col+'14', borderColor: entry.done ? col+'40' : inCurrentMilestone ? '#22d3ee99' : col+'99' }}
                           className={`rounded px-1.5 py-0.5 overflow-hidden group border ${dragged?'opacity-20 cursor-grabbing':'cursor-grab'} ${entry.done?'opacity-50':''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : inCurrentMilestone ? 'ring-1 ring-cyan-400/60' : ''}`}
                           onMouseDown={e => startDragMMEntry(e, entry)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'mmEntry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'mmEntry', id: entry.id }); }, 600); }}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'mmEntry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false, dragging:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'mmEntry', id: entry.id }); }, 600); }}
                           onClick={e=>e.stopPropagation()}
                           onDoubleClick={e=>{e.stopPropagation();handleDblClickBlock(entry.id);}}
                           onContextMenu={e=>{e.preventDefault();e.stopPropagation();setSelectedForResize({type:'mmEntry',id:entry.id});}}>
