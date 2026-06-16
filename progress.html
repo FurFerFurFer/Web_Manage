@@ -4011,8 +4011,7 @@
       const [ghost, setGhost]     = useState(null);
       const [nowY, setNowY]       = useState(null);
       const [selectedForResize, setSelectedForResize] = useState(null);
-      const [selectedForDrag,   setSelectedForDrag]   = useState(null);
-      const [pxPerHour, setPxPerHour] = useState(() => { const w = window.innerWidth; return w >= 768 && w < 1024 ? 80 : 64; });
+      const [pxPerHour, setPxPerHour] = useState(64);
       const pxPerHourRef = useRef(64);
       pxPerHourRef.current = pxPerHour;
 
@@ -4020,7 +4019,7 @@
       const [calDate,   setCalDate]   = useState({ year: new Date().getFullYear(), month: new Date().getMonth() });
       const [selDay,    setSelDay]    = useState(null);
 
-      const [timelineMode,  setTimelineMode]  = useState(() => window.innerWidth < 640 ? 'day' : 'week'); // 'week' | 'day'
+      const [timelineMode,  setTimelineMode]  = useState('week'); // 'week' | 'day'
       const [dayFocusDate,  setDayFocusDate]  = useState(new Date(today));
       const [openComments,     setOpenComments]     = useState(new Set());
       const [openMMComments,   setOpenMMComments]   = useState(new Set());
@@ -4031,10 +4030,6 @@
       const [sourcePickerMode, setSourcePickerMode] = useState({});
       const [viewingSource,    setViewingSource]    = useState(null);
       const [overlapFronts,    setOverlapFronts]    = useState({});
-
-      const [screenW, setScreenW] = useState(() => window.innerWidth);
-      const isMobile = screenW < 640;
-      const isTablet = screenW >= 640 && screenW < 1024;
 
       const [priorityMatrix, setPriorityMatrix] = useState(() => {
         try { return JSON.parse(localStorage.getItem('trackPriorityMatrix') || '{}'); } catch { return {}; }
@@ -4054,7 +4049,6 @@
       };
 
       const TOTAL_H = (END_HOUR - START_HOUR) * pxPerHour;
-      const timeColW = isMobile ? 40 : TIME_COL_W;
 
       const containerRef    = useRef(null);
       const headerRef       = useRef(null);
@@ -4064,26 +4058,9 @@
       const daysRef         = useRef(null);
       const searchRef       = useRef(null);
       const shiftScrollRef  = useRef(0);
-      const touchRef           = useRef(null); // { type, item, offsetY, startX, startY, moved }
-      const swipeRef           = useRef(null); // { startX, startY } for empty-space swipe navigation
-      const pinchRef           = useRef(null); // { startDist, startPxPerHour } for two-finger zoom
-      const selectedForDragRef   = useRef(null);
-      const selectedForResizeRef = useRef(null);
+      const touchRef        = useRef(null); // { type, item, offsetY, startX, startY, moved }
 
       useEffect(() => { ghostRef.current = ghost; }, [ghost]);
-
-      useEffect(() => {
-        const fn = () => setScreenW(window.innerWidth);
-        window.addEventListener('resize', fn);
-        return () => window.removeEventListener('resize', fn);
-      }, []);
-
-      useEffect(() => {
-        if (isMobile && timelineMode === 'week') setTimelineMode('day');
-      }, [isMobile]);
-
-      useEffect(() => { selectedForDragRef.current   = selectedForDrag;   }, [selectedForDrag]);
-      useEffect(() => { selectedForResizeRef.current = selectedForResize; }, [selectedForResize]);
 
       function getWeekStart(d) {
         const date = new Date(d);
@@ -4180,8 +4157,8 @@
           // X → day column (account for horizontal scroll + sticky time col)
           const currDays = daysRef.current;
           if (!currDays) return;
-          const relX   = clientX - rect.left + el.scrollLeft - timeColW;
-          const colW   = (el.scrollWidth - timeColW) / currDays.length;
+          const relX   = clientX - rect.left + el.scrollLeft - TIME_COL_W;
+          const colW   = (el.scrollWidth - TIME_COL_W) / currDays.length;
           const dayIdx = Math.max(0, Math.min(currDays.length - 1, Math.floor(relX / colW)));
           const newDate = toDateStr(currDays[dayIdx]);
 
@@ -4227,19 +4204,6 @@
         function onMouseUp()    { handlePointerUp(); }
 
         function onTouchMove(e) {
-          // Pinch-to-zoom: two fingers, not actively dragging a block or resizing
-          if (e.touches.length === 2 && pinchRef.current && !dragRef.current && !resizeRef.current) {
-            e.preventDefault();
-            const dist = Math.hypot(
-              e.touches[1].clientX - e.touches[0].clientX,
-              e.touches[1].clientY - e.touches[0].clientY
-            );
-            const scale = dist / pinchRef.current.startDist;
-            const newPPH = Math.max(32, Math.min(256, Math.round(pinchRef.current.startPxPerHour * scale / 8) * 8));
-            setPxPerHour(newPPH);
-            pxPerHourRef.current = newPPH;
-            return;
-          }
           const t = e.touches[0];
           if (resizeRef.current) {
             e.preventDefault();
@@ -4250,23 +4214,20 @@
           const dx = Math.abs(t.clientX - touchRef.current.startX);
           const dy = Math.abs(t.clientY - touchRef.current.startY);
           if (!touchRef.current.moved && (dx > 8 || dy > 8)) {
-            clearTimeout(touchRef.current.longPressTimer);
             touchRef.current.moved = true;
             const { type, item, offsetY } = touchRef.current;
-            if (selectedForDragRef.current && selectedForDragRef.current.id === item.id) {
-              if (type === 'goal') {
-                dragRef.current = { type: 'goal', taskId: item.id, offsetY };
-                const g = { type:'goal', taskId:item.id, date:item.scheduledDate, time:item.scheduledTime||'09:00', duration:item.duration||60 };
-                ghostRef.current = g; setGhost(g);
-              } else if (type === 'entry') {
-                dragRef.current = { type: 'entry', entryId: item.id, offsetY };
-                const g = { type:'entry', entryId:item.id, date:item.date, time:item.time||'09:00', duration:item.duration||60 };
-                ghostRef.current = g; setGhost(g);
-              } else if (type === 'mmEntry') {
-                dragRef.current = { type: 'mmEntry', entryId: item.id, offsetY };
-                const g = { type:'mmEntry', entryId:item.id, date:item.date, time:item.time||'09:00', duration:item.duration||60 };
-                ghostRef.current = g; setGhost(g);
-              }
+            if (type === 'goal') {
+              dragRef.current = { type: 'goal', taskId: item.id, offsetY };
+              const g = { type:'goal', taskId:item.id, date:item.scheduledDate, time:item.scheduledTime||'09:00', duration:item.duration||60 };
+              ghostRef.current = g; setGhost(g);
+            } else if (type === 'entry') {
+              dragRef.current = { type: 'entry', entryId: item.id, offsetY };
+              const g = { type:'entry', entryId:item.id, date:item.date, time:item.time||'09:00', duration:item.duration||60 };
+              ghostRef.current = g; setGhost(g);
+            } else if (type === 'mmEntry') {
+              dragRef.current = { type: 'mmEntry', entryId: item.id, offsetY };
+              const g = { type:'mmEntry', entryId:item.id, date:item.date, time:item.time||'09:00', duration:item.duration||60 };
+              ghostRef.current = g; setGhost(g);
             }
           }
           if (touchRef.current.moved) {
@@ -4275,45 +4236,15 @@
           }
         }
 
-        function onTouchEnd(e) {
-          pinchRef.current = null;
-          if (touchRef.current) {
-            clearTimeout(touchRef.current.longPressTimer);
-            if (!touchRef.current.moved && !touchRef.current.longPressActivated) {
-              const { type, item } = touchRef.current;
-              if (selectedForResizeRef.current && selectedForResizeRef.current.id === item.id) {
-                setSelectedForResize(null);
-              } else if (selectedForDragRef.current && selectedForDragRef.current.id === item.id) {
-                setSelectedForDrag(null);
-              } else {
-                setSelectedForDrag({ type, id: item.id });
-                setSelectedForResize(null);
-              }
-              dragRef.current = null; ghostRef.current = null; setGhost(null);
-            } else if (touchRef.current.moved) {
-              handlePointerUp();
-              setSelectedForDrag(null);
-            }
-          } else if (!resizeRef.current && swipeRef.current && e.changedTouches.length > 0) {
-            const endX = e.changedTouches[0].clientX;
-            const endY = e.changedTouches[0].clientY;
-            const sdx = endX - swipeRef.current.startX;
-            const sdy = endY - swipeRef.current.startY;
-            if (Math.abs(sdx) > 60 && Math.abs(sdx) > Math.abs(sdy) * 1.5) {
-              if (sdx < 0) {
-                setDayFocusDate(d => { const n = new Date(d); n.setDate(n.getDate()+1); return n; });
-                setAnchor(d => { const n = new Date(d); n.setDate(n.getDate()+7); return n; });
-              } else {
-                setDayFocusDate(d => { const n = new Date(d); n.setDate(n.getDate()-1); return n; });
-                setAnchor(d => { const n = new Date(d); n.setDate(n.getDate()-7); return n; });
-              }
-            }
+        function onTouchEnd() {
+          if (touchRef.current && !touchRef.current.moved) {
+            const { type, item } = touchRef.current;
+            setSelectedForResize(prev => prev && prev.id === item.id ? null : { type, id: item.id });
+            dragRef.current = null; ghostRef.current = null; setGhost(null);
           } else {
             handlePointerUp();
-            setSelectedForDrag(null);
           }
           touchRef.current = null;
-          swipeRef.current = null;
         }
 
         document.addEventListener('mousemove', onMouseMove);
@@ -4635,41 +4566,37 @@
         <div className="flex flex-col h-full">
 
           {/* Nav bar */}
-          <div className="flex-shrink-0 flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 border-b border-gray-800">
+          <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-800">
             {schedView === 'timeline' && <>
               {timelineMode === 'week' ? <>
                 <button onClick={() => { const d = new Date(anchor); d.setDate(d.getDate()-1); setAnchor(d); }}
-                  className="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400 min-w-[36px]">&#8249;</button>
+                  className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400">&#8249;</button>
                 <button onClick={() => { const d = new Date(anchor); d.setDate(d.getDate()+1); setAnchor(d); }}
-                  className="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400 min-w-[36px]">&#8250;</button>
+                  className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400">&#8250;</button>
                 <button onClick={() => setAnchor(new Date(today))}
                   className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-500">today</button>
-                <span className="text-xs text-gray-500 flex-1 min-w-0 truncate">{weekLabel}</span>
+                <span className="text-xs text-gray-500 flex-1">{weekLabel}</span>
               </> : <>
                 <button onClick={() => { const d = new Date(dayFocusDate); d.setDate(d.getDate()-1); setDayFocusDate(d); }}
-                  className="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400 min-w-[36px]">&#8249;</button>
+                  className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400">&#8249;</button>
                 <button onClick={() => { const d = new Date(dayFocusDate); d.setDate(d.getDate()+1); setDayFocusDate(d); }}
-                  className="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400 min-w-[36px]">&#8250;</button>
+                  className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400">&#8250;</button>
                 <button onClick={() => setDayFocusDate(new Date(today))}
                   className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-500">today</button>
-                <span className="text-xs text-gray-500 flex-1 min-w-0 truncate">
-                  {isMobile
-                    ? dayFocusDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                    : dayFocusDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                <span className="text-xs text-gray-500 flex-1">
+                  {dayFocusDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
                 </span>
               </>}
-              {!isMobile && (
-                <div className="flex gap-0.5 border border-gray-700 rounded overflow-hidden mr-1">
-                  {[['week','WEEK'],['day','DAY']].map(([m,l])=>(
-                    <button key={m} onClick={()=>setTimelineMode(m)}
-                      className={`text-xs px-2 py-1 font-bold transition ${timelineMode===m?'bg-gray-700 text-white':'text-gray-600 hover:text-gray-300'}`}>{l}</button>
-                  ))}
-                </div>
-              )}
+              <div className="flex gap-0.5 border border-gray-700 rounded overflow-hidden mr-1">
+                {[['week','WEEK'],['day','DAY']].map(([m,l])=>(
+                  <button key={m} onClick={()=>setTimelineMode(m)}
+                    className={`text-xs px-2 py-1 font-bold transition ${timelineMode===m?'bg-gray-700 text-white':'text-gray-600 hover:text-gray-300'}`}>{l}</button>
+                ))}
+              </div>
             </>}
             {schedView === 'calendar' && <span className="flex-1" />}
             <div className="flex gap-1 ml-auto">
-              {[['timeline', isMobile ? 'TL' : 'TIMELINE'],['calendar', isMobile ? 'CAL' : 'CALENDAR']].map(([v,l])=>(
+              {[['timeline','TIMELINE'],['calendar','CALENDAR']].map(([v,l])=>(
                 <button key={v} onClick={()=>setSchedView(v)}
                   className={`text-xs px-2 py-1 rounded font-bold transition ${schedView===v?'bg-white text-gray-950':'text-gray-500 hover:text-white'}`}>{l}</button>
               ))}
@@ -4681,19 +4608,8 @@
             <div className="flex flex-1 overflow-hidden">
               <div ref={containerRef}
                 className="overflow-auto relative select-none"
-                style={{ width: timelineMode === 'day' && !isMobile ? '65%' : '100%', flex: timelineMode === 'week' ? '1 1 0%' : undefined }}
-                onClick={() => setSelectedForResize(null)}
-                onTouchStart={e => {
-                  if (e.touches.length === 2 && !dragRef.current) {
-                    pinchRef.current = {
-                      startDist: Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY),
-                      startPxPerHour: pxPerHourRef.current
-                    };
-                    swipeRef.current = null;
-                  } else if (e.touches.length === 1) {
-                    swipeRef.current = { startX: e.touches[0].clientX, startY: e.touches[0].clientY };
-                  }
-                }}>
+                style={{ width: timelineMode === 'day' ? '65%' : '100%', flex: timelineMode === 'week' ? '1 1 0%' : undefined }}
+                onClick={() => setSelectedForResize(null)}>
 
             {/* Day header — sticky to top of scroll container */}
             <div ref={headerRef}
@@ -4701,16 +4617,16 @@
               style={{ minWidth: timelineMode === 'week' ? TOTAL_W + 'px' : undefined, backgroundColor: '#080d18' }}>
 
               {/* Time col spacer — sticky left */}
-              <div style={{ width: timeColW + 'px', position: 'sticky', left: 0, zIndex: 30, backgroundColor: '#080d18' }}
+              <div style={{ width: TIME_COL_W + 'px', position: 'sticky', left: 0, zIndex: 30, backgroundColor: '#080d18' }}
                 className="flex-shrink-0 border-r border-gray-800/50 flex flex-col items-center justify-end gap-0.5 pb-1">
                 {timelineMode === 'day' && (
                   <>
                     <button onClick={() => setPxPerHour(p => Math.min(256, p + 16))}
-                      className={`${isMobile ? 'w-8 h-8 text-sm' : 'w-5 h-5 text-xs'} bg-gray-800 hover:bg-gray-700 rounded text-gray-400 flex items-center justify-center leading-none`}>+</button>
-                    <button onClick={() => setPxPerHour(isMobile ? 80 : 64)}
-                      className={`${isMobile ? 'w-8 h-8 text-[10px]' : 'w-5 h-5 text-[9px]'} rounded flex items-center justify-center leading-none transition ${(isMobile ? pxPerHour === 80 : pxPerHour === 64) ? 'bg-gray-700 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400'}`}>D</button>
+                      className="w-5 h-5 text-xs bg-gray-800 hover:bg-gray-700 rounded text-gray-400 flex items-center justify-center leading-none">+</button>
+                    <button onClick={() => setPxPerHour(64)}
+                      className={`w-5 h-5 text-[9px] rounded flex items-center justify-center leading-none transition ${pxPerHour === 64 ? 'bg-gray-700 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-400'}`}>D</button>
                     <button onClick={() => setPxPerHour(p => Math.max(32, p - 16))}
-                      className={`${isMobile ? 'w-8 h-8 text-sm' : 'w-5 h-5 text-xs'} bg-gray-800 hover:bg-gray-700 rounded text-gray-400 flex items-center justify-center leading-none`}>−</button>
+                      className="w-5 h-5 text-xs bg-gray-800 hover:bg-gray-700 rounded text-gray-400 flex items-center justify-center leading-none">−</button>
                   </>
                 )}
               </div>
@@ -4734,13 +4650,13 @@
                     <div className="mt-1 flex gap-1">
                       <button
                         onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); }}
-                        className="w-7 h-7 flex items-center justify-center text-sm text-gray-700 hover:text-indigo-400 transition-colors rounded hover:bg-gray-800/60">+</button>
+                        className="text-[10px] text-gray-700 hover:text-indigo-400 transition-colors">+</button>
                       <button
                         onClick={() => { setMmPickerDay(mmPickerDay === ds ? null : ds); setPickerDay(null); setMgPickerDay(null); setSearch(''); }}
-                        className="w-7 h-7 flex items-center justify-center text-sm text-gray-700 hover:text-emerald-400 transition-colors rounded hover:bg-gray-800/60">◎</button>
+                        className="text-[10px] text-gray-700 hover:text-emerald-400 transition-colors">◎</button>
                       {!isPast && <button
                         onClick={() => { setMgPickerDay(mgPickerDay === ds ? null : ds); setPickerDay(null); setMmPickerDay(null); setSearch(''); }}
-                        className="w-7 h-7 flex items-center justify-center text-sm text-gray-700 hover:text-emerald-400 transition-colors rounded hover:bg-gray-800/60">⊕</button>}
+                        className="text-[10px] text-gray-700 hover:text-emerald-400 transition-colors">⊕</button>}
                     </div>
 
                     {/* MG list — top of day */}
@@ -4977,7 +4893,7 @@
             <div className="flex" style={{ height: TOTAL_H + 'px', minWidth: timelineMode === 'week' ? TOTAL_W + 'px' : undefined }}>
 
               {/* Time axis — sticky left */}
-              <div style={{ width: timeColW + 'px', position: 'sticky', left: 0, zIndex: 10, backgroundColor: '#080d18' }}
+              <div style={{ width: TIME_COL_W + 'px', position: 'sticky', left: 0, zIndex: 10, backgroundColor: '#080d18' }}
                 className="flex-shrink-0 relative border-r border-gray-800/50">
                 {HOURS.map(h => (
                   <div key={h} style={{ top: (h - START_HOUR) * pxPerHour - 8 + 'px' }}
@@ -5086,8 +5002,7 @@
                       const done     = task.taskType === 'routine' ? !!(task.routineDates?.[ds]?.done) : isComplete(task, goals);
                       const isLeaf   = isCountableLeaf(task);
                       const dragged  = ghost && ghost.type === 'goal' && ghost.taskId === task.id;
-                      const isSelected    = selectedForResize && selectedForResize.id === task.id;
-                      const isDragSelected = selectedForDrag   && selectedForDrag.id   === task.id;
+                      const isSelected = selectedForResize && selectedForResize.id === task.id;
                       const commentOpen = timelineMode === 'day' && openComments.has(task.id);
                       if (top < -height || top >= TOTAL_H) return null;
                       return (
@@ -5099,15 +5014,15 @@
                           } ${done
                             ? 'bg-emerald-900/90 border-2 border-emerald-500'
                             : 'text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
-                          } ${isSelected ? 'ring-2 ring-white/60' : isDragSelected ? 'ring-2 ring-amber-400/80' : ''}`}
+                          } ${isSelected ? 'ring-2 ring-white/60' : ''}`}
                           onMouseDown={e => startDrag(e, task, ds)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false, longPressActivated:false }; touchRef.current.longPressTimer = setTimeout(() => { if (touchRef.current && !touchRef.current.moved) { touchRef.current.longPressActivated = true; setSelectedForResize({ type:'goal', id:task.id }); setSelectedForDrag(null); } }, 500); }}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(task.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'goal', id: task.id }); }}
                         >
                           {isSelected && (
-                            <div className="absolute top-0 left-0 right-0 h-5 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
+                            <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
                               onMouseDown={e => startResize(e, task, 'top', 'goal')}
                               onTouchStart={e => startResize(e, task, 'top', 'goal')} />
                           )}
@@ -5176,7 +5091,7 @@
                             onMouseDown={e => e.stopPropagation()}
                           >×</button>
                           {isSelected && (
-                            <div className="absolute bottom-0 left-0 right-0 h-5 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
+                            <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
                               onMouseDown={e => startResize(e, task, 'bottom', 'goal')}
                               onTouchStart={e => startResize(e, task, 'bottom', 'goal')} />
                           )}
@@ -5284,8 +5199,7 @@
                       const top      = (dth + dtm / 60 - START_HOUR) * pxPerHour;
                       const height   = Math.max(22, (dur / 60) * pxPerHour);
                       const dragged  = ghost && ghost.type === 'entry' && ghost.entryId === entry.id;
-                      const isSelected    = selectedForResize && selectedForResize.id === entry.id;
-                      const isDragSelected = selectedForDrag   && selectedForDrag.id   === entry.id;
+                      const isSelected = selectedForResize && selectedForResize.id === entry.id;
                       const commentOpen = timelineMode === 'day' && openComments.has(entry.id);
                       if (top < -height || top >= TOTAL_H) return null;
                       return (
@@ -5299,15 +5213,15 @@
                           }}
                           className={`rounded px-1.5 py-0.5 overflow-hidden group border ${
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
-                          } ${entry.done ? 'opacity-50' : ''} ${isSelected ? 'ring-2 ring-white/60' : isDragSelected ? 'ring-2 ring-amber-400/80' : ''}`}
+                          } ${entry.done ? 'opacity-50' : ''} ${isSelected ? 'ring-2 ring-white/60' : ''}`}
                           onMouseDown={e => startDragEntry(e, entry)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'entry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false, longPressActivated:false }; touchRef.current.longPressTimer = setTimeout(() => { if (touchRef.current && !touchRef.current.moved) { touchRef.current.longPressActivated = true; setSelectedForResize({ type:'entry', id:entry.id }); setSelectedForDrag(null); } }, 500); }}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'entry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(entry.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'entry', id: entry.id }); }}
                         >
                           {isSelected && (
-                            <div className="absolute top-0 left-0 right-0 h-5 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
+                            <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
                               onMouseDown={e => startResize(e, entry, 'top', 'entry')}
                               onTouchStart={e => startResize(e, entry, 'top', 'entry')} />
                           )}
@@ -5362,7 +5276,7 @@
                             onMouseDown={e => e.stopPropagation()}
                           >×</button>
                           {isSelected && (
-                            <div className="absolute bottom-0 left-0 right-0 h-5 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
+                            <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
                               onMouseDown={e => startResize(e, entry, 'bottom', 'entry')}
                               onTouchStart={e => startResize(e, entry, 'bottom', 'entry')} />
                           )}
@@ -5475,8 +5389,7 @@
                       const top = (dth + dtm / 60 - START_HOUR) * pxPerHour;
                       const height = Math.max(22, (dur / 60) * pxPerHour);
                       const dragged = ghost && ghost.type === 'mmEntry' && ghost.entryId === entry.id;
-                      const isSelected    = selectedForResize && selectedForResize.id === entry.id;
-                      const isDragSelected = selectedForDrag   && selectedForDrag.id   === entry.id;
+                      const isSelected = selectedForResize && selectedForResize.id === entry.id;
                       const col = mm.color || '#6366f1';
                       const stg = sirStageLabel(mm);
                       const stgCol = mm.ksStage ? STAGE_COLORS_SCHED[mm.ksStage] : col;
@@ -5501,14 +5414,14 @@
                         <div
                           style={{ top: top+'px', height: height+'px', left:'3px', right:'3px', position:'absolute', zIndex: getBlockZIndex(entry.id),
                             backgroundColor: inCurrentMilestone ? '#22d3ee14' : col+'14', borderColor: entry.done ? col+'40' : inCurrentMilestone ? '#22d3ee99' : col+'99' }}
-                          className={`rounded px-1.5 py-0.5 overflow-hidden group border ${dragged?'opacity-20 cursor-grabbing':'cursor-grab'} ${entry.done?'opacity-50':''} ${isSelected ? 'ring-2 ring-white/60' : isDragSelected ? 'ring-2 ring-amber-400/80' : inCurrentMilestone ? 'ring-1 ring-cyan-400/60' : ''}`}
+                          className={`rounded px-1.5 py-0.5 overflow-hidden group border ${dragged?'opacity-20 cursor-grabbing':'cursor-grab'} ${entry.done?'opacity-50':''} ${isSelected ? 'ring-2 ring-white/60' : inCurrentMilestone ? 'ring-1 ring-cyan-400/60' : ''}`}
                           onMouseDown={e => startDragMMEntry(e, entry)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'mmEntry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false, longPressActivated:false }; touchRef.current.longPressTimer = setTimeout(() => { if (touchRef.current && !touchRef.current.moved) { touchRef.current.longPressActivated = true; setSelectedForResize({ type:'mmEntry', id:entry.id }); setSelectedForDrag(null); } }, 500); }}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'mmEntry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; }}
                           onClick={e=>e.stopPropagation()}
                           onDoubleClick={e=>{e.stopPropagation();handleDblClickBlock(entry.id);}}
                           onContextMenu={e=>{e.preventDefault();e.stopPropagation();setSelectedForResize({type:'mmEntry',id:entry.id});}}>
                           {isSelected && (
-                            <div className="absolute top-0 left-0 right-0 h-5 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
+                            <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
                               onMouseDown={e=>startResize(e,entry,'top','mmEntry')}
                               onTouchStart={e=>startResize(e,entry,'top','mmEntry')} />
                           )}
@@ -5597,7 +5510,7 @@
                             onClick={e=>{e.stopPropagation();if(window.confirm('Remove this MM session?'))setMmEntries(prev=>prev.filter(e=>e.id!==entry.id));}}
                             onMouseDown={e=>e.stopPropagation()}>×</button>
                           {isSelected && (
-                            <div className="absolute bottom-0 left-0 right-0 h-5 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
+                            <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
                               onMouseDown={e=>startResize(e,entry,'bottom','mmEntry')}
                               onTouchStart={e=>startResize(e,entry,'bottom','mmEntry')} />
                           )}
@@ -5915,8 +5828,8 @@
             </div>
               </div>
 
-              {/* Eisenhower Matrix Panel — day mode only, hidden on mobile */}
-              {timelineMode === 'day' && !isMobile && (
+              {/* Eisenhower Matrix Panel — day mode only */}
+              {timelineMode === 'day' && (
                 <div className="flex-shrink-0 border-l border-gray-800 flex flex-col overflow-hidden" style={{ width: '35%' }}>
                   <div className="flex-shrink-0 px-3 py-2 border-b border-gray-800">
                     <span className="text-xs font-bold text-gray-400 tracking-widest uppercase">Task Priority</span>
