@@ -4067,6 +4067,7 @@
       const touchRef        = useRef(null); // { type, item, offsetY, startX, startY, moved }
       const longPressTimerRef = useRef(null);
       const mouseDownRef      = useRef(null); // { type, id, startX, startY } — desktop click-to-arm
+      const suppressMouseRef  = useRef(false); // suppress synthetic mouse events after touch
 
       useEffect(() => { ghostRef.current = ghost; }, [ghost]);
 
@@ -4217,7 +4218,7 @@
           handlePointerMove(e.clientX, e.clientY);
         }
         function onMouseUp() {
-          if (mouseDownRef.current) {
+          if (mouseDownRef.current && !suppressMouseRef.current) {
             const { type, id } = mouseDownRef.current;
             if (selectedForDragRef.current && selectedForDragRef.current.id === id) {
               setSelectedForDrag(null);
@@ -4225,8 +4226,8 @@
               setSelectedForDrag({ type, id });
               setSelectedForResize(null);
             }
-            mouseDownRef.current = null;
           }
+          mouseDownRef.current = null;
           handlePointerUp();
         }
 
@@ -4284,6 +4285,8 @@
             handlePointerUp();
           }
           touchRef.current = null;
+          suppressMouseRef.current = true;
+          setTimeout(() => { suppressMouseRef.current = false; }, 500);
         }
 
         document.addEventListener('mousemove', onMouseMove);
@@ -4444,6 +4447,7 @@
       }
 
       function startDrag(e, task, dateStr) {
+        if (suppressMouseRef.current) return;
         if (e.button !== 0) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === task.id;
@@ -4462,6 +4466,7 @@
       }
 
       function startDragEntry(e, entry) {
+        if (suppressMouseRef.current) return;
         if (e.button !== 0) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === entry.id;
@@ -4478,6 +4483,7 @@
       }
 
       function startDragMMEntry(e, entry) {
+        if (suppressMouseRef.current) return;
         if (e.button !== 0) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === entry.id;
