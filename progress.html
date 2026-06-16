@@ -4247,11 +4247,11 @@
           const dx = Math.abs(t.clientX - touchRef.current.startX);
           const dy = Math.abs(t.clientY - touchRef.current.startY);
           if (!touchRef.current.moved && (dx > 8 || dy > 8)) {
+            touchRef.current.moved = true;
             if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
             const { type, item, offsetY } = touchRef.current;
             const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === item.id;
             if (isArmed) {
-              touchRef.current.moved = true;
               if (type === 'goal') {
                 dragRef.current = { type: 'goal', taskId: item.id, offsetY };
                 const g = { type:'goal', taskId:item.id, date:item.scheduledDate, time:item.scheduledTime||'09:00', duration:item.duration||60 };
@@ -4267,7 +4267,7 @@
               }
             }
           }
-          if (touchRef.current.moved) {
+          if (dragRef.current) {
             e.preventDefault();
             handlePointerMove(t.clientX, t.clientY);
           }
