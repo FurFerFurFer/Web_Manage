@@ -4067,7 +4067,6 @@
       const touchRef        = useRef(null); // { type, item, offsetY, startX, startY, moved }
       const longPressTimerRef = useRef(null);
       const mouseDownRef      = useRef(null); // { type, id, startX, startY } — desktop click-to-arm
-      const lastTouchTimeRef  = useRef(0);    // suppress iOS synthetic mouse events after touchend
 
       useEffect(() => { ghostRef.current = ghost; }, [ghost]);
 
@@ -4218,11 +4217,6 @@
           handlePointerMove(e.clientX, e.clientY);
         }
         function onMouseUp() {
-          if (Date.now() - lastTouchTimeRef.current < 500) {
-            mouseDownRef.current = null;
-            handlePointerUp();
-            return;
-          }
           if (mouseDownRef.current) {
             const { type, id } = mouseDownRef.current;
             if (selectedForDragRef.current && selectedForDragRef.current.id === id) {
@@ -4247,11 +4241,11 @@
           const dx = Math.abs(t.clientX - touchRef.current.startX);
           const dy = Math.abs(t.clientY - touchRef.current.startY);
           if (!touchRef.current.moved && (dx > 8 || dy > 8)) {
-            touchRef.current.moved = true;
             if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
             const { type, item, offsetY } = touchRef.current;
             const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === item.id;
             if (isArmed) {
+              touchRef.current.moved = true;
               if (type === 'goal') {
                 dragRef.current = { type: 'goal', taskId: item.id, offsetY };
                 const g = { type:'goal', taskId:item.id, date:item.scheduledDate, time:item.scheduledTime||'09:00', duration:item.duration||60 };
@@ -4267,14 +4261,13 @@
               }
             }
           }
-          if (dragRef.current) {
+          if (touchRef.current.moved) {
             e.preventDefault();
             handlePointerMove(t.clientX, t.clientY);
           }
         }
 
         function onTouchEnd() {
-          lastTouchTimeRef.current = Date.now();
           if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
           if (touchRef.current && !touchRef.current.moved) {
             const { type, item } = touchRef.current;
@@ -4452,7 +4445,6 @@
 
       function startDrag(e, task, dateStr) {
         if (e.button !== 0) return;
-        if (Date.now() - lastTouchTimeRef.current < 500) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === task.id;
         if (!isArmed) {
@@ -4471,7 +4463,6 @@
 
       function startDragEntry(e, entry) {
         if (e.button !== 0) return;
-        if (Date.now() - lastTouchTimeRef.current < 500) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === entry.id;
         if (!isArmed) {
@@ -4488,7 +4479,6 @@
 
       function startDragMMEntry(e, entry) {
         if (e.button !== 0) return;
-        if (Date.now() - lastTouchTimeRef.current < 500) return;
         e.stopPropagation();
         const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === entry.id;
         if (!isArmed) {

@@ -73,18 +73,9 @@
   function hideOverlay() {
     const el = document.getElementById('fb-overlay');
     if (!el) return;
-    const start = Date.now();
-    function doHide() {
-      const root = document.getElementById('root');
-      if ((root && root.children.length > 0) || Date.now() - start > 10000) {
-        el.style.transition = 'opacity .25s';
-        el.style.opacity = '0';
-        setTimeout(() => { if (el.parentNode) el.remove(); }, 270);
-      } else {
-        requestAnimationFrame(doHide);
-      }
-    }
-    requestAnimationFrame(doHide);
+    el.style.transition = 'opacity .25s';
+    el.style.opacity = '0';
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 270);
   }
 
   function showSignInButton(hint) {
