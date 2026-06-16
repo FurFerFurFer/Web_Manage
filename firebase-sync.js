@@ -60,8 +60,10 @@
         const ts = Date.now();
         _origSet.call(localStorage, DB_TS_KEY, String(ts));
         _lastWrittenToFirestore = value;
+        console.log('[Track sync] pushing write to Firestore, length:', value?.length);
         db.collection('users').doc(_uid)
           .set({ data: value, ts })
+          .then(() => console.log('[Track sync] write confirmed by server'))
           .catch(e => console.warn('[Track sync] write error', e));
       }, 700);
     }
@@ -118,12 +120,24 @@
     db.collection('users').doc(_uid).onSnapshot(snap => {
       if (!snap.exists || snap.metadata.hasPendingWrites) return;
       const remote = snap.data()?.data;
-      if (!remote || remote === lastSeen) return;
+      if (!remote) { console.log('[Track sync] skip: no remote data'); return; }
+      if (remote === lastSeen) { console.log('[Track sync] skip: matches lastSeen'); return; }
+      if (remote === _lastWrittenToFirestore) {
+        console.log('[Track sync] skip: own write confirmation');
+        lastSeen = remote;
+        return;
+      }
+      if (remote === localStorage.getItem(DB_KEY)) {
+        console.log('[Track sync] skip: local already has this value');
+        lastSeen = remote;
+        return;
+      }
       lastSeen = remote;
-      if (remote === _lastWrittenToFirestore) return; // confirmation of our own write — skip
-      if (remote === localStorage.getItem(DB_KEY)) return;
+      console.log('[Track sync] REMOTE CHANGE DETECTED — showing banner');
       _origSet.call(localStorage, DB_KEY, remote);
       showSyncBanner();
+    }, error => {
+      console.error('[Track sync] listener error — sync stopped:', error.code, error.message);
     });
   }
 
