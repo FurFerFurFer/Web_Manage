@@ -73,9 +73,18 @@
   function hideOverlay() {
     const el = document.getElementById('fb-overlay');
     if (!el) return;
-    el.style.transition = 'opacity .25s';
-    el.style.opacity = '0';
-    setTimeout(() => { if (el.parentNode) el.remove(); }, 270);
+    function doHide() {
+      el.style.transition = 'opacity .25s';
+      el.style.opacity = '0';
+      setTimeout(() => { if (el.parentNode) el.remove(); }, 270);
+    }
+    const root = document.getElementById('root');
+    if (!root || root.children.length > 0) { doHide(); return; }
+    const t = setTimeout(doHide, 5000);
+    const obs = new MutationObserver(() => {
+      if (root.children.length > 0) { clearTimeout(t); obs.disconnect(); doHide(); }
+    });
+    obs.observe(root, { childList: true });
   }
 
   function showSignInButton(hint) {
