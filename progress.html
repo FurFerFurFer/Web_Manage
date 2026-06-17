@@ -4213,20 +4213,17 @@
           if (mouseDownRef.current) {
             const dx = Math.abs(e.clientX - mouseDownRef.current.startX);
             const dy = Math.abs(e.clientY - mouseDownRef.current.startY);
-            if (dx > 8 || dy > 8) mouseDownRef.current = null;
+            if (dx > 8 || dy > 8) {
+              dragRef.current = mouseDownRef.current.dragInfo;
+              const g = mouseDownRef.current.ghostInfo;
+              ghostRef.current = g;
+              setGhost(g);
+              mouseDownRef.current = null;
+            }
           }
           handlePointerMove(e.clientX, e.clientY);
         }
         function onMouseUp() {
-          if (mouseDownRef.current && !suppressMouseRef.current) {
-            const { type, id } = mouseDownRef.current;
-            if (selectedForDragRef.current && selectedForDragRef.current.id === id) {
-              setSelectedForDrag(null);
-            } else {
-              setSelectedForDrag({ type, id });
-              setSelectedForResize(null);
-            }
-          }
           mouseDownRef.current = null;
           handlePointerUp();
         }
@@ -4450,53 +4447,41 @@
         if (suppressMouseRef.current) return;
         if (e.button !== 0) return;
         e.stopPropagation();
-        const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === task.id;
-        if (!isArmed) {
-          mouseDownRef.current = { type: 'goal', id: task.id, startX: e.clientX, startY: e.clientY };
-          return;
-        }
         e.preventDefault();
         const rect = e.currentTarget.getBoundingClientRect();
-        dragRef.current = { type: 'goal', taskId: task.id, offsetY: e.clientY - rect.top };
         const date = task.taskType === 'routine' ? dateStr : task.scheduledDate;
         const time = (task.taskType === 'routine' ? task.routineDates?.[dateStr]?.time : task.scheduledTime) || '09:00';
-        const g = { type: 'goal', taskId: task.id, date, time, duration: task.duration || 60 };
-        ghostRef.current = g;
-        setGhost(g);
+        mouseDownRef.current = {
+          startX: e.clientX, startY: e.clientY,
+          dragInfo: { type: 'goal', taskId: task.id, offsetY: e.clientY - rect.top },
+          ghostInfo: { type: 'goal', taskId: task.id, date, time, duration: task.duration || 60 }
+        };
       }
 
       function startDragEntry(e, entry) {
         if (suppressMouseRef.current) return;
         if (e.button !== 0) return;
         e.stopPropagation();
-        const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === entry.id;
-        if (!isArmed) {
-          mouseDownRef.current = { type: 'entry', id: entry.id, startX: e.clientX, startY: e.clientY };
-          return;
-        }
         e.preventDefault();
         const rect = e.currentTarget.getBoundingClientRect();
-        dragRef.current = { type: 'entry', entryId: entry.id, offsetY: e.clientY - rect.top };
-        const g = { type: 'entry', entryId: entry.id, date: entry.date, time: entry.time || '09:00', duration: entry.duration || 60 };
-        ghostRef.current = g;
-        setGhost(g);
+        mouseDownRef.current = {
+          startX: e.clientX, startY: e.clientY,
+          dragInfo: { type: 'entry', entryId: entry.id, offsetY: e.clientY - rect.top },
+          ghostInfo: { type: 'entry', entryId: entry.id, date: entry.date, time: entry.time || '09:00', duration: entry.duration || 60 }
+        };
       }
 
       function startDragMMEntry(e, entry) {
         if (suppressMouseRef.current) return;
         if (e.button !== 0) return;
         e.stopPropagation();
-        const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === entry.id;
-        if (!isArmed) {
-          mouseDownRef.current = { type: 'mmEntry', id: entry.id, startX: e.clientX, startY: e.clientY };
-          return;
-        }
         e.preventDefault();
         const rect = e.currentTarget.getBoundingClientRect();
-        dragRef.current = { type: 'mmEntry', entryId: entry.id, offsetY: e.clientY - rect.top };
-        const g = { type: 'mmEntry', entryId: entry.id, date: entry.date, time: entry.time || '09:00', duration: entry.duration || 60 };
-        ghostRef.current = g;
-        setGhost(g);
+        mouseDownRef.current = {
+          startX: e.clientX, startY: e.clientY,
+          dragInfo: { type: 'mmEntry', entryId: entry.id, offsetY: e.clientY - rect.top },
+          ghostInfo: { type: 'mmEntry', entryId: entry.id, date: entry.date, time: entry.time || '09:00', duration: entry.duration || 60 }
+        };
       }
 
       function startResize(e, item, edge, type) {
