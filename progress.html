@@ -4068,6 +4068,7 @@
       const longPressTimerRef = useRef(null);
       const mouseDownRef      = useRef(null); // { type, id, startX, startY } — desktop click-to-arm
       const suppressMouseRef  = useRef(false); // suppress synthetic mouse events after touch
+      const scrollRafRef      = useRef(null);
 
       useEffect(() => { ghostRef.current = ghost; }, [ghost]);
 
@@ -4128,7 +4129,44 @@
       }, []);
 
       useEffect(() => {
+        const EDGE_ZONE = 80;
+        const MAX_SPEED = 12;
+
+        function stopEdgeScroll() {
+          if (scrollRafRef.current) {
+            cancelAnimationFrame(scrollRafRef.current);
+            scrollRafRef.current = null;
+          }
+        }
+
+        function startEdgeScroll(clientY) {
+          stopEdgeScroll();
+          const el = containerRef.current;
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          const distTop    = clientY - rect.top;
+          const distBottom = rect.bottom - clientY;
+          let speed = 0;
+          if (distTop < EDGE_ZONE && distTop >= 0) {
+            speed = -MAX_SPEED * (1 - distTop / EDGE_ZONE);
+          } else if (distBottom < EDGE_ZONE && distBottom >= 0) {
+            speed = MAX_SPEED * (1 - distBottom / EDGE_ZONE);
+          }
+          if (speed === 0) return;
+          function tick() {
+            if (!containerRef.current) return;
+            containerRef.current.scrollTop += speed;
+            scrollRafRef.current = requestAnimationFrame(tick);
+          }
+          scrollRafRef.current = requestAnimationFrame(tick);
+        }
+
         function handlePointerMove(clientX, clientY) {
+          if (dragRef.current || resizeRef.current) {
+            startEdgeScroll(clientY);
+          } else {
+            stopEdgeScroll();
+          }
           // Handle resize drag
           if (resizeRef.current) {
             const { type, id, edge, startY, startDuration, startTotalMin } = resizeRef.current;
@@ -4180,6 +4218,7 @@
         }
 
         function handlePointerUp() {
+          stopEdgeScroll();
           // Commit resize
           if (resizeRef.current) {
             const { type, id, previewDuration, previewTime } = resizeRef.current;
@@ -4266,6 +4305,7 @@
         }
 
         function onTouchEnd() {
+          stopEdgeScroll();
           if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
           if (touchRef.current && !touchRef.current.moved) {
             const { type, item } = touchRef.current;
@@ -4291,6 +4331,7 @@
         document.addEventListener('touchmove', onTouchMove, { passive: false });
         document.addEventListener('touchend',  onTouchEnd);
         return () => {
+          stopEdgeScroll();
           document.removeEventListener('mousemove', onMouseMove);
           document.removeEventListener('mouseup',   onMouseUp);
           document.removeEventListener('touchmove', onTouchMove);
