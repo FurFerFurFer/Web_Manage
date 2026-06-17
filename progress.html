@@ -522,6 +522,35 @@
       });
     }
 
+    function addDissectChild(goals, parentId, childTitle) {
+      return goals.map(g => {
+        if (g.id === parentId) {
+          const child = {
+            id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
+            title: childTitle,
+            children: [],
+            completed: false,
+            isSubGoal: false,
+            scheduledDate: g.scheduledDate,
+            scheduledTime: g.scheduledTime,
+            duration: g.duration || 60,
+            createdAt: Date.now(),
+          };
+          return { ...g, children: [...(g.children || []), child] };
+        }
+        return { ...g, children: addDissectChild(g.children || [], parentId, childTitle) };
+      });
+    }
+
+    function removeDissectChild(goals, parentId, childId) {
+      return goals.map(g => {
+        if (g.id === parentId) {
+          return { ...g, children: (g.children || []).filter(c => c.id !== childId) };
+        }
+        return { ...g, children: removeDissectChild(g.children || [], parentId, childId) };
+      });
+    }
+
     function updateNote(nodes, id, fields) {
       return nodes.map(n =>
         n.id === id
@@ -4042,6 +4071,8 @@
       });
       const [matrixDragId,   setMatrixDragId]   = useState(null);
       const [matrixDragOver, setMatrixDragOver] = useState(null);
+      const [dissectModal, setDissectModal] = useState(null); // null | { goalId }
+      const [dissectInput, setDissectInput] = useState('');
 
       const sessionsByDate = useMemo(() => {
         const m = {};
@@ -4410,7 +4441,9 @@
         const scheduled = t.taskType === 'routine'
           ? (t.routineDates ? Object.prototype.hasOwnProperty.call(t.routineDates, ds) : t.scheduledDate === ds)
           : t.scheduledDate === ds;
-        return scheduled && !(isMilestoneNode(t) && getLeaves(t, goals).length === 0);
+        if (!scheduled || (isMilestoneNode(t) && getLeaves(t, goals).length === 0)) return false;
+        if (t.children && t.children.length > 0 && t.children.some(c => c.scheduledDate === ds)) return false;
+        return true;
       });
       const entriesForDate = ds => saEntries.filter(e => e.date === ds);
       const mmEntriesForDate = ds => (mmEntries || []).filter(e => e.date === ds);
@@ -5163,6 +5196,12 @@
                               })}
                             </div>
                           )}
+                          <button
+                            className={`absolute top-0.5 text-[10px] ${timelineMode === 'day' ? 'right-8' : 'right-4'} ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-60'} text-indigo-400 hover:text-indigo-200 transition-opacity leading-none px-0.5`}
+                            title="Dissect into sub-tasks"
+                            onClick={e => { e.stopPropagation(); setDissectModal({ goalId: task.id }); setDissectInput(''); }}
+                            onMouseDown={e => e.stopPropagation()}
+                          >✂</button>
                           <button
                             className={`absolute top-0.5 right-0.5 text-[10px] ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none px-0.5`}
                             onClick={e => { e.stopPropagation(); if (window.confirm('Remove from schedule?')) { task.taskType === 'routine' ? setGoals(prev => unscheduleRoutineDate(prev, task.id, ds)) : unschedule(task.id); } }}
@@ -6017,6 +6056,71 @@
             </div>
           )}
 
+        {/* Dissect modal */}
+        {dissectModal && (() => {
+          const parent = flattenAll(goals).find(t => t.id === dissectModal.goalId);
+          if (!parent) return null;
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setDissectModal(null)}>
+              <div className="bg-gray-900 border border-indigo-700/60 rounded-lg shadow-2xl w-80 max-w-full mx-4 overflow-hidden"
+                onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+                  <div>
+                    <div className="text-[9px] text-indigo-500 uppercase tracking-widest font-semibold">Dissect</div>
+                    <div className="text-sm font-semibold text-white truncate">{parent.title}</div>
+                  </div>
+                  <button className="text-gray-500 hover:text-white text-base leading-none px-1" onClick={() => setDissectModal(null)}>×</button>
+                </div>
+                {(parent.children || []).length === 0 && (
+                  <div className="px-4 py-2 text-[11px] text-gray-500 italic">Add sub-tasks below — they'll appear in the schedule instead.</div>
+                )}
+                {(parent.children || []).length > 0 && (
+                  <div className="px-4 py-2 flex flex-col gap-1 max-h-48 overflow-y-auto">
+                    {(parent.children || []).map(child => {
+                      const childDone = isComplete(child, goals);
+                      return (
+                        <div key={child.id} className="flex items-center gap-2 group/child py-0.5">
+                          <span className={`flex-1 text-xs truncate ${childDone ? 'line-through text-emerald-400' : 'text-gray-200'}`}>
+                            {childDone ? '✓ ' : ''}{child.title}
+                          </span>
+                          <button
+                            className="text-[10px] text-gray-600 hover:text-red-400 opacity-0 group-hover/child:opacity-100 transition-opacity leading-none flex-shrink-0"
+                            onClick={() => setGoals(prev => removeDissectChild(prev, parent.id, child.id))}
+                          >×</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="px-4 py-3 border-t border-gray-800 flex gap-2">
+                  <input
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+                    placeholder="Sub-task name…"
+                    value={dissectInput}
+                    onChange={e => setDissectInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && dissectInput.trim()) {
+                        setGoals(prev => addDissectChild(prev, parent.id, dissectInput.trim()));
+                        setDissectInput('');
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded transition-colors disabled:opacity-40"
+                    disabled={!dissectInput.trim()}
+                    onClick={() => {
+                      if (dissectInput.trim()) {
+                        setGoals(prev => addDissectChild(prev, parent.id, dissectInput.trim()));
+                        setDissectInput('');
+                      }
+                    }}
+                  >Add</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         </div>
       );
     }
