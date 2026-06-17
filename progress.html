@@ -2302,7 +2302,7 @@
                         <p className="text-[11px] font-semibold text-indigo-200 leading-tight">{nt.title}</p>
                         {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                         <button
-                          className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                          className="absolute top-0.5 right-0.5 text-sm text-gray-500 hover:text-red-400 leading-none p-1"
                           onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { onRemoveNote(node.id, nt.id); if (editingNoteId === nt.id) { setEditingNoteId(null); setNoteDraftTitle(''); setNoteDraftDetail(''); } } }}>×</button>
                       </div>
                     ))}
@@ -3709,7 +3709,7 @@
                                             <p className="text-[11px] font-semibold text-indigo-200 leading-tight">{nt.title}</p>
                                             {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                             <button
-                                              className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                              className="absolute top-0.5 right-0.5 text-sm text-gray-500 hover:text-red-400 leading-none p-1"
                                               onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setSaActions(prev => removeNoteFromSaAction(prev, sub.id, nt.id)); if (editingNoteIds[sub.id] === nt.id) { setEditingNoteIds(prev => ({ ...prev, [sub.id]: null })); setSaNoteDrafts(prev => ({ ...prev, [sub.id]: { title: '', detail: '' } })); } } }}>×</button>
                                           </div>
                                         ))}
@@ -3807,7 +3807,7 @@
                                       <p className="text-[11px] font-semibold text-indigo-200 leading-tight">{nt.title}</p>
                                       {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                       <button
-                                        className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                        className="absolute top-0.5 right-0.5 text-sm text-gray-500 hover:text-red-400 leading-none p-1"
                                         onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setSaActions(prev => removeNoteFromSaAction(prev, action.id, nt.id)); if (editingNoteIds[action.id] === nt.id) { setEditingNoteIds(prev => ({ ...prev, [action.id]: null })); setSaNoteDrafts(prev => ({ ...prev, [action.id]: { title: '', detail: '' } })); } } }}>×</button>
                                     </div>
                                   ))}
@@ -4757,16 +4757,16 @@
                     }`}>
                       {day.getDate()}
                     </div>
-                    <div className="mt-1 flex gap-1">
+                    <div className="mt-1 flex gap-1.5">
                       <button
                         onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); }}
-                        className="text-[10px] text-gray-700 hover:text-indigo-400 transition-colors">+</button>
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
                       <button
                         onClick={() => { setMmPickerDay(mmPickerDay === ds ? null : ds); setPickerDay(null); setMgPickerDay(null); setSearch(''); }}
-                        className="text-[10px] text-gray-700 hover:text-emerald-400 transition-colors">◎</button>
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">◎</button>
                       {!isPast && <button
                         onClick={() => { setMgPickerDay(mgPickerDay === ds ? null : ds); setPickerDay(null); setMmPickerDay(null); setSearch(''); }}
-                        className="text-[10px] text-gray-700 hover:text-emerald-400 transition-colors">⊕</button>}
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">⊕</button>}
                     </div>
 
                     {/* MG list — top of day */}
@@ -4788,7 +4788,7 @@
                                   <span className="flex-1 text-emerald-300 leading-tight">{getMGTextForDay(mmId, ds, mgChanges) || mm.name}</span>
                                   {!isPast && <button
                                     onClick={() => toggleMGDay(ds, mmId, mgSchedule, setMgSchedule)}
-                                    className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-opacity ml-1 flex-shrink-0"
+                                    className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-opacity ml-1 flex-shrink-0 p-1"
                                   >×</button>}
                                 </li>
                               );
@@ -5162,7 +5162,7 @@
                           </div>
                           {timelineMode === 'day' && (
                             <button
-                              className={`absolute top-0.5 right-4 text-[13px] leading-none px-0.5 py-0.5 rounded transition-colors ${task.notes?.length > 0 ? 'text-indigo-400' : 'text-gray-400 hover:text-indigo-400'}`}
+                              className={`absolute top-0.5 right-4 text-base leading-none p-1 rounded transition-colors ${task.notes?.length > 0 ? 'text-indigo-400' : 'text-gray-400 hover:text-indigo-400'}`}
                               onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; }); setViewingSource(null); }}
                               onMouseDown={e => e.stopPropagation()}
                               title="add note"
@@ -5197,13 +5197,13 @@
                             </div>
                           )}
                           <button
-                            className={`absolute top-0.5 text-[10px] ${timelineMode === 'day' ? 'right-8' : 'right-4'} ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-60'} text-indigo-400 hover:text-indigo-200 transition-opacity leading-none px-0.5`}
+                            className={`absolute top-0.5 text-sm ${timelineMode === 'day' ? 'right-8' : 'right-4'} ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-60'} text-indigo-400 hover:text-indigo-200 transition-opacity leading-none p-1`}
                             title="Dissect into sub-tasks"
                             onClick={e => { e.stopPropagation(); setDissectModal({ goalId: task.id }); setDissectInput(''); }}
                             onMouseDown={e => e.stopPropagation()}
                           >✂</button>
                           <button
-                            className={`absolute top-0.5 right-0.5 text-[10px] ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none px-0.5`}
+                            className={`absolute top-0.5 right-0.5 text-sm ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none p-1`}
                             onClick={e => { e.stopPropagation(); if (window.confirm('Remove from schedule?')) { task.taskType === 'routine' ? setGoals(prev => unscheduleRoutineDate(prev, task.id, ds)) : unschedule(task.id); } }}
                             onMouseDown={e => e.stopPropagation()}
                           >×</button>
@@ -5233,7 +5233,7 @@
                                     <p className="text-[11px] font-semibold text-indigo-200 leading-tight">{nt.title}</p>
                                     {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                     <button
-                                      className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                      className="absolute top-0.5 right-0.5 text-sm text-gray-500 hover:text-red-400 leading-none p-1"
                                       onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setGoals(prev => removeNoteFromTask(prev, task.id, nt.id)); if (timelineEditingNoteIds[task.id] === nt.id) { setTimelineEditingNoteIds(prev => ({ ...prev, [task.id]: null })); setNoteDrafts(prev => ({ ...prev, [task.id]: { title: '', detail: '' } })); } } }}
                                       onMouseDown={e => e.stopPropagation()}
                                     >×</button>
@@ -5389,7 +5389,7 @@
                             </div>
                           )}
                           <button
-                            className={`absolute top-0.5 right-0.5 text-[10px] ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none px-0.5`}
+                            className={`absolute top-0.5 right-0.5 text-sm ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none p-1`}
                             onClick={e => { e.stopPropagation(); if (window.confirm('Remove this entry?')) setSaEntries(prev => prev.filter(e => e.id !== entry.id)); }}
                             onMouseDown={e => e.stopPropagation()}
                           >×</button>
@@ -5421,7 +5421,7 @@
                                       <p className="text-[11px] font-semibold text-yellow-200 leading-tight">{nt.title}</p>
                                       {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                       <button
-                                        className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                        className="absolute top-0.5 right-0.5 text-sm text-gray-500 hover:text-red-400 leading-none p-1"
                                         onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setSaEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; if (nt.id === en.id+'_n0') return {...en, noteTitle: undefined, noteDetail: undefined}; return {...en, notes: (en.notes||[]).filter(n => n.id !== nt.id)}; })); if (timelineEditingNoteIds[entry.id] === nt.id) { setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: null })); setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: '', detail: '' } })); } } }}
                                         onMouseDown={e => e.stopPropagation()}
                                       >×</button>
@@ -5575,12 +5575,12 @@
                                 title="view unticked comments"
                               >comment</button>
                               <button
-                                className={`text-[13px] leading-none px-0.5 py-0.5 rounded transition-colors ${entry.sourcePins?.length > 0 ? 'text-emerald-400' : 'text-gray-400 hover:text-emerald-400'}`}
+                                className={`text-base leading-none p-1 rounded transition-colors ${entry.sourcePins?.length > 0 ? 'text-emerald-400' : 'text-gray-400 hover:text-emerald-400'}`}
                                 onClick={e => { e.stopPropagation(); setOpenSourcePicker(prev => { const n = new Set(prev); n.has(entry.id) ? n.delete(entry.id) : n.add(entry.id); return n; }); setSourcePickerMode(prev => ({...prev, [entry.id]: 'text'})); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setOpenMMComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setViewingNote(null); setViewingSource(null); }}
                                 title="add source"
                               >⊕</button>
                               <button
-                                className={`text-[13px] leading-none px-0.5 py-0.5 rounded transition-colors ${(entry.notes||[]).length > 0 || entry.noteTitle ? 'text-indigo-400' : 'text-gray-400 hover:text-indigo-400'}`}
+                                className={`text-base leading-none p-1 rounded transition-colors ${(entry.notes||[]).length > 0 || entry.noteTitle ? 'text-indigo-400' : 'text-gray-400 hover:text-indigo-400'}`}
                                 onClick={e=>{e.stopPropagation();setOpenComments(prev=>{const n=new Set(prev);n.has(entry.id)?n.delete(entry.id):n.add(entry.id);return n;});setOpenSourcePicker(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setOpenMMComments(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setViewingNote(null);setViewingSource(null);}}
                                 title="add note"
                               >✎</button>
@@ -5625,7 +5625,7 @@
                             </div>
                           )}
                           <button
-                            className={`absolute top-0.5 right-0.5 text-[10px] ${isSelected?'opacity-100':'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none px-0.5`}
+                            className={`absolute top-0.5 right-0.5 text-sm ${isSelected?'opacity-100':'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none p-1`}
                             onClick={e=>{e.stopPropagation();if(window.confirm('Remove this MM session?'))setMmEntries(prev=>prev.filter(e=>e.id!==entry.id));}}
                             onMouseDown={e=>e.stopPropagation()}>×</button>
                           {isSelected && (
@@ -5656,7 +5656,7 @@
                                       <p className="text-[11px] font-semibold leading-tight" style={{ color: col+'dd' }}>{nt.title}</p>
                                       {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
                                       <button
-                                        className="absolute top-0.5 right-0.5 text-[10px] text-gray-500 hover:text-red-400 leading-none px-0.5"
+                                        className="absolute top-0.5 right-0.5 text-sm text-gray-500 hover:text-red-400 leading-none p-1"
                                         onClick={e => { e.stopPropagation(); if (window.confirm('Delete this note?')) { setMmEntries(prev => prev.map(en => { if (en.id !== entry.id) return en; if (nt.id === en.id+'_n0') return {...en, noteTitle: undefined, noteDetail: undefined}; return {...en, notes: (en.notes||[]).filter(n => n.id !== nt.id)}; })); if (timelineEditingNoteIds[entry.id] === nt.id) { setTimelineEditingNoteIds(prev => ({ ...prev, [entry.id]: null })); setNoteDrafts(prev => ({ ...prev, [entry.id]: { title: '', detail: '' } })); } } }}
                                         onMouseDown={e => e.stopPropagation()}
                                       >×</button>
