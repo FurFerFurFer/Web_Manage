@@ -4041,6 +4041,7 @@
       const [nowY, setNowY]       = useState(null);
       const [selectedForResize, setSelectedForResize] = useState(null);
       const [selectedForDrag,   setSelectedForDrag]   = useState(null);
+      const [mouseDownInfo, setMouseDownInfo] = useState(null);
       const [pxPerHour, setPxPerHour] = useState(64);
       const pxPerHourRef = useRef(64);
       pxPerHourRef.current = pxPerHour;
@@ -4289,12 +4290,14 @@
               ghostRef.current = g;
               setGhost(g);
               mouseDownRef.current = null;
+              setMouseDownInfo(null);
             }
           }
           handlePointerMove(e.clientX, e.clientY);
         }
         function onMouseUp() {
           mouseDownRef.current = null;
+          setMouseDownInfo(null);
           handlePointerUp();
         }
 
@@ -4531,6 +4534,7 @@
           dragInfo: { type: 'goal', taskId: task.id, offsetY: e.clientY - rect.top },
           ghostInfo: { type: 'goal', taskId: task.id, date, time, duration: task.duration || 60 }
         };
+        setMouseDownInfo({ blockType: 'goal', id: task.id });
       }
 
       function startDragEntry(e, entry) {
@@ -4544,6 +4548,7 @@
           dragInfo: { type: 'entry', entryId: entry.id, offsetY: e.clientY - rect.top },
           ghostInfo: { type: 'entry', entryId: entry.id, date: entry.date, time: entry.time || '09:00', duration: entry.duration || 60 }
         };
+        setMouseDownInfo({ blockType: 'entry', id: entry.id });
       }
 
       function startDragMMEntry(e, entry) {
@@ -4557,6 +4562,7 @@
           dragInfo: { type: 'mmEntry', entryId: entry.id, offsetY: e.clientY - rect.top },
           ghostInfo: { type: 'mmEntry', entryId: entry.id, date: entry.date, time: entry.time || '09:00', duration: entry.duration || 60 }
         };
+        setMouseDownInfo({ blockType: 'mmEntry', id: entry.id });
       }
 
       function startResize(e, item, edge, type) {
@@ -5115,13 +5121,14 @@
                       const dragged  = ghost && ghost.type === 'goal' && ghost.taskId === task.id;
                       const isSelected = selectedForResize && selectedForResize.id === task.id;
                       const isArmed    = selectedForDrag   && selectedForDrag.id   === task.id;
+                      const isPickedUp = mouseDownInfo?.blockType === 'goal' && mouseDownInfo.id === task.id && !dragged;
                       const commentOpen = timelineMode === 'day' && openComments.has(task.id);
                       if (top < -height || top >= TOTAL_H) return null;
                       return (
                         <React.Fragment key={task.id}>
                         <div
-                          style={{ top: top + 'px', height: height + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: isSelected ? 50 : getBlockZIndex(task.id), ...(!done && { backgroundColor: '#4f46e530' }) }}
-                          className={`rounded px-1.5 py-0.5 overflow-hidden group ${
+                          style={{ top: top + 'px', height: height + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(task.id), ...(!done && { backgroundColor: '#4f46e530' }), ...(isPickedUp && { transform: 'translateY(-3px) scale(1.02)' }) }}
+                          className={`rounded px-1.5 py-0.5 overflow-hidden group transition-transform duration-100 ${
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
                           } ${done
                             ? 'bg-emerald-900/90 border-2 border-emerald-500'
@@ -5319,6 +5326,7 @@
                       const dragged  = ghost && ghost.type === 'entry' && ghost.entryId === entry.id;
                       const isSelected = selectedForResize && selectedForResize.id === entry.id;
                       const isArmed    = selectedForDrag   && selectedForDrag.id   === entry.id;
+                      const isPickedUp = mouseDownInfo?.blockType === 'entry' && mouseDownInfo.id === entry.id && !dragged;
                       const commentOpen = timelineMode === 'day' && openComments.has(entry.id);
                       if (top < -height || top >= TOTAL_H) return null;
                       return (
@@ -5326,11 +5334,12 @@
                         <div
                           style={{
                             top: top + 'px', height: height + 'px', left: '3px', right: '3px',
-                            position: 'absolute', zIndex: isSelected ? 50 : getBlockZIndex(entry.id),
+                            position: 'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(entry.id),
                             backgroundColor: action.color + '18',
                             borderColor: entry.done ? action.color + '40' : action.color + 'aa',
+                            ...(isPickedUp && { transform: 'translateY(-3px) scale(1.02)' }),
                           }}
-                          className={`rounded px-1.5 py-0.5 overflow-hidden group border ${
+                          className={`rounded px-1.5 py-0.5 overflow-hidden group border transition-transform duration-100 ${
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
                           } ${entry.done ? 'opacity-50' : ''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
                           onMouseDown={e => startDragEntry(e, entry)}
@@ -5510,6 +5519,7 @@
                       const dragged = ghost && ghost.type === 'mmEntry' && ghost.entryId === entry.id;
                       const isSelected = selectedForResize && selectedForResize.id === entry.id;
                       const isArmed    = selectedForDrag   && selectedForDrag.id   === entry.id;
+                      const isPickedUp = mouseDownInfo?.blockType === 'mmEntry' && mouseDownInfo.id === entry.id && !dragged;
                       const col = mm.color || '#6366f1';
                       const stg = sirStageLabel(mm);
                       const stgCol = mm.ksStage ? STAGE_COLORS_SCHED[mm.ksStage] : col;
@@ -5532,9 +5542,10 @@
                       return (
                         <React.Fragment key={entry.id}>
                         <div
-                          style={{ top: top+'px', height: height+'px', left:'3px', right:'3px', position:'absolute', zIndex: isSelected ? 50 : getBlockZIndex(entry.id),
-                            backgroundColor: inCurrentMilestone ? '#22d3ee14' : col+'14', borderColor: entry.done ? col+'40' : inCurrentMilestone ? '#22d3ee99' : col+'99' }}
-                          className={`rounded px-1.5 py-0.5 overflow-hidden group border ${dragged?'opacity-20 cursor-grabbing':'cursor-grab'} ${entry.done?'opacity-50':''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : inCurrentMilestone ? 'ring-1 ring-cyan-400/60' : ''}`}
+                          style={{ top: top+'px', height: height+'px', left:'3px', right:'3px', position:'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(entry.id),
+                            backgroundColor: inCurrentMilestone ? '#22d3ee14' : col+'14', borderColor: entry.done ? col+'40' : inCurrentMilestone ? '#22d3ee99' : col+'99',
+                            ...(isPickedUp && { transform: 'translateY(-3px) scale(1.02)' }) }}
+                          className={`rounded px-1.5 py-0.5 overflow-hidden group border transition-transform duration-100 ${dragged?'opacity-20 cursor-grabbing':'cursor-grab'} ${entry.done?'opacity-50':''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : inCurrentMilestone ? 'ring-1 ring-cyan-400/60' : ''}`}
                           onMouseDown={e => startDragMMEntry(e, entry)}
                           onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'mmEntry', item:entry, offsetY: t.clientY - rect.top, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'mmEntry', id: entry.id }); }, 600); }}
                           onClick={e=>e.stopPropagation()}
