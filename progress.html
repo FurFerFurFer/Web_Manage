@@ -4037,6 +4037,8 @@
       const [mmPickerDay, setMmPickerDay] = useState(null);
       const [mgPickerDay, setMgPickerDay] = useState(null);
       const [search, setSearch]   = useState('');
+      const [pickerView, setPickerView] = useState('tree');
+      const [expandedNodes, setExpandedNodes] = useState(new Set());
       const [ghost, setGhost]     = useState(null);
       const [nowY, setNowY]       = useState(null);
       const [selectedForResize, setSelectedForResize] = useState(null);
@@ -4441,6 +4443,61 @@
         };
       }
 
+      function renderPickerTreeNode(node, depth, ds) {
+        if (!node || node.isLink || isMilestoneNode(node) || isComplete(node, goals)) return null;
+        if (getLeaves(node, goals).length === 0) return null;
+        const visibleChildren = (node.children || []).flatMap(c => {
+          if (!c || c.isLink) return [];
+          if (isMilestoneNode(c)) {
+            return (c.children || []).filter(sub =>
+              sub && !sub.isLink && !isMilestoneNode(sub) && !isComplete(sub, goals) && getLeaves(sub, goals).length > 0
+            );
+          }
+          if (isComplete(c, goals) || getLeaves(c, goals).length === 0) return [];
+          return [c];
+        });
+        const hasChildren = visibleChildren.length > 0;
+        const isExpanded = expandedNodes.has(node.id);
+        const isRoutine = node.taskType === 'routine';
+        const leafCount = getLeaves(node, goals).length;
+        const milestoneIds = selectedMilestoneSchedule ? new Set(selectedMilestoneSchedule.tasks.map(t => t.id)) : new Set();
+        const isMilestoneTask = milestoneIds.has(node.id);
+        if (search.trim()) {
+          const selfMatch = (node.title || '').toLowerCase().includes(search.toLowerCase());
+          if (!selfMatch && !hasChildren) return null;
+        }
+        return (
+          <div key={node.id}>
+            <div
+              className="flex items-center hover:bg-gray-800 transition-colors"
+              style={{ paddingLeft: `${depth * 14 + 10}px` }}
+            >
+              <div
+                onClick={hasChildren
+                  ? () => setExpandedNodes(prev => { const n = new Set(prev); n.has(node.id) ? n.delete(node.id) : n.add(node.id); return n; })
+                  : undefined
+                }
+                className={`flex-1 flex items-center gap-1.5 py-1.5 text-xs min-w-0 ${hasChildren ? 'cursor-pointer' : ''}`}
+              >
+                {hasChildren
+                  ? <span className="text-gray-600 w-3 text-center flex-shrink-0">{isExpanded ? '▾' : '▸'}</span>
+                  : <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isMilestoneTask ? 'bg-cyan-400' : isRoutine ? 'bg-amber-500' : 'bg-gray-600'}`} />
+                }
+                <span className={`flex-1 truncate ${isMilestoneTask ? 'text-cyan-200' : isRoutine ? 'text-amber-400' : hasChildren ? 'text-gray-200 font-medium' : 'text-gray-400'}`}>
+                  {node.title}
+                </span>
+                {hasChildren && <span className="text-gray-600 text-[10px] ml-1 flex-shrink-0">{leafCount}</span>}
+              </div>
+              <button
+                onClick={e => { e.stopPropagation(); assignToDate(node, ds); }}
+                className="flex-shrink-0 w-7 h-7 flex items-center justify-center text-gray-600 hover:text-indigo-400 transition-colors text-base mr-1"
+              >+</button>
+            </div>
+            {hasChildren && isExpanded && visibleChildren.map(c => renderPickerTreeNode(c, depth + 1, ds))}
+          </div>
+        );
+      }
+
       const tasksForDate = ds => allTasks.filter(t => {
         const scheduled = t.taskType === 'routine'
           ? (t.routineDates ? Object.prototype.hasOwnProperty.call(t.routineDates, ds) : t.scheduledDate === ds)
@@ -4766,7 +4823,7 @@
                     </div>
                     <div className="mt-1 flex gap-1.5">
                       <button
-                        onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); }}
+                        onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); setPickerView('tree'); }}
                         className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
                       <button
                         onClick={() => { setMmPickerDay(mmPickerDay === ds ? null : ds); setPickerDay(null); setMgPickerDay(null); setSearch(''); }}
@@ -4844,79 +4901,122 @@
                       const { activeTasks, normalTasks } = getPickerTaskGroups(ds);
                       const rootActions = saActions.filter(a => !a.parentId);
                       const hasGoalTasks = activeTasks.length > 0 || normalTasks.length > 0;
+                      const routineTasks = allTasks.filter(t => t.taskType === 'routine' && !isComplete(t, goals) && taskMatchesSearch(t));
                       return (
                         <>
-                          <div className="fixed inset-0 z-20" onClick={() => { setPickerDay(null); setMmPickerDay(null); setSearch(''); }} />
-                          <div className="absolute top-full left-0 mt-1 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-30 overflow-hidden">
-                            <div className="p-2 border-b border-gray-800">
+                          <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setPickerDay(null); setMmPickerDay(null); setSearch(''); }} />
+                          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                            {/* Search */}
+                            <div className="p-3 border-b border-gray-800 flex-shrink-0">
                               <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Escape') { setPickerDay(null); setSearch(''); } }}
                                 placeholder="filter tasks..."
-                                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none placeholder-gray-600 focus:border-indigo-600" />
+                                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-indigo-600" />
                             </div>
-                            <div className="max-h-64 overflow-y-auto">
-                              {/* Active milestone tasks */}
-                              {activeTasks.length > 0 && (
+                            {/* Tab bar */}
+                            <div className="flex border-b border-gray-800 flex-shrink-0">
+                              <button
+                                onClick={() => setPickerView('tree')}
+                                className={`flex-1 py-2 text-xs font-medium tracking-wide transition-colors ${pickerView === 'tree' ? 'text-indigo-400 border-b-2 border-indigo-500 bg-indigo-950/20' : 'text-gray-600 hover:text-gray-400'}`}>
+                                Directory
+                              </button>
+                              <button
+                                onClick={() => setPickerView('routines')}
+                                className={`flex-1 py-2 text-xs font-medium tracking-wide transition-colors ${pickerView === 'routines' ? 'text-amber-400 border-b-2 border-amber-500 bg-amber-950/20' : 'text-gray-600 hover:text-gray-400'}`}>
+                                Routines
+                              </button>
+                              <button
+                                onClick={() => setPickerView('milestone')}
+                                className={`flex-1 py-2 text-xs font-medium tracking-wide transition-colors ${pickerView === 'milestone' ? 'text-cyan-400 border-b-2 border-cyan-500 bg-cyan-950/20' : 'text-gray-600 hover:text-gray-400'}`}>
+                                Milestone
+                              </button>
+                            </div>
+                            {/* Tab content */}
+                            <div className="overflow-y-auto flex-1">
+                              {pickerView === 'tree' && (
                                 <>
-                                  <div className="px-3 py-1 text-[9px] text-cyan-400 tracking-widest border-b border-cyan-900/50 bg-cyan-950/20">ACTIVE MILESTONE</div>
-                                  {activeTasks.map(t => (
-                                    <button key={`active-${t.id}`} onClick={() => assignToDate(t, ds)}
-                                      className="w-full text-left px-3 py-1.5 text-xs bg-cyan-950/30 hover:bg-cyan-900/45 flex items-center justify-between gap-2 transition-colors border-b border-cyan-900/30">
-                                      <span className="flex items-center gap-2 min-w-0">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0" />
-                                        <span className="text-cyan-100 truncate">{t.title}</span>
-                                      </span>
-                                      {(t.children || []).length > 0 && (
-                                        <span className="text-cyan-500 flex-shrink-0">+{getLeaves(t, goals).length}</span>
-                                      )}
-                                    </button>
-                                  ))}
-                                </>
-                              )}
-                              {/* Goal tasks */}
-                              {normalTasks.length > 0 && (
-                                <>
-                                  {(rootActions.length > 0 || activeTasks.length > 0) && (
-                                    <div className="px-3 py-1 text-[9px] text-gray-600 tracking-widest border-b border-gray-800/50">
-                                      {activeTasks.length > 0 ? 'OTHER GOALS' : 'GOALS'}
-                                    </div>
+                                  {/* Goals tree */}
+                                  {(goals || []).map(g => renderPickerTreeNode(g, 0, ds))}
+                                  {/* Actions */}
+                                  {rootActions.length > 0 && (
+                                    <>
+                                      <div className="border-t border-gray-800/50 mt-1" />
+                                      <div className="px-3 py-1 text-[9px] text-gray-600 tracking-widest border-b border-gray-800/50">ACTIONS</div>
+                                      {rootActions.map(action => {
+                                        const hasChildren = saActions.some(a => a.parentId === action.id);
+                                        const childCount  = saActions.filter(a => a.parentId === action.id).length;
+                                        return (
+                                          <button key={action.id}
+                                            onClick={() => hasChildren ? assignDirectoryToDate(action, ds) : assignSAToDate(action, ds)}
+                                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors">
+                                            <span className="flex-shrink-0 leading-none">{action.emoji}</span>
+                                            <span className="flex-1 truncate" style={{ color: action.color }}>{action.title}</span>
+                                            {hasChildren
+                                              ? <span className="text-gray-600 flex-shrink-0 text-[10px]">+{childCount} all</span>
+                                              : <span className="text-gray-600 flex-shrink-0 font-mono text-[10px]">{formatTime12(action.time)}</span>
+                                            }
+                                          </button>
+                                        );
+                                      })}
+                                    </>
                                   )}
-                                  {normalTasks.map(t => (
-                                    <button key={t.id} onClick={() => assignToDate(t, ds)}
-                                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center justify-between gap-2 transition-colors">
-                                      <span className="text-gray-300 truncate">{t.title}</span>
-                                      {(t.children || []).length > 0 && (
-                                        <span className="text-gray-600 flex-shrink-0">+{getLeaves(t, goals).length}</span>
-                                      )}
-                                    </button>
-                                  ))}
+                                  {!hasGoalTasks && rootActions.length === 0 && (goals || []).every(g => renderPickerTreeNode(g, 0, ds) === null) && (
+                                    <div className="px-3 py-4 text-xs text-gray-600 text-center">nothing to add</div>
+                                  )}
                                 </>
                               )}
-                              {/* Supporting actions */}
-                              {rootActions.length > 0 && (
+                              {pickerView === 'routines' && (
                                 <>
-                                  {hasGoalTasks && <div className="border-t border-gray-800/50" />}
-                                  <div className="px-3 py-1 text-[9px] text-gray-600 tracking-widest border-b border-gray-800/50">ACTIONS</div>
-                                  {rootActions.map(action => {
-                                    const hasChildren = saActions.some(a => a.parentId === action.id);
-                                    const childCount  = saActions.filter(a => a.parentId === action.id).length;
-                                    return (
-                                      <button key={action.id}
-                                        onClick={() => hasChildren ? assignDirectoryToDate(action, ds) : assignSAToDate(action, ds)}
-                                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors">
-                                        <span className="flex-shrink-0 leading-none">{action.emoji}</span>
-                                        <span className="flex-1 truncate" style={{ color: action.color }}>{action.title}</span>
-                                        {hasChildren
-                                          ? <span className="text-gray-600 flex-shrink-0 text-[10px]">+{childCount} all</span>
-                                          : <span className="text-gray-600 flex-shrink-0 font-mono text-[10px]">{formatTime12(action.time)}</span>
-                                        }
-                                      </button>
-                                    );
-                                  })}
+                                  {routineTasks.length === 0
+                                    ? <div className="px-3 py-4 text-xs text-gray-600 text-center">no routines</div>
+                                    : routineTasks.map(t => (
+                                        <button key={t.id} onClick={() => assignToDate(t, ds)}
+                                          className="w-full text-left px-3 py-2 text-xs hover:bg-amber-950/30 flex items-center gap-2.5 transition-colors border-b border-gray-800/40">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                                          <span className="text-amber-400 truncate flex-1">{t.title}</span>
+                                        </button>
+                                      ))
+                                  }
                                 </>
                               )}
-                              {!hasGoalTasks && rootActions.length === 0 && (
-                                <div className="px-3 py-3 text-xs text-gray-600 text-center">nothing to add</div>
+                              {pickerView === 'milestone' && (
+                                <>
+                                  {!selectedMilestoneSchedule
+                                    ? <div className="px-3 py-4 text-xs text-gray-600 text-center">no active milestone</div>
+                                    : (() => {
+                                        const ms = selectedMilestoneSchedule;
+                                        const msTasks = ms.tasks.filter(taskMatchesSearch);
+                                        return (
+                                          <>
+                                            <div className="px-3 py-2 border-b border-cyan-900/50 bg-cyan-950/20 flex-shrink-0">
+                                              <div className="text-xs text-cyan-300 font-medium truncate">{ms.milestone.title || ms.owner.title}</div>
+                                              {ms.milestone.startDate && ms.milestone.endDate && (
+                                                <div className="text-[10px] text-cyan-700 mt-0.5">{ms.milestone.startDate} → {ms.milestone.endDate}</div>
+                                              )}
+                                            </div>
+                                            {msTasks.length === 0
+                                              ? <div className="px-3 py-4 text-xs text-gray-600 text-center">no tasks match</div>
+                                              : msTasks.map(t => (
+                                                  <div key={t.id} className="flex items-center hover:bg-cyan-950/30 transition-colors border-b border-cyan-900/20">
+                                                    <div className="flex-1 flex items-center gap-2 px-3 py-1.5 text-xs min-w-0">
+                                                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 flex-shrink-0" />
+                                                      <span className="text-cyan-100 truncate flex-1">{t.title}</span>
+                                                      {(t.children || []).length > 0 && (
+                                                        <span className="text-cyan-700 text-[10px] flex-shrink-0">{getLeaves(t, goals).length}</span>
+                                                      )}
+                                                    </div>
+                                                    <button
+                                                      onClick={() => assignToDate(t, ds)}
+                                                      className="flex-shrink-0 w-7 h-7 flex items-center justify-center text-cyan-800 hover:text-cyan-400 transition-colors text-base mr-1"
+                                                    >+</button>
+                                                  </div>
+                                                ))
+                                            }
+                                          </>
+                                        );
+                                      })()
+                                  }
+                                </>
                               )}
                             </div>
                           </div>
