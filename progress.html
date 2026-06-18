@@ -4255,10 +4255,24 @@
           stopEdgeScroll();
           // Commit resize
           if (resizeRef.current) {
-            const { type, id, previewDuration, previewTime } = resizeRef.current;
+            const { type, id, previewDuration, previewTime, dateStr } = resizeRef.current;
             if (previewDuration !== undefined) {
               const update = { duration: previewDuration, ...(previewTime ? (type === 'goal' ? { scheduledTime: previewTime } : { time: previewTime }) : {}) };
-              if (type === 'goal') setGoals(prev => updateTaskProps(prev, id, update));
+              if (type === 'goal') {
+                setGoals(prev => {
+                  function applyUpdate(goals) {
+                    return goals.map(g => {
+                      if (g.id !== id) return { ...g, children: applyUpdate(g.children || []) };
+                      if (g.taskType === 'routine' && previewTime && dateStr) {
+                        const { scheduledTime, ...rest } = update;
+                        return { ...g, ...rest, routineDates: { ...(g.routineDates || {}), [dateStr]: { ...(g.routineDates?.[dateStr] || {}), time: previewTime } } };
+                      }
+                      return { ...g, ...update };
+                    });
+                  }
+                  return applyUpdate(prev);
+                });
+              }
               else if (type === 'entry') setSaEntries(prev => prev.map(e => e.id === id ? { ...e, ...update } : e));
               else if (type === 'mmEntry') setMmEntries(prev => prev.map(e => e.id === id ? { ...e, ...update } : e));
             }
@@ -4325,9 +4339,9 @@
               const inTopHandle = isExpandable && offsetY < HANDLE_PX;
               const inBottomHandle = isExpandable && blockHeight !== undefined && offsetY > blockHeight - HANDLE_PX;
               if (inTopHandle || inBottomHandle) {
-                const timeStr = type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00');
+                const timeStr = touchRef.current.resolvedTime || (type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00'));
                 const [th, tm] = timeStr.split(':').map(Number);
-                resizeRef.current = { type, id: item.id, edge: inTopHandle ? 'top' : 'bottom', startY: t.clientY, startDuration: item.duration || 60, startTotalMin: th * 60 + tm };
+                resizeRef.current = { type, id: item.id, edge: inTopHandle ? 'top' : 'bottom', startY: t.clientY, startDuration: item.duration || 60, startTotalMin: th * 60 + tm, dateStr: touchRef.current.resizeDate };
               } else {
                 if (type === 'goal') {
                   dragRef.current = { type: 'goal', taskId: item.id, offsetY };
@@ -4661,16 +4675,16 @@
         setMouseDownInfo({ blockType: 'mmEntry', id: entry.id });
       }
 
-      function startResize(e, item, edge, type) {
+      function startResize(e, item, edge, type, resolvedTime, dateStr) {
         e.preventDefault();
         e.stopPropagation();
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        const timeStr = type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00');
+        const timeStr = resolvedTime || (type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00'));
         const [th, tm] = timeStr.split(':').map(Number);
         const startTotalMin = th * 60 + tm;
         const startDuration = item.duration || 60;
         const id = item.id;
-        resizeRef.current = { type, id, edge, startY: clientY, startDuration, startTotalMin };
+        resizeRef.current = { type, id, edge, startY: clientY, startDuration, startTotalMin, dateStr };
       }
 
       function assignToDate(task, dateStr) {
@@ -5274,15 +5288,15 @@
                             : 'text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
                           } ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
                           onMouseDown={e => startDrag(e, task, ds)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, blockHeight: rect.height, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'goal', id: task.id }); }, 600); }}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, blockHeight: rect.height, resolvedTime: time, resizeDate: ds, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'goal', id: task.id }); }, 600); }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(task.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'goal', id: task.id }); }}
                         >
                           {isSelected && (
                             <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
-                              onMouseDown={e => startResize(e, task, 'top', 'goal')}
-                              onTouchStart={e => startResize(e, task, 'top', 'goal')} />
+                              onMouseDown={e => startResize(e, task, 'top', 'goal', time, ds)}
+                              onTouchStart={e => startResize(e, task, 'top', 'goal', time, ds)} />
                           )}
                           <div className="flex items-start gap-1 h-full">
                             {isLeaf && (
@@ -5356,8 +5370,8 @@
                           >×</button>
                           {isSelected && (
                             <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
-                              onMouseDown={e => startResize(e, task, 'bottom', 'goal')}
-                              onTouchStart={e => startResize(e, task, 'bottom', 'goal')} />
+                              onMouseDown={e => startResize(e, task, 'bottom', 'goal', time, ds)}
+                              onTouchStart={e => startResize(e, task, 'bottom', 'goal', time, ds)} />
                           )}
                         </div>
                         {commentOpen && (
