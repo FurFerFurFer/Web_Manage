@@ -4311,7 +4311,8 @@
           if (!touchRef.current.moved && (dx > 8 || dy > 8)) {
             if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
             const { type, item, offsetY } = touchRef.current;
-            const isArmed = selectedForDragRef.current && selectedForDragRef.current.id === item.id;
+            const isArmed = (selectedForDragRef.current && selectedForDragRef.current.id === item.id) ||
+                            (selectedForResizeRef.current && selectedForResizeRef.current.id === item.id);
             if (isArmed) {
               touchRef.current.moved = true;
               if (type === 'goal') {
@@ -5119,7 +5120,7 @@
                       return (
                         <React.Fragment key={task.id}>
                         <div
-                          style={{ top: top + 'px', height: height + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: getBlockZIndex(task.id), ...(!done && { backgroundColor: '#4f46e530' }) }}
+                          style={{ top: top + 'px', height: height + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: isSelected ? 50 : getBlockZIndex(task.id), ...(!done && { backgroundColor: '#4f46e530' }) }}
                           className={`rounded px-1.5 py-0.5 overflow-hidden group ${
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
                           } ${done
@@ -5325,7 +5326,7 @@
                         <div
                           style={{
                             top: top + 'px', height: height + 'px', left: '3px', right: '3px',
-                            position: 'absolute', zIndex: getBlockZIndex(entry.id),
+                            position: 'absolute', zIndex: isSelected ? 50 : getBlockZIndex(entry.id),
                             backgroundColor: action.color + '18',
                             borderColor: entry.done ? action.color + '40' : action.color + 'aa',
                           }}
@@ -5531,7 +5532,7 @@
                       return (
                         <React.Fragment key={entry.id}>
                         <div
-                          style={{ top: top+'px', height: height+'px', left:'3px', right:'3px', position:'absolute', zIndex: getBlockZIndex(entry.id),
+                          style={{ top: top+'px', height: height+'px', left:'3px', right:'3px', position:'absolute', zIndex: isSelected ? 50 : getBlockZIndex(entry.id),
                             backgroundColor: inCurrentMilestone ? '#22d3ee14' : col+'14', borderColor: entry.done ? col+'40' : inCurrentMilestone ? '#22d3ee99' : col+'99' }}
                           className={`rounded px-1.5 py-0.5 overflow-hidden group border ${dragged?'opacity-20 cursor-grabbing':'cursor-grab'} ${entry.done?'opacity-50':''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : inCurrentMilestone ? 'ring-1 ring-cyan-400/60' : ''}`}
                           onMouseDown={e => startDragMMEntry(e, entry)}
