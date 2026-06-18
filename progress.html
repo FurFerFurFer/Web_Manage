@@ -4342,7 +4342,9 @@
         function onTouchEnd() {
           stopEdgeScroll();
           if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-          if (touchRef.current && !touchRef.current.moved) {
+          if (resizeRef.current || (touchRef.current && touchRef.current.moved)) {
+            handlePointerUp();
+          } else if (touchRef.current) {
             const { type, item } = touchRef.current;
             if (selectedForResizeRef.current && selectedForResizeRef.current.id === item.id) {
               setSelectedForResize(null);
@@ -4353,8 +4355,6 @@
               setSelectedForResize(null);
             }
             dragRef.current = null; ghostRef.current = null; setGhost(null);
-          } else {
-            handlePointerUp();
           }
           touchRef.current = null;
           suppressMouseRef.current = true;
