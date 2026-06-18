@@ -4387,7 +4387,12 @@
       }, []);
 
       useEffect(() => {
-        if (pickerDay && searchRef.current) searchRef.current.focus();
+        if (pickerDay) {
+          if (searchRef.current) searchRef.current.focus();
+          setExpandedNodes(getAllParentNodeIds(goals));
+        } else {
+          setExpandedNodes(new Set());
+        }
       }, [pickerDay]);
 
       const allTasks   = flattenAll(goals).filter(t => !t.isLink);
@@ -4453,6 +4458,30 @@
         };
       }
 
+      function getAllParentNodeIds(nodes) {
+        const ids = new Set();
+        function traverse(node) {
+          if (!node || node.isLink || isMilestoneNode(node) || isComplete(node, goals)) return;
+          if (getLeaves(node, goals).length === 0) return;
+          const visibleChildren = (node.children || []).flatMap(c => {
+            if (!c || c.isLink) return [];
+            if (isMilestoneNode(c)) {
+              return (c.children || []).filter(sub =>
+                sub && !sub.isLink && !isMilestoneNode(sub) && !isComplete(sub, goals) && getLeaves(sub, goals).length > 0
+              );
+            }
+            if (isComplete(c, goals) || getLeaves(c, goals).length === 0) return [];
+            return [c];
+          });
+          if (visibleChildren.length > 0) {
+            ids.add(node.id);
+            visibleChildren.forEach(traverse);
+          }
+        }
+        (nodes || []).forEach(traverse);
+        return ids;
+      }
+
       function renderPickerTreeNode(node, depth, ds) {
         if (!node || node.isLink || isMilestoneNode(node) || isComplete(node, goals)) return null;
         if (getLeaves(node, goals).length === 0) return null;
@@ -4467,7 +4496,7 @@
           return [c];
         });
         const hasChildren = visibleChildren.length > 0;
-        const isExpanded = expandedNodes.has(node.id);
+        const isExpanded = search.trim() ? true : expandedNodes.has(node.id);
         const isRoutine = node.taskType === 'routine';
         const leafCount = getLeaves(node, goals).length;
         const milestoneIds = selectedMilestoneSchedule ? new Set(selectedMilestoneSchedule.tasks.map(t => t.id)) : new Set();
