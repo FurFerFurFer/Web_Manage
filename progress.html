@@ -3344,7 +3344,7 @@
             <div className="flex-1 flex min-h-0 overflow-hidden">
 
               {/* Left: original task management */}
-              <div className="w-[40%] flex-shrink-0 overflow-y-auto border-r border-gray-800 py-5 px-4">
+              <div className="w-[65%] flex-shrink-0 overflow-y-auto border-r border-gray-800 py-5 px-4">
                 <div className="flex items-center gap-2 mb-4 px-1">
                   <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: goalColor }} />
                   <span className="text-xs font-bold text-gray-300 tracking-wide truncate">{activeGoal.title}</span>
@@ -3360,7 +3360,7 @@
               </div>
 
               {/* Right: progress panel */}
-              <div className="flex-1 overflow-y-auto p-6">
+              <div className="w-[35%] flex-shrink-0 overflow-y-auto p-6">
                 <div className="text-[10px] tracking-widest text-gray-700 mb-6">PROGRESSION</div>
                 <GoalProgressPanel
                   node={activeGoal}
