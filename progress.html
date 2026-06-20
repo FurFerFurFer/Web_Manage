@@ -1426,21 +1426,23 @@
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-1.5 flex-wrap">
               <MindMapsBadge mm={mm} sirDoneMap={sirDoneMap} />
-              <select value={tgt.stage || ''} onChange={e => setTarget('stage', e.target.value)}
-                className="text-[9px] bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-400 outline-none focus:border-indigo-600 cursor-pointer"
-                title="Goal stage target">
-                <option value="">— stage</option>
-                <option value="1">S1</option>
-                <option value="2">S2</option>
-                <option value="3">S3</option>
-                <option value="4">S4</option>
-                <option value="sir">SIR T1 (entered)</option>
-                <option value="sir1">SIR T2 (D1 done)</option>
-                <option value="sir2">SIR T3 (D3 done)</option>
-                <option value="sir3">SIR T4 (D7 done)</option>
-                <option value="sir4">SIR T5 (D14 done)</option>
-                <option value="sir5">FIN (D30 done)</option>
-              </select>
+              {mm.type !== 'anchor' && (
+                <select value={tgt.stage || ''} onChange={e => setTarget('stage', e.target.value)}
+                  className="text-[9px] bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-400 outline-none focus:border-indigo-600 cursor-pointer"
+                  title="Goal stage target">
+                  <option value="">— stage</option>
+                  <option value="1">S1</option>
+                  <option value="2">S2</option>
+                  <option value="3">S3</option>
+                  <option value="4">S4</option>
+                  <option value="sir">SIR T1 (entered)</option>
+                  <option value="sir1">SIR T2 (D1 done)</option>
+                  <option value="sir2">SIR T3 (D3 done)</option>
+                  <option value="sir3">SIR T4 (D7 done)</option>
+                  <option value="sir4">SIR T5 (D14 done)</option>
+                  <option value="sir5">FIN (D30 done)</option>
+                </select>
+              )}
               {String(mm.type) === '2' && (
                 <div className="flex items-center gap-0.5">
                   <input type="number" min="1" max="10" value={tgt.level || ''}
