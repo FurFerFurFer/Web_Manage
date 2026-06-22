@@ -1622,6 +1622,7 @@
       const nodeMilestones = node.milestones || [];
       const [showMsPicker, setShowMsPicker] = useState(false);
       const [hovMs, setHovMs] = useState(null);
+      const [hovDelete, setHovDelete] = useState(false);
 
       function sortMsBySubgoalOrder(list) {
         const orderMap = new Map(nodeMilestones.map((m, i) => [m.id, i]));
@@ -1745,6 +1746,7 @@
       }
 
       function handleRemove() {
+        if (!window.confirm(`Remove "${mm.name}" from To Learn?`)) return;
         const toRemove = new Set([mmId, ...getMMDescendants(mmId, mms || [])]);
         onUpdateToLearn(node.id, (node.toLearn || []).filter(id => !toRemove.has(id)));
         const updated = { ...(node.mmTargets || {}) };
@@ -1777,7 +1779,9 @@
       return (
         <div style={{ paddingLeft: depth * 14 }}>
           <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div
+              className="flex items-center gap-2 flex-wrap rounded transition-all duration-150"
+              style={hovDelete ? { boxShadow: '0 0 10px 2px rgba(239,68,68,0.35)', background: 'rgba(127,29,29,0.18)' } : {}}>
               <MindMapsBadge mm={mm} sirDoneMap={sirDoneMap} />
               {mm.type !== 'anchor' && (
                 <select
@@ -1871,7 +1875,9 @@
                 </div>
               )}
               <button onClick={handleRemove}
-                className="ml-auto text-gray-700 hover:text-red-400 text-[10px] flex-shrink-0"
+                onMouseEnter={() => setHovDelete(true)}
+                onMouseLeave={() => setHovDelete(false)}
+                className="ml-auto text-gray-600 hover:text-red-400 text-lg flex-shrink-0 leading-none transition-colors px-1"
                 title="Remove">×</button>
             </div>
 
