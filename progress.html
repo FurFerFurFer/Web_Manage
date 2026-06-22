@@ -6263,7 +6263,7 @@
                                 title="view unticked comments"
                               >comment</button>
                               <button
-                                className={`text-base leading-none p-1 rounded transition-colors ${entry.sourcePins?.length > 0 ? 'text-emerald-400' : 'text-gray-400 hover:text-emerald-400'}`}
+                                className={`text-base leading-none p-1 rounded transition-colors ${(sourceDumps||[]).some(d=>(d.mmLinks||[]).some(l=>l.mmId===entry.mmId&&(getSCTextBlocks(l).length>0||(l.links||[]).length>0))) ? 'text-emerald-300 bg-emerald-900/30 hover:bg-emerald-800/40' : 'text-gray-400 hover:text-emerald-400'}`}
                                 onClick={e => { e.stopPropagation(); setOpenSourcePicker(prev => { const n = new Set(prev); n.has(entry.id) ? n.delete(entry.id) : n.add(entry.id); return n; }); setSourcePickerMode(prev => ({...prev, [entry.id]: 'text'})); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setOpenMMComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setViewingNote(null); setViewingSource(null); }}
                                 title="add source"
                               >⊕</button>
