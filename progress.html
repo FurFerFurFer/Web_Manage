@@ -173,6 +173,39 @@
       if (dirty) localStorage.setItem('track_db', JSON.stringify(db));
     })();
 
+    // Migrate old mmTargets[mmId].milestone (single string) → milestones array format
+    (function migrateMmTargetsMilestoneField() {
+      const db = _getTrackDB();
+      if (!db.slots) return;
+      let dirty = false;
+      function walk(nodes) {
+        return nodes.map(n => {
+          const mmTargets = n.mmTargets;
+          let updatedTargets = mmTargets;
+          if (mmTargets) {
+            const newTargets = {};
+            let changed = false;
+            for (const [mmId, tgt] of Object.entries(mmTargets)) {
+              if (tgt && tgt.milestone && !tgt.milestones) {
+                changed = true;
+                const { milestone, stage, level, ...rest } = tgt;
+                const entry = { milestoneId: milestone };
+                if (stage) entry.stage = stage;
+                if (level) entry.level = level;
+                newTargets[mmId] = { ...rest, milestones: [entry] };
+              } else {
+                newTargets[mmId] = tgt;
+              }
+            }
+            if (changed) { updatedTargets = newTargets; dirty = true; }
+          }
+          return { ...n, mmTargets: updatedTargets, children: walk(n.children || []) };
+        });
+      }
+      db.slots = db.slots.map(s => ({ ...s, goals: walk(s.goals || []) }));
+      if (dirty) localStorage.setItem('track_db', JSON.stringify(db));
+    })();
+
     // ── pure helpers ──────────────────────────────────────────────────────────
 
     function uid() { return Math.random().toString(36).slice(2, 10); }
@@ -1007,25 +1040,28 @@
     const STAGE_ORDER = { 1:1, 2:2, 3:3, 4:4, sir:5, sir1:6, sir2:7, sir3:8, sir4:9, sir5:10, finished:11 };
     const STAGE_COLORS_SIR = ["#7c3aed","#2563eb","#0891b2","#0d9488","#059669"];
 
-    // target = { stage?: stageKey, level?: number }
+    // target = { stage?: stageKey, level?: number, milestones?: [{milestoneId, stage, level}] }
     function isMMTargetMet(mm, target, sirDoneMap) {
       if (!target) return true;
+      const eff = (target.milestones?.length > 0)
+        ? target.milestones[target.milestones.length - 1]
+        : target;
       let effOrder;
       if (mm.ksStage === 'sir') {
         const done = (sirDoneMap || {})[mm.id] || 0;
-        effOrder = 5 + done; // sir=5, sir1=6, ..., sir5=10
+        effOrder = 5 + done;
       } else {
         effOrder = STAGE_ORDER[mm.ksStage] || 0;
       }
-      const stageMet = !target.stage || effOrder >= (STAGE_ORDER[target.stage] || 0);
-      const levelMet = !target.level || (mm.rating || 0) >= Number(target.level);
+      const stageMet = !eff.stage || effOrder >= (STAGE_ORDER[eff.stage] || 0);
+      const levelMet = !eff.level || (mm.rating || 0) >= Number(eff.level);
       return stageMet && levelMet;
     }
 
     // Returns null (no active targets), true (all met), or false (some unmet)
     function computeMMAutoComplete(goal, mms, sirDoneMap) {
       const entries = Object.entries(goal.mmTargets || {});
-      const active = entries.filter(([, t]) => t && (t.stage || t.level));
+      const active = entries.filter(([, t]) => t && (t.stage || t.level || (t.milestones || []).length > 0));
       if (active.length === 0) return null;
       return active.every(([mmId, target]) => {
         const mm = mms.find(m => m.id === mmId);
@@ -1036,16 +1072,19 @@
     // Returns 0.0–1.0 for a single MM's fractional progress toward its target
     function mmProgressFraction(mm, target, sirDoneMap) {
       if (!mm || !target) return 0;
+      const eff = (target.milestones?.length > 0)
+        ? target.milestones[target.milestones.length - 1]
+        : target;
       let stageFrac = null, levelFrac = null;
-      if (target.stage) {
-        const targetOrder = STAGE_ORDER[target.stage] || 1;
+      if (eff.stage) {
+        const targetOrder = STAGE_ORDER[eff.stage] || 1;
         const effOrder = mm.ksStage === 'sir'
           ? 5 + ((sirDoneMap || {})[mm.id] || 0)
           : (STAGE_ORDER[mm.ksStage] || 0);
         stageFrac = Math.min(1, effOrder / targetOrder);
       }
-      if (target.level) {
-        levelFrac = Math.min(1, (mm.rating || 0) / Number(target.level));
+      if (eff.level) {
+        levelFrac = Math.min(1, (mm.rating || 0) / Number(eff.level));
       }
       if (stageFrac !== null && levelFrac !== null) return (stageFrac + levelFrac) / 2;
       return stageFrac !== null ? stageFrac : (levelFrac !== null ? levelFrac : 0);
@@ -1374,13 +1413,235 @@
       );
     }
 
+    // ── MilestoneBar ─────────────────────────────────────────────────────────
+
+    function MilestoneBar({ label, goalVal, allEntries, nodeMilestones, fillPct, done,
+        onUpdate, onRemove, getVal, getLabel, goalLabel, mm, sirDoneMap }) {
+      const [hover, setHover] = useState(null);
+      const [drag, setDrag] = useState(null);   // { idx, liveVal } — render-only
+      const barRef = useRef(null);
+      // Refs so document listeners never become stale and never need to be re-added
+      const dragRef       = useRef(null);
+      const allEntriesRef = useRef(allEntries);
+      const goalValRef    = useRef(goalVal);
+      const getValRef     = useRef(getVal);
+      const onUpdateRef   = useRef(onUpdate);
+
+      // Keep refs current on every render
+      useEffect(() => {
+        allEntriesRef.current = allEntries;
+        goalValRef.current    = goalVal;
+        getValRef.current     = getVal;
+        onUpdateRef.current   = onUpdate;
+      });
+
+      // Attach document drag listeners once — use refs so no stale closure teardown
+      useEffect(() => {
+        function onMove(e) {
+          const d = dragRef.current;
+          if (!d) return;
+          const pct = Math.max(0, Math.min(100, (e.clientX - d.barRect.left) / d.barRect.width * 100));
+          const raw = Math.round(pct / 100 * goalValRef.current);
+          const prevEntry = allEntriesRef.current[d.idx - 1];
+          const nextEntry = allEntriesRef.current[d.idx + 1];
+          const prevVal = prevEntry ? (getValRef.current(prevEntry) || 1) : 1;
+          const nextVal = nextEntry ? (getValRef.current(nextEntry) || goalValRef.current) : goalValRef.current;
+          const clamped = Math.max(prevVal, Math.min(nextVal, raw));
+          dragRef.current = { ...d, liveVal: clamped };
+          setDrag({ idx: d.idx, liveVal: clamped });
+        }
+        function onUp() {
+          const d = dragRef.current;
+          if (!d) return;
+          if (d.liveVal != null) {
+            const entry = allEntriesRef.current[d.idx];
+            onUpdateRef.current(entry.milestoneId, d.liveVal);
+          }
+          dragRef.current = null;
+          setDrag(null);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        return () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+      }, []);
+
+      const intTicks = allEntries.slice(0, -1)
+        .map((e, idx) => ({ e, idx, val: getVal(e) }))
+        .filter(t => t.val != null);
+
+      const goalEntry  = allEntries.length > 0 ? allEntries[allEntries.length - 1] : null;
+      const lastIdx    = allEntries.length - 1;
+      const goalMs     = goalEntry ? nodeMilestones.find(m => m.id === goalEntry.milestoneId) : null;
+      const currentVal = Math.round(fillPct / 100 * goalVal);
+
+      function tickPct(val) { return (val / goalVal) * 100; }
+
+      return (
+        <div>
+          <div className="text-[10px] text-gray-600 tracking-widest mb-1">{label}</div>
+          <div className="relative" style={{ paddingTop: 32 }}>
+
+            {/* Tick labels above bar (pointer-events-none so they don't block drag) */}
+            {intTicks.map(({ e, idx, val }) => {
+              const displayVal = drag?.idx === idx && drag.liveVal != null ? drag.liveVal : val;
+              const pct = Math.max(0, Math.min(100, tickPct(displayVal)));
+              const ms = nodeMilestones.find(m => m.id === e.milestoneId);
+              const isHov = hover === e.milestoneId;
+              const met = isMMTargetMet(mm, e, sirDoneMap);
+              return (
+                <div key={e.milestoneId} className="absolute bottom-0 pointer-events-none"
+                  style={{ left: `${pct}%`, transform: 'translateX(-50%)', zIndex: isHov ? 20 : 10 }}>
+                  <div style={{ marginBottom: 14 }}>
+                    <span className={`text-[13px] whitespace-nowrap overflow-hidden text-ellipsis block text-center
+                      ${met ? 'text-emerald-500' : 'text-cyan-600'}`} style={{ maxWidth: 80 }}>
+                      {ms?.title || getLabel(val)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Goal label */}
+            <div className="absolute bottom-0 right-0 pointer-events-none" style={{ zIndex: 5 }}>
+              {hover !== '__goal__' && goalEntry && (
+                <span className="text-[11px] text-indigo-400">{goalLabel}</span>
+              )}
+            </div>
+
+            {/* Track */}
+            <div ref={barRef}
+              className="relative h-1.5 bg-gray-800 rounded-full"
+              style={{ overflow: 'visible', cursor: 'default' }}>
+
+              {/* Segment blocks — one per stage/level step */}
+              <div className="absolute inset-0 flex pointer-events-none" style={{ gap: 1 }}>
+                {Array.from({ length: goalVal }, (_, i) => (
+                  <div key={i} className="flex-1"
+                    style={{
+                      backgroundColor: currentVal > i ? (done ? '#10b981' : '#6366f1') : '#374151',
+                      borderRadius: i === 0 ? '3px 0 0 3px' : i === goalVal - 1 ? '0 3px 3px 0' : 0,
+                    }}
+                  />
+                ))}
+              </div>
+
+              {/* Goal marker — hover for tooltip + remove (rendered first so intermediate ticks paint on top) */}
+              {goalEntry && (
+                <div className="absolute flex items-center justify-center"
+                  style={{ right: 0, top: '50%', width: 16, height: 20, transform: 'translate(50%, -50%)', zIndex: 15 }}
+                  onClick={ev => ev.stopPropagation()}
+                  onMouseEnter={() => setHover('__goal__')}
+                  onMouseLeave={() => setHover(null)}>
+                  {hover === '__goal__' && (
+                    <div className="absolute pointer-events-auto"
+                      style={{ bottom: '100%', right: 0, marginBottom: 4, zIndex: 30 }}
+                      onMouseDown={ev => ev.stopPropagation()}>
+                      <div className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-[8px] whitespace-nowrap shadow-lg">
+                        <div className="text-gray-300 font-medium">{goalMs?.title}</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-indigo-400 font-bold">⋆goal</span>
+                          <button onClick={() => { setHover(null); onRemove(goalEntry.milestoneId); }}
+                            className="text-gray-600 hover:text-red-400">×</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ width: 2, height: 22, backgroundColor: '#6366f1', borderRadius: 1, opacity: 0.5 }} />
+                </div>
+              )}
+
+              {/* Draggable intermediate ticks — 20px tall hit area centred on bar */}
+              {intTicks.map(({ e, idx, val }) => {
+                const displayVal = drag?.idx === idx && drag.liveVal != null ? drag.liveVal : val;
+                const pct = Math.max(0, Math.min(100, tickPct(displayVal)));
+                const met = isMMTargetMet(mm, e, sirDoneMap);
+                const isHov = hover === e.milestoneId;
+                const isDragging = drag?.idx === idx;
+                return (
+                  <div key={e.milestoneId}
+                    className="absolute flex items-center justify-center"
+                    style={{
+                      left: `${pct}%`, top: '50%',
+                      width: 16, height: 20,
+                      transform: 'translate(-50%, -50%)',
+                      cursor: 'ew-resize', zIndex: 16,
+                    }}
+                    onClick={ev => ev.stopPropagation()}
+                    onMouseDown={ev => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      const rect = barRef.current.getBoundingClientRect();
+                      dragRef.current = { idx, barRect: rect, liveVal: null };
+                      setDrag({ idx, liveVal: val });
+                      setHover(null);
+                    }}
+                    onMouseEnter={() => { if (!dragRef.current) setHover(e.milestoneId); }}
+                    onMouseLeave={() => { if (!dragRef.current) setHover(null); }}>
+                    {/* Tooltip on hover */}
+                    {isHov && !dragRef.current && (
+                      <div className="absolute pointer-events-auto"
+                        style={{ bottom: '100%', left: '50%', transform: 'translateX(-50%)', marginBottom: 4, zIndex: 30 }}
+                        onMouseDown={ev => ev.stopPropagation()}>
+                        <div className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-[8px] whitespace-nowrap shadow-lg">
+                          <div className="text-gray-300 font-medium">{nodeMilestones.find(m => m.id === e.milestoneId)?.title}</div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-cyan-400">{getLabel(displayVal)}</span>
+                            <button onClick={() => { setHover(null); onRemove(e.milestoneId); }}
+                              className="text-gray-600 hover:text-red-400">×</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {/* Visual line */}
+                    <div style={{
+                      width: isDragging ? 2 : 1,
+                      height: 22,
+                      backgroundColor: met ? '#10b981' : '#22d3ee',
+                      borderRadius: 1,
+                      opacity: isHov || isDragging ? 1 : 0.75,
+                    }} />
+                  </div>
+                );
+              })}
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
     // ── ToLearnRow ────────────────────────────────────────────────────────────
 
     function ToLearnRow({ entry, depth, node, mms, sirDoneMap, onUpdateToLearn, onUpdateMmTargets }) {
       const { mm, children } = entry;
       const mmId = mm.id;
       const tgt = (node.mmTargets || {})[mmId] || {};
-      const hasTarget = !!(tgt.stage || tgt.level);
+      const nodeMilestones = node.milestones || [];
+      const [showMsPicker, setShowMsPicker] = useState(false);
+      const [hovMs, setHovMs] = useState(null);
+
+      function sortMsBySubgoalOrder(list) {
+        const orderMap = new Map(nodeMilestones.map((m, i) => [m.id, i]));
+        return [...list].sort((a, b) => (orderMap.get(a.milestoneId) ?? 999) - (orderMap.get(b.milestoneId) ?? 999));
+      }
+
+      function msScoreGT(a, b) {
+        const sa = STAGE_ORDER[a.stage] || 0, sb = STAGE_ORDER[b.stage] || 0;
+        if (sa !== sb) return sa > sb;
+        return (Number(a.level) || 0) > (Number(b.level) || 0);
+      }
+
+      const milestoneEntries = sortMsBySubgoalOrder(tgt.milestones || []);
+      const effOrder = mm.ksStage === 'sir' ? 5 + ((sirDoneMap || {})[mm.id] || 0) : (STAGE_ORDER[mm.ksStage] || 0);
+      const firstUnmetEntryIdx = milestoneEntries.findIndex(e => {
+        const stageMet = !e.stage || effOrder >= (STAGE_ORDER[e.stage] || 0);
+        const levelMet = !e.level || (mm.rating || 0) >= Number(e.level);
+        return !(stageMet && levelMet);
+      });
+      const hasTarget = !!(tgt.stage || tgt.level || milestoneEntries.length > 0);
       const met = hasTarget && isMMTargetMet(mm, tgt, sirDoneMap);
       const indicator = !hasTarget
         ? <span className="text-gray-700 text-[10px]">·</span>
@@ -1388,28 +1649,98 @@
           ? <span className="text-emerald-400 text-[10px] font-bold">✓</span>
           : <span className="text-amber-400 text-[10px]">○</span>;
 
+      const invalidIdxs = new Set(
+        milestoneEntries.map((e, i) => {
+          if (i === 0) return -1;
+          const prev = milestoneEntries[i - 1];
+          if ((!e.stage && !e.level) || (!prev.stage && !prev.level)) return -1;
+          return msScoreGT(prev, e) ? i : -1;
+        }).filter(i => i >= 0)
+      );
+
       function setTarget(field, val) {
         const cur = (node.mmTargets || {})[mmId] || {};
         const next = { ...cur, [field]: val || undefined };
-        let updatedTargets = { ...(node.mmTargets || {}) };
-        if (!next.stage && !next.level && !next.milestone) {
+        const updatedTargets = { ...(node.mmTargets || {}) };
+        if (!next.stage && !next.level && !(next.milestones || []).length) {
           delete updatedTargets[mmId];
         } else {
           updatedTargets[mmId] = next;
         }
-        if (field === 'milestone') {
-          const toLearnSet = new Set(node.toLearn || []);
-          const descendants = getMMDescendants(mmId, mms || []).filter(id => toLearnSet.has(id));
-          for (const descId of descendants) {
-            const descCur = updatedTargets[descId] || {};
-            const descNext = { ...descCur, milestone: val || undefined };
-            if (!descNext.stage && !descNext.level && !descNext.milestone) {
-              delete updatedTargets[descId];
-            } else {
-              updatedTargets[descId] = descNext;
-            }
+        onUpdateMmTargets(node.id, updatedTargets);
+      }
+
+      function addMilestoneEntry(milestoneId, stage, level) {
+        const cur = (node.mmTargets || {})[mmId] || {};
+        const entry = { milestoneId, stage: stage || undefined, level: level || undefined };
+        const list = sortMsBySubgoalOrder([...(cur.milestones || []), entry]);
+        const updatedTargets = { ...(node.mmTargets || {}), [mmId]: { ...cur, milestones: list } };
+        onUpdateMmTargets(node.id, updatedTargets);
+      }
+
+      function addMilestoneAtDefault(milestoneId) {
+        const orderMap = new Map(nodeMilestones.map((m, i) => [m.id, i]));
+        const newPos = orderMap.get(milestoneId) ?? 0;
+        const prevEntry = milestoneEntries
+          .filter(e => (orderMap.get(e.milestoneId) ?? Infinity) < newPos)
+          .sort((a, b) => (orderMap.get(b.milestoneId) ?? 0) - (orderMap.get(a.milestoneId) ?? 0))[0];
+        const nextEntry = milestoneEntries
+          .filter(e => (orderMap.get(e.milestoneId) ?? -1) > newPos)
+          .sort((a, b) => (orderMap.get(a.milestoneId) ?? 0) - (orderMap.get(b.milestoneId) ?? 0))[0];
+        const ORDER_TO_STAGE_MAP = Object.fromEntries(
+          Object.entries(STAGE_ORDER).filter(([k]) => k !== 'finished').map(([k, v]) => [v, k])
+        );
+        const prevStageOrder = STAGE_ORDER[prevEntry?.stage] || 0;
+        const nextStageOrder = STAGE_ORDER[nextEntry?.stage] || STAGE_ORDER[tgt.stage] || 1;
+        let stage;
+        if (nextStageOrder > prevStageOrder) {
+          const targetOrder = nextStageOrder > prevStageOrder + 1 ? nextStageOrder - 1 : nextStageOrder;
+          stage = ORDER_TO_STAGE_MAP[targetOrder];
+        }
+        let level;
+        if (String(mm.type) === '2') {
+          const prevLevel = Number(prevEntry?.level) || 0;
+          const nextLevel = Number(nextEntry?.level || tgt.level) || 0;
+          if (nextLevel > prevLevel) {
+            level = nextLevel > prevLevel + 1 ? nextLevel - 1 : nextLevel;
           }
         }
+        addMilestoneEntry(milestoneId, stage, level);
+      }
+
+      function removeMilestoneEntry(milestoneId) {
+        const cur = (node.mmTargets || {})[mmId] || {};
+        const sorted = sortMsBySubgoalOrder(cur.milestones || []);
+        const deletedEntry = sorted.find(e => e.milestoneId === milestoneId);
+        const isDeletingLast = sorted.length > 0 && sorted[sorted.length - 1].milestoneId === milestoneId;
+
+        let list = sorted.filter(e => e.milestoneId !== milestoneId);
+
+        if (isDeletingLast && list.length > 0 && deletedEntry) {
+          const newLastId = list[list.length - 1].milestoneId;
+          list = list.map(e =>
+            e.milestoneId === newLastId
+              ? { ...e, stage: deletedEntry.stage, level: deletedEntry.level }
+              : e
+          );
+        }
+
+        const next = { ...cur, milestones: list.length ? list : undefined };
+        const updatedTargets = { ...(node.mmTargets || {}) };
+        if (!next.stage && !next.level && !next.milestones) {
+          delete updatedTargets[mmId];
+        } else {
+          updatedTargets[mmId] = next;
+        }
+        onUpdateMmTargets(node.id, updatedTargets);
+      }
+
+      function updateMilestoneEntry(milestoneId, field, val) {
+        const cur = (node.mmTargets || {})[mmId] || {};
+        const list = sortMsBySubgoalOrder((cur.milestones || []).map(e =>
+          e.milestoneId === milestoneId ? { ...e, [field]: val || undefined } : e
+        ));
+        const updatedTargets = { ...(node.mmTargets || {}), [mmId]: { ...cur, milestones: list } };
         onUpdateMmTargets(node.id, updatedTargets);
       }
 
@@ -1421,53 +1752,187 @@
         onUpdateMmTargets(node.id, updated);
       }
 
+      useEffect(() => {
+        if (!showMsPicker) return;
+        function dismiss() { setShowMsPicker(false); }
+        document.addEventListener('mousedown', dismiss);
+        return () => document.removeEventListener('mousedown', dismiss);
+      }, [showMsPicker]);
+
+      const usedMilestoneIds = new Set(milestoneEntries.map(e => e.milestoneId));
+      const availableMilestones = nodeMilestones.filter(m => !usedMilestoneIds.has(m.id));
+      const lastEntry = milestoneEntries.length > 0 ? milestoneEntries[milestoneEntries.length - 1] : null;
+      const lastIdx = milestoneEntries.length - 1;
+      const secondToLastStageOrder = milestoneEntries.length > 1
+        ? (STAGE_ORDER[milestoneEntries[milestoneEntries.length - 2]?.stage] || 0)
+        : 0;
+      const allStages = [
+        { val: '1', label: 'S1' }, { val: '2', label: 'S2' },
+        { val: '3', label: 'S3' }, { val: '4', label: 'S4' },
+        { val: 'sir', label: 'SIR T1' }, { val: 'sir1', label: 'SIR T2' },
+        { val: 'sir2', label: 'SIR T3' }, { val: 'sir3', label: 'SIR T4' },
+        { val: 'sir4', label: 'SIR T5' }, { val: 'sir5', label: 'FIN' },
+      ];
+
       return (
         <div style={{ paddingLeft: depth * 14 }}>
           <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <MindMapsBadge mm={mm} sirDoneMap={sirDoneMap} />
               {mm.type !== 'anchor' && (
-                <select value={tgt.stage || ''} onChange={e => setTarget('stage', e.target.value)}
+                <select
+                  value={lastEntry ? (lastEntry.stage || '') : (tgt.stage || '')}
+                  onChange={e => lastEntry
+                    ? updateMilestoneEntry(lastEntry.milestoneId, 'stage', e.target.value)
+                    : setTarget('stage', e.target.value)}
                   className="text-[9px] bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-400 outline-none focus:border-indigo-600 cursor-pointer"
                   title="Goal stage target">
                   <option value="">— stage</option>
-                  <option value="1">S1</option>
-                  <option value="2">S2</option>
-                  <option value="3">S3</option>
-                  <option value="4">S4</option>
-                  <option value="sir">SIR T1 (entered)</option>
-                  <option value="sir1">SIR T2 (D1 done)</option>
-                  <option value="sir2">SIR T3 (D3 done)</option>
-                  <option value="sir3">SIR T4 (D7 done)</option>
-                  <option value="sir4">SIR T5 (D14 done)</option>
-                  <option value="sir5">FIN (D30 done)</option>
+                  {[
+                    { val: '1',    label: 'S1' },
+                    { val: '2',    label: 'S2' },
+                    { val: '3',    label: 'S3' },
+                    { val: '4',    label: 'S4' },
+                    { val: 'sir',  label: 'SIR T1 (entered)' },
+                    { val: 'sir1', label: 'SIR T2 (D1 done)' },
+                    { val: 'sir2', label: 'SIR T3 (D3 done)' },
+                    { val: 'sir3', label: 'SIR T4 (D7 done)' },
+                    { val: 'sir4', label: 'SIR T5 (D14 done)' },
+                    { val: 'sir5', label: 'FIN (D30 done)' },
+                  ].filter(({ val }) => !lastEntry || STAGE_ORDER[val] >= secondToLastStageOrder)
+                   .map(({ val, label }) => <option key={val} value={val}>{label}</option>)}
                 </select>
               )}
               {String(mm.type) === '2' && (
                 <div className="flex items-center gap-0.5">
-                  <input type="number" min="1" max="10" value={tgt.level || ''}
-                    onChange={e => setTarget('level', e.target.value ? Number(e.target.value) : undefined)}
+                  <input type="number" min="1" max="10"
+                    value={lastEntry ? (lastEntry.level || '') : (tgt.level || '')}
+                    onChange={e => {
+                      const v = e.target.value ? Number(e.target.value) : undefined;
+                      lastEntry ? updateMilestoneEntry(lastEntry.milestoneId, 'level', v) : setTarget('level', v);
+                    }}
                     placeholder="lvl"
                     className="w-10 text-[9px] bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-400 outline-none focus:border-indigo-600"
                     title="Goal level target (1–10)" />
                   <span className="text-[9px] text-gray-600">/10</span>
                 </div>
               )}
-              {(node.milestones || []).length > 0 && (
-                <select value={tgt.milestone || ''} onChange={e => setTarget('milestone', e.target.value)}
-                  className="text-[9px] bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-400 outline-none focus:border-indigo-600 cursor-pointer"
-                  title="Milestone">
-                  <option value="">— milestone</option>
-                  {(node.milestones || []).map(m => (
-                    <option key={m.id} value={m.id}>{m.title}</option>
-                  ))}
-                </select>
-              )}
               {indicator}
+              {milestoneEntries.map((e, idx) => {
+                const ms = nodeMilestones.find(m => m.id === e.milestoneId);
+                if (!ms) return null;
+                const isCurrent = idx === firstUnmetEntryIdx;
+                const isMet = firstUnmetEntryIdx === -1 || idx < firstUnmetEntryIdx;
+                const isHovMs = hovMs === e.milestoneId;
+                return (
+                  <span key={e.milestoneId}
+                    className={`inline-flex items-center gap-1 text-[9px] rounded px-1.5 py-0.5 whitespace-nowrap border transition-all ${isCurrent ? 'bg-cyan-950/60 text-cyan-300 border-cyan-600/60 font-bold' : isMet ? 'bg-gray-800/20 text-gray-600 border-gray-700/20' : 'bg-gray-800/40 text-gray-500 border-gray-700/30'}`}
+                    style={isHovMs ? {} : { maxWidth: 72, overflow: 'hidden' }}
+                    title={ms.title}
+                    onMouseEnter={() => setHovMs(e.milestoneId)}
+                    onMouseLeave={() => setHovMs(null)}>
+                    <span className="truncate">{ms.title}</span>
+                    {isHovMs && (
+                      <button
+                        onClick={ev => {
+                          ev.stopPropagation();
+                          if (window.confirm(`Remove milestone checkpoint "${ms.title}"?`))
+                            removeMilestoneEntry(e.milestoneId);
+                        }}
+                        className="text-gray-500 hover:text-red-400 leading-none flex-shrink-0 ml-0.5">
+                        ×
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+              {hasTarget && availableMilestones.length > 0 && (
+                <div className="relative flex-shrink-0">
+                  <button
+                    onClick={() => availableMilestones.length === 1
+                      ? addMilestoneAtDefault(availableMilestones[0].id)
+                      : setShowMsPicker(v => !v)}
+                    className="text-[9px] text-gray-600 hover:text-cyan-400 transition-colors">
+                    + ms
+                  </button>
+                  {showMsPicker && (
+                    <div
+                      className="absolute top-full left-0 mt-1 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 min-w-[100px]"
+                      onMouseDown={e => e.stopPropagation()}>
+                      {availableMilestones.map(ms => (
+                        <button key={ms.id}
+                          onClick={() => { addMilestoneAtDefault(ms.id); setShowMsPicker(false); }}
+                          className="block w-full text-left px-2 py-1 text-[9px] text-gray-300 hover:bg-gray-800 hover:text-cyan-400 whitespace-nowrap">
+                          {ms.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <button onClick={handleRemove}
                 className="ml-auto text-gray-700 hover:text-red-400 text-[10px] flex-shrink-0"
                 title="Remove">×</button>
             </div>
+
+            {hasTarget && (
+              <div className="ml-10 mt-2 flex flex-col gap-4">
+                {/* KS02 interactive bar */}
+                {(lastEntry?.stage || tgt.stage) && (() => {
+                  const SLABEL = {'1':'S1','2':'S2','3':'S3','4':'S4',sir:'SIR',sir1:'T2',sir2:'T3',sir3:'T4',sir4:'T5',sir5:'FIN'};
+                  const ORDER_TO_STAGE = Object.fromEntries(
+                    Object.entries(STAGE_ORDER).filter(([k]) => k !== 'finished').map(([k,v]) => [v,k])
+                  );
+                  const goalStage = lastEntry?.stage || tgt.stage;
+                  const goalOrder = STAGE_ORDER[goalStage] || 1;
+                  const currOrder = mm.ksStage === 'sir'
+                    ? 5 + ((sirDoneMap || {})[mm.id] || 0)
+                    : (STAGE_ORDER[mm.ksStage] || 0);
+                  const fillPct = Math.min(100, (currOrder / goalOrder) * 100);
+                  return (
+                    <MilestoneBar
+                      label="KS02"
+                      goalVal={goalOrder}
+                      allEntries={milestoneEntries}
+                      nodeMilestones={nodeMilestones}
+                      fillPct={fillPct}
+                      done={fillPct >= 100}
+                      onUpdate={(milestoneId, val) => updateMilestoneEntry(milestoneId, 'stage', ORDER_TO_STAGE[val])}
+                      onRemove={removeMilestoneEntry}
+                      getVal={e => STAGE_ORDER[e.stage] || undefined}
+                      getLabel={val => SLABEL[ORDER_TO_STAGE[val]] || String(val)}
+                      goalLabel={SLABEL[goalStage] || goalStage}
+                      mm={mm}
+                      sirDoneMap={sirDoneMap}
+                    />
+                  );
+                })()}
+
+                {/* MG interactive bar (Type 2 only) */}
+                {String(mm.type) === '2' && (lastEntry?.level || tgt.level) && (() => {
+                  const goalLevel = Number(lastEntry?.level || tgt.level);
+                  const currLevel = mm.rating || 0;
+                  const fillPct = Math.min(100, (currLevel / goalLevel) * 100);
+                  return (
+                    <MilestoneBar
+                      label="MG"
+                      goalVal={goalLevel}
+                      allEntries={milestoneEntries}
+                      nodeMilestones={nodeMilestones}
+                      fillPct={fillPct}
+                      done={fillPct >= 100}
+                      onUpdate={(milestoneId, val) => updateMilestoneEntry(milestoneId, 'level', val)}
+                      onRemove={removeMilestoneEntry}
+                      getVal={e => e.level ? Number(e.level) : undefined}
+                      getLabel={val => String(val)}
+                      goalLabel={`${goalLevel}/10`}
+                      mm={mm}
+                      sirDoneMap={sirDoneMap}
+                    />
+                  );
+                })()}
+              </div>
+            )}
           </div>
           {children.length > 0 && (
             <div className="mt-1">
@@ -2030,11 +2495,13 @@
               })()}
               {(node.toLearn || []).length === 0
                 ? <div className="text-[11px] text-gray-700 italic">No Mind Maps linked yet.</div>
-                : <div className="flex flex-col gap-2">
-                    {buildToLearnTree(node.toLearn || [], mms || []).map(entry => (
-                      <ToLearnRow key={entry.mm.id} entry={entry} depth={0}
-                        node={node} mms={mms} sirDoneMap={sirDoneMap}
-                        onUpdateToLearn={onUpdateToLearn} onUpdateMmTargets={onUpdateMmTargets} />
+                : <div className="flex flex-col">
+                    {buildToLearnTree(node.toLearn || [], mms || []).map((entry, i) => (
+                      <div key={entry.mm.id} className={i > 0 ? 'border-t border-gray-800/50 pt-3 mt-3' : 'pb-3'}>
+                        <ToLearnRow entry={entry} depth={0}
+                          node={node} mms={mms} sirDoneMap={sirDoneMap}
+                          onUpdateToLearn={onUpdateToLearn} onUpdateMmTargets={onUpdateMmTargets} />
+                      </div>
                     ))}
                   </div>
               }
@@ -4425,14 +4892,18 @@
           milestone = (owner.milestones || []).find(m => m.id === selectedMilestone.milestoneId);
           if (!milestone) return null;
         } else {
-          const todayStr = toDateStr(new Date());
           let found = false;
           for (const goal of goals || []) {
             if (found) break;
             for (const o of collectMilestoneOwners(goal, goals || [])) {
               if (found) break;
               for (const m of o.milestones || []) {
-                if (m.startDate && m.endDate && todayStr >= m.startDate && todayStr <= m.endDate) {
+                const blocks = collectMilestoneBlocks(o, m.id, goals || []);
+                const prog = blocks.reduce((acc, b) => {
+                  const p = countProgress(b, id => findNode(goals, id));
+                  return { done: acc.done + p.done, total: acc.total + p.total };
+                }, { done: 0, total: 0 });
+                if (!(prog.total > 0 && prog.done >= prog.total)) {
                   owner = o; milestone = m; found = true; break;
                 }
               }
@@ -5093,6 +5564,34 @@
                       const _mmW = mm => { if (mm.ksStage==='sir') { const d=sirDoneMap[mm.id]||0; return d>=5?1:d>=4?2:d>=3?3:d>=2?4:5; } return mm.ksStage==null?10:(_mmSortW[mm.ksStage]??10); };
                       const dueMMs   = visibleMMs.filter(m => dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
                       const otherMMs = visibleMMs.filter(m => !dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
+                      function getFirstUnmetMs(mm) {
+                        function scan(nodes) {
+                          for (const n of nodes) {
+                            const tgt = (n.mmTargets || {})[mm.id];
+                            if (tgt?.milestones?.length > 0) {
+                              const orderMap = new Map((n.milestones || []).map((m, i) => [m.id, i]));
+                              const sorted = [...tgt.milestones].sort((a, b) => (orderMap.get(a.milestoneId) ?? 999) - (orderMap.get(b.milestoneId) ?? 999));
+                              const effOrder = mm.ksStage === 'sir' ? 5 + (sirDoneMap[mm.id] || 0) : (STAGE_ORDER[mm.ksStage] || 0);
+                              for (const msEntry of sorted) {
+                                const stageMet = !msEntry.stage || effOrder >= (STAGE_ORDER[msEntry.stage] || 0);
+                                const levelMet = !msEntry.level || (mm.rating || 0) >= Number(msEntry.level);
+                                if (!(stageMet && levelMet)) {
+                                  const ms = (n.milestones || []).find(m => m.id === msEntry.milestoneId);
+                                  return {
+                                    title: ms?.title || null,
+                                    isActive: !!(ms?.startDate && ms?.endDate && ds >= ms.startDate && ds <= ms.endDate)
+                                  };
+                                }
+                              }
+                              return { title: null, isActive: false };
+                            }
+                            const found = scan(n.children || []);
+                            if (found !== undefined) return found;
+                          }
+                          return null;
+                        }
+                        return scan(goals || []) || { title: null, isActive: false };
+                      }
                       return (
                         <>
                           <div className="fixed inset-0 z-20" onClick={() => { setMmPickerDay(null); setSearch(''); }} />
@@ -5109,11 +5608,13 @@
                                   <div className="px-3 py-1 text-[9px] text-emerald-600 tracking-widest border-b border-gray-800/50">SIR DUE TODAY</div>
                                   {dueMMs.map(mm => {
                                     const stg = sirStageLabel(mm);
+                                    const { title: msTitle, isActive } = getFirstUnmetMs(mm);
                                     return (
                                       <button key={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
-                                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-emerald-950/40 flex items-center gap-2 transition-colors">
+                                        className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? 'bg-cyan-950/50 hover:bg-cyan-900/50' : 'hover:bg-emerald-950/40'}`}>
                                         <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-500" />
                                         <span className="flex-1 truncate text-emerald-400">{mm.name}</span>
+                                        {msTitle && <span className="text-[9px] text-cyan-400 flex-shrink-0 truncate" style={{maxWidth:80}}>{msTitle}</span>}
                                         {stg && <span className="text-[9px] text-emerald-600 flex-shrink-0">{stg}</span>}
                                       </button>
                                     );
@@ -5125,26 +5626,14 @@
                               )}
                               {otherMMs.map(mm => {
                                 const stg = sirStageLabel(mm);
-                                const inMs = (() => {
-                                  function scan(nodes) {
-                                    for (const n of nodes) {
-                                      const mid = (n.mmTargets || {})[mm.id]?.milestone;
-                                      if (mid) {
-                                        const ms = (n.milestones || []).find(m => m.id === mid);
-                                        if (ms && ms.startDate && ms.endDate && ds >= ms.startDate && ds <= ms.endDate) return true;
-                                      }
-                                      if (scan(n.children || [])) return true;
-                                    }
-                                    return false;
-                                  }
-                                  return scan(goals || []);
-                                })();
+                                const { title: msTitle, isActive } = getFirstUnmetMs(mm);
                                 return (
                                   <button key={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
-                                    className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${inMs ? 'hover:bg-cyan-950/40' : 'hover:bg-gray-800'}`}>
-                                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: inMs ? '#22d3ee' : '#6b7280' }} />
-                                    <span className={`flex-1 truncate ${inMs ? 'text-cyan-400' : 'text-gray-500'}`}>{mm.name}</span>
-                                    {stg && <span className={`text-[9px] flex-shrink-0 ${inMs ? 'text-cyan-600' : 'text-gray-600'}`}>{stg}</span>}
+                                    className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? 'bg-cyan-950/50 hover:bg-cyan-900/50' : 'hover:bg-gray-800'}`}>
+                                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: isActive ? '#22d3ee' : '#6b7280' }} />
+                                    <span className={`flex-1 truncate ${isActive ? 'text-cyan-300' : 'text-gray-500'}`}>{mm.name}</span>
+                                    {msTitle && <span className="text-[9px] text-cyan-400 flex-shrink-0 truncate" style={{maxWidth:80}}>{msTitle}</span>}
+                                    {stg && <span className={`text-[9px] flex-shrink-0 ${isActive ? 'text-cyan-500' : 'text-gray-600'}`}>{stg}</span>}
                                   </button>
                                 );
                               })}
@@ -5680,19 +6169,37 @@
                       const stgCol = mm.ksStage ? STAGE_COLORS_SCHED[mm.ksStage] : col;
                       const commentOpen = timelineMode === 'day' && openComments.has(entry.id);
                       if (top < -height || top >= TOTAL_H) return null;
-                      const inCurrentMilestone = (() => {
+                      const { inCurrentMilestone, firstUnmetMilestoneTitle } = (() => {
                         function scan(nodes) {
                           for (const n of nodes) {
-                            const milestoneId = (n.mmTargets || {})[entry.mmId]?.milestone;
-                            if (milestoneId) {
-                              const ms = (n.milestones || []).find(m => m.id === milestoneId);
-                              if (ms && ms.startDate && ms.endDate && ds >= ms.startDate && ds <= ms.endDate) return true;
+                            const tgt = (n.mmTargets || {})[entry.mmId];
+                            if (tgt?.milestones?.length > 0) {
+                              const orderMap = new Map((n.milestones || []).map((m, i) => [m.id, i]));
+                              const sorted = [...tgt.milestones].sort(
+                                (a, b) => (orderMap.get(a.milestoneId) ?? 999) - (orderMap.get(b.milestoneId) ?? 999)
+                              );
+                              const effOrder = mm.ksStage === 'sir'
+                                ? 5 + (sirDoneMap[mm.id] || 0)
+                                : (STAGE_ORDER[mm.ksStage] || 0);
+                              for (const msEntry of sorted) {
+                                const stageMet = !msEntry.stage || effOrder >= (STAGE_ORDER[msEntry.stage] || 0);
+                                const levelMet = !msEntry.level || (mm.rating || 0) >= Number(msEntry.level);
+                                if (!(stageMet && levelMet)) {
+                                  const ms = (n.milestones || []).find(m => m.id === msEntry.milestoneId);
+                                  return {
+                                    firstUnmetMilestoneTitle: ms?.title || null,
+                                    inCurrentMilestone: !!(ms?.startDate && ms?.endDate && ds >= ms.startDate && ds <= ms.endDate)
+                                  };
+                                }
+                              }
+                              return { firstUnmetMilestoneTitle: null, inCurrentMilestone: false };
                             }
-                            if (scan(n.children || [])) return true;
+                            const found = scan(n.children || []);
+                            if (found) return found;
                           }
-                          return false;
+                          return null;
                         }
-                        return scan(goals || []);
+                        return scan(goals || []) || { firstUnmetMilestoneTitle: null, inCurrentMilestone: false };
                       })();
                       return (
                         <React.Fragment key={entry.id}>
@@ -5727,9 +6234,17 @@
                                   {formatTime12(dispTime)} – {formatTime12(addMins(dispTime, dur))}
                                 </div>
                               )}
-                              {height >= 32 && stg && (
-                                <div className="text-[10px] leading-tight font-bold"
-                                  style={{color:stgCol,opacity:0.85}}>{stg}</div>
+                              {firstUnmetMilestoneTitle && (
+                                <div className="text-[10px] leading-tight font-bold truncate"
+                                  style={{color:'#22d3ee', opacity:0.85}}>
+                                  {firstUnmetMilestoneTitle}
+                                </div>
+                              )}
+                              {height >= 32 && stg && !firstUnmetMilestoneTitle && (
+                                <div className="text-[10px] leading-tight font-bold truncate"
+                                  style={{color: stgCol, opacity:0.85}}>
+                                  {stg}
+                                </div>
                               )}
                             </div>
                           </div>
