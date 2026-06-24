@@ -5394,20 +5394,30 @@
                       );
                     })()}
 
-                    {/* MG picker dropdown */}
+                    {/* MG picker modal */}
                     {mgPickerDay === ds && !isPast && (() => {
                       const t2mms = (mms || []).filter(m => String(m.type) === '2');
                       const dayMGs = getMGsForDay(ds, mgSchedule);
+                      const visibleMGs = t2mms.filter(mm =>
+                        !search.trim() || mm.name.toLowerCase().includes(search.toLowerCase()) ||
+                        (mm.currentMG && mm.currentMG.toLowerCase().includes(search.toLowerCase()))
+                      );
                       return (
                         <>
-                          <div className="fixed inset-0 z-20" onClick={() => setMgPickerDay(null)} />
-                          <div className="absolute top-full left-0 mt-1 w-60 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-30 overflow-hidden">
-                            <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800">MG — MINDSET / GOAL</div>
-                            <div className="max-h-52 overflow-y-auto">
+                          <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setMgPickerDay(null); setSearch(''); }} />
+                          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                            <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex-shrink-0">MG — MINDSET / GOAL</div>
+                            <div className="p-3 border-b border-gray-800 flex-shrink-0">
+                              <input value={search} onChange={e => setSearch(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Escape') { setMgPickerDay(null); setSearch(''); } }}
+                                placeholder="filter MGs..."
+                                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-emerald-600" />
+                            </div>
+                            <div className="overflow-y-auto flex-1">
                               {t2mms.length === 0 && (
                                 <div className="px-3 py-3 text-[10px] text-gray-600">No T2 MGs yet.</div>
                               )}
-                              {t2mms.map(mm => {
+                              {visibleMGs.map(mm => {
                                 const active = dayMGs.includes(mm.id);
                                 return (
                                   <button key={mm.id}
@@ -5437,7 +5447,7 @@
                       return (
                         <>
                           <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setPickerDay(null); setMmPickerDay(null); setSearch(''); }} />
-                          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
                             {/* Search */}
                             <div className="p-3 border-b border-gray-800 flex-shrink-0">
                               <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
@@ -5600,15 +5610,15 @@
                       }
                       return (
                         <>
-                          <div className="fixed inset-0 z-20" onClick={() => { setMmPickerDay(null); setSearch(''); }} />
-                          <div className="absolute top-full left-0 mt-1 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-30 overflow-hidden">
-                            <div className="p-2 border-b border-gray-800">
+                          <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setMmPickerDay(null); setSearch(''); }} />
+                          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                            <div className="p-3 border-b border-gray-800 flex-shrink-0">
                               <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Escape') { setMmPickerDay(null); setSearch(''); } }}
                                 placeholder="filter mind maps..."
-                                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none placeholder-gray-600 focus:border-emerald-600" />
+                                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-emerald-600" />
                             </div>
-                            <div className="max-h-64 overflow-y-auto">
+                            <div className="overflow-y-auto flex-1">
                               {hasDue && dueMMs.length > 0 && (
                                 <>
                                   <div className="px-3 py-1 text-[9px] text-emerald-600 tracking-widest border-b border-gray-800/50">SIR DUE TODAY</div>
