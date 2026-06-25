@@ -5367,8 +5367,9 @@
                 return (
                   <div key={ds}
                     style={timelineMode === 'week' ? { minWidth: DAY_MIN_W + 'px' } : undefined}
-                    className="flex-1 flex flex-row border-l border-gray-800 relative">
+                    className="flex-1 flex flex-col border-l border-gray-800 relative">
 
+                    <div className="flex flex-row">
                     {/* LEFT STRIP — SIR sessions due this day */}
                     <div className="flex flex-col gap-0.5 pt-2 pl-1 pr-0.5 flex-shrink-0" style={{ width: '36px' }}>
                       {(sessions || [])
@@ -5412,36 +5413,6 @@
                         onClick={() => { setMgPickerDay(mgPickerDay === ds ? null : ds); setPickerDay(null); setMmPickerDay(null); setSearch(''); }}
                         className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">⊕</button>}
                     </div>
-
-                    {/* MG list — top of day */}
-                    {(() => {
-                      const dayMGs  = getMGsForDay(ds, mgSchedule);
-                      const carried = !Object.prototype.hasOwnProperty.call(mgSchedule, ds) && dayMGs.length > 0;
-                      const t2mms   = (mms || []).filter(m => String(m.type) === '2');
-                      if (!dayMGs.length) return null;
-                      return (
-                        <div className="w-full px-1 mt-1 text-left">
-                          {carried && <div className="text-[9px] text-gray-600 italic text-center">↑ carried</div>}
-                          <ul className="text-[10px] space-y-0.5 list-none">
-                            {dayMGs.map(mmId => {
-                              const mm = t2mms.find(m => m.id === mmId);
-                              if (!mm) return null;
-                              return (
-                                <li key={mmId} className="flex items-start gap-1 group">
-                                  <span className="text-emerald-600 mt-px flex-shrink-0">•</span>
-                                  <span className="flex-1 text-emerald-300 leading-tight">{getMGTextForDay(mmId, ds, mgChanges) || mm.name}</span>
-                                  {!isPast && <button
-                                    onClick={() => toggleMGDay(ds, mmId, mgSchedule, setMgSchedule)}
-                                    className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-opacity ml-1 flex-shrink-0 p-1"
-                                  >×</button>}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                      );
-                    })()}
-
 
                     {/* MG picker modal */}
                     {mgPickerDay === ds && !isPast && (() => {
@@ -5727,6 +5698,36 @@
                         </button>
                       ))}
                     </div>
+                    </div>
+
+                    {/* MG list — full width */}
+                    {(() => {
+                      const dayMGs  = getMGsForDay(ds, mgSchedule);
+                      const carried = !Object.prototype.hasOwnProperty.call(mgSchedule, ds) && dayMGs.length > 0;
+                      const t2mms   = (mms || []).filter(m => String(m.type) === '2');
+                      if (!dayMGs.length) return null;
+                      return (
+                        <div className="w-full px-1 mt-1 pb-2 text-left">
+                          {carried && <div className="text-[9px] text-gray-600 italic text-center">↑ carried</div>}
+                          <ul className="text-[10px] space-y-0.5 list-none">
+                            {dayMGs.map(mmId => {
+                              const mm = t2mms.find(m => m.id === mmId);
+                              if (!mm) return null;
+                              return (
+                                <li key={mmId} className="flex items-start gap-1 group">
+                                  <span className="text-emerald-600 mt-px flex-shrink-0">•</span>
+                                  <span className="flex-1 text-emerald-300 leading-tight">{getMGTextForDay(mmId, ds, mgChanges) || mm.name}</span>
+                                  {!isPast && <button
+                                    onClick={() => toggleMGDay(ds, mmId, mgSchedule, setMgSchedule)}
+                                    className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-opacity ml-1 flex-shrink-0 p-1"
+                                  >×</button>}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
