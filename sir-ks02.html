@@ -2008,7 +2008,7 @@
           </div>
 
           <div className="fixed bottom-0 left-0 right-0 p-4 bg-gray-950 border-t border-gray-800">
-            <button onClick={()=>onSave({...form})} className="w-full max-w-2xl mx-auto block bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold">SAVE CHANGES</button>
+            <button onClick={()=>{onSave({...form});setDirty(false);}} className="w-full max-w-2xl mx-auto block bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold">SAVE CHANGES</button>
           </div>
         </div>
       );
@@ -3471,7 +3471,12 @@
                       const moved=p.map(c=>c.kolbId===k.id?{...c,mmId:updated.mmId}:c);
                       return hasNewMG?[...moved,{id:nid(),mmId:updated.mmId,kolbId:k.id,oldMG:targetMM.currentMG||"(none)",newMG:mgValue,experiment:updated.experiments||"",date:k.date}]:moved;
                     });
-                    if (hasNewMG) setMms(p=>p.map(m=>m.id===updated.mmId?{...m,currentMG:mgValue}:m));
+                    if (hasNewMG) {
+                      const movedChanges=mgChanges.filter(c=>c.kolbId===k.id&&c.mmId).map(c=>({...c,mmId:updated.mmId}));
+                      const existingForTarget=mgChanges.filter(c=>c.mmId===updated.mmId&&c.kolbId!==k.id);
+                      const allForTarget=[...existingForTarget,...movedChanges,{date:k.date,newMG:mgValue}].sort((a,b)=>b.date.localeCompare(a.date));
+                      setMms(p=>p.map(m=>m.id===updated.mmId?{...m,currentMG:allForTarget[0].newMG}:m));
+                    }
                     if (affectedMmIds.size){
                       setMms(p=>p.map(m=>{
                         if (!affectedMmIds.has(m.id)) return m;
