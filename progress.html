@@ -1437,10 +1437,10 @@
 
       // Attach document drag listeners once — use refs so no stale closure teardown
       useEffect(() => {
-        function onMove(e) {
+        function computeDrag(clientX) {
           const d = dragRef.current;
           if (!d) return;
-          const pct = Math.max(0, Math.min(100, (e.clientX - d.barRect.left) / d.barRect.width * 100));
+          const pct = Math.max(0, Math.min(100, (clientX - d.barRect.left) / d.barRect.width * 100));
           const raw = Math.round(pct / 100 * goalValRef.current);
           const prevEntry = allEntriesRef.current[d.idx - 1];
           const nextEntry = allEntriesRef.current[d.idx + 1];
@@ -1450,7 +1450,7 @@
           dragRef.current = { ...d, liveVal: clamped };
           setDrag({ idx: d.idx, liveVal: clamped });
         }
-        function onUp() {
+        function commitDrag() {
           const d = dragRef.current;
           if (!d) return;
           if (d.liveVal != null) {
@@ -1460,11 +1460,23 @@
           dragRef.current = null;
           setDrag(null);
         }
+        function onMove(e) { computeDrag(e.clientX); }
+        function onUp() { commitDrag(); }
+        function onTouchMove(e) {
+          if (!dragRef.current) return;
+          e.preventDefault();
+          computeDrag(e.touches[0].clientX);
+        }
+        function onTouchEnd() { commitDrag(); }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
+        document.addEventListener('touchend', onTouchEnd);
         return () => {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', onTouchEnd);
         };
       }, []);
 
@@ -1571,6 +1583,14 @@
                     }}
                     onClick={ev => ev.stopPropagation()}
                     onMouseDown={ev => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      const rect = barRef.current.getBoundingClientRect();
+                      dragRef.current = { idx, barRect: rect, liveVal: null };
+                      setDrag({ idx, liveVal: val });
+                      setHover(null);
+                    }}
+                    onTouchStart={ev => {
                       ev.preventDefault();
                       ev.stopPropagation();
                       const rect = barRef.current.getBoundingClientRect();
