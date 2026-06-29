@@ -966,7 +966,7 @@
       );
     }
 
-    function KolbForm({mmOptions,initialMMId,levelTemplates,onSave,onCancel}) {
+    function KolbForm({mmOptions,initialMMId,levelTemplates,onSave,onCancel,kolbs}) {
       const [form,setForm]=useState(EMPTY_KOLB);
       const [step,setStep]=useState(1);
       const [mmId,setMMId]=useState(initialMMId||"");
@@ -1075,6 +1075,7 @@
             </div>)}
             {step===4&&(<div className="space-y-4">
               <div className="text-xs font-bold text-emerald-300">STEP 4 — EXPERIMENT & MG</div>
+              {(()=>{const relevantKolbs=kolbs?(mmId?kolbs.filter(k=>k.mmId===mmId):kolbs):[];const latestExp=[...relevantKolbs].sort((a,b)=>b.id-a.id)[0]?.experiments||"";const mgFocus=mmOptions.find(m=>m.id===mmId)?.currentMG||"";return(latestExp||mgFocus)&&(<div className="space-y-2 pb-1">{latestExp&&(<div className="bg-gray-900 border border-yellow-900 rounded px-3 py-2"><div className="text-[10px] text-gray-500 mb-1">LATEST EXPERIMENT</div><div className="text-xs text-yellow-200 whitespace-pre-wrap">{latestExp}</div></div>)}{mgFocus&&(<div className="bg-gray-900 border border-emerald-900 rounded px-3 py-2"><div className="text-[10px] text-gray-500 mb-1">MG FOCUS</div><div className="text-xs text-emerald-400 whitespace-pre-wrap">{mgFocus}</div></div>)}</div>);})()}
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-xs font-bold text-yellow-400">4.1 EXPERIMENT</span>
@@ -3568,7 +3569,7 @@
             </div>
           )}
 
-          {kolbModal&&<KolbForm mmOptions={type2mms} initialMMId={kolbModal.mmId||null} levelTemplates={levelTemplates} onSave={saveKolb} onCancel={()=>setKolbModal(null)}/>}
+          {kolbModal&&<KolbForm mmOptions={type2mms} initialMMId={kolbModal.mmId||null} levelTemplates={levelTemplates} onSave={saveKolb} onCancel={()=>setKolbModal(null)} kolbs={kolbs}/>}
 
           {linModal&&<LinModal mms={mms} sessions={sessions} sirSessionsMap={sirSessionsMap} mmColor={mmColor} linModal={linModal} setLinModal={setLinModal} linDayTitles={linDayTitles} onSave={(items,title)=>{saveLinSession(items,title);setLinModal(null);}}/>}
         </div>
