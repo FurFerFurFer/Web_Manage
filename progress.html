@@ -262,6 +262,7 @@
           ? { ...g, routineDates: {
                 ...(g.routineDates || {}),
                 [dateStr]: {
+                  ...(g.routineDates?.[dateStr] || {}),
                   time: (g.routineDates?.[dateStr]?.time || '09:00'),
                   done: !(g.routineDates?.[dateStr]?.done)
                 }
@@ -538,6 +539,16 @@
       return out;
     }
 
+    // Selection/ghost records match a rendered block by id, plus date for routines
+    // (routine instances share one task.id across days).
+    function selMatch(sel, id, isRoutine, ds) {
+      return !!sel && sel.id === id && (!isRoutine || sel.date === ds);
+    }
+    // Routines may carry a per-date duration in routineDates[ds]; fall back to the shared one.
+    function goalDurationFor(t, ds) {
+      return ((t.taskType === 'routine' ? t.routineDates?.[ds]?.duration : undefined) ?? t.duration) || 60;
+    }
+
     function updateSchedule(goals, id, date, time) {
       return goals.map(g => {
         if (g.id === id) {
@@ -546,7 +557,7 @@
             const prev = (g.routineDates || {})[date];
             return { ...g, routineDates: {
               ...(g.routineDates || {}),
-              [date]: { time: time || prev?.time || '09:00', done: prev?.done || false }
+              [date]: { ...(prev || {}), time: time || prev?.time || '09:00', done: prev?.done || false }
             }};
           }
           return { ...g, scheduledDate: date, scheduledTime: time };
@@ -4705,13 +4716,13 @@
           }
           // Handle resize drag
           if (resizeRef.current) {
-            const { type, id, edge, startY, startDuration, startTotalMin } = resizeRef.current;
+            const { type, id, edge, startY, startDuration, startTotalMin, dateStr } = resizeRef.current;
             const deltaY = clientY - startY;
             const deltaMins = Math.round((deltaY / pxPerHourRef.current * 60) / 5) * 5;
             if (edge === 'bottom') {
               const newDuration = Math.max(5, startDuration + deltaMins);
               resizeRef.current.previewDuration = newDuration;
-              setGhost(g => ({ ...(g || { type, id, _resize: true }), duration: newDuration }));
+              setGhost(g => ({ ...(g || { type, id, dateStr, _resize: true }), duration: newDuration }));
             } else {
               const newDuration = Math.max(5, startDuration - deltaMins);
               const newTotalMin = Math.max(START_HOUR * 60, Math.min((END_HOUR - 1) * 60, startTotalMin + deltaMins));
@@ -4720,7 +4731,7 @@
               const newTime = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
               resizeRef.current.previewDuration = newDuration;
               resizeRef.current.previewTime = newTime;
-              setGhost(g => ({ ...(g || { type, id, _resize: true }), duration: newDuration, time: newTime }));
+              setGhost(g => ({ ...(g || { type, id, dateStr, _resize: true }), duration: newDuration, time: newTime }));
             }
             return;
           }
@@ -4765,9 +4776,8 @@
                   function applyUpdate(goals) {
                     return goals.map(g => {
                       if (g.id !== id) return { ...g, children: applyUpdate(g.children || []) };
-                      if (g.taskType === 'routine' && previewTime && dateStr) {
-                        const { scheduledTime, ...rest } = update;
-                        return { ...g, ...rest, routineDates: { ...(g.routineDates || {}), [dateStr]: { ...(g.routineDates?.[dateStr] || {}), time: previewTime } } };
+                      if (g.taskType === 'routine' && dateStr) {
+                        return { ...g, routineDates: { ...(g.routineDates || {}), [dateStr]: { ...(g.routineDates?.[dateStr] || {}), duration: previewDuration, ...(previewTime ? { time: previewTime } : {}) } } };
                       }
                       return { ...g, ...update };
                     });
@@ -4832,22 +4842,25 @@
           if (!touchRef.current.moved && (dx > 8 || dy > 8)) {
             if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
             const { type, item, offsetY, blockHeight } = touchRef.current;
-            const isArmed = (selectedForDragRef.current && selectedForDragRef.current.id === item.id) ||
-                            (selectedForResizeRef.current && selectedForResizeRef.current.id === item.id);
+            const isRoutine = item.taskType === 'routine';
+            const tds = touchRef.current.resizeDate;
+            const isArmed = selMatch(selectedForDragRef.current, item.id, isRoutine, tds) ||
+                            selMatch(selectedForResizeRef.current, item.id, isRoutine, tds);
             if (isArmed) {
               touchRef.current.moved = true;
               const HANDLE_PX = 16;
-              const isExpandable = selectedForResizeRef.current && selectedForResizeRef.current.id === item.id;
+              const isExpandable = selMatch(selectedForResizeRef.current, item.id, isRoutine, tds);
               const inTopHandle = isExpandable && offsetY < HANDLE_PX;
               const inBottomHandle = isExpandable && blockHeight !== undefined && offsetY > blockHeight - HANDLE_PX;
               if (inTopHandle || inBottomHandle) {
                 const timeStr = touchRef.current.resolvedTime || (type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00'));
                 const [th, tm] = timeStr.split(':').map(Number);
-                resizeRef.current = { type, id: item.id, edge: inTopHandle ? 'top' : 'bottom', startY: t.clientY, startDuration: item.duration || 60, startTotalMin: th * 60 + tm, dateStr: touchRef.current.resizeDate };
+                resizeRef.current = { type, id: item.id, edge: inTopHandle ? 'top' : 'bottom', startY: t.clientY, startDuration: type === 'goal' ? goalDurationFor(item, touchRef.current.resizeDate) : (item.duration || 60), startTotalMin: th * 60 + tm, dateStr: touchRef.current.resizeDate };
               } else {
                 if (type === 'goal') {
                   dragRef.current = { type: 'goal', taskId: item.id, offsetY };
-                  const g = { type:'goal', taskId:item.id, date:item.scheduledDate, time:item.scheduledTime||'09:00', duration:item.duration||60 };
+                  const srcDate = isRoutine ? tds : item.scheduledDate;
+                  const g = { type:'goal', taskId:item.id, date:srcDate, srcDate, time: touchRef.current.resolvedTime || item.scheduledTime || '09:00', duration: goalDurationFor(item, tds) };
                   ghostRef.current = g; setGhost(g);
                 } else if (type === 'entry') {
                   dragRef.current = { type: 'entry', entryId: item.id, offsetY };
@@ -4874,12 +4887,14 @@
             handlePointerUp();
           } else if (touchRef.current) {
             const { type, item } = touchRef.current;
-            if (selectedForResizeRef.current && selectedForResizeRef.current.id === item.id) {
+            const isRoutine = item.taskType === 'routine';
+            const tds = touchRef.current.resizeDate;
+            if (selMatch(selectedForResizeRef.current, item.id, isRoutine, tds)) {
               setSelectedForResize(null);
-            } else if (selectedForDragRef.current && selectedForDragRef.current.id === item.id) {
+            } else if (selMatch(selectedForDragRef.current, item.id, isRoutine, tds)) {
               setSelectedForDrag(null);
             } else {
-              setSelectedForDrag({ type, id: item.id });
+              setSelectedForDrag({ type, id: item.id, date: tds });
               setSelectedForResize(null);
             }
             dragRef.current = null; ghostRef.current = null; setGhost(null);
@@ -5148,9 +5163,9 @@
         mouseDownRef.current = {
           startX: e.clientX, startY: e.clientY,
           dragInfo: { type: 'goal', taskId: task.id, offsetY: e.clientY - rect.top },
-          ghostInfo: { type: 'goal', taskId: task.id, date, time, duration: task.duration || 60 }
+          ghostInfo: { type: 'goal', taskId: task.id, date, srcDate: date, time, duration: goalDurationFor(task, dateStr) }
         };
-        setMouseDownInfo({ blockType: 'goal', id: task.id });
+        setMouseDownInfo({ blockType: 'goal', id: task.id, date: task.taskType === 'routine' ? dateStr : undefined });
       }
 
       function startDragEntry(e, entry) {
@@ -5188,7 +5203,7 @@
         const timeStr = resolvedTime || (type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00'));
         const [th, tm] = timeStr.split(':').map(Number);
         const startTotalMin = th * 60 + tm;
-        const startDuration = item.duration || 60;
+        const startDuration = type === 'goal' ? goalDurationFor(item, dateStr) : (item.duration || 60);
         const id = item.id;
         resizeRef.current = { type, id, edge, startY: clientY, startDuration, startTotalMin, dateStr };
       }
@@ -5911,7 +5926,7 @@
                 const dayBlockDescs = [
                   ...dayTasks.map(t => {
                     const [th, tm] = ((t.taskType === 'routine' ? t.routineDates?.[ds]?.time || t.scheduledTime : t.scheduledTime) || '09:00').split(':').map(Number);
-                    return { id: t.id, top: (th + tm/60 - START_HOUR) * pxPerHour, height: Math.max(22, ((t.duration||60)/60) * pxPerHour) };
+                    return { id: t.id, top: (th + tm/60 - START_HOUR) * pxPerHour, height: Math.max(22, (goalDurationFor(t, ds)/60) * pxPerHour) };
                   }),
                   ...dayEntries.map(e => {
                     const [th, tm] = (e.time || '09:00').split(':').map(Number);
@@ -5967,17 +5982,20 @@
                     {dayTasks.map(task => {
                       const time     = (task.taskType === 'routine' ? task.routineDates?.[ds]?.time || task.scheduledTime : task.scheduledTime) || '09:00';
                       const [th, tm] = time.split(':').map(Number);
-                      const dur      = (ghost && ghost._resize && ghost.type === 'goal' && ghost.id === task.id) ? (ghost.duration || task.duration || 60) : (task.duration || 60);
-                      const dispTime = (ghost && ghost._resize && ghost.type === 'goal' && ghost.id === task.id && ghost.time) ? ghost.time : time;
+                      const isRoutine = task.taskType === 'routine';
+                      const baseDur   = goalDurationFor(task, ds);
+                      const ghostHere = ghost && ghost._resize && ghost.type === 'goal' && ghost.id === task.id && (!isRoutine || ghost.dateStr === ds);
+                      const dur      = ghostHere ? (ghost.duration || baseDur) : baseDur;
+                      const dispTime = (ghostHere && ghost.time) ? ghost.time : time;
                       const [dth, dtm] = dispTime.split(':').map(Number);
                       const top      = (dth + dtm / 60 - START_HOUR) * pxPerHour;
                       const height   = Math.max(22, (dur / 60) * pxPerHour);
                       const done     = task.taskType === 'routine' ? !!(task.routineDates?.[ds]?.done) : isComplete(task, goals);
                       const isLeaf   = isCountableLeaf(task);
-                      const dragged  = ghost && ghost.type === 'goal' && ghost.taskId === task.id;
-                      const isSelected = selectedForResize && selectedForResize.id === task.id;
-                      const isArmed    = selectedForDrag   && selectedForDrag.id   === task.id;
-                      const isPickedUp = mouseDownInfo?.blockType === 'goal' && mouseDownInfo.id === task.id && !dragged;
+                      const dragged  = ghost && ghost.type === 'goal' && ghost.taskId === task.id && (!isRoutine || ghost.srcDate === ds);
+                      const isSelected = selMatch(selectedForResize, task.id, isRoutine, ds);
+                      const isArmed    = selMatch(selectedForDrag, task.id, isRoutine, ds);
+                      const isPickedUp = mouseDownInfo?.blockType === 'goal' && mouseDownInfo.id === task.id && (!isRoutine || mouseDownInfo.date === ds) && !dragged;
                       const commentOpen = timelineMode === 'day' && openComments.has(task.id);
                       if (top < -height || top >= TOTAL_H) return null;
                       return (
@@ -5991,10 +6009,10 @@
                             : 'text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
                           } ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
                           onMouseDown={e => startDrag(e, task, ds)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, blockHeight: rect.height, resolvedTime: time, resizeDate: ds, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'goal', id: task.id }); }, 600); }}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, blockHeight: rect.height, resolvedTime: time, resizeDate: ds, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'goal', id: task.id, date: ds }); }, 600); }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(task.id); }}
-                          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'goal', id: task.id }); }}
+                          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'goal', id: task.id, date: ds }); }}
                         >
                           {isSelected && (
                             <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
@@ -6800,7 +6818,7 @@
                     })}
 
                     {/* Ghost block while dragging */}
-                    {ghost && ghost.date === ds && (() => {
+                    {ghost && !ghost._resize && ghost.date === ds && (() => {
                       const [th, tm] = ghost.time.split(':').map(Number);
                       const dur  = ghost.duration || 60;
                       const top  = (th + tm / 60 - START_HOUR) * pxPerHour;
