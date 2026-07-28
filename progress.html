@@ -4528,6 +4528,14 @@
 
       const STAGE_COLORS_SCHED = {ks02:'#7c3aed',1:'#7c3aed',2:'#2563eb',3:'#0891b2',4:'#0d9488',sir:'#059669',sir1:'#059669',sir2:'#059669',sir3:'#059669',sir4:'#059669',sir5:'#059669',finished:'#4b5563'};
       const stageLabel = s => s==='finished'?'FIN':s==='sir'?'SIR T1':s==='sir1'?'SIR T2':s==='sir2'?'SIR T3':s==='sir3'?'SIR T4':s==='sir4'?'SIR T5':s==='sir5'?'FIN':s?`S${s}`:null;
+      const scheduledSirStageLabel = session => {
+        const repIndex = Number(session?.repIndex);
+        return Number.isInteger(repIndex) && repIndex >= 0 && repIndex < SIR_INTERVALS.length
+          ? `SIR T${repIndex + 1}`
+          : 'SIR';
+      };
+      const sirSessionDisplayDate = session =>
+        session?.done && session.finishDate ? session.finishDate : session?.date;
       const sirStageLabel = (mm) => { if (mm.ksStage==='sir') { const d=(sirDoneMap[mm.id]||0); return d>=5?'FIN':`SIR T${d+1}`; } return stageLabel(mm.ksStage); };
 
       const ultimateMMs = useMemo(() => {
@@ -4594,7 +4602,10 @@
 
       const sessionsByDate = useMemo(() => {
         const m = {};
-        (sessions || []).forEach(s => { (m[s.date] = m[s.date] || []).push(s); });
+        (sessions || []).forEach(s => {
+          const date = sirSessionDisplayDate(s);
+          if (date) (m[date] = m[date] || []).push(s);
+        });
         return m;
       }, [sessions]);
 
@@ -5411,20 +5422,26 @@
                     {/* LEFT STRIP — SIR sessions due this day */}
                     <div className="flex flex-col gap-0.5 pt-2 pl-1 pr-0.5 flex-shrink-0" style={{ width: '36px' }}>
                       {(sessions || [])
-                        .filter(s => s.date === ds && !s.done && !s.skipped)
+                        .filter(s => sirSessionDisplayDate(s) === ds && !s.skipped)
                         .map(s => {
                           const mm = (mms || []).find(m => m.id === s.mmId);
                           if (!mm) return null;
-                          const lbl = stageLabel(mm.ksStage) || 'SIR';
-                          const shortLbl = lbl.replace('SIR T', 'T').replace('SIR', 'T1');
+                          const scheduledStage = scheduledSirStageLabel(s);
+                          const shortLbl = scheduledStage.replace('SIR ', '');
+                          const sessionStatus = s.done ? 'done' : 'scheduled';
+                          const badgeStyle = s.done
+                            ? { backgroundColor: '#713f12', color: '#fde047', border: '1px solid #a16207' }
+                            : { backgroundColor: '#064e3b', color: '#34d399', border: '1px solid #065f46' };
                           return (
-                            <div key={s.id}
-                              title={mm.name}
+                            <button key={s.id}
+                              type="button"
+                              title={`${scheduledStage} ${sessionStatus} · ${mm.name}`}
+                              aria-label={`${scheduledStage} ${sessionStatus} for ${mm.name}`}
                               onClick={e => { e.stopPropagation(); setSirSessionPopup({ s, mm }); }}
                               className="text-[8px] leading-tight rounded px-0.5 py-0.5 text-center truncate cursor-pointer select-none hover:brightness-125 transition-all"
-                              style={{ backgroundColor: '#064e3b', color: '#34d399', border: '1px solid #065f46' }}>
+                              style={badgeStyle}>
                               {shortLbl}
-                            </div>
+                            </button>
                           );
                         })
                       }
@@ -5745,12 +5762,13 @@
               const { s, mm } = sirSessionPopup;
               const close = () => setSirSessionPopup(null);
               const color = mmColor(mm.id);
-              const repNum = (s.repIndex ?? 0) + 1;
               const sirDone = (sirDoneMap || {})[mm.id] || 0;
               const currentStageLbl = mm.ksStage === 'sir'
                 ? (sirDone >= SIR_INTERVALS.length ? 'FIN' : `SIR T${sirDone + 1}`)
                 : stageLabel(mm.ksStage) || mm.ksStage || '—';
-              const scheduledStageLbl = `SIR T${repNum}`;
+              const sessionStageLbl = scheduledSirStageLabel(s);
+              const sessionStageStatusLbl = s.done ? 'DONE' : 'SCHEDULED';
+              const displayDate = sirSessionDisplayDate(s);
               return (
                 <>
                   <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
@@ -5771,11 +5789,11 @@
                           <div className="text-xs text-emerald-400 font-bold">{currentStageLbl}</div>
                         </div>
                         <div className="bg-gray-800 rounded p-2">
-                          <div className="text-[9px] text-gray-500 tracking-widest mb-0.5">SCHEDULED</div>
-                          <div className="text-xs text-indigo-300 font-bold">{scheduledStageLbl}</div>
+                          <div className="text-[9px] text-gray-500 tracking-widest mb-0.5">{sessionStageStatusLbl}</div>
+                          <div className={`text-xs font-bold ${s.done ? 'text-amber-300' : 'text-indigo-300'}`}>{sessionStageLbl}</div>
                         </div>
                       </div>
-                      <div className="text-[10px] text-gray-600 text-center">{s.date}</div>
+                      <div className="text-[10px] text-gray-600 text-center">{displayDate}</div>
                       <button
                         onClick={() => { close(); window.open('sir-ks02.html', '_blank'); }}
                         className="w-full py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded transition-colors">
@@ -7089,9 +7107,9 @@
       const [saActions,  setSaActions]  = useState(() => _readP('saActions',  []));
       const [saEntries,  setSaEntries]  = useState(() => _readP('saEntries',  []));
       const [mmEntries,  setMmEntries]  = useState(() => _readP('mmEntries',  []));
-      const [mms]                       = useState(() => _readMMs());
+      const [mms, setMms]               = useState(() => _readMMs());
       const [kolbs]                     = useState(() => _readP('kolbs', []));
-      const [sessions]                  = useState(() => _readSessions());
+      const [sessions, setSessions]      = useState(() => _readSessions());
       const [mgChanges]                 = useState(() => _readMGChanges());
       const [sourceDumps]               = useState(() => _readP('sourceDumps', []));
       const [mgSchedule, setMgSchedule] = useState(() => _readP('mgSchedule', {}));
@@ -7108,14 +7126,27 @@
       useEffect(() => { _writeP('calendarNotes', calendarNotes); }, [calendarNotes]);
 
       useEffect(() => {
+        function refreshSirState() {
+          const freshMms = _readMMs();
+          setMms(freshMms);
+          setSessions(_readSessions());
+          return freshMms;
+        }
         function onVisible() {
           if (document.visibilityState === 'visible') {
-            const freshMms = _readMMs();
+            const freshMms = refreshSirState();
             setGoals(prev => expandAnchorToLearn(prev, freshMms));
           }
         }
+        function onStorage(event) {
+          if (event.key === 'track_db') refreshSirState();
+        }
         document.addEventListener('visibilitychange', onVisible);
-        return () => document.removeEventListener('visibilitychange', onVisible);
+        window.addEventListener('storage', onStorage);
+        return () => {
+          document.removeEventListener('visibilitychange', onVisible);
+          window.removeEventListener('storage', onStorage);
+        };
       }, []);
 
       const sirDoneMap = useMemo(() => buildSirDoneMap(sessions), [sessions]);

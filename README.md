@@ -106,6 +106,7 @@ The current SIR implementation includes:
 - Per-mind-map review history.
 - SIR completion information used by goal progress.
 - Schedule-session details distinguish the current stage derived from completed repetitions from the stage of the selected scheduled session (for example, D7 is `SIR T3`).
+- Timeline day badges show each session's stage (`T1`–`T5`). Scheduled and postponed sessions are green on their current scheduled date; completed sessions move to their actual finish date, turn yellow, and show `DONE` in their details. SIR badge state refreshes when the database changes in another tab or when Progress becomes visible again.
 
 ### Marginal Gains
 
