@@ -105,6 +105,7 @@ The current SIR implementation includes:
 - Completion and revert behavior.
 - Per-mind-map review history.
 - SIR completion information used by goal progress.
+- Schedule-session details distinguish the current stage derived from completed repetitions from the stage of the selected scheduled session (for example, D7 is `SIR T3`).
 
 ### Marginal Gains
 
