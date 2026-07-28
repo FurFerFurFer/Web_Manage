@@ -54,9 +54,10 @@ Active files:
 | `index.html` | Home, workspace slots, import/export, navigation |
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
+| `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
 | `firebase-sync.js` | Firebase authentication and whole-database synchronization |
 | `notes-widget.js` | Per-slot floating notes |
-| `styles.css` | Shared static styling |
+| `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -115,6 +116,7 @@ The schema is not yet centralized. Defaults, migrations, readers, writers, and i
 
 Other current browser keys include:
 
+- `track_theme`
 - `track_db_ts`
 - `trackPriorityMatrix`
 - `fb_reloaded` in `sessionStorage`
@@ -317,6 +319,7 @@ Do not begin a large refactor merely because the current files are large. Refact
 For changes affecting shared JavaScript:
 
 ```bash
+node --check theme.js
 node --check firebase-sync.js
 node --check notes-widget.js
 ```
@@ -506,8 +509,9 @@ Do not treat a feature request as authorization to deploy or modify cloud state.
 
 ## Current Verification Baseline
 
-As of 2026-07-25:
+As of 2026-07-28:
 
+- `theme.js` passed `node --check`.
 - `firebase-sync.js` passed `node --check`.
 - `notes-widget.js` passed `node --check`.
 - Home loaded in headless Chrome.

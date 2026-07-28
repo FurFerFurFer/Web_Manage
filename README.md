@@ -12,16 +12,17 @@ This README is the source of truth for what the project currently contains and h
 
 ## Current Status
 
-Status reviewed: 2026-07-25
+Status reviewed: 2026-07-28
 
 - The application renders successfully in a local Chrome smoke test.
 - `index.html`, `progress.html`, and `sir-ks02.html` are the active pages.
 - The Git working tree was clean before the documentation work represented by `NOTES.md` and `AGENTS.md`.
 - Development currently happens on `master`; the inspected history contains no merge commits.
 - The repository currently has no build step, package manifest, automated test suite, or CI workflow.
-- The standalone scripts `firebase-sync.js` and `notes-widget.js` pass `node --check`.
+- The standalone scripts `theme.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
 - React pages currently compile JSX in the browser through Babel.
 - Data is stored locally first and can optionally be synchronized through Firebase.
+- All three pages provide persistent light and dark themes with a shared accessible switch.
 
 The code is operational, but current verification is mainly syntax checking plus browser smoke and manual interaction checks.
 
@@ -55,6 +56,16 @@ When a proposed change is implemented:
 - Basic workspace metadata counts.
 
 Each slot is intended to isolate a different subject, course, project, or learning area.
+
+### Appearance and accessibility
+
+The shared interface currently provides:
+
+- Coordinated light and dark palettes across Home, Progress, KS02, Firebase states, and floating notes.
+- An accessible switch that follows the operating-system theme until the user makes a choice.
+- Persistence of the selected appearance across pages and browser tabs through `track_theme`.
+- Visible keyboard focus, reduced-motion handling, stronger text contrast, and 44px primary touch targets.
+- Responsive Home cards and horizontally scrollable app navigation on narrow screens.
 
 ### Mind maps and knowledge structure
 
@@ -181,9 +192,10 @@ The current import path reconstructs a known subset of slot fields rather than p
 | `index.html` | Home page, slot management, slot import/export, navigation |
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule, calendar notes |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
+| `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, cloud synchronization |
 | `notes-widget.js` | Floating per-slot notes widget |
-| `styles.css` | Shared static styling, primarily home and shared layout styles |
+| `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
 | `README.md` | Current project and workflow documentation |
 | `NOTES.md` | Future ideas and possible changes |
 | `AGENTS.md` | Agent operating instructions |
@@ -200,6 +212,7 @@ Track-website/
 ├── index.html
 ├── progress.html
 ├── sir-ks02.html
+├── theme.js
 ├── firebase-sync.js
 ├── notes-widget.js
 └── styles.css
@@ -283,6 +296,7 @@ Not every constructor or importer currently initializes every field. Code must t
 
 The project also currently uses:
 
+- `track_theme` for the explicit light/dark appearance preference.
 - `track_db_ts` for the local Firebase comparison timestamp.
 - `trackPriorityMatrix` for schedule priority-matrix state.
 - `fb_reloaded` in `sessionStorage` to break Firebase reload loops.

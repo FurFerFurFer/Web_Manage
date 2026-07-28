@@ -53,7 +53,7 @@
       '#nw-body{flex:1;overflow-y:auto;padding:8px 0;display:flex;flex-direction:column;}',
       '#nw-body::-webkit-scrollbar{width:4px;}',
       '#nw-body::-webkit-scrollbar-thumb{background:#374151;border-radius:2px;}',
-      '.nw-note-row{display:flex;align-items:center;padding:8px 16px;cursor:pointer;gap:10px;transition:background 0.1s;color:#d1d5db;font-size:13px;border-bottom:1px solid #111827;}',
+      '.nw-note-row{width:100%;display:flex;align-items:center;padding:8px 16px;cursor:pointer;gap:10px;transition:background 0.1s;color:#d1d5db;font-size:13px;background:transparent;border:0;border-bottom:1px solid #111827;text-align:left;font-family:inherit;}',
       '.nw-note-row:hover{background:#111827;color:#f0f0f0;}',
       '.nw-note-dot{width:6px;height:6px;border-radius:50%;background:#6366f1;flex-shrink:0;}',
       '.nw-note-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
@@ -67,6 +67,7 @@
       '#nw-content{flex:1;background:#0d1117;border:1px solid #1f2937;border-radius:6px;color:#d1d5db;font-size:13px;padding:10px;resize:none;outline:none;font-family:inherit;line-height:1.6;margin:0 12px 12px;}',
       '#nw-content:focus{border-color:#374151;}',
       '#nw-content::placeholder{color:#374151;}',
+      '.nw-icon-svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}',
     ].join('\n');
     document.head.appendChild(s);
   }
@@ -110,7 +111,8 @@
       body.appendChild(empty);
     } else {
       notes.forEach(function (note) {
-        var row = document.createElement('div');
+        var row = document.createElement('button');
+        row.type = 'button';
         row.className = 'nw-note-row';
         row.onclick = function () { state.activeId = note.id; state.view = 'detail'; render(); };
 
@@ -153,6 +155,7 @@
     backBtn.id = 'nw-back-btn';
     backBtn.textContent = '←';
     backBtn.title = 'Back to list';
+    backBtn.setAttribute('aria-label', 'Back to notes list');
     backBtn.onclick = function () { state.view = 'list'; render(); };
 
     var topicEl = document.createElement('div');
@@ -172,7 +175,8 @@
     var delBtn = document.createElement('button');
     delBtn.className = 'nw-icon-btn';
     delBtn.title = 'Delete note';
-    delBtn.textContent = '🗑';
+    delBtn.setAttribute('aria-label', 'Delete note');
+    delBtn.innerHTML = '<svg class="nw-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>';
     delBtn.onclick = function () {
       if (!window.confirm('Delete this note?')) return;
       var n2 = loadNotes().filter(function (x) { return x.id !== state.activeId; });
@@ -254,7 +258,8 @@
     btn = document.createElement('button');
     btn.id = 'nw-btn';
     btn.title = 'Notes';
-    btn.innerHTML = '✎';
+    btn.setAttribute('aria-label', 'Open notes');
+    btn.innerHTML = '<svg class="nw-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>';
     btn.onclick = function () { state.view = 'list'; render(); };
     document.body.appendChild(btn);
 
@@ -274,6 +279,7 @@
     closeBtn.className = 'nw-icon-btn';
     closeBtn.textContent = '×';
     closeBtn.title = 'Close';
+    closeBtn.setAttribute('aria-label', 'Close notes');
     closeBtn.style.fontSize = '20px';
     closeBtn.onclick = function () { state.view = 'collapsed'; state.activeId = null; render(); };
 

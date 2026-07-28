@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Progress & Schedule</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
+  <script src="theme.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -19,7 +21,7 @@
     };
   </script>
 </head>
-<body>
+<body class="app-page progress-page">
   <div id="root"></div>
 
   <script type="text/babel">
@@ -1134,15 +1136,15 @@
               {[0,1,2,3,4].map(i => (
                 <span key={i} style={{
                   width:6, height:6, borderRadius:2, display:'inline-block',
-                  backgroundColor: i < sirDone ? STAGE_COLORS_SIR[i] : '#1f2937',
-                  border: `1px solid ${i < sirDone ? STAGE_COLORS_SIR[i] : '#374151'}`
+                  backgroundColor: i < sirDone ? STAGE_COLORS_SIR[i] : 'var(--color-border-subtle)',
+                  border: `1px solid ${i < sirDone ? STAGE_COLORS_SIR[i] : 'var(--color-border-strong)'}`
                 }}/>
               ))}
             </span>
           )}
           {String(mm.type) === '2' && mm.rating != null && (
             <span className="text-[9px] px-1 py-0.5 rounded font-bold"
-              style={{ backgroundColor: '#312e81', color: '#a5b4fc' }}>
+              style={{ backgroundColor: 'var(--color-primary-soft)', color: 'var(--color-primary-text)' }}>
               {mm.rating}/10
             </span>
           )}
@@ -1189,7 +1191,7 @@
                           {done ? '✓' : `D${iv}`}
                         </div>
                       </div>
-                      {i < 4 && <div style={{ flex:1, height:1, backgroundColor: done ? col : '#1f2937', minWidth:4 }}/>}
+                      {i < 4 && <div style={{ flex:1, height:1, backgroundColor: done ? col : 'var(--color-border-subtle)', minWidth:4 }}/>}
                     </React.Fragment>
                   );
                 })}
@@ -3479,7 +3481,7 @@
                     ref={isToday ? todayCellRef : null}
                     className="min-h-[92px] p-1.5 flex flex-col cursor-default"
                     style={{
-                      backgroundColor: active.length ? `${tint}12` : '#080d18',
+                      backgroundColor: active.length ? `${tint}12` : 'var(--color-app-bg)',
                       outline: selectedActive ? `1px solid ${selectedItem.chipColor}` : isToday ? '1px solid #6366f1' : 'none',
                       outlineOffset: '-1px',
                     }}>
@@ -5379,10 +5381,10 @@
             {/* Day header — sticky to top of scroll container */}
             <div ref={headerRef}
               className="flex border-b border-gray-800 sticky top-0 z-20"
-              style={{ minWidth: timelineMode === 'week' ? TOTAL_W + 'px' : undefined, backgroundColor: '#080d18' }}>
+              style={{ minWidth: timelineMode === 'week' ? TOTAL_W + 'px' : undefined, backgroundColor: 'var(--color-app-bg)' }}>
 
               {/* Time col spacer — sticky left */}
-              <div style={{ width: TIME_COL_W + 'px', position: 'sticky', left: 0, zIndex: 30, backgroundColor: '#080d18' }}
+              <div style={{ width: TIME_COL_W + 'px', position: 'sticky', left: 0, zIndex: 30, backgroundColor: 'var(--color-app-bg)' }}
                 className="flex-shrink-0 border-r border-gray-800/50 flex flex-col items-center justify-end gap-0.5 pb-1">
                 {timelineMode === 'day' && (
                   <>
@@ -5851,7 +5853,7 @@
             <div className="flex" style={{ height: TOTAL_H + 'px', minWidth: timelineMode === 'week' ? TOTAL_W + 'px' : undefined }}>
 
               {/* Time axis — sticky left */}
-              <div style={{ width: TIME_COL_W + 'px', position: 'sticky', left: 0, zIndex: 10, backgroundColor: '#080d18' }}
+              <div style={{ width: TIME_COL_W + 'px', position: 'sticky', left: 0, zIndex: 10, backgroundColor: 'var(--color-app-bg)' }}
                 className="flex-shrink-0 relative border-r border-gray-800/50">
                 {HOURS.map(h => (
                   <div key={h} style={{ top: (h - START_HOUR) * pxPerHour - 8 + 'px' }}
@@ -7243,6 +7245,7 @@
                 </div>
               )}
             </div>
+            <div className="theme-toggle-host" data-theme-toggle-host></div>
           </header>
 
           {/* Tab: PROGRESS */}
