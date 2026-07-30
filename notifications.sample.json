@@ -1,0 +1,50 @@
+{
+  "generatedAt": "2026-07-29T07:00:00+07:00",
+  "note": "Synthetic fixture documenting the notifications.json contract. The scheduled run writes the real file as notifications.json. Safe to delete.",
+  "items": [
+    {
+      "id": "gmail:18f2a9c4d1",
+      "source": "gmail",
+      "kind": "email",
+      "from": "Coursera <no-reply@coursera.org>",
+      "subject": "Your weekly learning streak summary",
+      "preview": "You completed 3 of 5 planned sessions this week. Keep the streak going.",
+      "date": "2026-07-29T06:12:00+07:00",
+      "unread": true,
+      "url": "https://mail.google.com/mail/u/0/#inbox/18f2a9c4d1"
+    },
+    {
+      "id": "outlook:AAMkAGI2T",
+      "source": "outlook",
+      "kind": "email",
+      "from": "Dr. Sarah Chen",
+      "subject": "Feedback on your KS02 submission",
+      "preview": "Thanks for sending this through. A few notes on the reflection section before Friday.",
+      "date": "2026-07-28T16:45:00+07:00",
+      "unread": true,
+      "url": null
+    },
+    {
+      "id": "teams:1722151800123",
+      "source": "teams",
+      "kind": "mention",
+      "from": "Project Standup",
+      "subject": "@you — can you post your progress board link?",
+      "preview": "Need it before tomorrow's review so we can pull the metrics together.",
+      "date": "2026-07-28T14:02:00+07:00",
+      "unread": false,
+      "url": null
+    },
+    {
+      "id": "outlook:AAMkAGI2X",
+      "source": "outlook",
+      "kind": "calendar",
+      "from": "Faculty Office",
+      "subject": "Rescheduled: KS02 review → Thu 14:00",
+      "preview": "Moved from Wednesday. Room B204.",
+      "date": "2026-07-27T09:30:00+07:00",
+      "unread": false,
+      "url": null
+    }
+  ]
+}

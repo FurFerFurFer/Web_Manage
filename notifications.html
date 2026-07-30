@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notifications · Track</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* ── notifications page ─────────────────────────────────── */
+    .ntf-shell {
+      max-width: 74rem;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 6rem;
+    }
+    .ntf-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.75rem;
+    }
+    .ntf-head h1 {
+      margin: 0.35rem 0 0;
+      font-size: 1.9rem;
+      letter-spacing: -0.02em;
+    }
+    .ntf-kicker {
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--color-text-muted);
+    }
+    .ntf-back {
+      color: var(--color-primary-text);
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .ntf-back:hover { text-decoration: underline; }
+    .ntf-stamp {
+      font-size: 0.78rem;
+      color: var(--color-text-muted);
+      text-align: right;
+    }
+
+    .ntf-panel {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border-subtle);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+      padding: 1.1rem 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .ntf-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.85rem 1.25rem;
+      align-items: center;
+    }
+    .ntf-group {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .ntf-group-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--color-text-subtle);
+      font-weight: 600;
+      margin-right: 0.15rem;
+    }
+    .ntf-chip {
+      border: 1px solid var(--color-border);
+      background: var(--color-surface-muted);
+      color: var(--color-text-secondary);
+      border-radius: 999px;
+      padding: 0.3rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background var(--motion-fast) var(--ease-ui),
+                  border-color var(--motion-fast) var(--ease-ui),
+                  color var(--motion-fast) var(--ease-ui);
+    }
+    .ntf-chip:hover { background: var(--color-surface-hover); }
+    .ntf-chip[aria-pressed="true"] {
+      background: var(--color-primary-soft);
+      border-color: var(--color-primary-border);
+      color: var(--color-primary-text);
+    }
+    .ntf-chip .ntf-chip-count {
+      opacity: 0.7;
+      font-variant-numeric: tabular-nums;
+      margin-left: 0.3rem;
+    }
+
+    .ntf-search {
+      flex: 1 1 14rem;
+      min-width: 11rem;
+      padding: 0.45rem 0.7rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--color-border);
+      background: var(--color-surface-muted);
+      color: var(--color-text);
+      font: inherit;
+      font-size: 0.85rem;
+    }
+    .ntf-select {
+      padding: 0.42rem 0.6rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--color-border);
+      background: var(--color-surface-muted);
+      color: var(--color-text);
+      font: inherit;
+      font-size: 0.82rem;
+    }
+
+    .ntf-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem 1.4rem;
+      align-items: center;
+      font-size: 0.82rem;
+      color: var(--color-text-muted);
+    }
+    .ntf-summary strong {
+      color: var(--color-text);
+      font-variant-numeric: tabular-nums;
+    }
+    .ntf-bulk {
+      margin-left: auto;
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .ntf-btn {
+      border: 1px solid var(--color-border);
+      background: var(--color-surface-muted);
+      color: var(--color-text-secondary);
+      border-radius: var(--radius-sm);
+      padding: 0.32rem 0.7rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .ntf-btn:hover { background: var(--color-surface-hover); }
+
+    .ntf-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .ntf-day {
+      margin: 1.4rem 0 0.55rem;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--color-text-subtle);
+    }
+    .ntf-day:first-child { margin-top: 0; }
+
+    .ntf-item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 0.85rem;
+      align-items: start;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border-subtle);
+      border-left: 3px solid var(--src-accent, var(--color-border));
+      border-radius: var(--radius-md);
+      padding: 0.8rem 0.95rem;
+      transition: background var(--motion-fast) var(--ease-ui),
+                  opacity var(--motion-fast) var(--ease-ui);
+    }
+    .ntf-item:hover { background: var(--color-surface-muted); }
+    .ntf-item.is-checked { opacity: 0.5; }
+    .ntf-item.is-checked .ntf-subject { text-decoration: line-through; }
+
+    .ntf-check {
+      width: 1.15rem;
+      height: 1.15rem;
+      margin-top: 0.15rem;
+      accent-color: var(--color-primary-solid);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .ntf-body { min-width: 0; }
+    .ntf-line1 {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .ntf-subject {
+      font-weight: 600;
+      font-size: 0.93rem;
+      color: var(--color-text);
+      overflow-wrap: anywhere;
+    }
+    .ntf-subject a { color: inherit; text-decoration: none; }
+    .ntf-subject a:hover { text-decoration: underline; }
+    .ntf-from {
+      font-size: 0.8rem;
+      color: var(--color-text-secondary);
+    }
+    .ntf-preview {
+      margin-top: 0.25rem;
+      font-size: 0.82rem;
+      color: var(--color-text-muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .ntf-tag {
+      font-size: 0.66rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      padding: 0.12rem 0.42rem;
+      border-radius: 999px;
+      border: 1px solid var(--src-accent, var(--color-border));
+      color: var(--src-accent, var(--color-text-muted));
+      white-space: nowrap;
+    }
+    .ntf-badge-new {
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.09em;
+      background: var(--color-primary-soft);
+      color: var(--color-primary-text);
+      border: 1px solid var(--color-primary-border);
+      border-radius: 999px;
+      padding: 0.1rem 0.4rem;
+    }
+    .ntf-badge-unread {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: var(--color-primary);
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .ntf-time {
+      font-size: 0.75rem;
+      color: var(--color-text-subtle);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .ntf-empty {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--color-text-muted);
+      font-size: 0.9rem;
+    }
+    .ntf-empty code {
+      background: var(--color-surface-muted);
+      border: 1px solid var(--color-border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 0.1rem 0.35rem;
+      font-size: 0.82rem;
+    }
+    .ntf-notice {
+      border: 1px solid var(--color-primary-border);
+      background: var(--color-primary-soft);
+      color: var(--color-text-secondary);
+      border-radius: var(--radius-md);
+      padding: 0.8rem 1rem;
+      font-size: 0.85rem;
+      margin-bottom: 1.25rem;
+      line-height: 1.55;
+    }
+    .ntf-notice strong { color: var(--color-text); }
+
+    @media (max-width: 640px) {
+      .ntf-shell { padding: 1.75rem 1rem 5rem; }
+      .ntf-item { grid-template-columns: auto 1fr; }
+      .ntf-time { grid-column: 2; text-align: left; margin-top: 0.2rem; }
+      .ntf-bulk { margin-left: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="ntf-shell">
+    <header class="ntf-head">
+      <div>
+        <a class="ntf-back" href="index.html">← Track</a>
+        <span class="ntf-kicker" style="display:block;margin-top:0.6rem;">Unified inbox</span>
+        <h1>Notifications</h1>
+      </div>
+      <div class="ntf-stamp" id="ntf-stamp"></div>
+    </header>
+
+    <div id="ntf-notice-slot"></div>
+
+    <section class="ntf-panel" aria-label="Filters">
+      <div class="ntf-controls">
+        <div class="ntf-group" role="group" aria-label="Filter by source">
+          <span class="ntf-group-label">Source</span>
+          <span id="ntf-source-chips"></span>
+        </div>
+        <div class="ntf-group" role="group" aria-label="Filter by type">
+          <span class="ntf-group-label">Type</span>
+          <span id="ntf-kind-chips"></span>
+        </div>
+      </div>
+      <div class="ntf-controls" style="margin-top:0.85rem;">
+        <input id="ntf-search" class="ntf-search" type="search" placeholder="Search sender, subject, preview…" aria-label="Search notifications">
+        <select id="ntf-sort" class="ntf-select" aria-label="Sort order">
+          <option value="date-desc">Newest first</option>
+          <option value="date-asc">Oldest first</option>
+          <option value="source">Group by source</option>
+          <option value="sender">Sender A–Z</option>
+        </select>
+        <button type="button" class="ntf-chip" id="ntf-unread-only" aria-pressed="false">Unread only</button>
+        <button type="button" class="ntf-chip" id="ntf-hide-done" aria-pressed="true">Hide ticked</button>
+      </div>
+    </section>
+
+    <section class="ntf-panel" aria-label="Summary and bulk actions">
+      <div class="ntf-summary">
+        <span><strong id="ntf-count-shown">0</strong> shown</span>
+        <span><strong id="ntf-count-new">0</strong> new</span>
+        <span><strong id="ntf-count-done">0</strong> ticked</span>
+        <div class="ntf-bulk">
+          <button type="button" class="ntf-btn" id="ntf-tick-visible">Tick all visible</button>
+          <button type="button" class="ntf-btn" id="ntf-untick-all">Clear ticks</button>
+          <button type="button" class="ntf-btn" id="ntf-mark-seen">Mark all seen</button>
+          <label class="ntf-btn" style="display:inline-flex;align-items:center;">
+            Load JSON
+            <input type="file" accept=".json" id="ntf-import" style="display:none">
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <div id="ntf-list-root"></div>
+  </main>
+
+  <script>
+  (function () {
+    'use strict';
+
+    // ── constants ────────────────────────────────────────────
+    var STATE_KEY = 'track_notifications';
+    var STATE_VERSION = 1;
+    var FEED_URL = 'notifications.json';
+
+    var SOURCES = [
+      { id: 'gmail',   label: 'Gmail',   accent: '#ea4335' },
+      { id: 'outlook', label: 'Outlook', accent: '#0f6cbd' },
+      { id: 'teams',   label: 'Teams',   accent: '#6264a7' }
+    ];
+    var KINDS = [
+      { id: 'email',    label: 'Email' },
+      { id: 'chat',     label: 'Chat' },
+      { id: 'mention',  label: 'Mention' },
+      { id: 'calendar', label: 'Calendar' }
+    ];
+
+    // ── local calendar-date helpers (never UTC) ──────────────
+    function localDay(d) {
+      var dt = (d instanceof Date) ? d : new Date(d);
+      if (isNaN(dt)) return '';
+      var m = String(dt.getMonth() + 1).padStart(2, '0');
+      var day = String(dt.getDate()).padStart(2, '0');
+      return dt.getFullYear() + '-' + m + '-' + day;
+    }
+    function dayLabel(key) {
+      if (!key) return 'Undated';
+      var today = localDay(new Date());
+      if (key === today) return 'Today';
+      var y = new Date();
+      y.setDate(y.getDate() - 1);
+      if (key === localDay(y)) return 'Yesterday';
+      var parts = key.split('-');
+      var dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      return dt.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+    }
+    function timeLabel(iso) {
+      var dt = new Date(iso);
+      if (isNaN(dt)) return '';
+      return dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // ── state (separate key; never touches track_db) ─────────
+    function defaultState() {
+      return {
+        version: STATE_VERSION,
+        checked: {},        // id -> ISO timestamp when ticked
+        seenIds: [],        // ids already shown to the user
+        lastSeenAt: null,
+        filters: {
+          sources: SOURCES.map(function (s) { return s.id; }),
+          kinds: KINDS.map(function (k) { return k.id; }),
+          unreadOnly: false,
+          hideDone: true,
+          search: '',
+          sort: 'date-desc'
+        }
+      };
+    }
+
+    function loadState() {
+      var base = defaultState();
+      var raw;
+      try { raw = JSON.parse(localStorage.getItem(STATE_KEY) || 'null'); } catch (e) { raw = null; }
+      if (!raw || typeof raw !== 'object') return base;
+      // defensive merge — unknown/legacy shapes degrade to defaults
+      return {
+        version: STATE_VERSION,
+        checked: (raw.checked && typeof raw.checked === 'object') ? raw.checked : base.checked,
+        seenIds: Array.isArray(raw.seenIds) ? raw.seenIds : base.seenIds,
+        lastSeenAt: raw.lastSeenAt || base.lastSeenAt,
+        filters: Object.assign({}, base.filters, (raw.filters && typeof raw.filters === 'object') ? raw.filters : {})
+      };
+    }
+
+    function saveState() {
+      try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); }
+      catch (e) { /* quota or private mode — page still works in-memory */ }
+    }
+
+    var state = loadState();
+    var items = [];
+    var feedMeta = null;
+
+    // ── feed normalization ───────────────────────────────────
+    function normalize(rawItems) {
+      if (!Array.isArray(rawItems)) return [];
+      var seen = {};
+      var out = [];
+      rawItems.forEach(function (r, i) {
+        if (!r || typeof r !== 'object') return;
+        var src = String(r.source || '').toLowerCase();
+        if (!SOURCES.some(function (s) { return s.id === src; })) src = 'gmail';
+        var id = String(r.id || (src + ':' + i));
+        if (seen[id]) return;          // de-dupe across runs
+        seen[id] = true;
+        var kind = String(r.kind || '').toLowerCase();
+        if (!KINDS.some(function (k) { return k.id === kind; })) {
+          kind = (src === 'teams') ? 'chat' : 'email';
+        }
+        out.push({
+          id: id,
+          source: src,
+          kind: kind,
+          from: String(r.from || 'Unknown'),
+          subject: String(r.subject || '(no subject)'),
+          preview: String(r.preview || ''),
+          date: r.date || null,
+          unread: r.unread !== false,
+          url: (typeof r.url === 'string' && /^https?:\/\//i.test(r.url)) ? r.url : null
+        });
+      });
+      return out;
+    }
+
+    function accentFor(src) {
+      var s = SOURCES.filter(function (x) { return x.id === src; })[0];
+      return s ? s.accent : 'var(--color-border)';
+    }
+    function labelFor(src) {
+      var s = SOURCES.filter(function (x) { return x.id === src; })[0];
+      return s ? s.label : src;
+    }
+
+    // ── filtering / sorting ──────────────────────────────────
+    function visibleItems() {
+      var f = state.filters;
+      var q = (f.search || '').trim().toLowerCase();
+      var list = items.filter(function (it) {
+        if (f.sources.indexOf(it.source) === -1) return false;
+        if (f.kinds.indexOf(it.kind) === -1) return false;
+        if (f.unreadOnly && !it.unread) return false;
+        if (f.hideDone && state.checked[it.id]) return false;
+        if (q) {
+          var hay = (it.from + ' ' + it.subject + ' ' + it.preview).toLowerCase();
+          if (hay.indexOf(q) === -1) return false;
+        }
+        return true;
+      });
+
+      var byDateDesc = function (a, b) {
+        return new Date(b.date || 0) - new Date(a.date || 0);
+      };
+      if (f.sort === 'date-asc') list.sort(function (a, b) { return -byDateDesc(a, b); });
+      else if (f.sort === 'sender') list.sort(function (a, b) {
+        return a.from.localeCompare(b.from) || byDateDesc(a, b);
+      });
+      else if (f.sort === 'source') list.sort(function (a, b) {
+        return a.source.localeCompare(b.source) || byDateDesc(a, b);
+      });
+      else list.sort(byDateDesc);
+
+      return list;
+    }
+
+    function isNew(it) { return state.seenIds.indexOf(it.id) === -1; }
+
+    // ── rendering ────────────────────────────────────────────
+    function el(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    }
+
+    function renderChips(containerId, defs, filterKey) {
+      var host = document.getElementById(containerId);
+      host.innerHTML = '';
+      defs.forEach(function (d) {
+        var active = state.filters[filterKey].indexOf(d.id) !== -1;
+        var b = el('button', 'ntf-chip');
+        b.type = 'button';
+        b.setAttribute('aria-pressed', String(active));
+        b.appendChild(document.createTextNode(d.label));
+        var n = items.filter(function (it) {
+          return (filterKey === 'sources' ? it.source : it.kind) === d.id;
+        }).length;
+        var c = el('span', 'ntf-chip-count', String(n));
+        b.appendChild(c);
+        if (d.accent) b.style.setProperty('--src-accent', d.accent);
+        b.onclick = function () {
+          var arr = state.filters[filterKey];
+          var i = arr.indexOf(d.id);
+          if (i === -1) arr.push(d.id); else arr.splice(i, 1);
+          saveState();
+          render();
+        };
+        host.appendChild(b);
+      });
+    }
+
+    function renderItem(it) {
+      var li = el('li', 'ntf-item' + (state.checked[it.id] ? ' is-checked' : ''));
+      li.style.setProperty('--src-accent', accentFor(it.source));
+
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'ntf-check';
+      cb.checked = !!state.checked[it.id];
+      cb.setAttribute('aria-label', 'Mark handled: ' + it.subject);
+      cb.onchange = function () {
+        if (cb.checked) state.checked[it.id] = new Date().toISOString();
+        else delete state.checked[it.id];
+        saveState();
+        render();
+      };
+
+      var body = el('div', 'ntf-body');
+      var l1 = el('div', 'ntf-line1');
+      if (it.unread) {
+        var dot = el('span', 'ntf-badge-unread');
+        dot.title = 'Unread';
+        l1.appendChild(dot);
+      }
+      var subj = el('span', 'ntf-subject');
+      if (it.url) {
+        var a = el('a', null, it.subject);
+        a.href = it.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        subj.appendChild(a);
+      } else {
+        subj.textContent = it.subject;
+      }
+      l1.appendChild(subj);
+      var tag = el('span', 'ntf-tag', labelFor(it.source));
+      tag.style.setProperty('--src-accent', accentFor(it.source));
+      l1.appendChild(tag);
+      if (isNew(it)) l1.appendChild(el('span', 'ntf-badge-new', 'NEW'));
+      body.appendChild(l1);
+      body.appendChild(el('div', 'ntf-from', it.from));
+      if (it.preview) body.appendChild(el('div', 'ntf-preview', it.preview));
+
+      var time = el('div', 'ntf-time', it.date ? timeLabel(it.date) : '');
+
+      li.append(cb, body, time);
+      return li;
+    }
+
+    function renderList() {
+      var root = document.getElementById('ntf-list-root');
+      root.innerHTML = '';
+      var list = visibleItems();
+
+      if (!items.length) {
+        var e = el('div', 'ntf-empty');
+        e.innerHTML =
+          'No feed loaded yet.<br><br>Waiting on <code>notifications.json</code> — ' +
+          'the scheduled weekday-morning run writes it into this folder. ' +
+          'You can also load a file manually with <strong>Load JSON</strong> above.';
+        root.appendChild(e);
+        return;
+      }
+      if (!list.length) {
+        root.appendChild(el('div', 'ntf-empty', 'Nothing matches the current filters.'));
+        return;
+      }
+
+      if (state.filters.sort === 'date-desc' || state.filters.sort === 'date-asc') {
+        var groups = {};
+        var order = [];
+        list.forEach(function (it) {
+          var k = it.date ? localDay(it.date) : '';
+          if (!groups[k]) { groups[k] = []; order.push(k); }
+          groups[k].push(it);
+        });
+        order.forEach(function (k) {
+          root.appendChild(el('div', 'ntf-day', dayLabel(k)));
+          var ul = el('ul', 'ntf-list');
+          groups[k].forEach(function (it) { ul.appendChild(renderItem(it)); });
+          root.appendChild(ul);
+        });
+      } else {
+        var ul2 = el('ul', 'ntf-list');
+        list.forEach(function (it) { ul2.appendChild(renderItem(it)); });
+        root.appendChild(ul2);
+      }
+    }
+
+    function render() {
+      renderChips('ntf-source-chips', SOURCES, 'sources');
+      renderChips('ntf-kind-chips', KINDS, 'kinds');
+
+      document.getElementById('ntf-unread-only').setAttribute('aria-pressed', String(state.filters.unreadOnly));
+      document.getElementById('ntf-hide-done').setAttribute('aria-pressed', String(state.filters.hideDone));
+      document.getElementById('ntf-search').value = state.filters.search || '';
+      document.getElementById('ntf-sort').value = state.filters.sort;
+
+      var shown = visibleItems().length;
+      var newCount = items.filter(isNew).length;
+      var doneCount = items.filter(function (it) { return !!state.checked[it.id]; }).length;
+      document.getElementById('ntf-count-shown').textContent = shown;
+      document.getElementById('ntf-count-new').textContent = newCount;
+      document.getElementById('ntf-count-done').textContent = doneCount;
+
+      var stamp = document.getElementById('ntf-stamp');
+      if (feedMeta && feedMeta.generatedAt) {
+        var d = new Date(feedMeta.generatedAt);
+        stamp.textContent = isNaN(d) ? '' :
+          'Feed generated ' + d.toLocaleString(undefined, {
+            weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+          });
+      } else {
+        stamp.textContent = '';
+      }
+
+      renderList();
+    }
+
+    function notice(html) {
+      var slot = document.getElementById('ntf-notice-slot');
+      slot.innerHTML = '';
+      if (!html) return;
+      var n = el('div', 'ntf-notice');
+      n.innerHTML = html;
+      slot.appendChild(n);
+    }
+
+    // ── feed loading ─────────────────────────────────────────
+    function applyFeed(data) {
+      feedMeta = { generatedAt: data.generatedAt || null };
+      items = normalize(data.items);
+      render();
+    }
+
+    function loadFeed() {
+      if (location.protocol === 'file:') {
+        notice(
+          '<strong>Opened as a local file.</strong> Browsers block reading ' +
+          '<code>notifications.json</code> over <code>file://</code>, so the feed can\'t load ' +
+          'automatically. Serve the folder with ' +
+          '<code>python3 -m http.server 8765 --bind 127.0.0.1</code> and open ' +
+          '<code>http://127.0.0.1:8765/notifications.html</code>, or use <strong>Load JSON</strong>. ' +
+          'Your ticks are saved either way.'
+        );
+        render();
+        return;
+      }
+      fetch(FEED_URL, { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          notice('');
+          applyFeed(data);
+        })
+        .catch(function () {
+          notice(
+            'No <code>notifications.json</code> found yet. It appears after the first ' +
+            'scheduled run, or you can load one manually.'
+          );
+          render();
+        });
+    }
+
+    // ── controls ─────────────────────────────────────────────
+    document.getElementById('ntf-search').addEventListener('input', function (e) {
+      state.filters.search = e.target.value;
+      saveState();
+      render();
+    });
+    document.getElementById('ntf-sort').addEventListener('change', function (e) {
+      state.filters.sort = e.target.value;
+      saveState();
+      render();
+    });
+    document.getElementById('ntf-unread-only').addEventListener('click', function () {
+      state.filters.unreadOnly = !state.filters.unreadOnly;
+      saveState();
+      render();
+    });
+    document.getElementById('ntf-hide-done').addEventListener('click', function () {
+      state.filters.hideDone = !state.filters.hideDone;
+      saveState();
+      render();
+    });
+    document.getElementById('ntf-tick-visible').addEventListener('click', function () {
+      var now = new Date().toISOString();
+      visibleItems().forEach(function (it) { state.checked[it.id] = now; });
+      saveState();
+      render();
+    });
+    document.getElementById('ntf-untick-all').addEventListener('click', function () {
+      if (!confirm('Clear every tick? This only affects this notifications page.')) return;
+      state.checked = {};
+      saveState();
+      render();
+    });
+    document.getElementById('ntf-mark-seen').addEventListener('click', function () {
+      var ids = {};
+      state.seenIds.forEach(function (i) { ids[i] = true; });
+      items.forEach(function (it) { ids[it.id] = true; });
+      state.seenIds = Object.keys(ids);
+      state.lastSeenAt = new Date().toISOString();
+      saveState();
+      render();
+    });
+    document.getElementById('ntf-import').addEventListener('change', function (e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (ev) {
+        try {
+          var data = JSON.parse(ev.target.result);
+          if (!data || !Array.isArray(data.items)) throw new Error('bad shape');
+          notice('');
+          applyFeed(data);
+        } catch (err) {
+          alert('Invalid notifications file — expected { "items": [...] }');
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+
+    render();
+    loadFeed();
+  })();
+  </script>
+  <script src="notes-widget.js"></script>
+</body>
+</html>
