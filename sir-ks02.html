@@ -2801,7 +2801,7 @@
         let saved=_getSlots();
         const activeId=_getActiveSlotId();
         if (!saved.length){
-          const def={id:"slot-"+Date.now(),name:"Default",createdAt:today(),sessions:[],mms:[],kolbs:[],mgChanges:[],linChanges:[],goals:[],saActions:[],saEntries:[],sourceDumps:[]};
+          const def={id:"slot-"+Date.now(),name:"Default",createdAt:today(),sessions:[],mms:[],kolbs:[],mgChanges:[],linChanges:[],goals:[],saActions:[],saEntries:[],sourceDumps:[],docPages:[]};
           saved=[def];
           _setSlots(saved);
         }

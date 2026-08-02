@@ -47,6 +47,14 @@ Do not start with a broad directory rewrite. The structure that reads existing d
 
 ## Proposal 1: Make Export and Import Lossless
 
+> **Status update (2026-08-02):** the immediate data-loss bug is fixed. The importer in
+> `index.html` now also restores `notes`, `mmEntries`, `calendarNotes`, and the new
+> `docPages`, and an export→import round trip covering all known slot fields was
+> verified with a synthetic fixture. What remains open from this proposal is the
+> structural work: a canonical `normalizeSlot` shared by creation and import,
+> type validation instead of a hand-maintained allow-list, and the source-dump
+> importer ID-deduplication issue below.
+
 ### Problem this would address
 
 `index.html` exports the entire slot object:
@@ -1020,6 +1028,25 @@ Document:
 - How to select a non-production Firebase project for testing.
 - How to deploy.
 - How to verify a deployment.
+
+## Proposal 12: Universal Calendar v2 Interactions
+
+The Universal calendar on `index.html` is a read-only aggregation of the active slot (see README for current behavior). The day-detail preview, milestone period bars, and the deep link into the Progress schedule day view are now implemented. Remaining candidate directions:
+
+- Click-to-create entries (calendar notes, tasks, doc pages) directly from a day cell.
+- Per-category filter toggles in the legend so noisy categories (for example MG focus carry-forward) can be hidden.
+- Deep links from a day-detail item into the owning KS02 record or Documentations page. (The Progress schedule day-view link is done — `progress.html?date=YYYY-MM-DD#schedule`; the same query-param pattern would extend to the other two pages.)
+- A week view sharing the same aggregation buckets.
+- An "all slots merged" mode with slot badges (explicitly deferred when the calendar was built — the current scope decision was active slot only).
+- Sharing the day-schedule geometry between `index.html` and `progress.html`. The preview currently re-implements `goalDurationFor`, `computeOverlapInfo`, and the top/height formula in vanilla JS because `SchedulePanel` is a ~2,600-line React component that cannot be mounted on the non-React home page. Extracting the pure collectors and geometry into a shared script would remove that duplication, at the cost of a new shared file the three pages must load.
+
+Any write path added here must follow the read-modify-write single-key pattern and the local-date rules; the current implementation deliberately contains no writes.
+
+## Proposal 13: Documentation Images Versus the 1 MiB Cloud Document
+
+Documentation pages store images as downscaled JPEG data-URIs inside `docPages`, so they ride along with slot export/import and Firebase sync. Because `firebase-sync.js` uploads the entire serialized database as a single Firestore document (hard 1 MiB limit — see Proposal 3), a handful of images can make cloud sync fail while local storage keeps working. Current mitigations are client-side only: 1000px/0.8-quality downscaling, a header warning above ~900 KB, and an insert confirmation above ~950 KB.
+
+If image use grows, move media out of the main document before touching anything else in Proposal 3: store image blobs in IndexedDB or Firebase Storage keyed by block id, keep only references in `docPages`, and extend export/import to bundle the media. Until then, the warning thresholds are the guardrail.
 
 ## Recommended Priorities
 

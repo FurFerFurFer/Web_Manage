@@ -54,6 +54,7 @@ Active files:
 | `index.html` | Home, workspace slots, import/export, navigation |
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
+| `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
 | `firebase-sync.js` | Firebase authentication and whole-database synchronization |
 | `notes-widget.js` | Per-slot floating notes |
@@ -108,7 +109,8 @@ Current slot fields include:
   mgSchedule,
   calendarNotes,
   pos,
-  levelTemplates
+  levelTemplates,
+  docPages
 }
 ```
 
@@ -134,6 +136,7 @@ Before changing a stored field, use `rg` across:
 index.html
 progress.html
 sir-ks02.html
+documentations.html
 firebase-sync.js
 notes-widget.js
 ```
@@ -287,6 +290,20 @@ Classify the request:
 
 Use `rg` for searches. Prefer targeted reads instead of repeatedly loading an entire multi-thousand-line HTML file.
 
+#### Reading file slices
+
+Read a line range with the `Read` tool's `offset` and `limit`. Do not shell out to:
+
+```bash
+awk 'NR>=5378 && NR<=5402' progress.html
+sed -n '300,500p' progress.html
+python3 -c "print(''.join(open('progress.html').readlines()[300:500]))"
+```
+
+Each of those requires a new permission rule that can only ever match one line range again, so the allowlist grows without becoming more useful. `Read` needs no rule and returns numbered lines.
+
+Search with `Grep` or `rg`, not bespoke `perl -ne` or chained `grep -v` one-liners.
+
 ### 4. Plan risky cross-cutting work
 
 Use a short working plan for tasks that cross multiple data or UI boundaries.
@@ -352,12 +369,13 @@ For changes affecting runtime HTML, scripts, CDN tags, React code, storage initi
    http://127.0.0.1:8765/index.html
    http://127.0.0.1:8765/progress.html
    http://127.0.0.1:8765/sir-ks02.html
+   http://127.0.0.1:8765/documentations.html
    ```
 
 3. Verify:
 
    - Home content appears.
-   - Both React roots are non-empty.
+   - All React roots are non-empty.
    - No white screen occurs.
    - Firebase reaches a sign-in, offline, or signed-in state.
    - The notes widget mounts.

@@ -4518,7 +4518,7 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes }) {
+    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, initialDate }) {
       const START_HOUR  = 4;
       const END_HOUR    = 23;
       const TIME_COL_W  = 56;
@@ -4548,7 +4548,13 @@
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      const [anchor, setAnchor]   = useState(new Date(today));
+      // Deep link from the universal calendar (index.html) — progress.html?date=YYYY-MM-DD#schedule.
+      // T12:00:00 keeps the parse on the local calendar day; bare 'YYYY-MM-DD'
+      // parses as UTC midnight and lands a day early west of UTC.
+      const linkedDay = initialDate ? new Date(initialDate + 'T12:00:00') : null;
+      if (linkedDay) linkedDay.setHours(0, 0, 0, 0);
+
+      const [anchor, setAnchor]   = useState(() => new Date(linkedDay || today));
       const [pickerDay, setPickerDay] = useState(null);
       const [mmPickerDay, setMmPickerDay] = useState(null);
       const [mgPickerDay, setMgPickerDay] = useState(null);
@@ -4579,8 +4585,8 @@
       const [calNoteTimelineDraft, setCalNoteTimelineDraft] = useState({ title: '', detail: '' });
       const [sirSessionPopup, setSirSessionPopup] = useState(null);
 
-      const [timelineMode,  setTimelineMode]  = useState('week'); // 'week' | 'day'
-      const [dayFocusDate,  setDayFocusDate]  = useState(new Date(today));
+      const [timelineMode,  setTimelineMode]  = useState(() => linkedDay ? 'day' : 'week'); // 'week' | 'day'
+      const [dayFocusDate,  setDayFocusDate]  = useState(() => new Date(linkedDay || today));
       const [openComments,     setOpenComments]     = useState(new Set());
       const [openMMComments,   setOpenMMComments]   = useState(new Set());
       const [noteDrafts,       setNoteDrafts]       = useState({});
@@ -7144,6 +7150,13 @@
       const [tab, setTab] = useState(() => window.location.hash.slice(1) || 'progress');
       const [selectedMilestone, setSelectedMilestone] = useState(null);
 
+      // ?date=YYYY-MM-DD#schedule — deep link from the universal calendar on index.html.
+      // The date rides in the query string, not the hash, so hash parsing above stays intact.
+      const initialScheduleDate = useMemo(() => {
+        const v = new URLSearchParams(window.location.search).get('date');
+        return /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null;
+      }, []);
+
       useEffect(() => { _writeP('goals',         goals);         }, [goals]);
       useEffect(() => { _writeP('saActions',     saActions);     }, [saActions]);
       useEffect(() => { _writeP('saEntries',     saEntries);     }, [saEntries]);
@@ -7332,6 +7345,7 @@
                 sourceDumps={sourceDumps}
                 selectedMilestone={selectedMilestone}
                 calendarNotes={calendarNotes} setCalendarNotes={setCalendarNotes}
+                initialDate={initialScheduleDate}
               />
             </div>
           )}

@@ -46,7 +46,7 @@ When a proposed change is implemented:
 
 `index.html` is the project hub. It currently provides:
 
-- Navigation to KS02 and Progress.
+- Navigation to KS02, Progress, Notifications, and Documentations.
 - Creation of named workspace slots.
 - Active-slot selection.
 - Slot renaming and deletion.
@@ -54,8 +54,17 @@ When a proposed change is implemented:
 - Per-slot JSON import.
 - Source-dump-only export and import.
 - Basic workspace metadata counts.
+- A read-only **Universal calendar** aggregating the active slot's dated data by day.
 
 Each slot is intended to isolate a different subject, course, project, or learning area.
+
+The Universal calendar is a month grid with a legend, a today highlight, milestone period bars, per-category colored dots, and a click-to-open day detail panel. It never writes data, re-renders on slot activation and on cross-tab `storage` events, and uses local calendar dates throughout.
+
+**Milestone periods** render as thin horizontal bars rather than repeated dots. Milestones are deduplicated by id (definitions are cloned across linked goal nodes), packed greedily into lanes so each keeps one row for its whole `startDate`–`endDate` span, and coloured from the same palette the Progress Milestones tab uses. A bar bridges the gap into the next day cell so a period reads as one continuous line, with rounded caps on its real start and end days and no bridge across a week wrap. Hovering a bar shows its title, owning goal, and dates. Days carrying more than three concurrent milestones show a `+N` badge.
+
+**Clicking a day** opens a read-only preview of that day's schedule, mirroring the Progress Schedule day view: an 04:00–23:00 timeline at 28px/hour with blocks positioned by time and duration, overlapping blocks split side by side using the same connected-component algorithm as `SchedulePanel`, plus a strip above it for MG focus (with the same 30-day carry-forward and `↑ carried` hint as Progress), SIR sessions due that day (shown on `finishDate` when done, skipped sessions excluded), and calendar notes. The preview has no handlers or inputs and never writes to `track_db`. A `→` button beside the date opens `progress.html?date=YYYY-MM-DD#schedule`, which loads the Schedule tab in day mode focused on that date; the date rides in the query string so the existing `#hash` tab routing is untouched.
+
+**Dots** below the day number cover only what the day schedule does not already show: Kolb records and MG changes fused into one category, LIN records (titled from `linDayTitles` when present), floating notes (by local day of `createdAt`), and source-dump creations. These are listed under the timeline in the day detail, with Kolb and MG-change rows distinguished by a meta label. Scheduled goal tasks, routine occurrences, SIR sessions, supporting-action entries, MM study entries, MG focus, and calendar notes are shown in the day timeline instead of as dots. MM creations, MM comments, and Documentation-page creations are not surfaced on the calendar.
 
 ### Appearance and accessibility
 
@@ -210,6 +219,40 @@ Unknown `source` and `kind` values fall back to safe defaults, duplicate `id` va
 
 Because browsers block `fetch` against `file://`, the feed only loads automatically when the folder is served over HTTP. Opening the page directly from disk shows an explanatory notice and the manual **Load JSON** fallback; ticks and filters still persist in that mode.
 
+### Documentations
+
+`documentations.html` is a Notion-style documentation workspace for recording external events and information. It currently supports:
+
+- Nested pages in a sidebar tree (any depth, flat `parentId` structure like source dumps), with expand/collapse, add page, add sub-page, and cascade delete with a count confirmation.
+- A Favorites sidebar section toggled per page from either of two star buttons that share the same `favorite` field: the small one revealed on hover in the sidebar page row, and a large touch-sized one at the right end of the page's toolbar row.
+- A per-page emoji icon chosen from a picker grid or typed freely.
+- Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
+- A **Reference source dump** popup that shows the active slot's source-dump tree fully expanded — every nesting level and every leaf `{label, url}` link visible at once — and inserts a picked link as a link block carrying `dumpRef: {dumpId, linkId, urlId}` provenance. The block shows a "from: <dump title>" badge that degrades to "source removed" if the source is later deleted.
+- Images chosen from disk are downscaled (max dimension 1000px) and stored as compressed JPEG data-URIs inside the page, so they export, import, and cloud-sync with the slot. A header warning appears when the serialized database approaches the 1 MB Firebase document limit, and inserting an image past ~950 KB asks for confirmation.
+- Export/share via **Export / PDF**: a print stylesheet hides all app chrome and forces light colors; the browser print dialog then saves the page as PDF (or prints it).
+
+Pages are stored in the per-slot `docPages` field. The page only ever writes that one field, always through a fresh read-modify-write of `track_db`, and refreshes from `storage` events so other tabs' edits appear. On a completely empty install it creates a default slot; if unmigrated legacy Progress/KS02 data is detected instead, it asks the user to open those pages (or Home) first rather than risk orphaning the legacy data.
+
+Each `docPages` entry is:
+
+```js
+{
+  id,                // string id (never collides with numeric KS02 ids)
+  title, icon,       // icon is an emoji or ""
+  parentId,          // null = root
+  favorite,          // boolean
+  createdAt,         // "YYYY-MM-DD", local calendar date
+  updatedAt,         // epoch ms
+  blocks: [
+    { id, type: 'h1'|'h2'|'h3'|'p', text },
+    { id, type: 'image', src /* jpeg data-URI */, alt },
+    { id, type: 'table', rows: [[string]] },
+    { id, type: 'link', label, url, dumpRef: {dumpId, linkId, urlId}|null, addedAt },
+    { id, type: 'divider' }
+  ]
+}
+```
+
 ### Local and cloud data
 
 Current data behavior includes:
@@ -222,16 +265,17 @@ Current data behavior includes:
 - Offline/local-only use after skipping sign-in.
 - Per-slot export and import.
 
-The current import path reconstructs a known subset of slot fields rather than performing a proven lossless round trip. Treat exports as important recovery artifacts, but consult `NOTES.md` before relying on import as a complete restore mechanism.
+Slot export serializes the whole slot object and is lossless. Slot import reconstructs the slot from an explicit field list that now includes `notes`, `mmEntries`, `calendarNotes`, and `docPages` in addition to the previously restored fields, so a full export→import round trip preserves all currently known user-owned fields. The import allow-list must still be extended whenever a new slot field is introduced — see `NOTES.md` Proposal 1 for the remaining schema-centralization work.
 
 ## Current Page and File Responsibilities
 
 | File | Current responsibility |
 | --- | --- |
-| `index.html` | Home page, slot management, slot import/export, navigation |
+| `index.html` | Home page, slot management, slot import/export, navigation, Universal calendar |
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule, calendar notes |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `notifications.html` | Unified Gmail/Outlook/Teams inbox, filtering, per-item tick state |
+| `documentations.html` | Notion-style nested documentation pages, source-dump references, PDF export |
 | `notifications.sample.json` | Synthetic fixture documenting the `notifications.json` feed contract |
 | `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, cloud synchronization |
@@ -254,6 +298,7 @@ Track-website/
 ├── progress.html
 ├── sir-ks02.html
 ├── notifications.html
+├── documentations.html
 ├── notifications.sample.json
 ├── theme.js
 ├── firebase-sync.js
@@ -329,7 +374,8 @@ The pages currently read or write fields including:
   mgSchedule,
   calendarNotes,
   pos,
-  levelTemplates
+  levelTemplates,
+  docPages
 }
 ```
 
@@ -541,9 +587,21 @@ The latest audit established:
 ```text
 firebase-sync.js: node syntax check passed
 notes-widget.js: node syntax check passed
-index.html: loaded in headless Chrome
-progress.html: React root rendered in headless Chrome
+index.html: loaded in headless Chrome; Universal calendar rendered, day detail opened
+Universal calendar: 57 assertions passed against a synthetic slot — legend reduced to the
+  milestone bar plus four dot categories, milestone lanes stable across each span with
+  caps/bridges and no week-wrap bridge, day preview block geometry (09:00 → top 140px,
+  90min → 42px, per-date routine duration honoured), four-way overlap split, SIR/MG-carry/
+  calendar-note strip, parent task superseded by its same-day child, and track_db
+  byte-identical after mouse, dblclick, contextmenu and touch events on every block
+progress.html: React root rendered in headless Chrome; ?date=YYYY-MM-DD#schedule opened the
+  Schedule tab in day mode focused on the linked date, and omitting ?date= still starts in
+  week mode
 sir-ks02.html: React root rendered in headless Chrome
+documentations.html: inline JSX compiled by Babel; React root rendered; block edit survived reload
+export→import round trip: all slot fields preserved with a synthetic fixture
+invalid slot import: rejected without modifying track_db
+print media: docs chrome hidden, dark text forced in both themes, PDF produced
 Firebase overlay: initialized
 notes widget: mounted
 ```
@@ -579,7 +637,7 @@ These are implemented areas, not roadmap items. Possible follow-up work belongs 
 The following describe the project today:
 
 - Slot schema definitions are duplicated across pages.
-- Import is not yet proven to be a lossless inverse of export.
+- The import allow-list restores all currently known fields but must be extended by hand for every new slot field.
 - Two pages can hold stale in-memory views of the same `track_db`.
 - Firebase synchronization rewrites one serialized database document.
 - Some user-visible dates are created through UTC-based helpers.

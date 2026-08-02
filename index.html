@@ -39,6 +39,12 @@
           <span class="nav-btn-meta">Gmail, Outlook and Teams in one filterable list</span>
         </span>
       </a>
+      <a class="nav-btn" href="documentations.html">
+        <span>
+          <span class="nav-btn-title">Documentations</span>
+          <span class="nav-btn-meta">Nested pages for external events and information</span>
+        </span>
+      </a>
     </nav>
 
     <section class="slot-panel" aria-labelledby="slot-panel-title">
@@ -66,6 +72,24 @@
           onchange="importSlot(event)" class="file-input-hidden">
       </label>
     </section>
+
+    <section class="cal-panel" aria-labelledby="cal-panel-title">
+      <div class="cal-header">
+        <div>
+          <span id="cal-panel-title" class="slot-panel-label">Universal calendar</span>
+          <span class="slot-panel-hint">Everything in the active workspace, by day — milestones, SIR, schedule, notes and more.</span>
+        </div>
+        <div class="cal-month-nav">
+          <button type="button" class="cal-nav-btn" onclick="calShiftMonth(-1)" aria-label="Previous month">‹</button>
+          <span id="cal-month-label" class="cal-month-label"></span>
+          <button type="button" class="cal-nav-btn" onclick="calShiftMonth(1)" aria-label="Next month">›</button>
+        </div>
+      </div>
+      <div id="cal-legend" class="cal-legend"></div>
+      <div id="cal-dow" class="cal-dow-row"></div>
+      <div id="cal-grid" class="cal-grid"></div>
+      <div id="cal-detail"></div>
+    </section>
   </main>
 
   <script>
@@ -85,6 +109,7 @@
         el.className = 'slot-empty-msg';
         el.textContent = 'No slots — open a tracker to auto-create one.';
         container.appendChild(el);
+        renderCalendar();
         return;
       }
 
@@ -182,6 +207,8 @@
         div.append(info, acts);
         container.appendChild(div);
       });
+
+      renderCalendar();
     }
 
     function startRename(id, currentName, nameRow) {
@@ -245,7 +272,7 @@
       const name = input.value.trim();
       if (!name) return;
       const createdAt = new Date().toISOString().slice(0,10);
-      const slot = {id:'slot-'+Date.now(), name, createdAt, sessions:[], mms:[], kolbs:[], mgChanges:[], goals:[], saActions:[], saEntries:[], notes:[]};
+      const slot = {id:'slot-'+Date.now(), name, createdAt, sessions:[], mms:[], kolbs:[], mgChanges:[], goals:[], saActions:[], saEntries:[], notes:[], docPages:[]};
       const db = getDB();
       db.slots = [...(db.slots||[]), slot];
       saveDB(db);
@@ -314,7 +341,11 @@
             linDayTitles: data.linDayTitles||{},
             pos: data.pos||{},
             levelTemplates: data.levelTemplates||{},
-            mgSchedule: data.mgSchedule||{}
+            mgSchedule: data.mgSchedule||{},
+            notes: data.notes||[],
+            mmEntries: data.mmEntries||[],
+            calendarNotes: data.calendarNotes||[],
+            docPages: Array.isArray(data.docPages) ? data.docPages : []
           };
           const db = getDB();
           db.slots = [...(db.slots||[]), slot];
@@ -326,6 +357,553 @@
       e.target.value = '';
     }
 
+
+    // ── universal calendar (read-only aggregation of the active slot) ──────
+    // Local calendar dates only — toISOString would give the UTC day.
+
+    function calToDateStr(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+    const calDIM = (y,m) => new Date(y, m+1, 0).getDate();
+    const calFirstDay = (y,m) => new Date(y, m, 1).getDay();
+    const calDStr = (y,m,d) => y + '-' + String(m+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+    const CAL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const CAL_DOWS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+    // Dots cover only what the day schedule does not already show.
+    // Schedule items (tasks, routines, SIR, supporting actions, MM sessions, MG
+    // focus, calendar notes) render in the read-only day timeline instead, and
+    // milestones render as spanning lane bars — see calBuildMilestoneLanes.
+    const CAL_CATS = [
+      {key:'kolbmg', label:'Kolb / MG change', color:'#38bdf8'},
+      {key:'lin',    label:'LIN record',       color:'#2dd4bf'},
+      {key:'note',   label:'Floating note',    color:'#e879f9'},
+      {key:'dump',   label:'Source dump',      color:'#a8a29e'}
+    ];
+
+    // milestone bar colours — same palette progress.html uses for chipColor
+    const CAL_MS_PALETTE = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#14b8a6','#f97316','#06b6d4','#a3e635'];
+    const CAL_MS_MAX_LANES = 3;
+
+    // same semantics as progress.html getMGsForDay: exact key, else walk back ≤30 days
+    function calMGsForDay(ds, mgSchedule) {
+      if (Object.prototype.hasOwnProperty.call(mgSchedule, ds)) return mgSchedule[ds] || [];
+      const d = new Date(ds + 'T12:00:00');
+      for (let i = 1; i <= 30; i++) {
+        d.setDate(d.getDate() - 1);
+        const prev = calToDateStr(d);
+        if (Object.prototype.hasOwnProperty.call(mgSchedule, prev)) return mgSchedule[prev] || [];
+      }
+      return [];
+    }
+
+    function calFlattenGoals(goals) {
+      const out = [];
+      (function walk(list) { (list||[]).forEach(g => { out.push(g); walk(g.children); }); })(goals);
+      return out;
+    }
+
+    function calBuildBuckets(slot, y, m) {
+      const buckets = {};
+      const first = calDStr(y, m, 1), last = calDStr(y, m, calDIM(y, m));
+      const add = (ds, cat, label, meta) => {
+        if (!ds || ds < first || ds > last) return;
+        (buckets[ds] = buckets[ds] || {});
+        (buckets[ds][cat] = buckets[ds][cat] || []).push({label, meta});
+      };
+      const mms = slot.mms || [];
+      const mmName = id => { const mm = mms.find(x => x.id === id); return mm ? mm.name : 'MM ' + id; };
+
+      // Kolb records and MG changes share one dot — they almost always land together.
+      (slot.kolbs||[]).forEach(k => add(k.date, 'kolbmg', k.mmId != null ? mmName(k.mmId) : 'Free Kolb', 'Kolb'));
+      (slot.mgChanges||[]).forEach(c => add(c.date, 'kolbmg', mmName(c.mmId) + (c.newMG ? ': ' + c.newMG : ''), 'MG change'));
+      (slot.linChanges||[]).forEach(r => add(r.date, 'lin', ((slot.linDayTitles||{})[r.date]) || r.title || r.date, (r.items||[]).length + ' change(s)'));
+      (slot.notes||[]).forEach(n => { if (n.createdAt) add(calToDateStr(new Date(n.createdAt)), 'note', n.topic || String(n.content||'').slice(0, 40) || 'Note'); });
+      (slot.sourceDumps||[]).forEach(dp => { if (dp.createdAt) add(dp.createdAt, 'dump', dp.title || 'Untitled'); });
+
+      return buckets;
+    }
+
+    // ── milestone lanes ───────────────────────────────────────────────────
+    // Milestones are periods, so they render as thin bars spanning their days
+    // rather than as a repeated dot. Lane index is stable across the month so a
+    // bar stays on the same row from its start day to its end day.
+    function calBuildMilestoneLanes(slot, y, m) {
+      const first = calDStr(y, m, 1), last = calDStr(y, m, calDIM(y, m));
+
+      // milestone definitions are cloned across linked goal nodes — dedupe by id
+      const seenMs = new Set();
+      const items = [];
+      calFlattenGoals(slot.goals||[]).forEach(g => (g.milestones||[]).forEach(mst => {
+        if (seenMs.has(mst.id)) return;
+        seenMs.add(mst.id);
+        if (!mst.startDate || !mst.endDate) return;
+        if (mst.endDate < first || mst.startDate > last) return;
+        items.push({ id: mst.id, title: mst.title || 'Milestone', owner: g.title || '', startDate: mst.startDate, endDate: mst.endDate });
+      }));
+
+      items.sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
+
+      // greedy lane packing: lowest lane whose intervals do not overlap
+      const laneEnds = [];
+      items.forEach((it, idx) => {
+        it.color = CAL_MS_PALETTE[idx % CAL_MS_PALETTE.length];
+        let lane = 0;
+        while (lane < laneEnds.length && laneEnds[lane] >= it.startDate) lane++;
+        laneEnds[lane] = it.endDate;
+        it.lane = lane;
+      });
+
+      const lanesByDate = {};
+      items.forEach(it => {
+        for (let d = 1; d <= calDIM(y, m); d++) {
+          const ds = calDStr(y, m, d);
+          if (ds < it.startDate || ds > it.endDate) continue;
+          (lanesByDate[ds] = lanesByDate[ds] || []).push({
+            lane: it.lane, color: it.color, title: it.title, owner: it.owner,
+            startDate: it.startDate, endDate: it.endDate,
+            isStart: ds === it.startDate, isEnd: ds === it.endDate
+          });
+        }
+      });
+
+      return { lanesByDate, laneCount: laneEnds.length };
+    }
+
+    // ── read-only day schedule ────────────────────────────────────────────
+    // Mirrors the geometry and collectors of SchedulePanel in progress.html so
+    // the preview reads the same as the real thing. Nothing here writes.
+    const CAL_SCHED_START_HOUR = 4, CAL_SCHED_END_HOUR = 23, CAL_SCHED_PX_PER_HOUR = 28;
+
+    // same fallback chain as goalDurationFor in progress.html
+    function calGoalDuration(t, ds) {
+      const perDate = t.taskType === 'routine' ? (t.routineDates && t.routineDates[ds] || {}).duration : undefined;
+      return (perDate != null ? perDate : t.duration) || 60;
+    }
+
+    function calGoalDone(node, ds) {
+      if (!node) return false;
+      if (node.taskType === 'routine') return !!((node.routineDates || {})[ds] || {}).done;
+      const kids = node.children || [];
+      if (!kids.length) return !!node.completed;
+      return kids.every(c => calGoalDone(c, ds));
+    }
+
+    function calBuildDaySchedule(slot, ds) {
+      const mms = slot.mms || [];
+      const mmName = id => { const mm = mms.find(x => x.id === id); return mm ? mm.name : 'MM ' + id; };
+      const blocks = [];
+
+      calFlattenGoals(slot.goals||[]).forEach(t => {
+        if (t.isLink) return;
+        const kids = t.children || [];
+        const scheduled = t.taskType === 'routine'
+          ? (t.routineDates ? Object.prototype.hasOwnProperty.call(t.routineDates, ds) : t.scheduledDate === ds)
+          : t.scheduledDate === ds;
+        if (!scheduled) return;
+        if (t.taskType === 'milestone' && !kids.length) return;
+        // a parent whose child sits on the same day is represented by the child
+        if (kids.some(c => c.scheduledDate === ds)) return;
+        const rd = (t.routineDates || {})[ds] || {};
+        blocks.push({
+          id: t.id,
+          title: t.title || 'Untitled',
+          kind: t.taskType === 'routine' ? 'Routine' : 'Goal task',
+          time: (t.taskType === 'routine' ? rd.time || t.scheduledTime : t.scheduledTime) || '09:00',
+          duration: calGoalDuration(t, ds),
+          done: calGoalDone(t, ds),
+          color: '#6366f1'
+        });
+      });
+
+      (slot.saEntries||[]).filter(e => e.date === ds).forEach(e => {
+        const a = (slot.saActions||[]).find(x => x.id === e.actionId);
+        blocks.push({
+          id: e.id,
+          title: a ? ((a.emoji ? a.emoji + ' ' : '') + a.title) : 'Action ' + e.actionId,
+          kind: 'Supporting action',
+          time: e.time || '09:00',
+          duration: e.duration || 60,
+          done: !!e.done,
+          color: (a && a.color) || '#fb923c'
+        });
+      });
+
+      (slot.mmEntries||[]).filter(e => e.date === ds).forEach(e => {
+        const mm = mms.find(x => x.id === e.mmId);
+        blocks.push({
+          id: e.id,
+          title: mm ? mm.name : mmName(e.mmId),
+          kind: 'MM session',
+          time: e.time || '09:00',
+          duration: e.duration || 60,
+          done: !!e.done,
+          color: (mm && mm.color) || '#6366f1'
+        });
+      });
+
+      const sir = (slot.sessions||[])
+        .filter(s => !s.skipped && (s.done && s.finishDate ? s.finishDate : s.date) === ds)
+        .map(s => ({ label: mmName(s.mmId) + ' · rep ' + ((s.repIndex||0)+1), done: !!s.done }));
+
+      const mgSchedule = slot.mgSchedule || {};
+      const mgIds = calMGsForDay(ds, mgSchedule);
+
+      return {
+        blocks,
+        sir,
+        calNotes: (slot.calendarNotes||[]).filter(n => n.date === ds),
+        mgs: mgIds.map(mmName),
+        mgCarried: mgIds.length > 0 && !Object.prototype.hasOwnProperty.call(mgSchedule, ds)
+      };
+    }
+
+    // port of computeOverlapInfo in progress.html: connected components over
+    // intersecting [top, top+height) ranges, so overlaps sit side by side
+    function calOverlapInfo(blocks) {
+      const n = blocks.length;
+      const adj = Array.from({length: n}, () => []);
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          if (blocks[i].top < blocks[j].top + blocks[j].height &&
+              blocks[j].top < blocks[i].top + blocks[i].height) { adj[i].push(j); adj[j].push(i); }
+        }
+      }
+      const visited = new Set(), info = {};
+      for (let i = 0; i < n; i++) {
+        if (visited.has(i)) continue;
+        const group = [], stack = [i];
+        while (stack.length) {
+          const v = stack.pop();
+          if (visited.has(v)) continue;
+          visited.add(v); group.push(v);
+          adj[v].forEach(u => stack.push(u));
+        }
+        if (group.length < 2) continue;
+        const orderedIds = group.sort((a, b) => a - b).map(idx => blocks[idx].id);
+        orderedIds.forEach(id => { info[id] = orderedIds; });
+      }
+      return info;
+    }
+
+    function calDurLabel(min) {
+      if (min < 60) return min + 'min';
+      const h = Math.floor(min / 60), r = min % 60;
+      return h + 'h' + (r ? ' ' + r + 'min' : '');
+    }
+
+    function renderCalDaySchedule(el, slot, ds) {
+      const day = calBuildDaySchedule(slot, ds);
+      const wrap = document.createElement('div');
+      wrap.className = 'cal-sched';
+
+      if (day.mgs.length || day.calNotes.length || day.sir.length) {
+        const strip = document.createElement('div');
+        strip.className = 'cal-sched-strip';
+
+        if (day.mgs.length) {
+          const mg = document.createElement('div');
+          mg.className = 'cal-sched-mg';
+          const lbl = document.createElement('span');
+          lbl.className = 'cal-sched-strip-lbl';
+          lbl.textContent = day.mgCarried ? 'MG focus ↑ carried' : 'MG focus';
+          mg.appendChild(lbl);
+          day.mgs.forEach(name => {
+            const chip = document.createElement('span');
+            chip.className = 'cal-sched-mg-item';
+            chip.textContent = '• ' + name;
+            mg.appendChild(chip);
+          });
+          strip.appendChild(mg);
+        }
+
+        if (day.sir.length) {
+          const row = document.createElement('div');
+          row.className = 'cal-sched-sirs';
+          const lbl = document.createElement('span');
+          lbl.className = 'cal-sched-strip-lbl';
+          lbl.textContent = 'SIR';
+          row.appendChild(lbl);
+          day.sir.forEach(s => {
+            const b = document.createElement('span');
+            b.className = 'cal-sched-sir' + (s.done ? ' done' : '');
+            b.textContent = s.label + (s.done ? ' ✓' : '');
+            row.appendChild(b);
+          });
+          strip.appendChild(row);
+        }
+
+        if (day.calNotes.length) {
+          const row = document.createElement('div');
+          row.className = 'cal-sched-notes';
+          day.calNotes.forEach(n => {
+            const chip = document.createElement('span');
+            chip.className = 'cal-sched-note';
+            chip.textContent = '📌 ' + (n.title || n.detail || 'Note');
+            if (n.detail) chip.title = n.detail;
+            row.appendChild(chip);
+          });
+          strip.appendChild(row);
+        }
+
+        wrap.appendChild(strip);
+      }
+
+      if (!day.blocks.length) {
+        const p = document.createElement('div');
+        p.className = 'cal-empty-msg';
+        p.textContent = 'Nothing scheduled.';
+        wrap.appendChild(p);
+        el.appendChild(wrap);
+        return;
+      }
+
+      const totalH = (CAL_SCHED_END_HOUR - CAL_SCHED_START_HOUR) * CAL_SCHED_PX_PER_HOUR;
+      const grid = document.createElement('div');
+      grid.className = 'cal-sched-grid';
+      grid.style.height = totalH + 'px';
+
+      for (let h = CAL_SCHED_START_HOUR; h < CAL_SCHED_END_HOUR; h++) {
+        const top = (h - CAL_SCHED_START_HOUR) * CAL_SCHED_PX_PER_HOUR;
+        const line = document.createElement('div');
+        line.className = 'cal-sched-line';
+        line.style.top = top + 'px';
+        grid.appendChild(line);
+        const lbl = document.createElement('div');
+        lbl.className = 'cal-sched-hour';
+        lbl.style.top = top + 'px';
+        lbl.textContent = String(h).padStart(2, '0') + ':00';
+        grid.appendChild(lbl);
+      }
+
+      const laid = day.blocks.map(b => {
+        const parts = String(b.time).split(':');
+        const h = Number(parts[0]) || 0, mi = Number(parts[1]) || 0;
+        return {
+          ...b,
+          top: (h + mi / 60 - CAL_SCHED_START_HOUR) * CAL_SCHED_PX_PER_HOUR,
+          height: Math.max(16, (b.duration / 60) * CAL_SCHED_PX_PER_HOUR)
+        };
+      });
+      const overlap = calOverlapInfo(laid);
+
+      // blocks live in their own layer so their percentage widths are measured
+      // against the track area, not the hour-label gutter
+      const layer = document.createElement('div');
+      layer.className = 'cal-sched-blocks';
+
+      laid.forEach(b => {
+        if (b.top < -b.height || b.top >= totalH) return;
+        const group = overlap[b.id];
+        const n = group ? group.length : 1;
+        const idx = group ? group.indexOf(b.id) : 0;
+        const div = document.createElement('div');
+        div.className = 'cal-sched-block' + (b.done ? ' done' : '');
+        div.style.top = b.top + 'px';
+        div.style.height = b.height + 'px';
+        div.style.left = 'calc(' + (idx * (100 / n)) + '% + 1px)';
+        div.style.width = 'calc(' + (100 / n) + '% - 2px)';
+        div.style.borderColor = b.color;
+        div.style.background = b.color + (b.done ? '18' : '30');
+        div.title = b.kind + ' · ' + b.title + ' · ' + b.time + ' · ' + calDurLabel(b.duration) + (b.done ? ' · done' : '');
+        const t = document.createElement('div');
+        t.className = 'cal-sched-block-title';
+        t.textContent = (b.done ? '✓ ' : '') + b.title;
+        const meta = document.createElement('div');
+        meta.className = 'cal-sched-block-meta';
+        meta.textContent = b.time + ' · ' + calDurLabel(b.duration);
+        div.append(t, meta);
+        layer.appendChild(div);
+      });
+
+      grid.appendChild(layer);
+      wrap.appendChild(grid);
+      el.appendChild(wrap);
+    }
+
+    let calY, calM, calSelectedDs = null;
+    (function() { const now = new Date(); calY = now.getFullYear(); calM = now.getMonth(); })();
+
+    function calShiftMonth(delta) {
+      calM += delta;
+      if (calM < 0) { calM = 11; calY--; }
+      if (calM > 11) { calM = 0; calY++; }
+      calSelectedDs = null;
+      renderCalendar();
+    }
+
+    function renderCalDetail(el, slot, ds, bucket) {
+      el.className = 'cal-detail';
+      const head = document.createElement('div');
+      head.className = 'cal-detail-head';
+      const date = document.createElement('span');
+      date.className = 'cal-detail-date';
+      date.textContent = new Date(ds + 'T12:00:00').toLocaleDateString(undefined, {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+      const link = document.createElement('a');
+      link.className = 'cal-detail-link';
+      link.href = 'progress.html?date=' + ds + '#schedule';
+      link.title = 'Open this day in the Schedule';
+      link.setAttribute('aria-label', 'Open ' + ds + ' in the Schedule');
+      link.textContent = '→';
+      head.append(date, link);
+      el.appendChild(head);
+
+      renderCalDaySchedule(el, slot, ds);
+
+      const cats = CAL_CATS.filter(c => bucket[c.key] && bucket[c.key].length);
+      cats.forEach(c => {
+        const g = document.createElement('div');
+        g.className = 'cal-detail-group';
+        const h = document.createElement('div');
+        h.className = 'cal-detail-cat';
+        const dot = document.createElement('span');
+        dot.className = 'cal-dot';
+        dot.style.background = c.color;
+        h.append(dot, document.createTextNode(c.label + ' (' + bucket[c.key].length + ')'));
+        g.appendChild(h);
+        bucket[c.key].forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'cal-detail-item';
+          row.textContent = item.label;
+          if (item.meta) {
+            const meta = document.createElement('span');
+            meta.className = 'cal-item-meta';
+            meta.textContent = ' · ' + item.meta;
+            row.appendChild(meta);
+          }
+          g.appendChild(row);
+        });
+        el.appendChild(g);
+      });
+    }
+
+    function renderCalendar() {
+      const grid = document.getElementById('cal-grid');
+      if (!grid) return;
+      const db = getDB();
+      const slots = db.slots || [];
+      const slot = slots.find(s => s.id === db.activeSlotId) || slots[0] || null;
+
+      document.getElementById('cal-month-label').textContent = CAL_MONTHS[calM] + ' ' + calY;
+
+      const legend = document.getElementById('cal-legend');
+      legend.innerHTML = '';
+      const msLegend = document.createElement('span');
+      msLegend.className = 'cal-legend-item';
+      const msBar = document.createElement('span');
+      msBar.className = 'cal-legend-bar';
+      msLegend.append(msBar, document.createTextNode('Milestone period'));
+      legend.appendChild(msLegend);
+      CAL_CATS.forEach(c => {
+        const item = document.createElement('span');
+        item.className = 'cal-legend-item';
+        const dot = document.createElement('span');
+        dot.className = 'cal-dot';
+        dot.style.background = c.color;
+        item.append(dot, document.createTextNode(c.label));
+        legend.appendChild(item);
+      });
+
+      const dow = document.getElementById('cal-dow');
+      dow.innerHTML = '';
+      CAL_DOWS.forEach(d => {
+        const el = document.createElement('div');
+        el.className = 'cal-dow';
+        el.textContent = d;
+        dow.appendChild(el);
+      });
+
+      grid.innerHTML = '';
+      const detail = document.getElementById('cal-detail');
+      detail.innerHTML = '';
+      detail.className = '';
+
+      if (!slot) {
+        detail.className = 'cal-detail';
+        const p = document.createElement('div');
+        p.className = 'cal-empty-msg';
+        p.textContent = 'Create a workspace above to see its data here.';
+        detail.appendChild(p);
+        return;
+      }
+
+      const buckets = calBuildBuckets(slot, calY, calM);
+      const ms = calBuildMilestoneLanes(slot, calY, calM);
+      const shownLanes = Math.min(ms.laneCount, CAL_MS_MAX_LANES);
+      const todayDs = calToDateStr(new Date());
+
+      for (let i = 0; i < calFirstDay(calY, calM); i++) {
+        const c = document.createElement('div');
+        c.className = 'cal-cell empty';
+        grid.appendChild(c);
+      }
+      for (let d = 1; d <= calDIM(calY, calM); d++) {
+        const ds = calDStr(calY, calM, d);
+        const bucket = buckets[ds] || {};
+        const dayLanes = ms.lanesByDate[ds] || [];
+        const cell = document.createElement('div');
+        cell.className = 'cal-cell'
+          + (ds === todayDs ? ' today' : '')
+          + (dayLanes.length ? ' milestone' : '')
+          + (ds === calSelectedDs ? ' selected' : '');
+        const num = document.createElement('div');
+        num.className = 'cal-day-num';
+        num.textContent = d;
+        cell.appendChild(num);
+
+        if (shownLanes) {
+          const lanes = document.createElement('div');
+          lanes.className = 'cal-ms-lanes';
+          const byLane = {};
+          dayLanes.forEach(seg => { byLane[seg.lane] = seg; });
+          for (let l = 0; l < shownLanes; l++) {
+            const row = document.createElement('div');
+            row.className = 'cal-ms-lane';
+            const seg = byLane[l];
+            if (seg) {
+              // bridge into the neighbouring cell so a period reads as one line;
+              // never bridge across a week wrap, and cap the real start/end days
+              const col = (calFirstDay(calY, calM) + d - 1) % 7;
+              const line = document.createElement('span');
+              line.className = 'cal-ms-line'
+                + (seg.isStart ? ' cap-start' : (col !== 0 ? ' bridge-left' : ''))
+                + (seg.isEnd ? ' cap-end' : (col !== 6 ? ' bridge-right' : ''));
+              line.style.background = seg.color;
+              line.title = seg.title + (seg.owner ? ' — ' + seg.owner : '') + ' · ' + seg.startDate + ' → ' + seg.endDate;
+              row.appendChild(line);
+            }
+            lanes.appendChild(row);
+          }
+          const hidden = dayLanes.filter(seg => seg.lane >= CAL_MS_MAX_LANES).length;
+          if (hidden) {
+            const more = document.createElement('span');
+            more.className = 'cal-ms-more';
+            more.textContent = '+' + hidden;
+            more.title = dayLanes.filter(seg => seg.lane >= CAL_MS_MAX_LANES).map(seg => seg.title).join('\n');
+            lanes.appendChild(more);
+          }
+          cell.appendChild(lanes);
+        }
+        const cats = CAL_CATS.filter(c => bucket[c.key] && bucket[c.key].length);
+        if (cats.length) {
+          const dots = document.createElement('div');
+          dots.className = 'cal-dots';
+          cats.forEach(c => {
+            const dot = document.createElement('span');
+            dot.className = 'cal-dot';
+            dot.style.background = c.color;
+            dots.appendChild(dot);
+          });
+          cell.appendChild(dots);
+          cell.title = cats.map(c => c.label + ': ' + bucket[c.key].length).join('\n');
+        }
+        cell.onclick = () => { calSelectedDs = (calSelectedDs === ds ? null : ds); renderCalendar(); };
+        grid.appendChild(cell);
+      }
+
+      if (calSelectedDs) renderCalDetail(detail, slot, calSelectedDs, buckets[calSelectedDs] || {});
+    }
+
+    // cross-tab refresh: another page edited track_db → re-render slots + calendar
+    window.addEventListener('storage', e => { if (!e.key || e.key === 'track_db') renderSlots(); });
 
     renderSlots();
   </script>

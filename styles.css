@@ -1314,3 +1314,523 @@ html[data-theme] #fb-sync-banner {
     background: ButtonText;
   }
 }
+
+/* ── universal calendar (index.html) ──────────────────────── */
+.cal-panel {
+  width: 100%;
+  margin-top: 1.25rem;
+  padding: clamp(1rem, 3vw, 1.375rem);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: rgba(var(--color-surface-rgb), 0.9);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(16px);
+}
+
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.cal-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cal-nav-btn {
+  min-width: 2rem;
+  min-height: 2rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-ui);
+}
+
+.cal-nav-btn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.cal-month-label {
+  min-width: 9rem;
+  text-align: center;
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.cal-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--color-text-muted);
+  font-size: 0.625rem;
+  letter-spacing: 0.02em;
+}
+
+.cal-dow-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.cal-dow {
+  padding: 0.25rem 0;
+  text-align: center;
+  color: var(--color-text-subtle);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.cal-cell {
+  position: relative;
+  min-height: 3.5rem;
+  padding: 0.25rem 0.3rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  cursor: pointer;
+  /* visible so milestone lane bars can bridge the grid gap between days —
+     clipping is delegated to .cal-dots, which is the only content that wraps */
+  overflow: visible;
+  transition: border-color var(--motion-fast) var(--ease-ui),
+    background var(--motion-fast) var(--ease-ui);
+}
+
+.cal-cell:hover {
+  border-color: var(--color-border-strong);
+}
+
+.cal-cell.empty {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+}
+
+.cal-cell.milestone {
+  background: rgba(6, 182, 212, 0.10);
+  border-color: rgba(6, 182, 212, 0.35);
+}
+
+.cal-cell.today {
+  border-color: var(--color-primary);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.cal-cell.selected {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary-border);
+}
+
+.cal-day-num {
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.cal-cell.today .cal-day-num {
+  color: var(--color-primary);
+}
+
+/* ── milestone period bars ───────────────────────────────── */
+/* One lane per concurrent milestone, index-stable across the month, so a
+   period reads as a single thin line running from its start day to its end. */
+.cal-ms-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 0.2rem;
+}
+
+.cal-ms-lane {
+  height: 0.25rem;
+}
+
+.cal-ms-line {
+  display: block;
+  height: 100%;
+  /* z-index lifts the bar above the neighbouring cells' backgrounds and
+     borders, which is what makes the bridge read as continuous */
+  position: relative;
+  z-index: 2;
+  opacity: 0.9;
+}
+
+.cal-ms-line.bridge-left {
+  margin-left: calc(-0.3rem - 2px);
+}
+
+.cal-ms-line.bridge-right {
+  margin-right: calc(-0.3rem - 2px);
+}
+
+.cal-ms-line.cap-start {
+  border-top-left-radius: 999px;
+  border-bottom-left-radius: 999px;
+}
+
+.cal-ms-line.cap-end {
+  border-top-right-radius: 999px;
+  border-bottom-right-radius: 999px;
+}
+
+.cal-ms-more {
+  color: var(--color-text-muted);
+  font-size: 0.5625rem;
+  line-height: 0.7rem;
+}
+
+.cal-legend-bar {
+  width: 1.1rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6366f1, #ec4899);
+  flex: none;
+}
+
+.cal-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 0.25rem;
+  overflow: hidden;
+}
+
+.cal-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  flex: none;
+}
+
+.cal-detail {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.cal-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.cal-detail-date {
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-weight: 800;
+}
+
+.cal-detail-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1;
+  text-decoration: none;
+  flex: none;
+  transition: border-color var(--motion-fast) var(--ease-ui),
+    color var(--motion-fast) var(--ease-ui);
+}
+
+.cal-detail-link:hover {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary);
+}
+
+/* ── read-only day schedule preview ──────────────────────── */
+/* Mirrors the Schedule day view in progress.html. Display only: no handlers,
+   no inputs, nothing here writes to track_db. */
+.cal-sched {
+  margin-bottom: 0.75rem;
+}
+
+.cal-sched-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.cal-sched-mg,
+.cal-sched-sirs,
+.cal-sched-notes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.cal-sched-strip-lbl {
+  color: var(--color-text-muted);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cal-sched-mg-item {
+  color: var(--color-success);
+  font-size: 0.6875rem;
+}
+
+.cal-sched-sir {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-size: 0.625rem;
+}
+
+.cal-sched-sir.done {
+  background: transparent;
+  color: var(--color-warning);
+}
+
+.cal-sched-note {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  color: var(--color-text-secondary);
+  font-size: 0.625rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.cal-sched-grid {
+  position: relative;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  overflow: hidden;
+}
+
+/* labels sit just below their hour line, so the first one is not clipped by
+   the grid's top edge */
+.cal-sched-hour {
+  position: absolute;
+  left: 0;
+  width: 2.6rem;
+  padding: 1px 0 0 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.5625rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-sched-line {
+  position: absolute;
+  left: 2.9rem;
+  right: 0;
+  height: 0;
+  border-top: 1px solid var(--color-border-subtle);
+  opacity: 0.55;
+}
+
+.cal-sched-blocks {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2.9rem;
+  right: 0.35rem;
+}
+
+.cal-sched-block {
+  position: absolute;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+.cal-sched-block.done {
+  opacity: 0.65;
+}
+
+.cal-sched-block-title {
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-sched-block.done .cal-sched-block-title {
+  text-decoration: line-through;
+}
+
+.cal-sched-block-meta {
+  color: var(--color-text-muted);
+  font-size: 0.5625rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-detail-group {
+  margin-bottom: 0.5rem;
+}
+
+.cal-detail-cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cal-detail-item {
+  padding: 0.1rem 0 0.1rem 1rem;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.cal-detail-item .cal-item-meta {
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
+}
+
+.cal-empty-msg {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .cal-cell {
+    min-height: 2.5rem;
+    padding: 0.15rem 0.2rem;
+  }
+
+  .cal-dot {
+    width: 0.3rem;
+    height: 0.3rem;
+  }
+
+  .cal-ms-lane {
+    height: 0.2rem;
+  }
+
+  .cal-month-label {
+    min-width: 7rem;
+  }
+
+  .cal-sched-hour {
+    width: 2rem;
+    font-size: 0.5rem;
+  }
+
+  .cal-sched-line,
+  .cal-sched-blocks {
+    left: 2.2rem;
+  }
+
+  .cal-sched-block-title {
+    font-size: 0.5625rem;
+  }
+}
+
+/* ── documentations print / export ────────────────────────── */
+@media print {
+  body.docs-page {
+    background: #fff !important;
+  }
+
+  body.docs-page .docs-header,
+  body.docs-page .docs-sidebar,
+  body.docs-page .docs-toolbar,
+  body.docs-page .docs-addmenu,
+  body.docs-page .doc-chrome,
+  body.docs-page .theme-toggle,
+  body.docs-page [data-theme-toggle-host],
+  body.docs-page #nw-btn,
+  body.docs-page #nw-panel,
+  body.docs-page #fb-overlay,
+  body.docs-page #fb-sync-banner {
+    display: none !important;
+  }
+
+  body.docs-page #root > div {
+    display: block !important;
+    height: auto !important;
+    background: #fff !important;
+  }
+
+  body.docs-page .docs-editor {
+    overflow: visible !important;
+  }
+
+  body.docs-page .docs-editor,
+  body.docs-page .docs-editor * {
+    color: #111 !important;
+    background: transparent !important;
+    border-color: #bbb !important;
+  }
+
+  body.docs-page .doc-block {
+    break-inside: avoid;
+  }
+
+  body.docs-page .docs-editor a {
+    color: #1d4ed8 !important;
+    text-decoration: underline;
+  }
+
+  body.docs-page .doc-table td {
+    border: 1px solid #999 !important;
+  }
+
+  body.docs-page .doc-link-input {
+    display: none !important;
+  }
+
+  body.docs-page textarea,
+  body.docs-page input {
+    resize: none;
+  }
+}

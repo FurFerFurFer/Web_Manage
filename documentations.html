@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentations</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%230d9488%22/%3E%3Cpath d=%22M10 9h12M10 15h12M10 21h8%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
+  <script src="theme.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-sync.js"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { gray: { 950: '#080d18' } } } }
+    };
+  </script>
+</head>
+<body class="app-page docs-page">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // ── unified DB helpers (same contract as progress.html) ──────────────────
+
+    function _getTrackDB() {
+      try { return JSON.parse(localStorage.getItem('track_db') || '{}'); } catch { return {}; }
+    }
+    function _activeSlot() {
+      const db=_getTrackDB(), slots=db.slots||[], id=db.activeSlotId;
+      return slots.find(s=>s.id===id) || slots[0] || null;
+    }
+    function _readP(key, fallback) {
+      const s=_activeSlot(); return (s && s[key]!==undefined) ? s[key] : fallback;
+    }
+    // this page only ever writes the docPages key, always as a fresh
+    // read-modify-write so other pages' fields are never rebuilt from stale state
+    function _writeDocPages(val) {
+      const db=_getTrackDB(), slots=db.slots||[];
+      if (!slots.length) return;
+      const id=(slots.find(s=>s.id===db.activeSlotId)||slots[0]).id;
+      db.slots=slots.map(s=>s.id===id?{...s,docPages:val}:s);
+      localStorage.setItem('track_db', JSON.stringify(db));
+    }
+
+    // ── local calendar dates (never toISOString — that is a UTC day) ─────────
+
+    function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+    const localToday = () => toDateStr(new Date());
+
+    // string ids: can never collide with the numeric nid() counters in sir-ks02
+    const genId = () => Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+
+    // ── DB size guard (Firebase uploads the whole DB as one ≤1 MiB doc) ──────
+
+    const DB_WARN_BYTES = 900000;
+    const DB_HARD_BYTES = 950000;
+    function dbSizeBytes() {
+      try { return new Blob([localStorage.getItem('track_db')||'']).size; } catch { return 0; }
+    }
+
+    // ── slot bootstrap ───────────────────────────────────────────────────────
+    // Only auto-create a slot on a genuinely empty install. If legacy Progress/
+    // KS02 data exists, creating db.slots here would make their migration IIFEs
+    // (guarded by `if (db.slots) return`) skip it and orphan that data.
+
+    function _hasLegacyData() {
+      const db=_getTrackDB();
+      if (db.ks02 || db.progress) return true;
+      return ['ks02_slots','progress_goals','progress_sa_actions','progress_sa_entries']
+        .some(k => { try { return !!localStorage.getItem(k); } catch { return false; } });
+    }
+    function _bootstrapSlotIfSafe() {
+      const db=_getTrackDB();
+      if ((db.slots||[]).length) return true;
+      if (_hasLegacyData()) return false;
+      const s={id:'slot-'+Date.now(),name:'Default',createdAt:localToday(),sessions:[],mms:[],kolbs:[],mgChanges:[],linChanges:[],goals:[],saActions:[],saEntries:[],sourceDumps:[],notes:[],docPages:[]};
+      localStorage.setItem('track_db', JSON.stringify({slots:[s],activeSlotId:s.id}));
+      return true;
+    }
+
+    // ── small shared UI pieces ───────────────────────────────────────────────
+
+    function AutoTextarea({value, onChange, onFocus, placeholder, className}) {
+      const ref = useRef(null);
+      useEffect(() => {
+        const el = ref.current; if (!el) return;
+        el.style.height='auto'; el.style.height=el.scrollHeight+'px';
+      }, [value]);
+      return (
+        <textarea ref={ref} rows={1} value={value} placeholder={placeholder}
+          onChange={onChange} onFocus={onFocus}
+          className={"w-full bg-transparent resize-none outline-none overflow-hidden placeholder-gray-600 "+(className||'')} />
+      );
+    }
+
+    const EMOJI_CHOICES = ["📄","📝","📰","📚","📖","🗂️","📁","🗓️","📌","📎","💡","🎯","🏆","🏅","🎓","🔬","🧪","🧠","🌱","🌍","⚡","🔥","⭐","❤️","✅","❗","❓","💬","📷","🎵","🧮","🖥️","🌐","✈️","🏫","🏥","💼","🧾","🔑","🎉"];
+
+    function EmojiPicker({onPick, onClose}) {
+      const [custom, setCustom] = useState('');
+      useEffect(() => {
+        const onKey = e => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, []);
+      return (
+        <div className="absolute z-30 mt-1 w-64 rounded border border-gray-700 bg-gray-900 p-2 shadow-xl">
+          <div className="grid grid-cols-8 gap-1">
+            {EMOJI_CHOICES.map(e => (
+              <button key={e} onClick={()=>onPick(e)} className="rounded p-1 text-lg hover:bg-gray-700">{e}</button>
+            ))}
+          </div>
+          <div className="mt-2 flex gap-1">
+            <input value={custom} onChange={e=>setCustom(e.target.value)} placeholder="type any emoji…"
+              className="flex-1 rounded bg-gray-800 px-2 py-1 text-xs outline-none border border-gray-700" />
+            <button onClick={()=>{ if(custom.trim()) onPick(custom.trim()); }}
+              className="rounded bg-gray-700 px-2 py-1 text-xs hover:bg-gray-600">Set</button>
+            <button onClick={()=>onPick('')} className="rounded px-2 py-1 text-xs text-gray-500 hover:text-gray-300">Clear</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── image pipeline: downscale to ≤1000px JPEG data-URI ───────────────────
+
+    function readImageDownscaled(file, cb) {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX = 1000;
+          let w = img.width, h = img.height;
+          if (w > MAX || h > MAX) { const k = MAX / Math.max(w, h); w = Math.round(w*k); h = Math.round(h*k); }
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          const ctx = c.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          cb(c.toDataURL('image/jpeg', 0.8));
+        };
+        img.onerror = () => alert('Could not read that file as an image.');
+        img.src = ev.target.result;
+      };
+      reader.onerror = () => alert('Could not read that file.');
+      reader.readAsDataURL(file);
+    }
+
+    // ── source dump reference modal (tree fully expanded, all leaf links) ────
+
+    function SourceDumpModal({dumps, mms, onPick, onClose}) {
+      useEffect(() => {
+        const onKey = e => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, []);
+      const childrenOf = id => dumps.filter(d => (d.parentId||null) === id);
+      const isLeaf = d => !dumps.some(o => o.parentId === d.id);
+      const mmName = id => { const m = mms.find(m => m.id === id); return m ? m.name : 'Unknown MM'; };
+      const roots = childrenOf(null);
+      const anyLinks = dumps.some(d => isLeaf(d) && (d.mmLinks||[]).some(l => (l.links||[]).length));
+
+      const renderEntry = (d, depth) => (
+        <div key={d.id} style={{marginLeft: depth ? 14 : 0}} className="border-l border-gray-800 pl-2 mt-1">
+          <div className="flex items-center gap-1 text-xs text-gray-300">
+            <span>{isLeaf(d) ? '📄' : '📁'}</span>
+            <span className="font-bold">{d.title || 'Untitled'}</span>
+          </div>
+          {isLeaf(d) && (d.mmLinks||[]).map(l => (
+            <div key={l.id} className="ml-4 mt-1">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500">MM · {mmName(l.mmId)}</div>
+              {(l.links||[]).length === 0 && (
+                <div className="text-[10px] text-gray-600 italic">no links</div>
+              )}
+              {(l.links||[]).map(u => (
+                <button key={u.id}
+                  onClick={()=>onPick({label:u.label, url:u.url, dumpRef:{dumpId:d.id, linkId:l.id, urlId:u.id}})}
+                  className="block w-full truncate rounded px-1 py-0.5 text-left text-xs text-cyan-300 hover:bg-gray-800"
+                  title={u.url}>
+                  🔗 {u.label || u.url} <span className="text-gray-600">· {u.url}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+          {childrenOf(d.id).map(c => renderEntry(c, depth+1))}
+        </div>
+      );
+
+      return (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60" onClick={onClose}>
+          <div className="max-h-[80vh] w-[520px] max-w-[92vw] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-4"
+            onClick={e=>e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-bold tracking-widest text-gray-300">REFERENCE FROM SOURCE DUMP</span>
+              <button onClick={onClose} className="text-gray-500 hover:text-gray-200">✕</button>
+            </div>
+            {roots.length === 0 && (
+              <div className="py-6 text-center text-xs text-gray-500">
+                No source dumps yet. Add them in KS02 → KS03 → SOURCE DUMP.
+              </div>
+            )}
+            {roots.length > 0 && !anyLinks && (
+              <div className="pb-2 text-[10px] text-gray-500 italic">
+                Dumps exist but no leaf entry has links yet — add label/url links in KS02 first.
+              </div>
+            )}
+            {roots.map(d => renderEntry(d, 0))}
+          </div>
+        </div>
+      );
+    }
+
+    // ── block editors ────────────────────────────────────────────────────────
+
+    const TEXT_STYLES = {
+      h1: 'text-3xl font-bold text-gray-100',
+      h2: 'text-2xl font-bold text-gray-100',
+      h3: 'text-lg font-bold text-gray-200',
+      p:  'text-sm text-gray-300'
+    };
+
+    function BlockShell({block, onMove, onDelete, onSetType, children}) {
+      const isText = ['h1','h2','h3','p'].includes(block.type);
+      return (
+        <div className="doc-block group relative rounded px-1 py-0.5 hover:bg-gray-900/60">
+          <div className="doc-chrome absolute -left-1 top-0 z-10 flex -translate-x-full items-center gap-0.5 pr-1 opacity-0 transition-opacity group-hover:opacity-100">
+            {isText && (
+              <select value={block.type} onChange={e=>onSetType(e.target.value)}
+                className="rounded border border-gray-700 bg-gray-900 px-0.5 py-0.5 text-[10px] text-gray-400">
+                <option value="h1">H1</option><option value="h2">H2</option>
+                <option value="h3">H3</option><option value="p">Text</option>
+              </select>
+            )}
+            <button onClick={()=>onMove(-1)} title="Move up"   className="rounded bg-gray-800 px-1 text-[10px] text-gray-400 hover:text-white">↑</button>
+            <button onClick={()=>onMove(1)}  title="Move down" className="rounded bg-gray-800 px-1 text-[10px] text-gray-400 hover:text-white">↓</button>
+            <button onClick={onDelete}       title="Delete"    className="rounded bg-gray-800 px-1 text-[10px] text-red-400 hover:text-red-300">✕</button>
+          </div>
+          {children}
+        </div>
+      );
+    }
+
+    function TableBlock({block, onChange, onFocus}) {
+      const setCell = (ri, ci, v) =>
+        onChange({...block, rows: block.rows.map((r,i)=>i===ri?r.map((c,j)=>j===ci?v:c):r)});
+      return (
+        <div onFocus={onFocus}>
+          <div className="overflow-x-auto">
+            <table className="doc-table w-full border-collapse text-sm">
+              <tbody>
+                {block.rows.map((row, ri) => (
+                  <tr key={ri}>
+                    {row.map((cell, ci) => (
+                      <td key={ci} className="border border-gray-700 p-0">
+                        <input value={cell} onChange={e=>setCell(ri,ci,e.target.value)}
+                          className={"w-full min-w-[90px] bg-transparent px-2 py-1 outline-none "+(ri===0?'font-bold text-gray-100 bg-gray-800/60':'text-gray-300')} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="doc-chrome mt-1 flex gap-1 text-[10px] opacity-0 transition-opacity group-hover:opacity-100">
+            <button onClick={()=>onChange({...block, rows:[...block.rows, block.rows[0].map(()=> '')]})} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ row</button>
+            <button onClick={()=>{ if(block.rows.length>1) onChange({...block, rows: block.rows.slice(0,-1)}); }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− row</button>
+            <button onClick={()=>onChange({...block, rows: block.rows.map(r=>[...r,''])})} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ col</button>
+            <button onClick={()=>{ if(block.rows[0].length>1) onChange({...block, rows: block.rows.map(r=>r.slice(0,-1))}); }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− col</button>
+          </div>
+        </div>
+      );
+    }
+
+    function LinkBlock({block, onChange, onFocus, dumpTitleFor}) {
+      const refTitle = block.dumpRef ? dumpTitleFor(block.dumpRef) : null;
+      return (
+        <div onFocus={onFocus} className="flex flex-wrap items-center gap-2">
+          <span className="text-gray-600">🔗</span>
+          <input value={block.label} placeholder="label" onChange={e=>onChange({...block,label:e.target.value})}
+            className="doc-link-input w-40 rounded border border-gray-800 bg-gray-900 px-2 py-1 text-xs outline-none focus:border-gray-600" />
+          <input value={block.url} placeholder="url" onChange={e=>onChange({...block,url:e.target.value})}
+            className="doc-link-input w-64 rounded border border-gray-800 bg-gray-900 px-2 py-1 text-xs outline-none focus:border-gray-600" />
+          {block.url && (
+            <a href={block.url} target="_blank" rel="noopener noreferrer"
+              className="text-xs text-cyan-300 underline decoration-cyan-700 hover:text-cyan-200">
+              {block.label || block.url}
+            </a>
+          )}
+          {block.dumpRef && (
+            <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500"
+              title={`dump ${block.dumpRef.dumpId} · link ${block.dumpRef.linkId} · url ${block.dumpRef.urlId}`}>
+              ⛁ {refTitle ? `from: ${refTitle}` : 'source removed'}
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    function ImageBlock({block, onChange, onFocus}) {
+      const fileRef = useRef(null);
+      const pick = e => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        readImageDownscaled(file, dataUri => {
+          if (dbSizeBytes() + dataUri.length > DB_HARD_BYTES &&
+              !window.confirm('This image pushes the workspace close to the 1 MB Firebase sync limit. Insert anyway?')) return;
+          onChange({...block, src: dataUri});
+        });
+      };
+      return (
+        <div onFocus={onFocus}>
+          {block.src
+            ? <img src={block.src} alt={block.alt||''} className="max-w-full rounded border border-gray-800" />
+            : <button onClick={()=>fileRef.current && fileRef.current.click()}
+                className="w-full rounded border border-dashed border-gray-700 py-6 text-xs text-gray-500 hover:border-gray-500 hover:text-gray-300">
+                🖼️ Choose an image… (stored compressed inside this workspace)
+              </button>}
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pick} />
+          <div className="doc-chrome mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+            <input value={block.alt||''} placeholder="caption / alt text" onChange={e=>onChange({...block,alt:e.target.value})}
+              className="w-60 rounded border border-gray-800 bg-gray-900 px-2 py-0.5 text-[10px] outline-none" />
+            {block.src && <button onClick={()=>fileRef.current && fileRef.current.click()}
+              className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-white">replace</button>}
+          </div>
+          {block.alt && block.src && <div className="mt-0.5 text-[10px] text-gray-500 italic">{block.alt}</div>}
+        </div>
+      );
+    }
+
+    // ── sidebar ──────────────────────────────────────────────────────────────
+
+    function PageTreeItem({page, pages, depth, activePageId, collapsed, onToggleCollapse, onSelect, onAddChild, onToggleFav, onDelete}) {
+      const children = pages.filter(p => p.parentId === page.id);
+      const isCollapsed = !!collapsed[page.id];
+      return (
+        <div>
+          <div className={"group flex items-center gap-1 rounded px-1 py-0.5 text-xs cursor-pointer "+(page.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')}
+            style={{paddingLeft: 4 + depth*14}}
+            onClick={()=>onSelect(page.id)}>
+            <button onClick={e=>{e.stopPropagation(); onToggleCollapse(page.id);}}
+              className={"w-3 text-[9px] "+(children.length?'text-gray-500 hover:text-gray-200':'invisible')}>
+              {isCollapsed ? '▸' : '▾'}
+            </button>
+            <span>{page.icon || '📄'}</span>
+            <span className="flex-1 truncate">{page.title || 'Untitled'}</span>
+            <span className="hidden shrink-0 gap-0.5 group-hover:flex">
+              <button title="Add sub-page" onClick={e=>{e.stopPropagation(); onAddChild(page.id);}} className="rounded px-1 text-gray-500 hover:text-white">+</button>
+              <button title={page.favorite?'Unfavorite':'Favorite'} onClick={e=>{e.stopPropagation(); onToggleFav(page.id);}} className="rounded px-1 text-gray-500 hover:text-amber-300">{page.favorite?'★':'☆'}</button>
+              <button title="Delete page" onClick={e=>{e.stopPropagation(); onDelete(page.id);}} className="rounded px-1 text-gray-500 hover:text-red-400">✕</button>
+            </span>
+            {page.favorite && <span className="text-[9px] text-amber-400 group-hover:hidden">★</span>}
+          </div>
+          {!isCollapsed && children.map(c => (
+            <PageTreeItem key={c.id} page={c} pages={pages} depth={depth+1}
+              activePageId={activePageId} collapsed={collapsed}
+              onToggleCollapse={onToggleCollapse} onSelect={onSelect}
+              onAddChild={onAddChild} onToggleFav={onToggleFav} onDelete={onDelete} />
+          ))}
+        </div>
+      );
+    }
+
+    // ── main app ─────────────────────────────────────────────────────────────
+
+    function App() {
+      const [slotReady] = useState(() => _bootstrapSlotIfSafe());
+      const [docPages, setDocPages] = useState(() => slotReady ? _readP('docPages', []) : []);
+      const [activePageId, setActivePageId] = useState(null);
+      const [activeBlockId, setActiveBlockId] = useState(null);
+      const [collapsed, setCollapsed] = useState({});
+      const [showDumpModal, setShowDumpModal] = useState(false);
+      const [showEmoji, setShowEmoji] = useState(false);
+      const [dbSize, setDbSize] = useState(() => dbSizeBytes());
+      const [dumpsSnapshot, setDumpsSnapshot] = useState(() => ({
+        dumps: _readP('sourceDumps', []).filter(d => d.parentId !== d.id),
+        mms: _readP('mms', [])
+      }));
+      const firstRun = useRef(true);
+
+      const slotName = (_activeSlot() || {}).name || '';
+
+      // save: only the docPages key, only when it actually changed
+      useEffect(() => {
+        if (firstRun.current) { firstRun.current = false; return; }
+        if (!slotReady) return;
+        const stored = JSON.stringify(_readP('docPages', []));
+        const next = JSON.stringify(docPages);
+        if (stored !== next) _writeDocPages(docPages);
+        setDbSize(dbSizeBytes());
+      }, [docPages]);
+
+      // cross-tab / remote freshness
+      useEffect(() => {
+        const refresh = () => {
+          const fresh = _readP('docPages', []);
+          setDocPages(prev => JSON.stringify(prev) === JSON.stringify(fresh) ? prev : fresh);
+          setDumpsSnapshot({
+            dumps: _readP('sourceDumps', []).filter(d => d.parentId !== d.id),
+            mms: _readP('mms', [])
+          });
+          setDbSize(dbSizeBytes());
+        };
+        const onStorage = e => { if (!e.key || e.key === 'track_db') refresh(); };
+        const onVis = () => { if (!document.hidden) refresh(); };
+        window.addEventListener('storage', onStorage);
+        document.addEventListener('visibilitychange', onVis);
+        return () => {
+          window.removeEventListener('storage', onStorage);
+          document.removeEventListener('visibilitychange', onVis);
+        };
+      }, []);
+
+      // keep an active page selected: first favorite, else first root, else first
+      useEffect(() => {
+        if (activePageId && docPages.some(p => p.id === activePageId)) return;
+        const fav = docPages.find(p => p.favorite);
+        const root = docPages.find(p => !p.parentId);
+        setActivePageId((fav || root || docPages[0] || {}).id || null);
+      }, [docPages, activePageId]);
+
+      const activePage = docPages.find(p => p.id === activePageId) || null;
+
+      // ── page mutations ──
+      const touch = p => ({...p, updatedAt: Date.now()});
+      const patchPage = (id, patch) => setDocPages(prev => prev.map(p => p.id===id ? touch({...p, ...patch}) : p));
+      const patchBlocks = (id, fn) => setDocPages(prev => prev.map(p => p.id===id ? touch({...p, blocks: fn(p.blocks||[])}) : p));
+
+      function addPage(parentId) {
+        const p = {id: genId(), title: '', icon: '', parentId: parentId||null, favorite: false,
+                   createdAt: localToday(), updatedAt: Date.now(),
+                   blocks: [{id: genId(), type: 'p', text: ''}]};
+        setDocPages(prev => [...prev, p]);
+        setActivePageId(p.id);
+        if (parentId) setCollapsed(c => ({...c, [parentId]: false}));
+      }
+      function toggleFav(id) { patchPage(id, {favorite: !(docPages.find(p=>p.id===id)||{}).favorite}); }
+      function deletePage(id) {
+        const toDel = new Set([id]);
+        let grew = true;
+        while (grew) {
+          grew = false;
+          for (const p of docPages) if (!toDel.has(p.id) && toDel.has(p.parentId)) { toDel.add(p.id); grew = true; }
+        }
+        const page = docPages.find(p => p.id === id);
+        const n = toDel.size - 1;
+        if (!window.confirm(`Delete "${(page&&page.title)||'Untitled'}"${n ? ` and ${n} sub-page${n>1?'s':''}` : ''}? This cannot be undone.`)) return;
+        setDocPages(prev => prev.filter(p => !toDel.has(p.id)));
+        if (toDel.has(activePageId)) setActivePageId(null);
+      }
+
+      // ── block mutations (on the active page) ──
+      function newBlock(type, extra) {
+        const base = {id: genId(), type};
+        if (['h1','h2','h3','p'].includes(type)) base.text = '';
+        if (type === 'image') { base.src = ''; base.alt = ''; }
+        if (type === 'table') base.rows = [['',''],['','']];
+        if (type === 'link') { base.label=''; base.url=''; base.dumpRef=null; base.addedAt=Date.now(); }
+        return {...base, ...(extra||{})};
+      }
+      function addBlock(type, extra) {
+        if (!activePage) return;
+        const b = newBlock(type, extra);
+        patchBlocks(activePage.id, blocks => {
+          const i = blocks.findIndex(x => x.id === activeBlockId);
+          if (i < 0) return [...blocks, b];
+          return [...blocks.slice(0, i+1), b, ...blocks.slice(i+1)];
+        });
+        setActiveBlockId(b.id);
+      }
+      const updateBlock = b => patchBlocks(activePage.id, blocks => blocks.map(x => x.id===b.id ? b : x));
+      const deleteBlock = id => patchBlocks(activePage.id, blocks => blocks.filter(x => x.id!==id));
+      const moveBlock = (id, dir) => patchBlocks(activePage.id, blocks => {
+        const i = blocks.findIndex(x => x.id===id), j = i + dir;
+        if (i < 0 || j < 0 || j >= blocks.length) return blocks;
+        const next = [...blocks]; [next[i], next[j]] = [next[j], next[i]];
+        return next;
+      });
+
+      const dumpTitleFor = ref => {
+        const d = dumpsSnapshot.dumps.find(d => d.id === ref.dumpId);
+        if (!d) return null;
+        const l = (d.mmLinks||[]).find(l => l.id === ref.linkId);
+        return (l && (l.links||[]).some(u => u.id === ref.urlId)) ? d.title : null;
+      };
+
+      function openDumpModal() {
+        setDumpsSnapshot({
+          dumps: _readP('sourceDumps', []).filter(d => d.parentId !== d.id),
+          mms: _readP('mms', [])
+        });
+        setShowDumpModal(true);
+      }
+
+      function exportPDF() {
+        if (!activePage) return;
+        const prev = document.title;
+        const restore = () => { document.title = prev; window.removeEventListener('afterprint', restore); };
+        window.addEventListener('afterprint', restore);
+        document.title = ((activePage.icon ? activePage.icon+' ' : '') + (activePage.title || 'Untitled'));
+        window.print();
+        setTimeout(restore, 1500);
+      }
+
+      const ancestors = useMemo(() => {
+        const out = [];
+        let cur = activePage, guard = 0;
+        while (cur && cur.parentId && guard++ < 50) {
+          const parent = docPages.find(p => p.id === cur.parentId);
+          if (!parent) break;
+          out.unshift(parent); cur = parent;
+        }
+        return out;
+      }, [docPages, activePageId]);
+
+      const favorites = docPages.filter(p => p.favorite);
+      const roots = docPages.filter(p => !p.parentId || !docPages.some(x => x.id === p.parentId));
+
+      if (!slotReady) {
+        return (
+          <div className="flex h-screen items-center justify-center bg-gray-950 font-mono text-sm text-gray-400">
+            <div className="max-w-md rounded border border-gray-800 bg-gray-900 p-6 text-center">
+              <div className="mb-2 text-gray-200">No workspace loaded yet</div>
+              <p className="text-xs leading-relaxed">
+                Older Track data was found that has not been migrated. Open
+                <a href="progress.html" className="mx-1 text-cyan-300 underline">Progress</a>or
+                <a href="sir-ks02.html" className="mx-1 text-cyan-300 underline">KS02</a>
+                once to migrate it, or create a workspace on the
+                <a href="index.html" className="mx-1 text-cyan-300 underline">Home</a>page.
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex h-screen flex-col bg-gray-950 font-mono text-gray-300">
+          {/* Header */}
+          <header className="docs-header sticky top-0 z-10 flex items-center gap-3 border-b border-gray-800 bg-gray-900/90 px-3 py-2 backdrop-blur-sm">
+            <a href="index.html" className="text-xs text-gray-600 transition-colors hover:text-gray-300">← TRACK</a>
+            <span className="text-xs font-bold tracking-widest text-gray-300">DOCUMENTATIONS</span>
+            {slotName && <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">{slotName}</span>}
+            {dbSize > DB_WARN_BYTES && (
+              <span className="rounded bg-amber-900/50 px-2 py-0.5 text-[10px] text-amber-300"
+                title="Firebase sync uploads the whole workspace as a single document with a 1 MB limit.">
+                ⚠ workspace {Math.round(dbSize/1024)} KB / ~1024 KB sync limit
+              </span>
+            )}
+            <div className="flex-1"></div>
+            <div className="theme-toggle-host" data-theme-toggle-host></div>
+          </header>
+
+          <div className="flex min-h-0 flex-1">
+            {/* Sidebar */}
+            <aside className="docs-sidebar flex w-60 shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900/60 p-2">
+              {favorites.length > 0 && (
+                <div className="mb-3">
+                  <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-widest text-gray-600">Favorites</div>
+                  {favorites.map(p => (
+                    <div key={p.id}
+                      className={"flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-xs "+(p.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')}
+                      onClick={()=>setActivePageId(p.id)}>
+                      <span>{p.icon || '📄'}</span>
+                      <span className="truncate">{p.title || 'Untitled'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mb-1 flex items-center justify-between px-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-gray-600">Pages</span>
+                <button onClick={()=>addPage(null)} title="Add page"
+                  className="rounded px-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white">＋</button>
+              </div>
+              {roots.length === 0 && (
+                <button onClick={()=>addPage(null)}
+                  className="mx-1 rounded border border-dashed border-gray-700 py-3 text-xs text-gray-500 hover:border-gray-500 hover:text-gray-300">
+                  Create your first page
+                </button>
+              )}
+              {roots.map(p => (
+                <PageTreeItem key={p.id} page={p} pages={docPages} depth={0}
+                  activePageId={activePageId} collapsed={collapsed}
+                  onToggleCollapse={id=>setCollapsed(c=>({...c,[id]:!c[id]}))}
+                  onSelect={setActivePageId} onAddChild={addPage}
+                  onToggleFav={toggleFav} onDelete={deletePage} />
+              ))}
+              <button onClick={()=>addPage(null)}
+                className="mt-2 rounded px-2 py-1 text-left text-xs text-gray-600 hover:bg-gray-800 hover:text-gray-300">
+                ＋ Add page
+              </button>
+            </aside>
+
+            {/* Editor */}
+            <main className="docs-editor min-w-0 flex-1 overflow-y-auto">
+              {!activePage ? (
+                <div className="flex h-full items-center justify-center text-xs text-gray-600">
+                  Select or create a page from the sidebar.
+                </div>
+              ) : (
+                <div className="mx-auto max-w-3xl px-10 py-10 font-sans">
+                  {/* breadcrumb */}
+                  {ancestors.length > 0 && (
+                    <div className="docs-toolbar mb-2 flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
+                      {ancestors.map(a => (
+                        <React.Fragment key={a.id}>
+                          <button onClick={()=>setActivePageId(a.id)} className="hover:text-gray-200">
+                            {a.icon || '📄'} {a.title || 'Untitled'}
+                          </button>
+                          <span>/</span>
+                        </React.Fragment>
+                      ))}
+                      <span className="text-gray-400">{activePage.icon || '📄'} {activePage.title || 'Untitled'}</span>
+                    </div>
+                  )}
+
+                  {/* toolbar */}
+                  <div className="docs-toolbar mb-4 flex flex-wrap items-center gap-2">
+                    <button onClick={exportPDF}
+                      className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[11px] text-gray-300 hover:border-gray-500"
+                      title="Opens the print dialog — choose 'Save as PDF' to share this page">
+                      ⤓ Export / PDF
+                    </button>
+                    <span className="text-[10px] text-gray-600">created {activePage.createdAt}</span>
+                    <button onClick={()=>toggleFav(activePage.id)}
+                      title={activePage.favorite ? 'Remove from favorites' : 'Add to favorites'}
+                      aria-label={activePage.favorite ? 'Remove from favorites' : 'Add to favorites'}
+                      aria-pressed={!!activePage.favorite}
+                      className={"ml-auto flex min-h-[2.75rem] min-w-[2.75rem] items-center justify-center rounded-lg border text-2xl leading-none "
+                        +(activePage.favorite
+                          ? 'border-amber-500/60 bg-amber-500/10 text-amber-300 hover:border-amber-400'
+                          : 'border-gray-700 bg-gray-900 text-gray-500 hover:border-gray-500 hover:text-amber-300')}>
+                      {activePage.favorite ? '★' : '☆'}
+                    </button>
+                  </div>
+
+                  {/* icon + title */}
+                  <div className="relative mb-1">
+                    <button onClick={()=>setShowEmoji(v=>!v)} title="Change page icon"
+                      className="rounded p-1 text-4xl hover:bg-gray-800/60">
+                      {activePage.icon || '📄'}
+                    </button>
+                    {showEmoji && (
+                      <EmojiPicker
+                        onPick={e=>{ patchPage(activePage.id, {icon: e}); setShowEmoji(false); }}
+                        onClose={()=>setShowEmoji(false)} />
+                    )}
+                  </div>
+                  <input value={activePage.title} placeholder="Untitled"
+                    onChange={e=>patchPage(activePage.id, {title: e.target.value})}
+                    className="mb-6 w-full bg-transparent text-4xl font-bold text-gray-100 outline-none placeholder-gray-700" />
+
+                  {/* blocks */}
+                  <div className="space-y-1 pl-2">
+                    {(activePage.blocks||[]).map(b => (
+                      <BlockShell key={b.id} block={b}
+                        onMove={dir=>moveBlock(b.id, dir)}
+                        onDelete={()=>deleteBlock(b.id)}
+                        onSetType={t=>updateBlock({...b, type: t})}>
+                        {['h1','h2','h3','p'].includes(b.type) && (
+                          <AutoTextarea value={b.text||''} className={TEXT_STYLES[b.type]}
+                            placeholder={b.type==='p' ? "Type something…" : "Heading"}
+                            onFocus={()=>setActiveBlockId(b.id)}
+                            onChange={e=>updateBlock({...b, text: e.target.value})} />
+                        )}
+                        {b.type === 'divider' && <hr className="my-2 border-gray-800" onClick={()=>setActiveBlockId(b.id)} />}
+                        {b.type === 'table' && <TableBlock block={b} onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)} />}
+                        {b.type === 'link' && <LinkBlock block={b} onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)} dumpTitleFor={dumpTitleFor} />}
+                        {b.type === 'image' && <ImageBlock block={b} onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)} />}
+                      </BlockShell>
+                    ))}
+                  </div>
+
+                  {/* add-block menu */}
+                  <div className="docs-addmenu mt-4 flex flex-wrap gap-1 border-t border-gray-800/70 pt-3 text-[11px]">
+                    {[['h1','H1'],['h2','H2'],['h3','H3'],['p','Text'],['dump','⛁ Reference source dump'],['link','🔗 Link'],['table','▦ Table'],['image','🖼 Image'],['divider','― Divider']].map(([t,l]) => (
+                      <button key={t} onClick={()=> t==='dump' ? openDumpModal() : addBlock(t)}
+                        className="rounded border border-gray-800 bg-gray-900 px-2 py-1 text-gray-400 hover:border-gray-600 hover:text-gray-200">
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </main>
+          </div>
+
+          {showDumpModal && (
+            <SourceDumpModal dumps={dumpsSnapshot.dumps} mms={dumpsSnapshot.mms}
+              onPick={({label, url, dumpRef}) => {
+                addBlock('link', {label, url, dumpRef, addedAt: Date.now()});
+                setShowDumpModal(false);
+              }}
+              onClose={()=>setShowDumpModal(false)} />
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+  <script src="notes-widget.js"></script>
+</body>
+</html>
