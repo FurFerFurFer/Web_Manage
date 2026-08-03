@@ -108,6 +108,7 @@ Current slot fields include:
   mmEntries,
   mgSchedule,
   calendarNotes,
+  deadlines,
   pos,
   levelTemplates,
   docPages

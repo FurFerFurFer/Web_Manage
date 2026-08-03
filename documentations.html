@@ -57,6 +57,19 @@
     // string ids: can never collide with the numeric nid() counters in sir-ks02
     const genId = () => Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
 
+    // every page at or under `id`, walked as a fixed point over the flat parentId
+    // links (a subtree is not contiguous in the array, so adjacency proves nothing).
+    // used both for cascade delete and as the drag cycle guard.
+    function docDescendantIds(pages, id) {
+      const set = new Set([id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const p of pages) if (!set.has(p.id) && set.has(p.parentId)) { set.add(p.id); grew = true; }
+      }
+      return set;
+    }
+
     // ── DB size guard (Firebase uploads the whole DB as one ≤1 MiB doc) ──────
 
     const DB_WARN_BYTES = 900000;
@@ -334,14 +347,45 @@
 
     // ── sidebar ──────────────────────────────────────────────────────────────
 
-    function PageTreeItem({page, pages, depth, activePageId, collapsed, onToggleCollapse, onSelect, onAddChild, onToggleFav, onDelete}) {
+    function PageTreeItem({page, pages, depth, activePageId, collapsed, onToggleCollapse, onSelect, onAddChild, onToggleFav, onDelete, onNest, onArrange}) {
       const children = pages.filter(p => p.parentId === page.id);
       const isCollapsed = !!collapsed[page.id];
+      // drag-over feedback stays local to the row; never lifted to App
+      const [nestDragOver, setNestDragOver] = useState(false);
+      const [arrangeDragOver, setArrangeDragOver] = useState(null); // null | 'before' | 'after'
       return (
         <div>
-          <div className={"group flex items-center gap-1 rounded px-1 py-0.5 text-xs cursor-pointer "+(page.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')}
+          <div className={"group flex items-center gap-1 rounded px-1 py-0.5 text-xs cursor-pointer "
+              +(page.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')
+              +(nestDragOver?' ring-1 ring-indigo-500 bg-indigo-950/30':'')
+              +(arrangeDragOver==='before'?' border-t-2 border-green-500':arrangeDragOver==='after'?' border-b-2 border-green-500':'')}
             style={{paddingLeft: 4 + depth*14}}
-            onClick={()=>onSelect(page.id)}>
+            onClick={()=>onSelect(page.id)}
+            onDragOver={e=>{
+              // the payload is unreadable during dragover, so sniff types, never getData.
+              // stopPropagation is what makes the innermost row win over its ancestors.
+              const types = e.dataTransfer.types;
+              if (types.includes('application/docpage-arrange-id')) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setArrangeDragOver(e.clientY < rect.top + rect.height/2 ? 'before' : 'after');
+              } else if (types.includes('application/docpage-nest-id')) {
+                e.preventDefault(); e.stopPropagation(); setNestDragOver(true);
+              }
+            }}
+            onDragLeave={e=>{ if (!e.currentTarget.contains(e.relatedTarget)) { setNestDragOver(false); setArrangeDragOver(null); } }}
+            onDrop={e=>{
+              const arrangeId = e.dataTransfer.getData('application/docpage-arrange-id');
+              if (arrangeId && arrangeId !== page.id) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                onArrange(arrangeId, page.id, e.clientY < rect.top + rect.height/2);
+              } else {
+                const nestId = e.dataTransfer.getData('application/docpage-nest-id');
+                if (nestId && nestId !== page.id) { e.preventDefault(); e.stopPropagation(); onNest(nestId, page.id); }
+              }
+              setNestDragOver(false); setArrangeDragOver(null);
+            }}>
             <button onClick={e=>{e.stopPropagation(); onToggleCollapse(page.id);}}
               className={"w-3 text-[9px] "+(children.length?'text-gray-500 hover:text-gray-200':'invisible')}>
               {isCollapsed ? '▸' : '▾'}
@@ -349,6 +393,14 @@
             <span>{page.icon || '📄'}</span>
             <span className="flex-1 truncate">{page.title || 'Untitled'}</span>
             <span className="hidden shrink-0 gap-0.5 group-hover:flex">
+              <span draggable onClick={e=>e.stopPropagation()}
+                onDragStart={e=>{e.dataTransfer.setData('application/docpage-nest-id', page.id); e.dataTransfer.effectAllowed='move'; e.stopPropagation();}}
+                title="Drag to nest into another page"
+                className="cursor-grab select-none rounded px-1 text-gray-500 hover:text-indigo-400">⠿</span>
+              <span draggable onClick={e=>e.stopPropagation()}
+                onDragStart={e=>{e.dataTransfer.setData('application/docpage-arrange-id', page.id); e.dataTransfer.effectAllowed='move'; e.stopPropagation();}}
+                title="Drag to arrange among pages"
+                className="cursor-grab select-none rounded px-1 text-gray-500 hover:text-green-400">⇅</span>
               <button title="Add sub-page" onClick={e=>{e.stopPropagation(); onAddChild(page.id);}} className="rounded px-1 text-gray-500 hover:text-white">+</button>
               <button title={page.favorite?'Unfavorite':'Favorite'} onClick={e=>{e.stopPropagation(); onToggleFav(page.id);}} className="rounded px-1 text-gray-500 hover:text-amber-300">{page.favorite?'★':'☆'}</button>
               <button title="Delete page" onClick={e=>{e.stopPropagation(); onDelete(page.id);}} className="rounded px-1 text-gray-500 hover:text-red-400">✕</button>
@@ -359,7 +411,8 @@
             <PageTreeItem key={c.id} page={c} pages={pages} depth={depth+1}
               activePageId={activePageId} collapsed={collapsed}
               onToggleCollapse={onToggleCollapse} onSelect={onSelect}
-              onAddChild={onAddChild} onToggleFav={onToggleFav} onDelete={onDelete} />
+              onAddChild={onAddChild} onToggleFav={onToggleFav} onDelete={onDelete}
+              onNest={onNest} onArrange={onArrange} />
           ))}
         </div>
       );
@@ -374,6 +427,7 @@
       const [activeBlockId, setActiveBlockId] = useState(null);
       const [collapsed, setCollapsed] = useState({});
       const [showDumpModal, setShowDumpModal] = useState(false);
+      const [rootDragOver, setRootDragOver] = useState(false);
       const [showEmoji, setShowEmoji] = useState(false);
       const [dbSize, setDbSize] = useState(() => dbSizeBytes());
       const [dumpsSnapshot, setDumpsSnapshot] = useState(() => ({
@@ -440,17 +494,65 @@
       }
       function toggleFav(id) { patchPage(id, {favorite: !(docPages.find(p=>p.id===id)||{}).favorite}); }
       function deletePage(id) {
-        const toDel = new Set([id]);
-        let grew = true;
-        while (grew) {
-          grew = false;
-          for (const p of docPages) if (!toDel.has(p.id) && toDel.has(p.parentId)) { toDel.add(p.id); grew = true; }
-        }
+        const toDel = docDescendantIds(docPages, id);
         const page = docPages.find(p => p.id === id);
         const n = toDel.size - 1;
         if (!window.confirm(`Delete "${(page&&page.title)||'Untitled'}"${n ? ` and ${n} sub-page${n>1?'s':''}` : ''}? This cannot be undone.`)) return;
         setDocPages(prev => prev.filter(p => !toDel.has(p.id)));
         if (toDel.has(activePageId)) setActivePageId(null);
+      }
+
+      // ── drag to nest / drag to arrange ──
+      // sibling order is implicit array order (roots and children are both filters),
+      // so every move is one splice of one page — no order field, no schema change.
+      // dropping a page into its own subtree would orphan both from every root, so
+      // each mutation refuses that outright rather than repairing it later.
+
+      // nest: dragged becomes the LAST child of target
+      function nestPage(draggedId, targetId) {
+        if (draggedId === targetId) return;
+        setDocPages(prev => {
+          if (docDescendantIds(prev, draggedId).has(targetId)) return prev;
+          const di = prev.findIndex(p => p.id === draggedId);
+          if (di < 0 || !prev.some(p => p.id === targetId)) return prev;
+          const arr = [...prev];
+          const [moved] = arr.splice(di, 1);
+          const ti = arr.findIndex(p => p.id === targetId);   // re-find AFTER the removal
+          let at = ti;
+          for (let i = ti + 1; i < arr.length; i++) if (arr[i].parentId === targetId) at = i;
+          arr.splice(at + 1, 0, {...moved, parentId: targetId, updatedAt: Date.now()});
+          return arr;
+        });
+        setCollapsed(c => ({...c, [targetId]: false}));
+      }
+
+      // arrange: dragged adopts the target's parent and lands immediately before/after it
+      function arrangePage(draggedId, targetId, insertBefore) {
+        if (draggedId === targetId) return;
+        setDocPages(prev => {
+          if (docDescendantIds(prev, draggedId).has(targetId)) return prev;
+          const di = prev.findIndex(p => p.id === draggedId);
+          const target = prev.find(p => p.id === targetId);
+          if (di < 0 || !target) return prev;
+          const arr = [...prev];
+          const [moved] = arr.splice(di, 1);
+          const ti = arr.findIndex(p => p.id === targetId);   // re-find AFTER the removal
+          arr.splice(insertBefore ? ti : ti + 1, 0,
+            {...moved, parentId: target.parentId || null, updatedAt: Date.now()});
+          return arr;
+        });
+      }
+
+      // promote: dragged leaves its parent and becomes the last root page
+      function promotePageToRoot(id) {
+        setDocPages(prev => {
+          const i = prev.findIndex(p => p.id === id);
+          if (i < 0 || !prev[i].parentId) return prev;
+          const arr = [...prev];
+          const [moved] = arr.splice(i, 1);
+          arr.push({...moved, parentId: null, updatedAt: Date.now()});
+          return arr;
+        });
       }
 
       // ── block mutations (on the active page) ──
@@ -570,10 +672,21 @@
                   ))}
                 </div>
               )}
-              <div className="mb-1 flex items-center justify-between px-1">
+              <div className={"mb-1 flex items-center justify-between rounded border px-1 "+(rootDragOver?'border-violet-500 bg-violet-950/20':'border-transparent')}
+                onDragOver={e=>{ if (e.dataTransfer.types.includes('application/docpage-nest-id')) { e.preventDefault(); setRootDragOver(true); } }}
+                onDragLeave={e=>{ if (!e.currentTarget.contains(e.relatedTarget)) setRootDragOver(false); }}
+                onDrop={e=>{
+                  const id = e.dataTransfer.getData('application/docpage-nest-id');
+                  if (id) { e.preventDefault(); promotePageToRoot(id); }
+                  setRootDragOver(false);
+                }}>
                 <span className="text-[10px] font-bold uppercase tracking-widest text-gray-600">Pages</span>
-                <button onClick={()=>addPage(null)} title="Add page"
-                  className="rounded px-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white">＋</button>
+                {rootDragOver ? (
+                  <span className="text-[9px] text-violet-300">↑ drop to move to top level</span>
+                ) : (
+                  <button onClick={()=>addPage(null)} title="Add page"
+                    className="rounded px-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white">＋</button>
+                )}
               </div>
               {roots.length === 0 && (
                 <button onClick={()=>addPage(null)}
@@ -586,7 +699,8 @@
                   activePageId={activePageId} collapsed={collapsed}
                   onToggleCollapse={id=>setCollapsed(c=>({...c,[id]:!c[id]}))}
                   onSelect={setActivePageId} onAddChild={addPage}
-                  onToggleFav={toggleFav} onDelete={deletePage} />
+                  onToggleFav={toggleFav} onDelete={deletePage}
+                  onNest={nestPage} onArrange={arrangePage} />
               ))}
               <button onClick={()=>addPage(null)}
                 className="mt-2 rounded px-2 py-1 text-left text-xs text-gray-600 hover:bg-gray-800 hover:text-gray-300">

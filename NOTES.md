@@ -48,7 +48,8 @@ Do not start with a broad directory rewrite. The structure that reads existing d
 ## Proposal 1: Make Export and Import Lossless
 
 > **Status update (2026-08-02):** the immediate data-loss bug is fixed. The importer in
-> `index.html` now also restores `notes`, `mmEntries`, `calendarNotes`, and the new
+> `index.html` now also restores `notes`, `mmEntries`, `calendarNotes`, `deadlines`,
+> and the new
 > `docPages`, and an export→import round trip covering all known slot fields was
 > verified with a synthetic fixture. What remains open from this proposal is the
 > structural work: a canonical `normalizeSlot` shared by creation and import,
@@ -182,6 +183,7 @@ useEffect(() => { _writeP('saEntries', saEntries); }, [saEntries]);
 useEffect(() => { _writeP('mmEntries', mmEntries); }, [mmEntries]);
 useEffect(() => { _writeP('mgSchedule', mgSchedule); }, [mgSchedule]);
 useEffect(() => { _writeP('calendarNotes', calendarNotes); }, [calendarNotes]);
+useEffect(() => { _writeP('deadlines', deadlines); }, [deadlines]);
 ```
 
 KS02 keeps a full slot array in `slotsRef` and rewrites the active slot whenever one of its major state values changes:
@@ -386,6 +388,7 @@ The canonical slot should explicitly define at least:
   mmEntries: [],
   mgSchedule: {},
   calendarNotes: [],
+  deadlines: [],
   pos: {},
   levelTemplates: {}
 }

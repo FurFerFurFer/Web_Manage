@@ -60,9 +60,13 @@ Each slot is intended to isolate a different subject, course, project, or learni
 
 The Universal calendar is a month grid with a legend, a today highlight, milestone period bars, per-category colored dots, and a click-to-open day detail panel. It never writes data, re-renders on slot activation and on cross-tab `storage` events, and uses local calendar dates throughout.
 
+**The calendar always fills the screen.** It is the last section of Home, but breaks out of the page's `46rem` column to span the full viewport width and is pinned to exactly one viewport height (`100dvh`), so scrolling down to it gives the month the whole device screen on phone, tablet, and desktop. Grid rows share the remaining height (`1fr`), so cells grow with the display instead of sitting at a fixed pixel height, and day numbers, dots, and milestone bars scale with them. On viewports under 600px tall (landscape phones) the panel keeps a `min-height` and grows past one screen rather than crushing the cells, with a `2rem` row floor. Cell padding and the grid gap come from `--cal-cell-pad-x` and `--cal-gap` on `.cal-panel`, which the milestone bridge margins are derived from — change padding through those variables so the bars stay aligned.
+
 **Milestone periods** render as thin horizontal bars rather than repeated dots. Milestones are deduplicated by id (definitions are cloned across linked goal nodes), packed greedily into lanes so each keeps one row for its whole `startDate`–`endDate` span, and coloured from the same palette the Progress Milestones tab uses. A bar bridges the gap into the next day cell so a period reads as one continuous line, with rounded caps on its real start and end days and no bridge across a week wrap. Hovering a bar shows its title, owning goal, and dates. Days carrying more than three concurrent milestones show a `+N` badge.
 
-**Clicking a day** opens a read-only preview of that day's schedule, mirroring the Progress Schedule day view: an 04:00–23:00 timeline at 28px/hour with blocks positioned by time and duration, overlapping blocks split side by side using the same connected-component algorithm as `SchedulePanel`, plus a strip above it for MG focus (with the same 30-day carry-forward and `↑ carried` hint as Progress), SIR sessions due that day (shown on `finishDate` when done, skipped sessions excluded), and calendar notes. The preview has no handlers or inputs and never writes to `track_db`. A `→` button beside the date opens `progress.html?date=YYYY-MM-DD#schedule`, which loads the Schedule tab in day mode focused on that date; the date rides in the query string so the existing `#hash` tab routing is untouched.
+**Clicking a day** opens a read-only preview of that day's schedule, mirroring the Progress Schedule day view: a 00:00–24:00 timeline at 28px/hour with blocks positioned by time and duration, overlapping blocks split side by side using the same connected-component algorithm as `SchedulePanel`, plus a strip above it for MG focus (with the same 30-day carry-forward and `↑ carried` hint as Progress), SIR sessions due that day (shown on `finishDate` when done, skipped sessions excluded), and calendar notes. The preview has no handlers or inputs and never writes to `track_db`. A `→` button beside the date opens `progress.html?date=YYYY-MM-DD#schedule`, which loads the Schedule tab in day mode focused on that date; the date rides in the query string so the existing `#hash` tab routing is untouched. A `×` button beside it closes the day again.
+
+The detail appears **beside the grid above 720px** as a scrollable column, so the whole month stays visible while a day is open, and **as a fixed bottom sheet at 720px and below**, capped at `62dvh` and padded clear of the notes-widget button. Because the panel's height is definite, a long timeline scrolls inside the column instead of pushing the calendar past one screen. When no workspace exists, the "create a workspace" message renders in the empty month area rather than in the detail.
 
 **Dots** below the day number cover only what the day schedule does not already show: Kolb records and MG changes fused into one category, LIN records (titled from `linDayTitles` when present), floating notes (by local day of `createdAt`), and source-dump creations. These are listed under the timeline in the day detail, with Kolb and MG-change rows distinguished by a meta label. Scheduled goal tasks, routine occurrences, SIR sessions, supporting-action entries, MM study entries, MG focus, and calendar notes are shown in the day timeline instead of as dots. MM creations, MM comments, and Documentation-page creations are not surfaced on the calendar.
 
@@ -75,6 +79,7 @@ The shared interface currently provides:
 - Persistence of the selected appearance across pages and browser tabs through `track_theme`.
 - Visible keyboard focus, reduced-motion handling, stronger text contrast, and 44px primary touch targets.
 - Responsive Home cards and horizontally scrollable app navigation on narrow screens.
+- A full-screen Universal calendar on every device, with its day detail as a side column above 720px and a bottom sheet at or below it.
 
 ### Mind maps and knowledge structure
 
@@ -166,9 +171,46 @@ Current scheduling behavior includes:
 - MM schedule entries.
 - MG schedule entries.
 - Calendar notes.
+- Deadlines with caution periods.
 - Source pins connected to scheduled work.
 - Drag, touch, expansion, and near-edge interaction behavior.
 - A locally stored priority matrix.
+
+The timeline grid covers the whole local day, `00:00`–`24:00`, at a default 64px per hour (day mode
+zooms between 32px and 256px). Dragging or top-edge resizing snaps to five minutes and clamps a block
+start to the `00:00`–`23:55` range, so every hour of the day is a valid drop target. Hour labels read
+`12am` through `11pm`.
+
+**Deadlines** are a separate slot field from calendar notes. A deadline is due on one date at a
+required time, and carries a required caution-period start date, a title, and an optional
+description:
+
+```js
+{ id, date: 'YYYY-MM-DD', time: 'HH:MM', startDate: 'YYYY-MM-DD', title, detail, createdAt }
+```
+
+The caution period runs `startDate` through `date` **inclusive**; `startDate` defaults to the due day,
+so the minimum period is that single day. Because both are `'YYYY-MM-DD'` strings, membership is a
+plain lexicographic comparison (`inCaution` in `SchedulePanel`) and needs no date arithmetic, so it
+does not drift across DST, a month boundary, or a year boundary. A deadline with no `startDate` — for
+instance one hand-edited out of an export — falls back to a one-day caution period rather than
+failing.
+
+Deadlines are created in Schedule → CALENDAR, next to date notes: a `⏰` hover button in each month
+day cell, and a `+` on the DEADLINES header of the selected-day panel. Both open an inline composer
+whose save is blocked until the title, the due time, and a caution start on or before the due day are
+all present. In the month grid a due day shows a red `⏰ HH:MM Title` line and every other caution day
+shows an amber `! Title` line. The selected-day panel lists deadlines due that day as editable rows
+(double-click to edit, `×` to delete) and caution-only deadlines as read-only amber rows.
+
+In Schedule → TIMELINE, a deadline draws a **red line across its day column at its due time**, on its
+own date only, with a clickable diamond and a `HH:MM Title` label. The line paints above every block
+state — normal, selected, and picked-up — so a task block can never cover it; its full-width hairline
+is click-through, so only the diamond and the label take pointer events and a block underneath stays
+draggable and resizable. Every other day of the caution period instead shows an amber `!` chip in the
+day header, beside the 📌 note chips. The red line, the `!` chips, the month-cell lines, and the
+caution rows all open the same deadline popup, which shows the title, due time, caution range and day
+count, and description, and can edit or delete in place.
 
 ### Floating notes
 
@@ -224,6 +266,7 @@ Because browsers block `fetch` against `file://`, the feed only loads automatica
 `documentations.html` is a Notion-style documentation workspace for recording external events and information. It currently supports:
 
 - Nested pages in a sidebar tree (any depth, flat `parentId` structure like source dumps), with expand/collapse, add page, add sub-page, and cascade delete with a count confirmation.
+- Drag to nest and drag to arrange, ported from the Progress goal tree: every sidebar row reveals two handles on hover — `⠿` (indigo) drags the page onto another page to nest it as that page's last child (auto-expanding a collapsed target), and `⇅` (green) drags it before/after a target row by vertical midpoint, adopting the target's parent so one drag can also move a page between parents or out to root level. Dropping the `⠿` handle on the "Pages" header promotes a page to top level. Drops onto the page itself or any of its own descendants are refused outright (a `parentId` cycle would make the whole subtree unreachable). Desktop mouse only — like the Progress tree drag, it uses the HTML5 drag-and-drop API, which does not fire on touch devices.
 - A Favorites sidebar section toggled per page from either of two star buttons that share the same `favorite` field: the small one revealed on hover in the sidebar page row, and a large touch-sized one at the right end of the page's toolbar row.
 - A per-page emoji icon chosen from a picker grid or typed freely.
 - Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
@@ -253,6 +296,8 @@ Each `docPages` entry is:
 }
 ```
 
+Sibling order in the sidebar is the pages' relative order inside the flat `docPages` array — there is no separate order field. Drag-to-arrange therefore persists by splicing the one moved page to a new array position (and re-parenting is just a `parentId` change), so export/import, Firebase sync, and the slot constructors need no order-specific handling.
+
 ### Local and cloud data
 
 Current data behavior includes:
@@ -265,7 +310,7 @@ Current data behavior includes:
 - Offline/local-only use after skipping sign-in.
 - Per-slot export and import.
 
-Slot export serializes the whole slot object and is lossless. Slot import reconstructs the slot from an explicit field list that now includes `notes`, `mmEntries`, `calendarNotes`, and `docPages` in addition to the previously restored fields, so a full export→import round trip preserves all currently known user-owned fields. The import allow-list must still be extended whenever a new slot field is introduced — see `NOTES.md` Proposal 1 for the remaining schema-centralization work.
+Slot export serializes the whole slot object and is lossless. Slot import reconstructs the slot from an explicit field list that now includes `notes`, `mmEntries`, `calendarNotes`, `deadlines`, and `docPages` in addition to the previously restored fields, so a full export→import round trip preserves all currently known user-owned fields. The import allow-list must still be extended whenever a new slot field is introduced — see `NOTES.md` Proposal 1 for the remaining schema-centralization work.
 
 ## Current Page and File Responsibilities
 
@@ -373,6 +418,7 @@ The pages currently read or write fields including:
   mmEntries,
   mgSchedule,
   calendarNotes,
+  deadlines,
   pos,
   levelTemplates,
   docPages
@@ -588,6 +634,13 @@ The latest audit established:
 firebase-sync.js: node syntax check passed
 notes-widget.js: node syntax check passed
 index.html: loaded in headless Chrome; Universal calendar rendered, day detail opened
+Universal calendar full-screen layout: 134 assertions passed against a synthetic slot at
+  390x844, 844x390, 820x1180, 1180x820 and 1440x900 in both themes — panel spans the full
+  viewport width with no horizontal page scroll, is exactly one screen tall wherever there
+  is room (and grows instead of crushing cells at 844x390), 7 equal columns and equal-height
+  rows filling to the bottom, milestone bridges still continuous with no week-wrap bridge,
+  a long day timeline scrolling inside its column without stretching the panel, side column
+  above 720px and fixed bottom sheet below, close button and touch taps clearing the day
 Universal calendar: 57 assertions passed against a synthetic slot — legend reduced to the
   milestone bar plus four dot categories, milestone lanes stable across each span with
   caps/bridges and no week-wrap bridge, day preview block geometry (09:00 → top 140px,
@@ -626,6 +679,7 @@ The latest commits before this documentation update show current work concentrat
 - Kolb ordering and preservation of unsaved state.
 - MG schedule layout.
 - Calendar notes.
+- Deadlines with caution periods, and a full 00:00–24:00 schedule timeline.
 - Source visibility in Schedule.
 - Expanded and filtered task-directory views.
 - Repeated stabilization of touch schedule behavior and Firebase reload behavior.

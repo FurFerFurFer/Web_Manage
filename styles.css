@@ -254,7 +254,9 @@ body.home {
   position: relative;
   min-height: 100vh;
   min-height: 100dvh;
-  padding: clamp(4.5rem, 9vw, 7rem) 1rem 3rem;
+  /* no bottom padding: the full-bleed calendar is the last section and ends
+     flush with the bottom of the page */
+  padding: clamp(4.5rem, 9vw, 7rem) 1rem 0;
   overflow-x: hidden;
   font-family: var(--font-ui);
   background:
@@ -1316,15 +1318,34 @@ html[data-theme] #fb-sync-banner {
 }
 
 /* ── universal calendar (index.html) ──────────────────────── */
+/* Full bleed: the panel escapes .home-shell's 46rem cap and body.home's inline
+   padding, then sizes itself to one whole viewport so a month always fills the
+   device screen. body.home already sets overflow-x: hidden, which absorbs the
+   desktop scrollbar delta in 50vw; touch devices have no scrollbar.
+   min-height (not height) so a very short landscape phone grows and scrolls
+   instead of crushing the day cells. */
 .cal-panel {
-  width: 100%;
+  --cal-pad: clamp(1rem, 3vw, 1.375rem);
+  --cal-cell-pad-x: clamp(0.2rem, 0.6vmin, 0.5rem);
+  --cal-gap: 2px;
+  width: auto;
   margin-top: 1.25rem;
-  padding: clamp(1rem, 3vw, 1.375rem);
+  margin-inline: calc(50% - 50vw);
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: var(--cal-pad)
+    max(var(--cal-pad), env(safe-area-inset-right))
+    max(var(--cal-pad), env(safe-area-inset-bottom))
+    max(var(--cal-pad), env(safe-area-inset-left));
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-inline: 0;
+  border-radius: 0;
   background: rgba(var(--color-surface-rgb), 0.9);
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(16px);
+  /* no backdrop-filter: it would make the panel a containing block for the
+     fixed day sheet below, and a full-screen panel has nothing to blur */
 }
 
 .cal-header {
@@ -1334,6 +1355,37 @@ html[data-theme] #fb-sync-banner {
   gap: 1rem;
   flex-wrap: wrap;
   margin-bottom: 0.75rem;
+  /* the fixed .theme-toggle floats over the top-right corner once the panel is
+     scrolled to the top of the viewport — reserve its width so the title, hint
+     and month nav never run underneath it */
+  padding-right: 8.5rem;
+}
+
+/* Wherever there is room, pin the panel to exactly one screen. A definite
+   height is what lets the day-detail column stretch to the grid and scroll its
+   own long timeline instead of stretching the panel past the viewport.
+   Under 600px tall (landscape phones) min-height stays in charge, so the panel
+   grows and the page scrolls rather than crushing the day cells. */
+@media (min-height: 600px) {
+  .cal-panel {
+    height: 100vh;
+    height: 100dvh;
+  }
+}
+
+.cal-body {
+  display: flex;
+  flex: 1;
+  gap: 0.75rem;
+  min-height: 0;
+}
+
+.cal-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 .cal-month-nav {
@@ -1387,30 +1439,37 @@ html[data-theme] #fb-sync-banner {
 .cal-dow-row {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 2px;
-  margin-bottom: 2px;
+  gap: var(--cal-gap);
+  margin-bottom: var(--cal-gap);
 }
 
 .cal-dow {
   padding: 0.25rem 0;
   text-align: center;
   color: var(--color-text-subtle);
-  font-size: 0.625rem;
+  font-size: clamp(0.625rem, 1.2vmin, 0.8125rem);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
+/* 1fr rows share whatever height is left after the header, legend and day
+   names, so the grid always lands on the bottom of the screen. The 2rem floor
+   keeps a cell readable on short landscape phones — the panel grows past
+   100dvh and the page scrolls rather than the cells collapsing. */
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 2px;
+  grid-auto-rows: minmax(2rem, 1fr);
+  gap: var(--cal-gap);
+  flex: 1;
+  min-height: 0;
 }
 
 .cal-cell {
   position: relative;
-  min-height: 3.5rem;
-  padding: 0.25rem 0.3rem;
+  min-height: 0;
+  padding: 0.25rem var(--cal-cell-pad-x);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
   background: var(--color-app-bg);
@@ -1449,7 +1508,7 @@ html[data-theme] #fb-sync-banner {
 
 .cal-day-num {
   color: var(--color-text-secondary);
-  font-size: 0.6875rem;
+  font-size: clamp(0.6875rem, 1.5vmin, 1rem);
   font-weight: 700;
 }
 
@@ -1468,7 +1527,7 @@ html[data-theme] #fb-sync-banner {
 }
 
 .cal-ms-lane {
-  height: 0.25rem;
+  height: clamp(0.2rem, 0.7vmin, 0.4rem);
 }
 
 .cal-ms-line {
@@ -1481,12 +1540,15 @@ html[data-theme] #fb-sync-banner {
   opacity: 0.9;
 }
 
+/* reach exactly into the neighbouring cell: the cell's own inline padding plus
+   the grid gap. Both come from the panel's custom properties so the bridge
+   stays aligned at every cell size. */
 .cal-ms-line.bridge-left {
-  margin-left: calc(-0.3rem - 2px);
+  margin-left: calc(-1 * (var(--cal-cell-pad-x) + var(--cal-gap)));
 }
 
 .cal-ms-line.bridge-right {
-  margin-right: calc(-0.3rem - 2px);
+  margin-right: calc(-1 * (var(--cal-cell-pad-x) + var(--cal-gap)));
 }
 
 .cal-ms-line.cap-start {
@@ -1501,8 +1563,8 @@ html[data-theme] #fb-sync-banner {
 
 .cal-ms-more {
   color: var(--color-text-muted);
-  font-size: 0.5625rem;
-  line-height: 0.7rem;
+  font-size: clamp(0.5625rem, 1.1vmin, 0.75rem);
+  line-height: 1.2;
 }
 
 .cal-legend-bar {
@@ -1522,18 +1584,38 @@ html[data-theme] #fb-sync-banner {
 }
 
 .cal-dot {
-  width: 0.4rem;
-  height: 0.4rem;
+  width: clamp(0.4rem, 1vmin, 0.6rem);
+  height: clamp(0.4rem, 1vmin, 0.6rem);
   border-radius: 50%;
   flex: none;
 }
 
+/* legend dots keep their small fixed size — they sit in a text row, not a cell */
+.cal-legend-item .cal-dot,
+.cal-detail-cat .cal-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+}
+
+/* renderCalendar only adds the class while a day is selected, so an unopened
+   month gives the whole width to the grid */
+#cal-detail:not(.cal-detail) {
+  display: none;
+}
+
 .cal-detail {
-  margin-top: 0.75rem;
   padding: 0.75rem;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
   background: var(--color-surface-muted);
+}
+
+/* ≥721px: a scrollable column beside the grid, so opening a day never resizes
+   or scrolls the month away */
+.cal-body > .cal-detail {
+  flex: 0 0 clamp(17rem, 26%, 24rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .cal-detail-head {
@@ -1548,6 +1630,13 @@ html[data-theme] #fb-sync-banner {
   color: var(--color-text);
   font-size: 0.8125rem;
   font-weight: 800;
+}
+
+.cal-detail-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: none;
 }
 
 .cal-detail-link {
@@ -1571,6 +1660,12 @@ html[data-theme] #fb-sync-banner {
 .cal-detail-link:hover {
   border-color: var(--color-primary-border);
   color: var(--color-primary);
+}
+
+.cal-detail-close {
+  font-family: inherit;
+  font-size: 1rem;
+  cursor: pointer;
 }
 
 /* ── read-only day schedule preview ──────────────────────── */
@@ -1741,19 +1836,50 @@ html[data-theme] #fb-sync-banner {
   font-size: 0.75rem;
 }
 
+/* the no-workspace message spans the whole month area */
+.cal-grid > .cal-empty-msg {
+  grid-column: 1 / -1;
+  padding: 0.75rem 0.25rem;
+}
+
+/* ≤720px the detail becomes a bottom sheet over the lower grid instead of a
+   side column — a phone has no room for both. z-index stays under the notes
+   widget FAB (9000), and the bottom padding keeps content clear of it. */
+@media (max-width: 720px) {
+  /* every row of chrome costs the grid height on a phone — the panel title
+     already says what this is */
+  .cal-panel .slot-panel-hint {
+    display: none;
+  }
+
+  .cal-body {
+    flex-direction: column;
+  }
+
+  .cal-body > .cal-detail {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 30;
+    flex: none;
+    max-height: 62vh;
+    max-height: 62dvh;
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+    border-inline: 0;
+    border-bottom: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-float);
+  }
+}
+
 @media (max-width: 640px) {
+  .cal-panel {
+    --cal-cell-pad-x: 0.2rem;
+  }
+
   .cal-cell {
-    min-height: 2.5rem;
-    padding: 0.15rem 0.2rem;
-  }
-
-  .cal-dot {
-    width: 0.3rem;
-    height: 0.3rem;
-  }
-
-  .cal-ms-lane {
-    height: 0.2rem;
+    padding-block: 0.15rem;
   }
 
   .cal-month-label {

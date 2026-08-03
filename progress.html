@@ -4518,9 +4518,9 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, initialDate }) {
-      const START_HOUR  = 4;
-      const END_HOUR    = 23;
+    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, initialDate }) {
+      const START_HOUR  = 0;
+      const END_HOUR    = 24;
       const TIME_COL_W  = 56;
       const DAY_MIN_W   = 140;
       const TOTAL_W     = TIME_COL_W + 7 * DAY_MIN_W;
@@ -4583,6 +4583,12 @@
       const [calNoteEditing, setCalNoteEditing] = useState(null);
       const [calNoteTimelineModal, setCalNoteTimelineModal] = useState(null);
       const [calNoteTimelineDraft, setCalNoteTimelineDraft] = useState({ title: '', detail: '' });
+      const [dlOpenDay,   setDlOpenDay]   = useState(null);   // day number for the inline composer
+      const [dlDraft,     setDlDraft]     = useState({ title: '', detail: '', time: '', startDate: '' });
+      const [dlEditing,   setDlEditing]   = useState(null);   // deadline id being edited inline
+      const [dlPopup,     setDlPopup]     = useState(null);   // deadline id — red-line / ! popup
+      const [dlPopupEdit, setDlPopupEdit] = useState(false);  // popup view ⇄ edit toggle
+      const [dlPopupDraft,setDlPopupDraft]= useState({ title: '', detail: '', time: '', startDate: '' });
       const [sirSessionPopup, setSirSessionPopup] = useState(null);
 
       const [timelineMode,  setTimelineMode]  = useState(() => linkedDay ? 'day' : 'week'); // 'week' | 'day'
@@ -4747,7 +4753,7 @@
               setGhost(g => ({ ...(g || { type, id, dateStr, _resize: true }), duration: newDuration }));
             } else {
               const newDuration = Math.max(5, startDuration - deltaMins);
-              const newTotalMin = Math.max(START_HOUR * 60, Math.min((END_HOUR - 1) * 60, startTotalMin + deltaMins));
+              const newTotalMin = Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 5, startTotalMin + deltaMins));
               const hh = Math.floor(newTotalMin / 60);
               const mm = newTotalMin % 60;
               const newTime = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
@@ -4765,7 +4771,7 @@
           const headerH  = headerRef.current ? headerRef.current.offsetHeight : 0;
           const relY     = clientY - rect.top + el.scrollTop - dragRef.current.offsetY - headerH;
           let totalMin   = Math.round(((relY / pxPerHourRef.current) * 60 + START_HOUR * 60) / 5) * 5;
-          totalMin       = Math.max(START_HOUR * 60, Math.min((END_HOUR - 1) * 60, totalMin));
+          totalMin       = Math.max(START_HOUR * 60, Math.min(END_HOUR * 60 - 5, totalMin));
           const hh       = Math.floor(totalMin / 60);
           const mm       = totalMin % 60;
           const newTime  = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
@@ -5365,6 +5371,65 @@
         if (calNoteEditing === id) { setCalNoteEditing(null); setCalNoteDraft({ title: '', detail: '' }); }
       }
 
+      // ── Deadlines ──────────────────────────────────────────────────────────
+      // A deadline is due on `date` at `time`; its caution period runs from
+      // `startDate` through `date` inclusive. 'YYYY-MM-DD' strings compare
+      // correctly lexicographically, so the range needs no Date arithmetic and
+      // cannot drift across DST, a month boundary, or a year boundary.
+      const dlStart   = d => d.startDate || d.date;
+      const inCaution = (d, ds) => ds >= dlStart(d) && ds <= d.date;
+      const dlValid   = (draft, dueDate) =>
+        !!draft.title.trim()
+        && /^\d{2}:\d{2}$/.test(draft.time)
+        && /^\d{4}-\d{2}-\d{2}$/.test(draft.startDate)
+        && draft.startDate <= dueDate;
+      // T12:00:00 keeps both parses on their local calendar day, so the span is
+      // whole days regardless of a DST shift in between.
+      const dlDayCount = d => Math.round(
+        (new Date(d.date + 'T12:00:00') - new Date(dlStart(d) + 'T12:00:00')) / 86400000
+      ) + 1;
+      const byTime = (a, b) => String(a.time).localeCompare(String(b.time));
+      const byDate = (a, b) => a.date.localeCompare(b.date) || byTime(a, b);
+      const deadlinesDueOn    = ds => (deadlines || []).filter(d => d.date === ds).sort(byTime);
+      const deadlinesCautionOn = ds => (deadlines || []).filter(d => inCaution(d, ds)).sort(byDate);
+
+      function openDlComposer(day, ds) {
+        setDlOpenDay(day);
+        setDlEditing(null);
+        setDlDraft({ title: '', detail: '', time: '', startDate: ds });
+        setCalNoteOpenDay(null);
+        setCalNoteEditing(null);
+      }
+      function closeDlComposer() {
+        setDlOpenDay(null);
+        setDlEditing(null);
+        setDlDraft({ title: '', detail: '', time: '', startDate: '' });
+      }
+      function openDlPopup(id) { setDlPopup(id); setDlPopupEdit(false); }
+      function addDeadline(date) {
+        if (!dlValid(dlDraft, date)) return;
+        setDeadlines(prev => [...prev, {
+          id: uid(), date, time: dlDraft.time, startDate: dlDraft.startDate,
+          title: dlDraft.title.trim(), detail: dlDraft.detail.trim(), createdAt: Date.now()
+        }]);
+        setDlDraft({ title: '', detail: '', time: '', startDate: date });
+      }
+      function updateDeadline(id) {
+        const dl = (deadlines || []).find(d => d.id === id);
+        if (!dl || !dlValid(dlDraft, dl.date)) return;
+        setDeadlines(prev => prev.map(d => d.id === id ? {
+          ...d, time: dlDraft.time, startDate: dlDraft.startDate,
+          title: dlDraft.title.trim(), detail: dlDraft.detail.trim()
+        } : d));
+        setDlEditing(null);
+        setDlDraft({ title: '', detail: '', time: '', startDate: dl.date });
+      }
+      function deleteDeadline(id) {
+        setDeadlines(prev => prev.filter(d => d.id !== id));
+        if (dlEditing === id) { setDlEditing(null); setDlDraft({ title: '', detail: '', time: '', startDate: '' }); }
+        if (dlPopup === id)   { setDlPopup(null); setDlPopupEdit(false); }
+      }
+
       return (
         <div className="flex flex-col h-full">
 
@@ -5495,7 +5560,7 @@
                     </div>
                     </div>
 
-                    {/* RIGHT STRIP — calendar notes */}
+                    {/* RIGHT STRIP — calendar notes + deadline caution markers */}
                     <div className="flex flex-col gap-0.5 pt-2 pr-1 pl-0.5 flex-shrink-0" style={{ minWidth: '60px', maxWidth: '110px' }}>
                       {(calendarNotes || []).filter(n => n.date === ds).map(note => (
                         <button key={note.id}
@@ -5507,6 +5572,16 @@
                           className="w-full flex items-center gap-0.5 rounded px-0.5 py-0.5 hover:bg-gray-800/70 transition-colors text-left">
                           <span className="text-[10px] flex-shrink-0">📌</span>
                           <span className="flex-1 text-[10px] text-gray-300 truncate leading-tight">{note.title}</span>
+                        </button>
+                      ))}
+                      {/* caution period — every day from startDate through the due day */}
+                      {deadlinesCautionOn(ds).map(d => (
+                        <button key={d.id}
+                          onClick={e => { e.stopPropagation(); openDlPopup(d.id); }}
+                          title={`Due ${d.date} ${d.time}`}
+                          className="w-full flex items-center gap-0.5 rounded px-0.5 py-0.5 hover:bg-amber-900/30 transition-colors text-left">
+                          <span className="text-[10px] flex-shrink-0 text-amber-400 font-bold">!</span>
+                          <span className="flex-1 text-[10px] text-amber-300 truncate leading-tight">{d.title}</span>
                         </button>
                       ))}
                     </div>
@@ -5545,8 +5620,10 @@
               })}
             </div>
 
-            {/* Time grid */}
-            <div className="flex" style={{ height: TOTAL_H + 'px', minWidth: timelineMode === 'week' ? TOTAL_W + 'px' : undefined }}>
+            {/* Time grid — position/zIndex make this its own stacking context, so
+                high-z children (a picked-up block, a deadline line) stay under the
+                sticky day header instead of painting over it when scrolled. */}
+            <div className="flex" style={{ position: 'relative', zIndex: 0, height: TOTAL_H + 'px', minWidth: timelineMode === 'week' ? TOTAL_W + 'px' : undefined }}>
 
               {/* Time axis — sticky left */}
               <div style={{ width: TIME_COL_W + 'px', position: 'sticky', left: 0, zIndex: 10, backgroundColor: 'var(--color-app-bg)' }}
@@ -5555,7 +5632,7 @@
                   <div key={h} style={{ top: (h - START_HOUR) * pxPerHour - 8 + 'px' }}
                     className="absolute right-2 pointer-events-none">
                     <span className="text-[10px] text-gray-700 font-mono leading-none">
-                      {h === 12 ? '12pm' : h > 12 ? `${h-12}pm` : `${h}am`}
+                      {h === 0 ? '12am' : h === 12 ? '12pm' : h > 12 ? `${h-12}pm` : `${h}am`}
                     </span>
                   </div>
                 ))}
@@ -5645,6 +5722,31 @@
                         <div className="flex-1 h-px bg-red-500" />
                       </div>
                     )}
+
+                    {/* Deadline lines — only on the day a deadline is due, at its own
+                        time. zIndex 200 clears every block state (10/15 normal, 50
+                        selected, 100 picked up) so the line is never covered. The
+                        wrapper is pointer-events-none and only the diamond and the
+                        label take clicks, so the hairline never swallows a drag. */}
+                    {deadlinesDueOn(ds).map(d => {
+                      const [dh, dm] = String(d.time || '').split(':').map(Number);
+                      if (!Number.isFinite(dh)) return null;
+                      const top = (dh + (dm || 0) / 60 - START_HOUR) * pxPerHour;
+                      if (top < 0 || top > TOTAL_H) return null;
+                      const open = e => { e.stopPropagation(); openDlPopup(d.id); };
+                      return (
+                        <div key={d.id} style={{ top: top + 'px', zIndex: 200 }}
+                          className="absolute left-0 right-0 h-[9px] -translate-y-1/2 flex items-center pointer-events-none group/dl">
+                          <div onClick={open} title={`${d.time} · ${d.title}`}
+                            className="w-2 h-2 rotate-45 bg-red-600 flex-shrink-0 -ml-1 pointer-events-auto cursor-pointer" />
+                          <div className="flex-1 h-px bg-red-600 group-hover/dl:h-0.5 transition-all" />
+                          <span onClick={open} title={`${d.time} · ${d.title}`}
+                            className="ml-1 px-1 rounded bg-red-600 text-white text-[9px] leading-tight truncate max-w-[55%] pointer-events-auto cursor-pointer">
+                            {d.time} {d.title}
+                          </span>
+                        </div>
+                      );
+                    })}
 
                     {/* Goal task blocks */}
                     {dayTasks.map(task => {
@@ -6914,6 +7016,98 @@
             );
           })()}
 
+          {/* Deadline popup — shared by the timeline red line, the ! caution chips,
+              the month-cell lines, and the caution rows in the day panel. */}
+          {dlPopup && (() => {
+            const d = (deadlines || []).find(x => x.id === dlPopup);
+            if (!d) { return null; }
+            const close = () => { setDlPopup(null); setDlPopupEdit(false); };
+            const startEdit = () => {
+              setDlPopupDraft({ title: d.title, detail: d.detail || '', time: d.time, startDate: dlStart(d) });
+              setDlPopupEdit(true);
+            };
+            const save = () => {
+              if (!dlValid(dlPopupDraft, d.date)) return;
+              setDeadlines(prev => prev.map(x => x.id === d.id ? {
+                ...x, time: dlPopupDraft.time, startDate: dlPopupDraft.startDate,
+                title: dlPopupDraft.title.trim(), detail: dlPopupDraft.detail.trim()
+              } : x));
+              setDlPopupEdit(false);
+            };
+            return (
+              <>
+                <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
+                <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                  <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+                    <span>{dlPopupEdit ? 'EDIT DEADLINE' : 'DEADLINE'} · {d.date}</span>
+                    <button onClick={close} className="text-gray-600 hover:text-gray-300 text-base leading-none">×</button>
+                  </div>
+                  {dlPopupEdit ? (
+                    <>
+                      <div className="p-3 flex flex-col gap-2 flex-1 overflow-y-auto">
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Due time</label>
+                          <input type="time" value={dlPopupDraft.time}
+                            onChange={e => setDlPopupDraft(p => ({ ...p, time: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-red-600" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Caution from</label>
+                          <input type="date" value={dlPopupDraft.startDate} max={d.date}
+                            onChange={e => setDlPopupDraft(p => ({ ...p, startDate: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-amber-600" />
+                        </div>
+                        <input value={dlPopupDraft.title}
+                          onChange={e => setDlPopupDraft(p => ({ ...p, title: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                          placeholder="Deadline title..."
+                          autoFocus
+                          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-red-600" />
+                        <textarea value={dlPopupDraft.detail}
+                          onChange={e => setDlPopupDraft(p => ({ ...p, detail: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                          placeholder="Details (optional)..." rows={5}
+                          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-red-600 resize-none" />
+                        {dlPopupDraft.startDate > d.date && (
+                          <p className="text-[10px] text-amber-400">Caution start must be on or before the deadline.</p>
+                        )}
+                      </div>
+                      <div className="px-3 py-2 border-t border-gray-800 flex gap-2 flex-shrink-0">
+                        <button onClick={save} disabled={!dlValid(dlPopupDraft, d.date)}
+                          className="flex-1 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-default text-white text-xs rounded transition-colors">Save</button>
+                        <button onClick={() => setDlPopupEdit(false)}
+                          className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded transition-colors">Cancel</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="p-3 flex flex-col gap-2 flex-1 overflow-y-auto">
+                        <div className="flex items-center gap-2">
+                          <span className="px-1.5 py-0.5 rounded bg-red-700 text-white text-[11px] font-mono">{d.time}</span>
+                          <span className="text-sm font-semibold text-red-100 break-words">{d.title}</span>
+                        </div>
+                        <p className="text-[10px] text-amber-400/80">
+                          <span className="font-bold">!</span> Caution period · {dlStart(d)} → {d.date} · {dlDayCount(d)} {dlDayCount(d) === 1 ? 'day' : 'days'}
+                        </p>
+                        {d.detail
+                          ? <p className="text-xs text-gray-400 whitespace-pre-wrap">{d.detail}</p>
+                          : <p className="text-xs text-gray-700 italic">No description.</p>}
+                      </div>
+                      <div className="px-3 py-2 border-t border-gray-800 flex gap-2 flex-shrink-0">
+                        <button onClick={startEdit}
+                          className="flex-1 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded transition-colors">Edit</button>
+                        <button onClick={() => { if (window.confirm('Delete this deadline?')) { deleteDeadline(d.id); } }}
+                          className="px-3 py-1.5 bg-gray-800 hover:bg-red-900/50 text-gray-400 hover:text-red-400 text-xs rounded transition-colors">Delete</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+
           {/* Calendar view */}
           {schedView === 'calendar' && (
             <div className="flex-1 overflow-y-auto p-4 max-w-2xl mx-auto w-full">
@@ -6934,20 +7128,35 @@
                   const active=(sessionsByDate[ds]||[]).filter(s=>!s.done&&!s.skipped);
                   const isToday=ds===toDateStr(new Date()), isSel=selDay===day;
                   const dayCalNotes=(calendarNotes||[]).filter(n=>n.date===ds);
+                  const dayDue=deadlinesDueOn(ds);
+                  const dayCaution=deadlinesCautionOn(ds).filter(d=>d.date!==ds);
                   return (
                     <div key={day}
                       className={`group rounded p-1 cursor-pointer min-h-[48px] border transition ${isSel?"border-white":"border-gray-800 hover:border-gray-600"} ${isToday?"bg-gray-800":"bg-gray-900"}`}
                       onClick={()=>setSelDay(isSel?null:day)}>
                       <div className="flex items-center justify-between mb-1">
                         <div className={`text-xs ${isToday?"text-white font-bold":"text-gray-400"}`}>{day}</div>
-                        <button
-                          onClick={e=>{
-                            e.stopPropagation();
-                            setSelDay(day);
-                            if(calNoteOpenDay===day){setCalNoteOpenDay(null);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}
-                            else{setCalNoteOpenDay(day);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}
-                          }}
-                          className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-indigo-400 transition-all text-base w-4 h-4 flex items-center justify-center leading-none rounded">+</button>
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            title="Add date note"
+                            onClick={e=>{
+                              e.stopPropagation();
+                              setSelDay(day);
+                              closeDlComposer();
+                              if(calNoteOpenDay===day){setCalNoteOpenDay(null);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}
+                              else{setCalNoteOpenDay(day);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}
+                            }}
+                            className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-indigo-400 transition-all text-base w-4 h-4 flex items-center justify-center leading-none rounded">+</button>
+                          <button
+                            title="Add deadline"
+                            onClick={e=>{
+                              e.stopPropagation();
+                              setSelDay(day);
+                              if(dlOpenDay===day) closeDlComposer();
+                              else openDlComposer(day, ds);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-all text-[10px] w-4 h-4 flex items-center justify-center leading-none rounded">⏰</button>
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-0.5">
                         {active.slice(0,4).map(s=><div key={s.id} className="w-2 h-2 rounded-full" style={{backgroundColor:mmColor(s.mmId)}}/>)}
@@ -6959,6 +7168,22 @@
                           <span className="truncate">{n.title}</span>
                         </div>
                       ))}
+                      {dayDue.map(d=>(
+                        <div key={d.id} onClick={e=>{e.stopPropagation();openDlPopup(d.id);}}
+                          title={`Due ${d.time} · ${d.title}`}
+                          className="text-[9px] text-red-300 truncate leading-tight mt-0.5 flex items-center gap-0.5">
+                          <span className="flex-shrink-0">⏰</span>
+                          <span className="truncate">{d.time} {d.title}</span>
+                        </div>
+                      ))}
+                      {dayCaution.map(d=>(
+                        <div key={d.id} onClick={e=>{e.stopPropagation();openDlPopup(d.id);}}
+                          title={`Caution period · due ${d.date} ${d.time}`}
+                          className="text-[9px] text-amber-300/80 truncate leading-tight mt-0.5 flex items-center gap-0.5">
+                          <span className="flex-shrink-0 font-bold text-amber-400">!</span>
+                          <span className="truncate">{d.title}</span>
+                        </div>
+                      ))}
                     </div>
                   );
                 })}
@@ -6967,6 +7192,8 @@
                 const ds=dStr(calDate.year,calDate.month,selDay);
                 const selSessions=sessionsByDate[ds]||[];
                 const dayNotes=(calendarNotes||[]).filter(n=>n.date===ds);
+                const selDue=deadlinesDueOn(ds);
+                const selCaution=deadlinesCautionOn(ds).filter(d=>d.date!==ds);
                 return (
                   <div className="mt-4 bg-gray-900 rounded border border-gray-700 p-3">
                     <div className="font-bold mb-2 text-xs tracking-widest text-gray-300">{MONTH_NAMES[calDate.month]} {selDay}</div>
@@ -6987,7 +7214,7 @@
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-[10px] text-gray-500 tracking-widest">NOTES</span>
                         {calNoteOpenDay!==selDay&&(
-                          <button onClick={()=>{setCalNoteOpenDay(selDay);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}}
+                          <button onClick={()=>{closeDlComposer();setCalNoteOpenDay(selDay);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}}
                             className="text-gray-600 hover:text-indigo-400 text-sm leading-none px-1 transition-colors">+</button>
                         )}
                       </div>
@@ -7036,6 +7263,95 @@
                       )}
                       {!dayNotes.length&&calNoteOpenDay!==selDay&&(
                         <div className="text-[10px] text-gray-700 italic text-center py-1">No notes. Click + to add.</div>
+                      )}
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-gray-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] text-gray-500 tracking-widest">DEADLINES</span>
+                        {dlOpenDay!==selDay&&(
+                          <button onClick={()=>{setCalNoteOpenDay(null);setCalNoteEditing(null);openDlComposer(selDay, ds);}}
+                            className="text-gray-600 hover:text-red-400 text-sm leading-none px-1 transition-colors">+</button>
+                        )}
+                      </div>
+                      {selDue.length>0&&(
+                        <div className="flex flex-col gap-1 mb-2">
+                          {selDue.map(d=>(
+                            <div key={d.id}
+                              className={`flex items-start gap-2 rounded px-2 py-1.5 border cursor-pointer group/dl transition-colors ${dlEditing===d.id?'border-red-500/70 bg-red-900/20':'border-gray-700/60 hover:border-gray-600 bg-gray-900/50'}`}
+                              onDoubleClick={()=>{setCalNoteOpenDay(null);setCalNoteEditing(null);setDlOpenDay(selDay);setDlEditing(d.id);setDlDraft({title:d.title,detail:d.detail||'',time:d.time,startDate:dlStart(d)});}}>
+                              <span className="flex-shrink-0 text-red-400 mt-0.5 text-[11px]">⏰</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[11px] font-semibold text-red-200 truncate">
+                                  <span className="px-1 mr-1 rounded bg-red-700 text-white text-[10px]">{d.time}</span>
+                                  {d.title}
+                                </p>
+                                {d.detail&&<p className="text-[10px] text-gray-500 mt-0.5 whitespace-pre-wrap line-clamp-3">{d.detail}</p>}
+                                {dlStart(d)!==d.date&&(
+                                  <p className="text-[9px] text-amber-400/70 mt-0.5">! caution from {dlStart(d)} · {dlDayCount(d)} days</p>
+                                )}
+                              </div>
+                              <button onClick={e=>{e.stopPropagation();if(window.confirm('Delete this deadline?')){deleteDeadline(d.id);}}}
+                                className="opacity-0 group-hover/dl:opacity-100 text-gray-600 hover:text-red-400 transition-opacity text-xs flex-shrink-0 px-1">×</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {selCaution.length>0&&(
+                        <div className="flex flex-col gap-1 mb-2">
+                          {selCaution.map(d=>(
+                            <div key={d.id} onClick={()=>openDlPopup(d.id)}
+                              title="Caution period — open the deadline"
+                              className="flex items-center gap-2 rounded px-2 py-1 border border-amber-800/40 bg-amber-950/20 cursor-pointer hover:border-amber-600/60 transition-colors">
+                              <span className="flex-shrink-0 text-amber-400 font-bold text-[11px]">!</span>
+                              <span className="flex-1 min-w-0 text-[11px] text-amber-200 truncate">{d.title}</span>
+                              <span className="flex-shrink-0 text-[9px] text-amber-400/70">due {d.date} {d.time}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {dlOpenDay===selDay&&(
+                        <div className="bg-gray-950 border border-red-700/40 rounded-lg overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+                            <span className="text-[10px] text-red-400 tracking-widest font-semibold">{dlEditing?'EDIT DEADLINE':'NEW DEADLINE'}</span>
+                            <button onClick={closeDlComposer}
+                              className="text-gray-500 hover:text-gray-300 text-sm leading-none px-1">×</button>
+                          </div>
+                          <div className="px-3 pt-2 pb-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Due time</label>
+                              <input type="time" value={dlDraft.time}
+                                onChange={e=>setDlDraft(p=>({...p,time:e.target.value}))}
+                                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none focus:border-red-600"/>
+                            </div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Caution from</label>
+                              <input type="date" value={dlDraft.startDate} max={ds}
+                                onChange={e=>setDlDraft(p=>({...p,startDate:e.target.value}))}
+                                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none focus:border-amber-600"/>
+                            </div>
+                            <input autoFocus value={dlDraft.title}
+                              onChange={e=>setDlDraft(p=>({...p,title:e.target.value}))}
+                              onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();dlEditing?updateDeadline(dlEditing):addDeadline(ds);}}}
+                              placeholder="Title…"
+                              className="w-full bg-transparent text-xs text-gray-200 outline-none placeholder-gray-600 border-b border-gray-700 pb-1.5 mb-2"/>
+                            <textarea value={dlDraft.detail}
+                              onChange={e=>setDlDraft(p=>({...p,detail:e.target.value}))}
+                              placeholder="Details… (optional)" rows={3}
+                              className="w-full bg-transparent text-xs text-gray-400 outline-none placeholder-gray-600 resize-none"/>
+                          </div>
+                          {dlDraft.startDate>ds&&(
+                            <div className="px-3 pb-1 text-[10px] text-amber-400">Caution start must be on or before the deadline.</div>
+                          )}
+                          <div className="flex justify-end px-3 pb-3">
+                            <button disabled={!dlValid(dlDraft, ds)}
+                              onClick={()=>{dlEditing?updateDeadline(dlEditing):addDeadline(ds);}}
+                              className="text-[11px] px-3 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-default text-white rounded transition-colors">
+                              {dlEditing?'Save':'Done'}</button>
+                          </div>
+                        </div>
+                      )}
+                      {!selDue.length&&!selCaution.length&&dlOpenDay!==selDay&&(
+                        <div className="text-[10px] text-gray-700 italic text-center py-1">No deadlines. Click + to add.</div>
                       )}
                     </div>
                   </div>
@@ -7147,6 +7463,7 @@
       const [mgSchedule, setMgSchedule] = useState(() => _readP('mgSchedule', {}));
       const [linChanges] = useState(() => _readP('linChanges', []));
       const [calendarNotes, setCalendarNotes] = useState(() => _readP('calendarNotes', []));
+      const [deadlines, setDeadlines] = useState(() => _readP('deadlines', []));
       const [tab, setTab] = useState(() => window.location.hash.slice(1) || 'progress');
       const [selectedMilestone, setSelectedMilestone] = useState(null);
 
@@ -7163,6 +7480,7 @@
       useEffect(() => { _writeP('mmEntries',     mmEntries);     }, [mmEntries]);
       useEffect(() => { _writeP('mgSchedule',    mgSchedule);    }, [mgSchedule]);
       useEffect(() => { _writeP('calendarNotes', calendarNotes); }, [calendarNotes]);
+      useEffect(() => { _writeP('deadlines',     deadlines);     }, [deadlines]);
 
       useEffect(() => {
         function refreshSirState() {
@@ -7345,6 +7663,7 @@
                 sourceDumps={sourceDumps}
                 selectedMilestone={selectedMilestone}
                 calendarNotes={calendarNotes} setCalendarNotes={setCalendarNotes}
+                deadlines={deadlines} setDeadlines={setDeadlines}
                 initialDate={initialScheduleDate}
               />
             </div>

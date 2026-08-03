@@ -86,9 +86,13 @@
         </div>
       </div>
       <div id="cal-legend" class="cal-legend"></div>
-      <div id="cal-dow" class="cal-dow-row"></div>
-      <div id="cal-grid" class="cal-grid"></div>
-      <div id="cal-detail"></div>
+      <div class="cal-body">
+        <div class="cal-grid-wrap">
+          <div id="cal-dow" class="cal-dow-row"></div>
+          <div id="cal-grid" class="cal-grid"></div>
+        </div>
+        <div id="cal-detail"></div>
+      </div>
     </section>
   </main>
 
@@ -272,7 +276,7 @@
       const name = input.value.trim();
       if (!name) return;
       const createdAt = new Date().toISOString().slice(0,10);
-      const slot = {id:'slot-'+Date.now(), name, createdAt, sessions:[], mms:[], kolbs:[], mgChanges:[], goals:[], saActions:[], saEntries:[], notes:[], docPages:[]};
+      const slot = {id:'slot-'+Date.now(), name, createdAt, sessions:[], mms:[], kolbs:[], mgChanges:[], goals:[], saActions:[], saEntries:[], notes:[], deadlines:[], docPages:[]};
       const db = getDB();
       db.slots = [...(db.slots||[]), slot];
       saveDB(db);
@@ -345,6 +349,7 @@
             notes: data.notes||[],
             mmEntries: data.mmEntries||[],
             calendarNotes: data.calendarNotes||[],
+            deadlines: Array.isArray(data.deadlines) ? data.deadlines : [],
             docPages: Array.isArray(data.docPages) ? data.docPages : []
           };
           const db = getDB();
@@ -471,7 +476,7 @@
     // ── read-only day schedule ────────────────────────────────────────────
     // Mirrors the geometry and collectors of SchedulePanel in progress.html so
     // the preview reads the same as the real thing. Nothing here writes.
-    const CAL_SCHED_START_HOUR = 4, CAL_SCHED_END_HOUR = 23, CAL_SCHED_PX_PER_HOUR = 28;
+    const CAL_SCHED_START_HOUR = 0, CAL_SCHED_END_HOUR = 24, CAL_SCHED_PX_PER_HOUR = 28;
 
     // same fallback chain as goalDurationFor in progress.html
     function calGoalDuration(t, ds) {
@@ -743,7 +748,19 @@
       link.title = 'Open this day in the Schedule';
       link.setAttribute('aria-label', 'Open ' + ds + ' in the Schedule');
       link.textContent = '→';
-      head.append(date, link);
+      // on narrow screens the detail is a sheet covering the day cell that
+      // toggles it, so it needs its own way back — same transition as the cell
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'cal-detail-link cal-detail-close';
+      close.title = 'Close day detail';
+      close.setAttribute('aria-label', 'Close day detail');
+      close.textContent = '×';
+      close.onclick = () => { calSelectedDs = null; renderCalendar(); };
+      const acts = document.createElement('div');
+      acts.className = 'cal-detail-acts';
+      acts.append(link, close);
+      head.append(date, acts);
       el.appendChild(head);
 
       renderCalDaySchedule(el, slot, ds);
@@ -817,11 +834,13 @@
       detail.className = '';
 
       if (!slot) {
-        detail.className = 'cal-detail';
+        // no data at all: the message belongs in the empty grid area, not in
+        // the day detail — nothing is selected, and on a phone the detail is a
+        // sheet pinned to the bottom of the screen
         const p = document.createElement('div');
         p.className = 'cal-empty-msg';
         p.textContent = 'Create a workspace above to see its data here.';
-        detail.appendChild(p);
+        grid.appendChild(p);
         return;
       }
 
