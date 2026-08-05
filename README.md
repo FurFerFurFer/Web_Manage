@@ -341,7 +341,6 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
 | `notes-widget.js` | Floating per-slot notes widget |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
-| `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `README.md` | Current project and workflow documentation |
 | `NOTES.md` | Future ideas and possible changes |
 | `AGENTS.md` | Agent operating instructions |
@@ -365,8 +364,7 @@ Track-website/
 ├── storage-guard.js
 ├── firebase-sync.js
 ├── notes-widget.js
-├── styles.css
-└── firestore.rules
+└── styles.css
 ```
 
 Most internal complexity is inside the two React HTML pages:
@@ -489,24 +487,14 @@ Compression is what removes the practical ceiling. Prose, JSON structure, goal t
 
 Cloud conflict selection still depends primarily on client-generated timestamps and whole-database replacement, with one addition: when this device holds unsent edits (`track_db_pending`) and the cloud copy differs, neither side is applied automatically. A conflict banner offers *Reload cloud version* or *Keep this device — push now*, and **uploads are frozen until the user chooses** — including uploads from edits made while the banner is up. Without that freeze the debounce armed by the edit that caused the conflict would fire a moment later and push the local copy anyway, making the choice decorative.
 
-### Security rules
-
-The rules live in [`firestore.rules`](firestore.rules) at the repository root. **They are not deployed from this repository** — there is no `firebase.json` and no Firebase CLI here, so the file is versioned for review only. Publishing it is a manual step:
+Firestore security rules must allow the subcollections, because rules do not cascade:
 
 ```text
-Firebase console → Firestore Database → Rules → paste firestore.rules → Publish
+match /users/{uid}/blob/{chunkId}    → read, write for the owner
+match /users/{uid}/backup/{backupId} → read, write for the owner
 ```
 
-Rules do **not** cascade into subcollections, so the `blob` and `backup` blocks are load-bearing. Without them the manifest read still succeeds while every chunk write is rejected, which surfaces as a persistent `permission-denied` sync error with local data intact. `firestore.rules` also rejects a legacy-shaped write once a v2 manifest exists, so a browser running cached pre-v2 JavaScript cannot overwrite the manifest and orphan the chunks; see `NOTES.md` for that rule's reasoning.
-
-### Sync failure surface
-
-A failed upload raises a persistent red `#fb-sync-error` banner with a *Retry now* button. It distinguishes two kinds of failure:
-
-- **Transient** (`unavailable`, `deadline-exceeded`, network loss): the banner says it is retrying, and `_scheduleRetry` backs off through 5 s, 15 s, then 60 s.
-- **Permanent** (`permission-denied`, `unauthenticated`): retrying the identical request cannot succeed until the Firestore rules change, so no retry is armed and the banner names the cause and the fix instead of promising a recovery that will not happen.
-
-With automatic retry off, sync resumes on *Retry now*, on the next local edit, on the `online` event, or on reload. A permanent failure never clears `track_db_pending` or writes `track_db_ts` — the edits genuinely are unsent, and the local copy stays authoritative.
+Rules are not versioned in this repository, so this has to be configured in the Firebase console. See `NOTES.md` for the recommended rule that also rejects a legacy-shaped write once a v2 manifest exists.
 
 ## Running the Current Application
 
@@ -741,23 +729,13 @@ cloud sync against an in-memory Firestore double: legacy→v2 migration writing 
   leaving track_db_ts unchanged behind a visible error banner, a remote change applied
   with the reload banner, and a remote change during unsent local edits raising the
   conflict banner without clobbering the local copy
-permanent vs transient sync failure: 33 assertions against the same Firestore double with
-  the blob/backup subcollections rejecting permission-denied. The permanent banner names
-  the code and firestore.rules and never says "Retrying…", no retry timer is armed and no
-  further attempt occurs after 7 s, track_db stays byte-identical, track_db_ts is not
-  written, track_db_pending stays set, and the cloud keeps only the legacy document.
-  "Retry now" makes exactly one further attempt. Once the double stops rejecting, the same
-  button completes the legacy→v2 migration: banner cleared, state synced, v2 manifest plus
-  blob/0 plus backup/v1 holding the pre-migration payload, and track_db unchanged
-  throughout. An `unavailable` rejection still says "Retrying…", still arms the 5 s timer,
-  and still retries on its own
 window.TrackSync.selfTest(): passed in-browser in auto/gzip and forced-raw modes, each
   also at a 64-byte chunk size to force the multi-chunk path
 offline path: #fb-skip leaves sync inert — state signed-out, no banner, no Firestore calls
 ```
 
-Not covered by this baseline: the live Firebase project (which needs `firestore.rules`
-published in the console), real multi-device sync, and touch interaction.
+Not covered by this baseline: the live Firebase project (which needs the console rules
+update described in `NOTES.md`), real multi-device sync, and touch interaction.
 
 This baseline should be rechecked after changes to:
 

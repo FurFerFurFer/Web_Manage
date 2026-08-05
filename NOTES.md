@@ -331,24 +331,40 @@ Before changing the cloud schema, provide:
 - A way to detect whether cloud data is old or new format.
 - A tested rollback or recovery path.
 
-### Implemented: the rules are versioned, but publishing is still manual
+### Firestore rules for the current chunked layout
 
-The rules for the chunked layout now live in `firestore.rules` at the repository root. See README "Security rules" for the file's status and the console steps. What stays here is the reasoning behind the one non-obvious clause.
+Rules are not versioned in this repository, so this must be pasted into the Firebase console. Rules do **not** cascade into subcollections, so without the `blob` and `backup` blocks every chunk write fails with `permission-denied`.
+
+```text
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // Once a v2 manifest exists, reject any non-v2 write. This is what stops a
+      // stale pre-v2 client from replacing the manifest with a legacy {data, ts}
+      // document and orphaning the blob chunks.
+      allow write: if request.auth != null && request.auth.uid == uid
+                   && (resource == null
+                       || !('v' in resource.data)
+                       || (request.resource.data.v is int
+                           && request.resource.data.v >= 2));
+
+      match /blob/{chunkId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+      match /backup/{backupId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+  }
+}
+```
 
 `!('v' in resource.data)` deliberately permits legacy → legacy and legacy → v2, so the migration itself is allowed.
 
 Without the `v` guard the stale-client hazard is bounded but real: a browser running cached pre-v2 JavaScript reads `snap.data()?.data`, gets `undefined`, and plain-`set`s a legacy document over the manifest. The chunks and `backup/v1` survive, a v2 reader still reads the legacy shape, and because the stale push carries that device's older timestamp the next write from any current device restores v2. Residual loss is confined to edits that existed only in the chunks and on no device's `localStorage`.
-
-### Implemented: a permanent sync failure no longer retries forever
-
-Moving the payload into subcollections made `permission-denied` reachable for the first time — before that, a signed-in user writing their own document could not hit it. The retry policy had never been wrong until then, so an unfixable authorization error looped a doomed write every 60 seconds behind a banner that claimed a retry would help.
-
-`_isPermanent(err)` now classifies `permission-denied` and `unauthenticated` as terminal: no retry is armed, and the banner names the cause and points at `firestore.rules`. See README "Sync failure surface".
-
-Two deliberate limits, both worth revisiting only if they bite:
-
-- The allowlist is exactly two codes. `invalid-argument`, `not-found` and `failed-precondition` are arguably permanent too, but each has transient readings in Firestore, and a wrongly-terminal classification stops sync for a failure that would have healed. Widening it needs evidence, not intuition.
-- Recovery is manual: *Retry now*, the next edit, the `online` event, or a reload. A very slow probe — one attempt every ten minutes or so — would let sync heal on its own after the rules are published, at the cost of reintroducing background writes that cannot succeed. Not obviously worth it for a failure the user must go and fix anyway.
 
 ### Implemented: localStorage quota is guarded
 
