@@ -56,7 +56,7 @@ Active files:
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
-| `firebase-sync.js` | Firebase authentication and whole-database synchronization |
+| `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 
@@ -120,12 +120,18 @@ The schema is not yet centralized. Defaults, migrations, readers, writers, and i
 Other current browser keys include:
 
 - `track_theme`
-- `track_db_ts`
+- `track_db_ts` — when this device's data was last **confirmed** in the cloud, written only after the server accepts a write
+- `track_db_pending` — set while this device holds unsent edits, cleared on confirmation
 - `trackPriorityMatrix`
-- `fb_reloaded` in `sessionStorage`
+- `fb_reloaded` and `fb_reloaded_gen` in `sessionStorage`
 - legacy Progress and KS02 keys used during migration
 
-Firebase currently uploads the complete serialized database to one user document.
+Firebase uploads the complete serialized database gzipped and split across `users/{uid}` (manifest) plus `users/{uid}/blob/{0..n-1}` (payload chunks), committed in one atomic batch. `users/{uid}/backup/v1` holds a one-time copy of the pre-migration legacy document. Readers verify chunk count, per-chunk generation, byte length, and checksum, and refuse a payload rather than partially applying it. See README "Current cloud shape".
+
+Two rules follow from this:
+
+- Never write `track_db_ts` before a cloud write is confirmed. Doing so leaves the local timestamp ahead of the remote one after a failure, which makes the resolver prefer stale local data forever.
+- Never auto-apply a remote payload while `track_db_pending` is set. Surface the choice instead, and freeze uploads until the user resolves it — otherwise the debounce armed by the edit that caused the conflict fires moments later and pushes local anyway.
 
 ## Non-Negotiable Data-Safety Rules
 
@@ -528,18 +534,18 @@ Do not treat a feature request as authorization to deploy or modify cloud state.
 
 ## Current Verification Baseline
 
-As of 2026-07-28:
+As of 2026-08-05:
 
-- `theme.js` passed `node --check`.
-- `firebase-sync.js` passed `node --check`.
-- `notes-widget.js` passed `node --check`.
-- Home loaded in headless Chrome.
-- Progress rendered a non-empty React root.
-- KS02 rendered a non-empty React root.
-- Firebase initialized to the authentication overlay.
-- The notes widget mounted.
+- `theme.js`, `firebase-sync.js`, and `notes-widget.js` passed `node --check`.
+- Home, Progress, KS02, Documentations, and Notifications loaded in headless Chrome with a seeded synthetic slot; every React root non-empty, no white screen, no page errors beyond the expected Tailwind/Babel CDN warnings.
+- Firebase reached the authentication overlay and the offline "Skip" path left the sync code inert (`TrackSync.getStatus().state === 'signed-out'`, no banner, no Firestore requests).
+- `window.TrackSync.selfTest()` passed in-browser across four configurations (auto/gzip, forced raw, and both at a 64-byte chunk size to force multi-chunk).
+- The codec round-tripped synthetic ASCII, Thai combining marks, CJK, astral-plane emoji, a 300 KB base64 data-URI, and empty input, in gzip and raw mode, at 700,000-byte and 64-byte chunk sizes. Flipped bytes, truncation, empty chunks, extra bytes, wrong length, wrong checksum, and unknown encodings were all refused rather than partially applied.
+- The sync write/read paths were driven against an in-memory Firestore double: legacy→v2 migration with a one-time `backup/v1`, fresh-account first write, local-newer push, a 2.67 MB payload splitting into 4 chunks and round-tripping exactly, stale chunk deletion on shrink, a wrong-generation chunk refused without touching `localStorage`, a rejected write leaving `track_db_ts` unchanged with a visible error banner, a genuine remote change applied with the reload banner, and a remote change arriving during unsent local edits raising the conflict banner without clobbering the local copy and without auto-pushing past the debounce (verified by commit count, including further edits made while the banner was up).
 
-This is a render baseline, not proof of full behavioral correctness.
+Not verified: behavior against the live Firebase project, which needs the console rules update and explicit user authorization. Real multi-device and touch interaction were not exercised.
+
+This is a render-plus-sync-logic baseline, not proof of full behavioral correctness.
 
 ## Definition of Done
 

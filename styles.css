@@ -1199,6 +1199,34 @@ html[data-theme] #fb-sync-banner {
   box-shadow: var(--shadow-float);
 }
 
+/* Sync failure and conflict banners. Both are non-dismissing and can appear
+   alongside #fb-sync-banner, so each keeps its own inline bottom offset. */
+html[data-theme] :is(#fb-sync-error, #fb-sync-conflict) {
+  background: var(--color-surface) !important;
+  box-shadow: var(--shadow-float);
+}
+
+html[data-theme] #fb-sync-error {
+  border-color: color-mix(in srgb, var(--color-danger) 55%, transparent) !important;
+  color: var(--color-danger) !important;
+}
+
+html[data-theme] #fb-sync-conflict {
+  border-color: color-mix(in srgb, var(--color-warning) 55%, transparent) !important;
+  color: var(--color-warning) !important;
+}
+
+html[data-theme] :is(#fb-sync-error, #fb-sync-conflict) button {
+  min-height: 1.75rem;
+  background: color-mix(in srgb, currentColor 16%, transparent) !important;
+  color: currentColor !important;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent) !important;
+}
+
+html[data-theme] :is(#fb-sync-error, #fb-sync-conflict) button:hover {
+  background: color-mix(in srgb, currentColor 26%, transparent) !important;
+}
+
 /* ── responsive behavior ──────────────────────────────────── */
 @media (max-width: 720px) {
   body.home {
@@ -1917,7 +1945,9 @@ html[data-theme] #fb-sync-banner {
   body.docs-page #nw-btn,
   body.docs-page #nw-panel,
   body.docs-page #fb-overlay,
-  body.docs-page #fb-sync-banner {
+  body.docs-page #fb-sync-banner,
+  body.docs-page #fb-sync-error,
+  body.docs-page #fb-sync-conflict {
     display: none !important;
   }
 
