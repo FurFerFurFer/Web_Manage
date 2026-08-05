@@ -19,7 +19,7 @@ Status reviewed: 2026-07-28
 - The Git working tree was clean before the documentation work represented by `NOTES.md` and `AGENTS.md`.
 - Development currently happens on `master`; the inspected history contains no merge commits.
 - The repository currently has no build step, package manifest, automated test suite, or CI workflow.
-- The standalone scripts `theme.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
+- The standalone scripts `theme.js`, `storage-guard.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
 - React pages currently compile JSX in the browser through Babel.
 - Data is stored locally first and can optionally be synchronized through Firebase.
 - All three pages provide persistent light and dark themes with a shared accessible switch.
@@ -312,6 +312,20 @@ Current data behavior includes:
 
 Slot export serializes the whole slot object and is lossless. Slot import reconstructs the slot from an explicit field list that now includes `notes`, `mmEntries`, `calendarNotes`, `deadlines`, and `docPages` in addition to the previously restored fields, so a full export→import round trip preserves all currently known user-owned fields. The import allow-list must still be extended whenever a new slot field is introduced — see `NOTES.md` Proposal 1 for the remaining schema-centralization work.
 
+#### Storage-quota handling
+
+Every page writes the whole workspace to the single `track_db` key, so the browser's per-origin `localStorage` quota (~5-10 MB) is the binding size limit now that cloud sync gzips and chunks the payload. All 23 `track_db` writes, plus the two `trackPriorityMatrix` writes in `progress.html`, go through `window.TrackStorage` in `storage-guard.js`:
+
+- `TrackStorage.saveDB(db)` — stringify and write `track_db`; returns `true` when stored, `false` when the quota rejected it.
+- `TrackStorage.setItem(key, value)` — the same guard for any other key.
+- `TrackStorage.clearQuotaBanner()` — dismiss the banner.
+
+A rejected write shows a persistent red `#track-quota-banner` above the sync banners saying the change was not saved, that everything saved earlier is intact, that reloading discards the unsaved change, and how to free space. Any error that is *not* a quota error is rethrown rather than swallowed.
+
+The guard is a plain function and deliberately does not patch `Storage.prototype.setItem`. `firebase-sync.js` patches that method and calls the captured native `_origSet` first, then marks `track_db_pending` and arms the upload debounce. Because the guard dispatches through the patch instead of replacing it, a quota throw aborts inside `_origSet` and no upload is armed for a write that never landed.
+
+Known limitation: on a quota failure the in-memory React state still shows the user's edit even though it was not persisted, and a reload discards it. The banner says so explicitly; rolling state back at each independent call site is not implemented.
+
 ## Current Page and File Responsibilities
 
 | File | Current responsibility |
@@ -323,6 +337,7 @@ Slot export serializes the whole slot object and is lossless. Slot import recons
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, PDF export |
 | `notifications.sample.json` | Synthetic fixture documenting the `notifications.json` feed contract |
 | `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
+| `storage-guard.js` | `localStorage` quota guard for every whole-database write, plus the quota banner (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
 | `notes-widget.js` | Floating per-slot notes widget |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
@@ -346,6 +361,7 @@ Track-website/
 ├── documentations.html
 ├── notifications.sample.json
 ├── theme.js
+├── storage-guard.js
 ├── firebase-sync.js
 ├── notes-widget.js
 └── styles.css
@@ -578,6 +594,8 @@ Do not perform a large unrelated cleanup in the same change.
 For shared standalone scripts:
 
 ```bash
+node --check theme.js
+node --check storage-guard.js
 node --check firebase-sync.js
 node --check notes-widget.js
 ```
@@ -665,6 +683,17 @@ The latest audit established:
 ```text
 firebase-sync.js: node syntax check passed
 notes-widget.js: node syntax check passed
+storage-guard.js: node syntax check passed
+localStorage quota guard: 43 assertions passed in headless Chrome against a synthetic slot —
+  all five pages mount with window.TrackStorage present and the notes widget attached; with
+  the real quota exhausted by filler keys, TrackStorage.saveDB returns false, the quota
+  banner appears, the stored track_db stays byte-identical and still parses, no false
+  track_db_pending is written, no React root is torn down, and the workspace is intact after
+  freeing the quota and reloading; the banner is display:none under print media
+quota guard composition with firebase-sync: 9 assertions passed — storage-guard.js leaves
+  Storage.prototype.setItem owned by firebase-sync, saveDB dispatches through that patch
+  rather than a captured native reference, a quota throw runs no trailing patch statement,
+  and a non-quota error is rethrown instead of swallowed
 index.html: loaded in headless Chrome; Universal calendar rendered, day detail opened
 Universal calendar full-screen layout: 134 assertions passed against a synthetic slot at
   390x844, 844x390, 820x1180, 1180x820 and 1440x900 in both themes — panel spans the full
@@ -742,8 +771,9 @@ The following describe the project today:
 - Slot schema definitions are duplicated across pages.
 - The import allow-list restores all currently known fields but must be extended by hand for every new slot field.
 - Two pages can hold stale in-memory views of the same `track_db`.
-- Firebase synchronization rewrites one serialized database document.
+- Firebase synchronization rewrites the whole serialized database on every save.
 - Some user-visible dates are created through UTC-based helpers.
+- A `localStorage` quota failure is reported but not rolled back: the unsaved edit stays on screen until reload.
 - React, Babel, Tailwind, and Firebase are runtime CDN dependencies.
 - There is no package lockfile or production build.
 - There is no automated unit, browser, or CI test suite.

@@ -1216,14 +1216,23 @@ html[data-theme] #fb-sync-conflict {
   color: var(--color-warning) !important;
 }
 
-html[data-theme] :is(#fb-sync-error, #fb-sync-conflict) button {
+/* localStorage quota banner (storage-guard.js). Stacked above the three sync banners,
+   so a failed save stays readable while a sync failure or conflict is also showing. */
+html[data-theme] #track-quota-banner {
+  background: var(--color-surface) !important;
+  border-color: color-mix(in srgb, var(--color-danger) 55%, transparent) !important;
+  color: var(--color-danger) !important;
+  box-shadow: var(--shadow-float);
+}
+
+html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) button {
   min-height: 1.75rem;
   background: color-mix(in srgb, currentColor 16%, transparent) !important;
   color: currentColor !important;
   border: 1px solid color-mix(in srgb, currentColor 40%, transparent) !important;
 }
 
-html[data-theme] :is(#fb-sync-error, #fb-sync-conflict) button:hover {
+html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) button:hover {
   background: color-mix(in srgb, currentColor 26%, transparent) !important;
 }
 
@@ -1947,7 +1956,8 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict) button:hover {
   body.docs-page #fb-overlay,
   body.docs-page #fb-sync-banner,
   body.docs-page #fb-sync-error,
-  body.docs-page #fb-sync-conflict {
+  body.docs-page #fb-sync-conflict,
+  body.docs-page #track-quota-banner {
     display: none !important;
   }
 

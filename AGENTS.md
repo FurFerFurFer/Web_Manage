@@ -55,7 +55,9 @@ Active files:
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
+| `notifications.html` | Unified inbox view over `notifications.json`, filtering, per-item tick state |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
+| `storage-guard.js` | `localStorage` quota guard for every whole-database write, quota banner (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
@@ -117,6 +119,11 @@ Current slot fields include:
 
 The schema is not yet centralized. Defaults, migrations, readers, writers, and import logic are distributed across multiple files.
 
+Every write of `track_db` must go through `TrackStorage.saveDB(db)` from `storage-guard.js`, never a bare `localStorage.setItem('track_db', …)`. It returns `false` when the browser quota rejected the write, so a full quota is a visible banner instead of an uncaught throw out of a React effect. Two rules follow:
+
+- Do not make `storage-guard.js` patch `Storage.prototype.setItem`. `firebase-sync.js` owns that patch and calls the captured native `_origSet` before it marks `track_db_pending` and arms the upload debounce. The guard must stay a plain function that dispatches through the patch, so a quota throw aborts before any upload is armed for a write that never landed.
+- Do not route `firebase-sync.js`'s own `_origSet` calls through the guard. Those deliberately bypass its patch, and a swallowed failure there would let `_flush()` treat an unwritten value as confirmed.
+
 Other current browser keys include:
 
 - `track_theme`
@@ -144,6 +151,8 @@ index.html
 progress.html
 sir-ks02.html
 documentations.html
+notifications.html
+storage-guard.js
 firebase-sync.js
 notes-widget.js
 ```
@@ -344,6 +353,7 @@ For changes affecting shared JavaScript:
 
 ```bash
 node --check theme.js
+node --check storage-guard.js
 node --check firebase-sync.js
 node --check notes-widget.js
 ```
@@ -536,7 +546,9 @@ Do not treat a feature request as authorization to deploy or modify cloud state.
 
 As of 2026-08-05:
 
-- `theme.js`, `firebase-sync.js`, and `notes-widget.js` passed `node --check`.
+- `theme.js`, `storage-guard.js`, `firebase-sync.js`, and `notes-widget.js` passed `node --check`.
+- The `localStorage` quota guard passed 43 headless assertions against a synthetic slot: all five pages mount with `window.TrackStorage` present; with the real quota exhausted, `TrackStorage.saveDB` returns `false`, the banner appears, the stored `track_db` stays byte-identical and still parses, no false `track_db_pending` is written, no React root is torn down, and the workspace survives freeing the quota and reloading. The banner is hidden under print media. A further 9 assertions confirmed the guard composes with `firebase-sync.js`'s `Storage.prototype.setItem` patch rather than replacing or bypassing it, and that a non-quota error is rethrown.
+- Not verified for the quota guard: the signed-in Firebase write path, which needs a live account. The reasoning there is structural — `firebase-sync.js` calls `_origSet` before its dirty-tracking lines, so a quota throw cannot arm an upload.
 - Home, Progress, KS02, Documentations, and Notifications loaded in headless Chrome with a seeded synthetic slot; every React root non-empty, no white screen, no page errors beyond the expected Tailwind/Babel CDN warnings.
 - Firebase reached the authentication overlay and the offline "Skip" path left the sync code inert (`TrackSync.getStatus().state === 'signed-out'`, no banner, no Firestore requests).
 - `window.TrackSync.selfTest()` passed in-browser across four configurations (auto/gzip, forced raw, and both at a 64-byte chunk size to force multi-chunk).

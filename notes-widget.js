@@ -15,7 +15,7 @@
     var slot = _twSlot();
     if (!slot) return;
     db.slots = (db.slots || []).map(function(s) { return s.id === slot.id ? Object.assign({}, s, { notes: notes }) : s; });
-    localStorage.setItem('track_db', JSON.stringify(db));
+    TrackStorage.saveDB(db);
   }
 
   (function migrate() {
@@ -29,7 +29,7 @@
         if (s.id !== id) return s;
         return Object.assign({}, s, { notes: (s.notes || []).concat(oldNotes) });
       });
-      localStorage.setItem('track_db', JSON.stringify(db));
+      TrackStorage.saveDB(db);
       localStorage.removeItem('track_global_notes');
     } catch(e) {}
   })();

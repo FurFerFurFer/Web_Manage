@@ -366,15 +366,13 @@ service cloud.firestore {
 
 Without the `v` guard the stale-client hazard is bounded but real: a browser running cached pre-v2 JavaScript reads `snap.data()?.data`, gets `undefined`, and plain-`set`s a legacy document over the manifest. The chunks and `backup/v1` survive, a v2 reader still reads the legacy shape, and because the stale push carries that device's older timestamp the next write from any current device restores v2. Residual loss is confined to edits that existed only in the chunks and on no device's `localStorage`.
 
-### Remaining: localStorage quota is now the binding limit
+### Implemented: localStorage quota is guarded
 
-Removing the Firestore ceiling makes the browser's own per-origin quota (~5-10 MB) the next one, and it is unhandled. These all call `setItem` with no `try`/`catch`, so a `QuotaExceededError` would propagate out of a React effect with no error boundary:
+Removing the Firestore ceiling made the browser's own per-origin quota (~5-10 MB) the binding limit. It was unhandled — every writer called `setItem` with no `try`/`catch`, so a `QuotaExceededError` propagated out of a React effect with no error boundary and white-screened the page mid-edit.
 
-- `_writeDocPages` in `documentations.html`
-- `saveDB` in `index.html`
-- the equivalent writers in `progress.html` and `sir-ks02.html`
+This is now done. `storage-guard.js` exposes `window.TrackStorage`, and all 23 `track_db` writes plus the two `trackPriorityMatrix` writes in `progress.html` go through it. A quota rejection returns `false` and raises a persistent banner instead of throwing; any other error is rethrown. See README "Storage-quota handling" for the current behavior and for why the guard is a plain function rather than a second `Storage.prototype.setItem` patch.
 
-A minimal fix is to catch the write, tell the user storage is full, and leave React state untouched so nothing appears to have been saved when it was not. Doing it consistently means touching every writer, which is why it is recorded here rather than bundled into the chunking change.
+Still open, deliberately: the guard reports the failure but does not roll the React state back, so the unsaved edit stays on screen until reload. Rolling back would mean giving each of the 25 call sites its own undo path. The better fix is to stop the quota being reachable at all — see Proposal 13 on documentation images.
 
 ## Proposal 4: Introduce a Canonical, Versioned Data Schema
 
