@@ -61,6 +61,7 @@ Active files:
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
+| `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -135,10 +136,11 @@ Other current browser keys include:
 
 Firebase uploads the complete serialized database gzipped and split across `users/{uid}` (manifest) plus `users/{uid}/blob/{0..n-1}` (payload chunks), committed in one atomic batch. `users/{uid}/backup/v1` holds a one-time copy of the pre-migration legacy document. Readers verify chunk count, per-chunk generation, byte length, and checksum, and refuse a payload rather than partially applying it. See README "Current cloud shape".
 
-Two rules follow from this:
+Three rules follow from this:
 
 - Never write `track_db_ts` before a cloud write is confirmed. Doing so leaves the local timestamp ahead of the remote one after a failure, which makes the resolver prefer stale local data forever.
 - Never auto-apply a remote payload while `track_db_pending` is set. Surface the choice instead, and freeze uploads until the user resolves it — otherwise the debounce armed by the edit that caused the conflict fires moments later and pushes local anyway.
+- Changing a Firestore path requires a matching block in `firestore.rules` **and** an explicit hand-off asking the user to publish it. Rules are versioned in this repository but are not deployed from it, and they do **not** cascade into subcollections — a path added without its own block fails every write with `permission-denied` while reads of the parent document keep succeeding, so the code looks correct and sync is silently dead. Never edit the live rules yourself; print the block and stop.
 
 ## Non-Negotiable Data-Safety Rules
 
@@ -555,7 +557,9 @@ As of 2026-08-05:
 - The codec round-tripped synthetic ASCII, Thai combining marks, CJK, astral-plane emoji, a 300 KB base64 data-URI, and empty input, in gzip and raw mode, at 700,000-byte and 64-byte chunk sizes. Flipped bytes, truncation, empty chunks, extra bytes, wrong length, wrong checksum, and unknown encodings were all refused rather than partially applied.
 - The sync write/read paths were driven against an in-memory Firestore double: legacy→v2 migration with a one-time `backup/v1`, fresh-account first write, local-newer push, a 2.67 MB payload splitting into 4 chunks and round-tripping exactly, stale chunk deletion on shrink, a wrong-generation chunk refused without touching `localStorage`, a rejected write leaving `track_db_ts` unchanged with a visible error banner, a genuine remote change applied with the reload banner, and a remote change arriving during unsent local edits raising the conflict banner without clobbering the local copy and without auto-pushing past the debounce (verified by commit count, including further edits made while the banner was up).
 
-Not verified: behavior against the live Firebase project, which needs the console rules update and explicit user authorization. Real multi-device and touch interaction were not exercised.
+- Permanent-vs-transient sync failure passed 33 headless assertions against the same double, with the `blob` and `backup` subcollections rejecting `permission-denied`: the banner names the code and `firestore.rules` and never claims a retry, no retry timer is armed and no further attempt occurs after 7 seconds, `track_db` stays byte-identical, `track_db_ts` is not written, `track_db_pending` stays set, and the cloud keeps only the legacy document. "Retry now" makes exactly one further attempt; once the double stops rejecting, the same button completes the legacy→v2 migration with `backup/v1` holding the pre-migration payload. An `unavailable` rejection still says "Retrying…", still arms the 5-second timer, and still retries on its own.
+
+Not verified: behavior against the live Firebase project, which needs `firestore.rules` published in the console and explicit user authorization. Real multi-device and touch interaction were not exercised.
 
 This is a render-plus-sync-logic baseline, not proof of full behavioral correctness.
 

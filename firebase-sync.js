@@ -344,8 +344,21 @@
     }
   };
 
-  function _scheduleRetry() {
+  // An authorization failure is permanent: the same request will be rejected identically
+  // until the Firestore rules change, so retrying it on a timer only burns quota and makes
+  // the banner's "Retrying…" a lie. Everything else — `unavailable`, `deadline-exceeded`,
+  // `resource-exhausted`, plain network failure — stays retryable.
+  function _isPermanent(err) {
+    const code = err && err.code;
+    return code === 'permission-denied' || code === 'unauthenticated';
+  }
+
+  function _scheduleRetry(err) {
     if (!_localDirty || !_uid || _conflictHold) return;
+    if (_isPermanent(err)) {
+      console.warn('[Track sync] not retrying — ' + err.code + ' cannot resolve on its own');
+      return;
+    }
     const delay = RETRY_MS[Math.min(_retryIdx, RETRY_MS.length - 1)];
     _retryIdx++;
     clearTimeout(_retryTimer);
@@ -406,7 +419,7 @@
       console.warn('[Track sync] write error', e);
       _setStatus('error', e);
       _showErrorBanner(e);
-      _scheduleRetry();
+      _scheduleRetry(e);
     } finally {
       _inFlight = false;
       if (_reflush) { _reflush = false; clearTimeout(_writeTimer); _writeTimer = setTimeout(_flush, 0); }
@@ -498,12 +511,22 @@
 
   // A failed upload used to be a console warning only, so cloud backup could stop
   // permanently with nothing visible. This banner does not auto-dismiss.
+  //
+  // A permanent failure gets its own text: promising a retry that _scheduleRetry will
+  // never arm would leave the user waiting for a recovery that cannot happen. `Retry now`
+  // stays on both branches — it is how sync resumes the moment the rules are published,
+  // with no reload.
   function _showErrorBanner(err) {
     const code = (err && (err.code || err.message)) || 'unknown';
     const el = _makeBanner('fb-sync-error', 60, '#ef4444', '#fca5a5');
     el.textContent = '';
     const msg = document.createElement('div');
-    msg.textContent = '⚠ Cloud sync failed (' + code + ') — your data is safe on this device. Retrying…';
+    msg.textContent = _isPermanent(err)
+      ? '⚠ Cloud sync blocked (' + code + '). Firestore rules must allow users/{uid}/blob ' +
+        'and users/{uid}/backup — rules do not cascade into subcollections. See ' +
+        'firestore.rules in the project. Your data is safe on this device; edits stay ' +
+        'local until this is fixed.'
+      : '⚠ Cloud sync failed (' + code + ') — your data is safe on this device. Retrying…';
     el.appendChild(msg);
     const row = document.createElement('div');
     row.style.cssText = 'margin-top:6px';

@@ -1,0 +1,45 @@
+// Firestore security rules for Track.
+//
+// THIS FILE IS NOT DEPLOYED FROM THIS REPOSITORY. There is no `firebase.json`, no
+// Firebase CLI, and no build step here, so nothing publishes it automatically. It is
+// versioned so the rules stay reviewable next to the code that depends on them, and so a
+// change to a cloud path can never silently outrun its permissions again.
+//
+// To deploy: Firebase console -> Firestore Database -> Rules -> paste -> Publish.
+//
+// Rules do NOT cascade into subcollections. `firebase-sync.js` writes the payload to
+// users/{uid}/blob/{0..n-1} and the one-time pre-migration copy to users/{uid}/backup/v1,
+// so without the two nested blocks below every chunk write fails `permission-denied`
+// while the manifest read still succeeds — which is exactly what a missing block looks
+// like from the app: a persistent cloud-sync error with local data intact.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // Once a v2 manifest exists, reject any non-v2 write. This is what stops a stale
+      // pre-v2 client from replacing the manifest with a legacy {data, ts} document and
+      // orphaning the blob chunks. `!('v' in resource.data)` deliberately permits
+      // legacy -> legacy and legacy -> v2, so the migration itself is allowed.
+      allow write: if request.auth != null && request.auth.uid == uid
+                   && (resource == null
+                       || !('v' in resource.data)
+                       || (request.resource.data.v is int
+                           && request.resource.data.v >= 2));
+
+      // Payload chunks. `read` covers both the per-document get and the collection list
+      // that `_fetchAndDecode` issues; the condition does not inspect document data, so
+      // the query is allowed.
+      match /blob/{chunkId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+
+      // One-time copy of the pre-migration single-document payload.
+      match /backup/{backupId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+  }
+}
