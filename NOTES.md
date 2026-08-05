@@ -270,31 +270,31 @@ The important property is that the choice is visible. Data should not be silentl
 
 ## Proposal 3: Split and Strengthen Cloud Persistence
 
-**Partly implemented.** The size limit and the silent-failure problem are solved: the payload is now gzipped and chunked across `users/{uid}/blob/{0..n-1}`, failures raise a visible banner, and `track_db_ts` is written only after the server confirms. See README "Current cloud shape". The remaining parts below — a *semantic* split into per-slot and per-dump documents, structured fields instead of one opaque string, and server timestamps — are still future work.
-
 ### Problem this would address
 
-Every change to `track_db` re-uploads the complete serialized database.
+Every change to `track_db` eventually performs:
+
+```js
+db.collection('users').doc(_uid).set({ data: value, ts })
+```
+
+`value` is the complete serialized database string.
 
 ### Risks
 
-#### Size limit — resolved
+#### Size limit
 
 Cloud Firestore documents have a maximum size of 1 MiB. See the official Firebase documentation:
 
 - <https://firebase.google.com/docs/firestore/quotas>
 
-This is a **per-document** limit, not an account limit; the free tier allows 1 GiB in total. The old code hit the per-document limit only because it packed the whole database into one document.
+Source dumps, notes, histories, goal trees, and multiple workspaces can grow continuously. Eventually, the single document can exceed the limit and synchronization will fail.
 
-The current implementation gzips the serialized value and splits it across chunk documents of 700,000 bytes, committed with the manifest in a single atomic batch. Compression alone buys roughly 10x on text and about 25% on base64 image data (exactly the inflation base64 adds), and chunking removes the ceiling beyond that. Readers verify chunk count, per-chunk generation, uncompressed length, and an FNV-1a checksum, and refuse rather than partially apply.
+The current error handling logs a warning, but there is no durable user-facing indication that cloud backup has stopped working.
 
-A rejected write now raises a non-dismissing `#fb-sync-error` banner with the error code and retries with backoff, so cloud backup can no longer stop silently.
+#### Expensive full rewrites
 
-#### Expensive full rewrites — still open
-
-Changing one checkbox still uploads every slot, note, source dump, and history entry again, just compressed. This is now the dominant cost and the main argument for the semantic split below.
-
-Currently mitigated only by: a 1200 ms debounce, an exact-value comparison against the last confirmed payload, and listening to the manifest document alone so an own-write echo costs one small document read instead of the whole payload.
+Changing one checkbox uploads every slot, note, source dump, and history entry again. This increases bandwidth and makes conflicts coarser than necessary.
 
 #### Weak rules and validation
 
@@ -331,48 +331,29 @@ Before changing the cloud schema, provide:
 - A way to detect whether cloud data is old or new format.
 - A tested rollback or recovery path.
 
-### Firestore rules for the current chunked layout
+### Reverted: chunked cloud sync
 
-Rules are not versioned in this repository, so this must be pasted into the Firebase console. Rules do **not** cascade into subcollections, so without the `blob` and `backup` blocks every chunk write fails with `permission-denied`.
+The gzipped, chunked, manifest-plus-`blob` cloud format was implemented in `042cf1e` and reverted on 2026-08-05 at the user's direction, after it surfaced as a persistent `permission-denied`. The cause was environmental, not a code defect: Firestore rules do not cascade into subcollections, and the live rules covered only `match /users/{uid}`, so the manifest read succeeded while every `blob/` and `backup/` write was rejected. The fix would have been a rules paste in the Firebase console. The revert was chosen instead.
 
-```text
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{uid} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+What the revert reinstates, and what is therefore open again:
 
-      // Once a v2 manifest exists, reject any non-v2 write. This is what stops a
-      // stale pre-v2 client from replacing the manifest with a legacy {data, ts}
-      // document and orphaning the blob chunks.
-      allow write: if request.auth != null && request.auth.uid == uid
-                   && (resource == null
-                       || !('v' in resource.data)
-                       || (request.resource.data.v is int
-                           && request.resource.data.v >= 2));
+- **Firestore's 1 MiB per-document ceiling.** This is the important one. `track_db` is serialized into a single `users/{uid}` document, and the workspace was already measured at roughly 936 KB against a 1,048,576-byte limit. Inserting one more documentation image (~200 KB as a base64 data-URI) is expected to push a write past it. Check the real number in the browser before assuming headroom.
+- **Silent write failure.** There is no `#fb-sync-error` banner any more. A rejected write logs to the console and nothing else, so cloud backup can stop without the user noticing.
+- **No `window.TrackSync`.** The status surface, `dbSizeBytes()`, `selfTest()`, and the Home header's sync readout are gone. No page references it, so nothing dangles.
+- **No `track_db_pending`, and no conflict banner.** A remote change arriving while this device holds unsent edits is resolved automatically instead of being offered to the user.
+- **`track_db_ts` is written optimistically**, inside the `Storage.prototype.setItem` patch, before any server confirmation. A failed write therefore leaves the local timestamp ahead of the remote one, which makes the resolver keep preferring stale local data. This is the hazard the "Never write `track_db_ts` before a cloud write is confirmed" rule in `AGENTS.md` was written against; that rule now describes an intent the code no longer implements.
 
-      match /blob/{chunkId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
-      }
-      match /backup/{backupId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
-      }
-    }
-  }
-}
-```
-
-`!('v' in resource.data)` deliberately permits legacy → legacy and legacy → v2, so the migration itself is allowed.
-
-Without the `v` guard the stale-client hazard is bounded but real: a browser running cached pre-v2 JavaScript reads `snap.data()?.data`, gets `undefined`, and plain-`set`s a legacy document over the manifest. The chunks and `backup/v1` survive, a v2 reader still reads the legacy shape, and because the stale push carries that device's older timestamp the next write from any current device restores v2. Residual loss is confined to edits that existed only in the chunks and on no device's `localStorage`.
+Reinstating the chunked format is a matter of reverting the revert and publishing the rules; nothing about the format itself was found to be wrong.
 
 ### Implemented: localStorage quota is guarded
 
-Removing the Firestore ceiling made the browser's own per-origin quota (~5-10 MB) the binding limit. It was unhandled — every writer called `setItem` with no `try`/`catch`, so a `QuotaExceededError` propagated out of a React effect with no error boundary and white-screened the page mid-edit.
+`storage-guard.js` survives the revert and is unaffected by it. Every writer previously called `setItem` with no `try`/`catch`, so a `QuotaExceededError` propagated out of a React effect with no error boundary and white-screened the page mid-edit.
 
-This is now done. `storage-guard.js` exposes `window.TrackStorage`, and all 23 `track_db` writes plus the two `trackPriorityMatrix` writes in `progress.html` go through it. A quota rejection returns `false` and raises a persistent banner instead of throwing; any other error is rethrown. See README "Storage-quota handling" for the current behavior and for why the guard is a plain function rather than a second `Storage.prototype.setItem` patch.
+This is done. `storage-guard.js` exposes `window.TrackStorage`, and all 23 `track_db` writes plus the two `trackPriorityMatrix` writes in `progress.html` go through it. A quota rejection returns `false` and raises a persistent banner instead of throwing; any other error is rethrown. See README "Storage-quota handling" for the current behavior and for why the guard is a plain function rather than a second `Storage.prototype.setItem` patch.
 
 Still open, deliberately: the guard reports the failure but does not roll the React state back, so the unsaved edit stays on screen until reload. Rolling back would mean giving each of the 25 call sites its own undo path. The better fix is to stop the quota being reachable at all — see Proposal 13 on documentation images.
+
+Note that with the chunked format reverted, the browser quota is no longer the binding limit for cloud sync — Firestore's 1 MiB document cap is reached first.
 
 ## Proposal 4: Introduce a Canonical, Versioned Data Schema
 
@@ -1090,11 +1071,9 @@ Any write path added here must follow the read-modify-write single-key pattern a
 
 ## Proposal 13: Documentation Images Versus the 1 MiB Cloud Document
 
-**Superseded.** The premise no longer holds. `firebase-sync.js` gzips the database and splits it across chunk documents, so there is no single-document ceiling for images to breach. Measured: base64 of incompressible JPEG data gzips to about 0.75, which recovers exactly the 33% inflation base64 introduced, so even a workspace consisting entirely of images fits one 700,000-byte chunk at the sizes reached in practice.
+Documentation pages store images as downscaled JPEG data-URIs inside `docPages`, so they ride along with slot export/import and Firebase sync. Because `firebase-sync.js` uploads the entire serialized database as a single Firestore document (hard 1 MiB limit — see Proposal 3), a handful of images can make cloud sync fail while local storage keeps working. Current mitigations are client-side only: 1000px/0.8-quality downscaling, a header warning above ~900 KB, and an insert confirmation above ~950 KB.
 
-The `~900 KB` header warning and the `~950 KB` insert confirmation have been removed — they described a limit that no longer exists. `documentations.html` now shows a plain size readout plus a `window.TrackSync` sync state, and image insertion has no size gate. 1000px/0.8-quality downscaling stays, for render performance and `localStorage` headroom rather than for Firestore.
-
-Moving media into IndexedDB or Firebase Storage is therefore no longer needed for sync to work. It would still be worth doing for a different reason — write amplification, since every keystroke currently re-uploads every image — but that is the Proposal 3 semantic split, not a size fix. Note that IndexedDB specifically is **not** an option while images must sync across devices: it is per-origin, per-device.
+If image use grows, move media out of the main document before touching anything else in Proposal 3: store image blobs in IndexedDB or Firebase Storage keyed by block id, keep only references in `docPages`, and extend export/import to bundle the media. Until then, the warning thresholds are the guardrail.
 
 ## Recommended Priorities
 

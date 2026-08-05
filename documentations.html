@@ -10,7 +10,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="firebase-sync.js?v=2"></script>
+  <script src="firebase-sync.js"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
@@ -71,13 +71,10 @@
       return set;
     }
 
-    // ── DB size readout ──────────────────────────────────────────────────────
-    // Firebase no longer uploads the DB as one ≤1 MiB document: firebase-sync.js
-    // gzips it and splits it across users/{uid}/blob/{0..n-1}, so there is no
-    // per-document ceiling to warn about. The remaining limit is this browser's
-    // localStorage quota (~5-10 MB), which is what DB_ADVISORY_BYTES tracks.
+    // ── DB size guard (Firebase uploads the whole DB as one ≤1 MiB doc) ──────
 
-    const DB_ADVISORY_BYTES = 4000000;
+    const DB_WARN_BYTES = 900000;
+    const DB_HARD_BYTES = 950000;
     function dbSizeBytes() {
       try { return new Blob([localStorage.getItem('track_db')||'']).size; } catch { return 0; }
     }
@@ -114,46 +111,6 @@
         <textarea ref={ref} rows={1} value={value} placeholder={placeholder}
           onChange={onChange} onFocus={onFocus}
           className={"w-full bg-transparent resize-none outline-none overflow-hidden placeholder-gray-600 "+(className||'')} />
-      );
-    }
-
-    // Cloud sync state plus a plain workspace-size readout. Degrades to the size
-    // alone when window.TrackSync is absent (offline-only, or a page that does not
-    // load firebase-sync.js).
-
-    const SYNC_LABELS = {
-      synced:       {text:'✓ synced',      cls:'text-emerald-400'},
-      syncing:      {text:'↻ syncing…',    cls:'text-sky-400'},
-      pending:      {text:'↻ syncing…',    cls:'text-sky-400'},
-      error:        {text:'⚠ sync failed', cls:'text-red-400'},
-      conflict:     {text:'⚠ conflict',    cls:'text-amber-300'},
-      'signed-out': {text:'· local only',  cls:'text-gray-500'},
-      idle:         {text:'· local only',  cls:'text-gray-500'}
-    };
-
-    function SyncChip({dbSize}) {
-      const [sync, setSync] = useState(() => window.TrackSync ? window.TrackSync.getStatus() : null);
-      useEffect(() => window.TrackSync ? window.TrackSync.subscribe(setSync) : undefined, []);
-
-      const label = sync ? (SYNC_LABELS[sync.state] || SYNC_LABELS.idle) : null;
-      const big = dbSize > DB_ADVISORY_BYTES;
-      const cloudKb = sync && sync.cloudBytes ? Math.round(sync.cloudBytes/1024) : null;
-
-      return (
-        <span className="flex items-center gap-1.5 text-[10px]">
-          <span className={"rounded px-1.5 py-0.5 "+(big ? "bg-amber-900/50 text-amber-300" : "text-gray-500")}
-            title={"Workspace size in this browser's local storage"
-              + (cloudKb ? " — sync compresses it to about "+cloudKb+" KB in the cloud" : "")
-              + ". Cloud sync splits the workspace across documents, so there is no 1 MB document limit."}>
-            {Math.round(dbSize/1024)} KB
-          </span>
-          {label && (
-            <span className={"rounded px-1.5 py-0.5 "+label.cls}
-              title={sync.lastError ? 'Last sync error: '+sync.lastError : 'Cloud sync status'}>
-              {label.text}
-            </span>
-          )}
-        </span>
       );
     }
 
@@ -363,10 +320,11 @@
         const file = e.target.files && e.target.files[0];
         e.target.value = '';
         if (!file) return;
-        // No size gate: cloud sync compresses and chunks the workspace, so images
-        // no longer threaten it. gzip recovers base64's 33% inflation, and even an
-        // all-image megabyte still fits one chunk.
-        readImageDownscaled(file, dataUri => onChange({...block, src: dataUri}));
+        readImageDownscaled(file, dataUri => {
+          if (dbSizeBytes() + dataUri.length > DB_HARD_BYTES &&
+              !window.confirm('This image pushes the workspace close to the 1 MB Firebase sync limit. Insert anyway?')) return;
+          onChange({...block, src: dataUri});
+        });
       };
       return (
         <div onFocus={onFocus}>
@@ -689,7 +647,12 @@
             <a href="index.html" className="text-xs text-gray-600 transition-colors hover:text-gray-300">← TRACK</a>
             <span className="text-xs font-bold tracking-widest text-gray-300">DOCUMENTATIONS</span>
             {slotName && <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">{slotName}</span>}
-            <SyncChip dbSize={dbSize} />
+            {dbSize > DB_WARN_BYTES && (
+              <span className="rounded bg-amber-900/50 px-2 py-0.5 text-[10px] text-amber-300"
+                title="Firebase sync uploads the whole workspace as a single document with a 1 MB limit.">
+                ⚠ workspace {Math.round(dbSize/1024)} KB / ~1024 KB sync limit
+              </span>
+            )}
             <div className="flex-1"></div>
             <div className="theme-toggle-host" data-theme-toggle-host></div>
           </header>

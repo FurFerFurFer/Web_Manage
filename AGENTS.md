@@ -58,7 +58,7 @@ Active files:
 | `notifications.html` | Unified inbox view over `notifications.json`, filtering, per-item tick state |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
 | `storage-guard.js` | `localStorage` quota guard for every whole-database write, quota banner (`window.TrackStorage`) |
-| `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
+| `firebase-sync.js` | Firebase authentication and whole-database synchronization |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 
@@ -121,24 +121,18 @@ The schema is not yet centralized. Defaults, migrations, readers, writers, and i
 
 Every write of `track_db` must go through `TrackStorage.saveDB(db)` from `storage-guard.js`, never a bare `localStorage.setItem('track_db', …)`. It returns `false` when the browser quota rejected the write, so a full quota is a visible banner instead of an uncaught throw out of a React effect. Two rules follow:
 
-- Do not make `storage-guard.js` patch `Storage.prototype.setItem`. `firebase-sync.js` owns that patch and calls the captured native `_origSet` before it marks `track_db_pending` and arms the upload debounce. The guard must stay a plain function that dispatches through the patch, so a quota throw aborts before any upload is armed for a write that never landed.
+- Do not make `storage-guard.js` patch `Storage.prototype.setItem`. `firebase-sync.js` owns that patch and calls the captured native `_origSet` before it arms the upload debounce. The guard must stay a plain function that dispatches through the patch, so a quota throw aborts before any upload is armed for a write that never landed.
 - Do not route `firebase-sync.js`'s own `_origSet` calls through the guard. Those deliberately bypass its patch, and a swallowed failure there would let `_flush()` treat an unwritten value as confirmed.
 
 Other current browser keys include:
 
 - `track_theme`
-- `track_db_ts` — when this device's data was last **confirmed** in the cloud, written only after the server accepts a write
-- `track_db_pending` — set while this device holds unsent edits, cleared on confirmation
+- `track_db_ts`
 - `trackPriorityMatrix`
-- `fb_reloaded` and `fb_reloaded_gen` in `sessionStorage`
+- `fb_reloaded` in `sessionStorage`
 - legacy Progress and KS02 keys used during migration
 
-Firebase uploads the complete serialized database gzipped and split across `users/{uid}` (manifest) plus `users/{uid}/blob/{0..n-1}` (payload chunks), committed in one atomic batch. `users/{uid}/backup/v1` holds a one-time copy of the pre-migration legacy document. Readers verify chunk count, per-chunk generation, byte length, and checksum, and refuse a payload rather than partially applying it. See README "Current cloud shape".
-
-Two rules follow from this:
-
-- Never write `track_db_ts` before a cloud write is confirmed. Doing so leaves the local timestamp ahead of the remote one after a failure, which makes the resolver prefer stale local data forever.
-- Never auto-apply a remote payload while `track_db_pending` is set. Surface the choice instead, and freeze uploads until the user resolves it — otherwise the debounce armed by the edit that caused the conflict fires moments later and pushes local anyway.
+Firebase currently uploads the complete serialized database to one user document.
 
 ## Non-Negotiable Data-Safety Rules
 
@@ -544,20 +538,18 @@ Do not treat a feature request as authorization to deploy or modify cloud state.
 
 ## Current Verification Baseline
 
-As of 2026-08-05:
+As of 2026-07-28:
 
 - `theme.js`, `storage-guard.js`, `firebase-sync.js`, and `notes-widget.js` passed `node --check`.
-- The `localStorage` quota guard passed 43 headless assertions against a synthetic slot: all five pages mount with `window.TrackStorage` present; with the real quota exhausted, `TrackStorage.saveDB` returns `false`, the banner appears, the stored `track_db` stays byte-identical and still parses, no false `track_db_pending` is written, no React root is torn down, and the workspace survives freeing the quota and reloading. The banner is hidden under print media. A further 9 assertions confirmed the guard composes with `firebase-sync.js`'s `Storage.prototype.setItem` patch rather than replacing or bypassing it, and that a non-quota error is rethrown.
-- Not verified for the quota guard: the signed-in Firebase write path, which needs a live account. The reasoning there is structural — `firebase-sync.js` calls `_origSet` before its dirty-tracking lines, so a quota throw cannot arm an upload.
+- The `localStorage` quota guard passed 43 headless assertions against a synthetic slot: all five pages mount with `window.TrackStorage` present; with the real quota exhausted, `TrackStorage.saveDB` returns `false`, the banner appears, the stored `track_db` stays byte-identical and still parses, no React root is torn down, and the workspace survives freeing the quota and reloading. The banner is hidden under print media. A further 9 assertions confirmed the guard composes with `firebase-sync.js`'s `Storage.prototype.setItem` patch rather than replacing or bypassing it, and that a non-quota error is rethrown.
+- Not verified for the quota guard: the signed-in Firebase write path, which needs a live account. The reasoning there is structural — `firebase-sync.js` calls `_origSet` before its own bookkeeping lines, so a quota throw cannot arm an upload.
 - Home, Progress, KS02, Documentations, and Notifications loaded in headless Chrome with a seeded synthetic slot; every React root non-empty, no white screen, no page errors beyond the expected Tailwind/Babel CDN warnings.
-- Firebase reached the authentication overlay and the offline "Skip" path left the sync code inert (`TrackSync.getStatus().state === 'signed-out'`, no banner, no Firestore requests).
-- `window.TrackSync.selfTest()` passed in-browser across four configurations (auto/gzip, forced raw, and both at a 64-byte chunk size to force multi-chunk).
-- The codec round-tripped synthetic ASCII, Thai combining marks, CJK, astral-plane emoji, a 300 KB base64 data-URI, and empty input, in gzip and raw mode, at 700,000-byte and 64-byte chunk sizes. Flipped bytes, truncation, empty chunks, extra bytes, wrong length, wrong checksum, and unknown encodings were all refused rather than partially applied.
-- The sync write/read paths were driven against an in-memory Firestore double: legacy→v2 migration with a one-time `backup/v1`, fresh-account first write, local-newer push, a 2.67 MB payload splitting into 4 chunks and round-tripping exactly, stale chunk deletion on shrink, a wrong-generation chunk refused without touching `localStorage`, a rejected write leaving `track_db_ts` unchanged with a visible error banner, a genuine remote change applied with the reload banner, and a remote change arriving during unsent local edits raising the conflict banner without clobbering the local copy and without auto-pushing past the debounce (verified by commit count, including further edits made while the banner was up).
+- Firebase initialized to the authentication overlay and the offline "Skip" path left the sync code inert — no Firestore requests.
+- The notes widget mounted on every page.
 
-Not verified: behavior against the live Firebase project, which needs the console rules update and explicit user authorization. Real multi-device and touch interaction were not exercised.
+The gzipped/chunked cloud format and its verification baseline were reverted on 2026-08-05. See "Reverted: chunked cloud sync" in `NOTES.md` for what that removed and what it reinstated.
 
-This is a render-plus-sync-logic baseline, not proof of full behavioral correctness.
+This is a render baseline, not proof of full behavioral correctness.
 
 ## Definition of Done
 
