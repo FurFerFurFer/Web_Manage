@@ -271,7 +271,7 @@ Because browsers block `fetch` against `file://`, the feed only loads automatica
 - A per-page emoji icon chosen from a picker grid or typed freely.
 - Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
 - A **Reference source dump** popup that shows the active slot's source-dump tree fully expanded — every nesting level and every leaf `{label, url}` link visible at once — and inserts a picked link as a link block carrying `dumpRef: {dumpId, linkId, urlId}` provenance. The block shows a "from: <dump title>" badge that degrades to "source removed" if the source is later deleted.
-- Images chosen from disk are downscaled (max dimension 1000px) and stored as compressed JPEG data-URIs inside the page, so they export, import, and cloud-sync with the slot. A header warning appears when the serialized database approaches the 1 MB Firebase document limit, and inserting an image past ~950 KB asks for confirmation.
+- Images chosen from disk are downscaled (max dimension 1000px) and stored as compressed JPEG data-URIs inside the page, so they export, import, and cloud-sync with the slot. There is no size gate on inserting one: cloud sync gzips and chunks the workspace, so images no longer threaten it. The header instead shows a plain workspace-size readout plus a cloud sync state (`✓ synced`, `↻ syncing…`, `⚠ sync failed`, `⚠ conflict`, or `· local only`), read from `window.TrackSync`. The size turns amber only past ~4 MB, which tracks the browser's own `localStorage` quota rather than any cloud limit.
 - Export/share via **Export / PDF**: a print stylesheet hides all app chrome and forces light colors; the browser print dialog then saves the page as PDF (or prints it).
 
 Pages are stored in the per-slot `docPages` field. The page only ever writes that one field, always through a fresh read-modify-write of `track_db`, and refreshes from `storage` events so other tabs' edits appear. On a completely empty install it creates a default slot; if unmigrated legacy Progress/KS02 data is detected instead, it asks the user to open those pages (or Home) first rather than risk orphaning the legacy data.
@@ -314,7 +314,7 @@ Slot export serializes the whole slot object and is lossless. Slot import recons
 
 #### Storage-quota handling
 
-Every page writes the whole workspace to the single `track_db` key, so the browser's per-origin `localStorage` quota (~5-10 MB) bounds how large a workspace can get locally. Cloud sync is bounded sooner, by Firestore's 1 MiB per-document limit. All 23 `track_db` writes, plus the two `trackPriorityMatrix` writes in `progress.html`, go through `window.TrackStorage` in `storage-guard.js`:
+Every page writes the whole workspace to the single `track_db` key, so the browser's per-origin `localStorage` quota (~5-10 MB) is the binding size limit now that cloud sync gzips and chunks the payload. All 23 `track_db` writes, plus the two `trackPriorityMatrix` writes in `progress.html`, go through `window.TrackStorage` in `storage-guard.js`:
 
 - `TrackStorage.saveDB(db)` — stringify and write `track_db`; returns `true` when stored, `false` when the quota rejected it.
 - `TrackStorage.setItem(key, value)` — the same guard for any other key.
@@ -322,7 +322,7 @@ Every page writes the whole workspace to the single `track_db` key, so the brows
 
 A rejected write shows a persistent red `#track-quota-banner` above the sync banners saying the change was not saved, that everything saved earlier is intact, that reloading discards the unsaved change, and how to free space. Any error that is *not* a quota error is rethrown rather than swallowed.
 
-The guard is a plain function and deliberately does not patch `Storage.prototype.setItem`. `firebase-sync.js` patches that method and calls the captured native `_origSet` first, then arms the upload debounce. Because the guard dispatches through the patch instead of replacing it, a quota throw aborts inside `_origSet` and no upload is armed for a write that never landed.
+The guard is a plain function and deliberately does not patch `Storage.prototype.setItem`. `firebase-sync.js` patches that method and calls the captured native `_origSet` first, then marks `track_db_pending` and arms the upload debounce. Because the guard dispatches through the patch instead of replacing it, a quota throw aborts inside `_origSet` and no upload is armed for a write that never landed.
 
 Known limitation: on a quota failure the in-memory React state still shows the user's edit even though it was not persisted, and a reload discards it. The banner says so explicitly; rolling state back at each independent call site is not implemented.
 
@@ -338,9 +338,10 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `notifications.sample.json` | Synthetic fixture documenting the `notifications.json` feed contract |
 | `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
 | `storage-guard.js` | `localStorage` quota guard for every whole-database write, plus the quota banner (`window.TrackStorage`) |
-| `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, cloud synchronization |
+| `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
 | `notes-widget.js` | Floating per-slot notes widget |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
+| `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `README.md` | Current project and workflow documentation |
 | `NOTES.md` | Future ideas and possible changes |
 | `AGENTS.md` | Agent operating instructions |
@@ -364,7 +365,8 @@ Track-website/
 ├── storage-guard.js
 ├── firebase-sync.js
 ├── notes-widget.js
-└── styles.css
+├── styles.css
+└── firestore.rules
 ```
 
 Most internal complexity is inside the two React HTML pages:
@@ -448,32 +450,63 @@ Not every constructor or importer currently initializes every field. Code must t
 The project also currently uses:
 
 - `track_theme` for the explicit light/dark appearance preference.
-- `track_db_ts` for the local Firebase comparison timestamp.
+- `track_db_ts` for the local Firebase comparison timestamp. It records when this device's data was last **confirmed** in the cloud, not when the device last edited, so it is written only after the server accepts a write.
+- `track_db_pending` while this device holds edits the cloud has not accepted yet. Set synchronously on every `track_db` write and removed on confirmation, so a tab closed mid-upload still records that edits are unsent.
 - `trackPriorityMatrix` for schedule priority-matrix state.
 - `track_notifications` for notification tick state, seen-item IDs, and filter preferences.
-- `fb_reloaded` in `sessionStorage` to break Firebase reload loops.
+- `fb_reloaded` and `fb_reloaded_gen` in `sessionStorage` to break Firebase reload loops and record which cloud generation was reloaded into.
 - Older legacy keys during migration, including former Progress and KS02 storage keys.
 
 `track_notifications` is deliberately stored outside `track_db`. It therefore requires no slot default, no migration, and no import/export change, and it is not uploaded to Firestore. The trade-off is that tick state is per-device and does not follow a workspace export.
 
 ### Current cloud shape
 
-Firebase currently stores the complete serialized `track_db` value in one user document:
+Firebase stores the serialized `track_db` value gzipped and split across numbered documents, so no single document approaches Firestore's 1 MiB per-document limit:
 
 ```text
-users/{uid}
+users/{uid}                  manifest
+users/{uid}/blob/{0..n-1}    payload chunks
+users/{uid}/backup/v1        one-time pre-migration copy
 ```
 
-with fields conceptually equivalent to:
+The manifest holds metadata only:
 
 ```js
 {
-  data: "<serialized track_db JSON>",
-  ts: 1234567890
+  v: 2,              // format version
+  enc: "gzip",       // or "raw" where CompressionStream is unavailable
+  n: 1,              // chunk count
+  len: 958464,       // uncompressed byte length
+  hash: "37e12d52",  // FNV-1a over the uncompressed bytes
+  gen: 1785914427341,
+  ts: 1785914427341
 }
 ```
 
-Cloud conflict selection currently depends primarily on client-generated timestamps and whole-database replacement.
+Each chunk document holds up to 700,000 bytes as a Firestore `Blob`, plus the `gen` it belongs to. The manifest and every chunk are written in a single `db.batch()`, so a commit is atomic. Readers take chunk ids strictly from `manifest.n`, require every chunk's `gen` to match the manifest's, and verify `len` and `hash` after decompressing. Any mismatch is refused rather than partially applied — a corrupt or torn read never reaches `localStorage`.
+
+Compression is what removes the practical ceiling. Prose, JSON structure, goal trees, and source dumps compress by an order of magnitude; base64 image data compresses by about 25%, which is exactly the inflation base64 added. A 936 KB workspace lands between roughly 90 KB (mostly text) and 705 KB (entirely images) — a single chunk either way. Chunking then handles anything larger without a format change.
+
+Cloud conflict selection still depends primarily on client-generated timestamps and whole-database replacement, with one addition: when this device holds unsent edits (`track_db_pending`) and the cloud copy differs, neither side is applied automatically. A conflict banner offers *Reload cloud version* or *Keep this device — push now*, and **uploads are frozen until the user chooses** — including uploads from edits made while the banner is up. Without that freeze the debounce armed by the edit that caused the conflict would fire a moment later and push the local copy anyway, making the choice decorative.
+
+### Security rules
+
+The rules live in [`firestore.rules`](firestore.rules) at the repository root. **They are not deployed from this repository** — there is no `firebase.json` and no Firebase CLI here, so the file is versioned for review only. Publishing it is a manual step:
+
+```text
+Firebase console → Firestore Database → Rules → paste firestore.rules → Publish
+```
+
+Rules do **not** cascade into subcollections, so the `blob` and `backup` blocks are load-bearing. Without them the manifest read still succeeds while every chunk write is rejected, which surfaces as a persistent `permission-denied` sync error with local data intact. `firestore.rules` also rejects a legacy-shaped write once a v2 manifest exists, so a browser running cached pre-v2 JavaScript cannot overwrite the manifest and orphan the chunks; see `NOTES.md` for that rule's reasoning.
+
+### Sync failure surface
+
+A failed upload raises a persistent red `#fb-sync-error` banner with a *Retry now* button. It distinguishes two kinds of failure:
+
+- **Transient** (`unavailable`, `deadline-exceeded`, network loss): the banner says it is retrying, and `_scheduleRetry` backs off through 5 s, 15 s, then 60 s.
+- **Permanent** (`permission-denied`, `unauthenticated`): retrying the identical request cannot succeed until the Firestore rules change, so no retry is armed and the banner names the cause and the fix instead of promising a recovery that will not happen.
+
+With automatic retry off, sync resumes on *Retry now*, on the next local edit, on the `online` event, or on reload. A permanent failure never clears `track_db_pending` or writes `track_db_ts` — the edits genuinely are unsent, and the local copy stays authoritative.
 
 ## Running the Current Application
 
@@ -589,6 +622,17 @@ git diff
 
 Inline JSX is not covered by `node --check`; it requires a browser render check.
 
+For changes touching the cloud codec, run the built-in diagnostic from the browser console on any page that loads `firebase-sync.js`. It encodes, chunks, concatenates and decodes entirely in memory and writes nothing to Firestore:
+
+```js
+await TrackSync.selfTest()                          // detected encoding, real chunk size
+await TrackSync.selfTest({ chunkBytes: 64 })        // force the multi-chunk path
+await TrackSync.selfTest({ forceRaw: true })        // exercise the no-gzip fallback
+TrackSync.getStatus()                               // current sync state
+```
+
+Each returns `{ pass, encoding, chunkBytes, results }` and prints a table. Corruption cases are expected to be *refused*, so a pass means every mangled payload threw rather than decoding.
+
 ### 5. Run browser smoke checks
 
 Start the local server and verify:
@@ -655,9 +699,9 @@ storage-guard.js: node syntax check passed
 localStorage quota guard: 43 assertions passed in headless Chrome against a synthetic slot —
   all five pages mount with window.TrackStorage present and the notes widget attached; with
   the real quota exhausted by filler keys, TrackStorage.saveDB returns false, the quota
-  banner appears, the stored track_db stays byte-identical and still parses, no React root
-  is torn down, and the workspace is intact after freeing the quota and reloading; the
-  banner is display:none under print media
+  banner appears, the stored track_db stays byte-identical and still parses, no false
+  track_db_pending is written, no React root is torn down, and the workspace is intact after
+  freeing the quota and reloading; the banner is display:none under print media
 quota guard composition with firebase-sync: 9 assertions passed — storage-guard.js leaves
   Storage.prototype.setItem owned by firebase-sync, saveDB dispatches through that patch
   rather than a captured native reference, a quota throw runs no trailing patch statement,
@@ -686,7 +730,34 @@ invalid slot import: rejected without modifying track_db
 print media: docs chrome hidden, dark text forced in both themes, PDF produced
 Firebase overlay: initialized
 notes widget: mounted
+cloud codec: gzip and raw round trips over synthetic ASCII, Thai combining marks, CJK,
+  astral-plane emoji, a 300 KB base64 data-URI and empty input, at 700,000-byte and
+  64-byte chunk sizes; flipped bytes, truncation, empty chunks, extra bytes, wrong
+  length, wrong checksum and unknown encodings all refused rather than partly applied
+cloud sync against an in-memory Firestore double: legacy→v2 migration writing backup/v1
+  exactly once, fresh-account first write, local-newer push, a 2.67 MB payload split
+  into 4 chunks round-tripping exactly, stale chunk documents deleted on shrink, a
+  wrong-generation chunk refused without touching localStorage, a rejected write
+  leaving track_db_ts unchanged behind a visible error banner, a remote change applied
+  with the reload banner, and a remote change during unsent local edits raising the
+  conflict banner without clobbering the local copy
+permanent vs transient sync failure: 33 assertions against the same Firestore double with
+  the blob/backup subcollections rejecting permission-denied. The permanent banner names
+  the code and firestore.rules and never says "Retrying…", no retry timer is armed and no
+  further attempt occurs after 7 s, track_db stays byte-identical, track_db_ts is not
+  written, track_db_pending stays set, and the cloud keeps only the legacy document.
+  "Retry now" makes exactly one further attempt. Once the double stops rejecting, the same
+  button completes the legacy→v2 migration: banner cleared, state synced, v2 manifest plus
+  blob/0 plus backup/v1 holding the pre-migration payload, and track_db unchanged
+  throughout. An `unavailable` rejection still says "Retrying…", still arms the 5 s timer,
+  and still retries on its own
+window.TrackSync.selfTest(): passed in-browser in auto/gzip and forced-raw modes, each
+  also at a 64-byte chunk size to force the multi-chunk path
+offline path: #fb-skip leaves sync inert — state signed-out, no banner, no Firestore calls
 ```
+
+Not covered by this baseline: the live Firebase project (which needs `firestore.rules`
+published in the console), real multi-device sync, and touch interaction.
 
 This baseline should be rechecked after changes to:
 
