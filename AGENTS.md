@@ -63,6 +63,7 @@ Active files:
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js` is offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -72,7 +73,9 @@ Current runtime dependencies are loaded through CDNs:
 - Tailwind browser CDN.
 - Firebase 10.12 compatibility scripts.
 
-Do not assume Vite, npm scripts, TypeScript, JSX modules, a test framework, or CI exists until the repository actually contains them.
+Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the repository actually contains them.
+
+There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
 Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=1`, `calendar-core.js?v=1`, `firebase-sync.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js`, `storage-guard.js`, and `notes-widget.js` are not yet versioned.
 
@@ -124,6 +127,10 @@ Current slot fields include:
 The schema is not yet centralized. Defaults, migrations, readers, writers, and import logic are distributed across multiple files.
 
 Items inside `calendarNotes` and `deadlines` may carry an optional `docPageId` naming the `docPages` entry that authored them; its absence means the item was authored in the Schedule. Preserve it: edit these items by spreading (`{...item, …}`), never by rebuilding them from a field list, and never delete such an item as a side effect of deleting its documentation page.
+
+A `calendarNotes` item may also carry an optional `time` (`HH:MM`). **Absence is meaningful and is the default**: without it the note renders as a chip in the day strip, which is how every day note behaved before the field existed; with it the note is positioned on the hour grid and must not also appear in the strip. Two rules follow: write the key only when there is a value — never `''` — and make clearing the field delete the key, or a note can never go back to being untimed. `TrackCalendar.noteTimed` is the single test for this; `progress.html` has its own copy because it does not load `calendar-core.js`, and the two must agree.
+
+Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`. `progress.html`'s `uid()`, `documentations.html`'s `genId()` and `notes-widget.js`'s `generateId()` are delegates with a local fallback; do not reintroduce a page-local id shape. `sir-ks02.html` keeps its numeric `nid()` counter for its own records. Never rewrite a stored id.
 
 Every write of `track_db` must go through `TrackStorage.saveDB(db)` from `storage-guard.js`, never a bare `localStorage.setItem('track_db', …)`. It returns `false` when the browser quota rejected the write, so a full quota is a visible banner instead of an uncaught throw out of a React effect. Two rules follow:
 
@@ -209,7 +216,12 @@ Never use real personal exports as test fixtures. Use synthetic data with the sa
 
 Do not rebuild a slot from a partial allowlist unless that is the explicitly tested normalization policy.
 
-Prefer read-modify-write behavior based on the latest stored value. Be alert to stale React snapshots overwriting fields owned by another page.
+Every page now writes **only the keys it owns**, merged into a fresh read of the stored slot, and refreshes from `storage` and `visibilitychange`. No page rebuilds a whole slot from its own React snapshot; `README.md` holds the per-page ownership table. Two rules follow, and both are load-bearing:
+
+- A new write must go through that page's single-key helper — `_writeP` (`progress.html`), `_writeSlotKeys` / `_writeSlotKey` / `_mutateSlotKey` (`sir-ks02.html`, `documentations.html`). Assigning `db.slots = …` from component state reintroduces exactly the bug that cost day notes, deadlines and documentation pages.
+- Writing a key the page does not own is a defect even when the value looks right, because the value came from a snapshot. If a page needs to change a foreign key, it does a fresh read-modify-write of that key alone.
+
+`tests/browser.test.js` asserts both directions for `sir-ks02.html`, including a field no page has heard of.
 
 ### Treat import/export as a contract
 
@@ -366,6 +378,19 @@ node --check calendar-core.js
 node --check firebase-sync.js
 node --check notes-widget.js
 ```
+
+Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
+
+```bash
+node tests/run.js
+```
+
+It runs `tests/calendar-core.test.js` under five timezones (UTC+14 through UTC-11) and then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+
+- Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
+- A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.
+- No new dependencies, no `package.json`, no runner config.
+- A missing Chrome fails the run; it is never reported as a pass.
 
 For all source changes:
 
@@ -570,11 +595,23 @@ Not verified: behavior against the live Firebase project, which needs `firestore
 
 This is a render-plus-sync-logic baseline, not proof of full behavioral correctness.
 
+### Repeatable from 2026-08-06
+
+Everything in this section that is not `node tests/run.js` was run once and cannot be re-run. The committed suite is the reproducible part:
+
+```bash
+node tests/run.js
+```
+
+51 offline cases under five timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) plus 16 headless-Chrome cases — 6 suites, all passing on 2026-08-06. The two `sir-ks02.html` regression cases were confirmed to **fail** against the pre-fix page served through `TRACK_TEST_ROOT`, with the other 14 still passing.
+
+Not covered by the suite, and still requiring manual checks: touch and drag interaction, the signed-in Firebase path, real multi-device behaviour, print output, and most of the UI.
+
 ### Documentations calendar blocks (2026-08-06)
 
 - `calendar-core.js` passes `node --check`, and 80 offline assertions against a synthetic slot — re-run under `Pacific/Kiritimati` (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles`, `Asia/Kathmandu` and `UTC` with identical results, which is what rules out a UTC-day regression in the new date code.
 - 71 headless assertions covering the block end to end: all four pages mount with the notes widget and no page errors, the `?page=` deep link, block creation and persistence, authoring notes and deadlines into the shared arrays with a `docPageId` and a local calendar date, ownership highlighting and exclusive edit controls, all three filter behaviours (Documentation covering both kinds, Day notes and Deadlines covering only schedule-authored ones), scope toggling across sub-pages, the origin chip and the Schedule's link back, an export→import allow-list replay preserving `docPageId`, a concurrent cross-tab write surviving a `docPages` write, and page deletion keeping every item the page authored.
-- 10 further assertions on styling and chrome: the print flatten rule parses with its `:not(.doc-cal)` exemption, the calendar print rules are live, day cells are 52px, the block causes no horizontal overflow, and both the block's move/delete chrome and the sidebar drag-to-nest still work with a calendar on the page.
+- 10 further assertions on styling and chrome: the print flatten rule parses with its `:not(.doc-cal)` exemption, the calendar print rules are live, day cells are 52px, the block causes no horizontal overflow, and both the block's move/delete chrome and the sidebar drag-to-nest still work with a calendar on the page. That flatten rule has since been split in two so a parse failure can only cost the exemption; the committed suite asserts the split.
 - Not verified: real touch hardware, and the live Firebase project.
 
 ### Re-verified after the 2026-08-05 revert and restore
@@ -602,6 +639,7 @@ A task is done only when all applicable statements are true:
 - Independent page state does not silently erase unrelated fields.
 - Local calendar behavior is used for user-facing dates.
 - Applicable syntax/build checks pass.
+- `node tests/run.js` passes, and a fix in a covered area added a case that was seen failing first.
 - Applicable browser smoke checks pass.
 - Applicable mouse and touch checks pass.
 - Data changes have a round-trip or migration check.

@@ -211,27 +211,20 @@ There is no `storage` event listener that reloads or merges state when another b
 
 Firebase does not automatically solve this because each tab may upload its own full serialized snapshot.
 
-### The blast radius grew when Documentations gained calendar blocks (2026-08-06)
+### Implemented (2026-08-06): no writer rebuilds the whole slot any more
 
-`calendarNotes` and `deadlines` now have a third writer. `documentations.html` itself is **not** the hazard — it derives every mutation from a fresh read of the stored array (`_mutateSlotKey`) rather than writing back a React snapshot, which is exactly the pattern this proposal recommends, and that was tested with a concurrent cross-tab write.
+`calendarNotes` and `deadlines` gained a third writer when Documentations got calendar blocks, and that exposed the last page still writing `db.slots` wholesale.
 
-The hazard is the other direction. `sir-ks02.html` line 2820 still rebuilds the active slot from `slotsRef.current`, an array captured at mount (line 2810) and thereafter refreshed only by its own `setSlots`; it has no `storage` listener. `_setSlots` then replaces `db.slots` wholesale:
+`sir-ks02.html` rebuilt the active slot from `slotsRef.current`, an array captured at mount and thereafter refreshed only by its own `setSlots`, and had no `storage` listener — so a day note, deadline (with its `docPageId`) or documentation page written by another tab was reverted by KS02's next edit.
 
-```js
-function _setSlots(slots) {
-  const db = _getTrackDB(); db.slots = slots;   // top-level keys survive, db.slots does not
-  TrackStorage.saveDB(db);
-}
-```
+Both fixes named below were applied, not just the smaller one:
 
-So the failure above now has a new victim. Open KS02 in one tab, author a day note or deadline from a Documentations calendar in another, then edit a mind map in the KS02 tab: the doc-authored item is reverted, along with its `docPageId`. The same is true of any `docPages` edit, so a documentation page written while KS02 is open can be rolled back too.
+1. Its auto-save is now `_writeSlotKeys(activeSlotId, {...})`, a per-key merge into a fresh read, matching `_writeP` in `progress.html` and `_writeSlotKey` in `documentations.html`. `slots`, `setSlots` and `slotsRef` are gone; `_setSlots` survives only for the empty-database bootstrap. A slot id that no longer exists writes nothing rather than folding this workspace's data into another slot.
+2. It has the `storage` + `visibilitychange` refresh the other three pages have, behind per-key JSON comparison so an unrelated write causes no re-render and no upload, and it bumps the `nid()` counter monotonically when it adopts another tab's records.
 
-Two ways to close it, smallest first:
+`tests/browser.test.js` holds the two-tab reproduction and a second case asserting KS02 leaves every foreign key — including one it has never heard of — exactly as another writer left it. Both were confirmed to fail against the pre-fix page.
 
-1. Give `sir-ks02.html` the `storage`/`visibilitychange` refresh the other three pages already have, so `slotsRef` cannot go stale for long. This narrows the window but does not remove it.
-2. Make its auto-save effect a per-key read-modify-write like `_writeP` in `progress.html` and `_writeSlotKey` in `documentations.html`, so it stops owning `db.slots` at all. This is the real fix and is the one this proposal ultimately recommends.
-
-Until one of them lands, KS02's auto-save is the only remaining writer in the project that can revert another page's field.
+**What remains open in this proposal:** two tabs of the *same* page are still last-write-wins for the keys that page owns, there is still no revision number, and the remote-change behaviour below is unchanged. The per-page ownership table is in `README.md`.
 
 ### Remote-change behavior
 
@@ -661,11 +654,13 @@ After extracting pure `.mjs` modules, the built-in Node test runner can test:
 
 These tests are fast and should run on every change.
 
-**`calendar-core.js` is the first module that is already testable this way** (2026-08-06). It is pure, dependency-free, takes a slot object and returns fresh data, and never touches `localStorage`. It only needs `globalThis.window = globalThis` before evaluation because it is a classic script rather than an `.mjs` module — no extraction work is required first, which makes it the cheapest possible place to start Layer 1 and prove the pattern.
+**Implemented (2026-08-06), for `calendar-core.js`.** It is pure, dependency-free, takes a slot object and returns fresh data, and never touches `localStorage`, so `tests/calendar-core.test.js` only needs `globalThis.window = globalThis` before evaluating it — no extraction work was required. It must run in the test file's own realm rather than a `vm` context, because `shownFn` does `h instanceof Set` and that check fails across a realm boundary.
 
-The gap this exposes is that **verification here is not repeatable by anyone else.** The calendar-block work was validated by 161 assertions — 80 offline against `calendar-core.js`, re-run under five timezones from UTC+14 to UTC-11, plus 81 in headless Chrome driving real interaction over the DevTools protocol — but all of it lived in a scratch directory and is gone. The next person to touch these collectors starts from nothing, and the recorded baseline in `README.md` and `AGENTS.md` is a claim they cannot re-run.
+This closed the gap that **verification here was not repeatable by anyone else**: the calendar-block work had been validated by 161 assertions that lived in a scratch directory and are gone, leaving `README.md` and `AGENTS.md` recording claims nobody could re-run.
 
-Committing even a single `tests/calendar-core.test.js` would change that, and needs no dependencies: Node's built-in `node:test` runner and `node:assert` are enough. The browser layer needs no dependencies either — Node 22 ships a global `WebSocket`, so a ~130-line CDP driver can launch the system Chrome and drive the pages without Playwright or Puppeteer in the tree, which keeps this compatible with Proposal 6 remaining undone.
+`node tests/run.js` now runs the offline suite under five timezones and then a browser suite, with no dependencies: `node:test`, `node:assert`, and a hand-rolled CDP driver over Node 22's global `WebSocket`, so this stays compatible with Proposal 6 remaining undone. A skipped browser layer fails the run rather than passing quietly, and `TRACK_TEST_ROOT` exists so a regression test can be shown failing against pre-fix code.
+
+Still to do at this layer: the rest of the pure logic is not extracted, so nothing else is testable this way yet — slot construction, schema normalization, migrations, goal-tree operations, MM-reference resolution, streaks, and SIR date calculation all remain inside the HTML pages.
 
 ### Layer 2: Static and build checks
 
@@ -1102,6 +1097,7 @@ The Universal calendar on `index.html` is a read-only aggregation of the active 
 
 Remaining candidate directions:
 
+- **Drag and resize for timed day notes.** A `calendarNotes` item can now carry an optional `time` (Proposal 14 item 4), and the Schedule draws such a note on the hour grid — but as a marker line, not as a draggable block. Moving it by dragging means teaching `SchedulePanel`'s drag, touch and resize machinery a fourth block type, and deciding whether a note gets a duration at all. Until then a note's time is changed in its popup, which is why the marker has no resize handles to imply otherwise.
 - Click-to-create for tasks and doc pages (only notes and deadlines are authorable today).
 - A KS02 deep link (`sir-ks02.html?...`) from a day-detail item into the owning record.
 - Filter toggles on the Home legend and/or the Progress schedule, reusing `TrackCalendar.FILTERS`.
@@ -1120,41 +1116,45 @@ Moving media into IndexedDB or Firebase Storage is therefore no longer needed fo
 
 ## Proposal 14: Known Wrinkles in the Documentations Calendar Blocks
 
-Recorded 2026-08-06, when calendar blocks were implemented. None of these is a defect against the current specification; each is a deliberate trade-off or a fragility that the next person to touch this code should know about rather than rediscover.
+Recorded 2026-08-06, when calendar blocks were implemented. **Items 1-5 were decided and implemented on 2026-08-06**; the reasoning is kept here because each was a judgement call, not a defect, and the alternatives are worth having on record. Item 6 is unchanged.
 
-### 1. The print flatten rule fails open, and badly
+### 1. The print flatten rule fails open, and badly — fixed
 
-`styles.css` flattens the Documentations editor to black-on-white for printing. Calendar blocks are exempted so their dots and milestone bars survive:
+`styles.css` flattens the Documentations editor to black-on-white for printing, exempting calendar blocks so their dots and milestone bars survive. The exemption uses `:not(.doc-cal *)`, a Selectors-4 complex `:not()`. It parses in every current browser, but a browser that rejected it would discard the **entire selector list** it appeared in — taking the plain `body.docs-page .docs-editor` baseline with it, so the failure mode was not "the calendar prints colourless" but "the whole page prints dark-on-dark and the user wastes ink finding out".
 
-```css
-body.docs-page .docs-editor,
-body.docs-page .docs-editor *:not(.doc-cal):not(.doc-cal *) { ... }
-```
+Now split into two rules with identical declarations, so a parse failure can only cost the exemption. `tests/browser.test.js` reads the CSSOM and asserts both rules parsed and that no single selector list contains both.
 
-`:not(.doc-cal *)` is a Selectors-4 complex `:not()`. It parses in every current browser and a test asserts that it does. But if a browser ever rejects it, CSS discards the **entire selector list**, including the plain `body.docs-page .docs-editor` beside it — so the failure mode is not "the calendar prints colourless", it is "the whole page prints dark-on-dark and the user wastes ink finding out".
+### 2. "Exclusively editable" had one exception — removed
 
-Cheap hardening: split it into two rules, so a parse failure can only cost the exemption.
+Items whose `docPageId` names a page that no longer exists used to be editable from **any** calendar block, so that deleting a documentation page could not strand them as Schedule-only.
 
-```css
-body.docs-page .docs-editor { ... }                              /* always applies */
-body.docs-page .docs-editor *:not(.doc-cal):not(.doc-cal *) { ... }   /* may be dropped */
-```
+That is no longer the rule: an orphan is now read-only in every calendar block, including one that happens to display it. An item whose owner is gone belongs to no page, and letting an arbitrary page edit it invents an ownership the user never expressed. It stays fully editable from the Progress Schedule, which owns these arrays, so nothing is stranded — the escape hatch is a surface, not a special case in the ownership rule.
 
-### 2. "Exclusively editable" has one documented exception
+The alternative not chosen remains reassigning orphans to the deleting page's parent, which invents ownership just as much and is harder to undo.
 
-Items whose `docPageId` names a page that no longer exists are editable from **any** calendar, not just one in scope. This is deliberate: deleting a documentation page keeps the items it authored, and if orphans were read-only everywhere they could only ever be edited from the Schedule. The alternative — reassigning orphans to the deleting page's parent — was not chosen because it invents ownership the user never expressed. Worth revisiting if orphans turn out to be common.
+### 3. The month-grid highlight marked due days only — extended
 
-### 3. The month-grid highlight marks due days only
+The indigo edge bar marks days carrying an owned item. For a deadline that was its due day only; the caution run-up went unmarked even though the Schedule renders those days as amber `!` chips.
 
-The indigo edge bar marks days carrying an owned item. For a deadline that is its due day; the caution run-up is not marked, even though the run-up is what the Schedule renders as amber `!` chips. Marking the whole range would need per-day interval expansion like `buildMilestoneLanes` does, and would make a long caution period dominate the month. Left as-is deliberately.
+The run-up is now marked too, with the same bar in `--color-warning` at 0.45 opacity, expanded per day (`TrackCalendar.daysBetween`) and clipped to the displayed month. The weaker treatment is the point: at full strength a three-week caution period reads as twenty-one due dates. The due day keeps the solid mark and is never double-marked.
 
-### 4. Day notes still cannot carry a time
+### 4. Day notes could not carry a time — added, optional
 
-`calendarNotes` has `date` but no `time`, so a day note can never be positioned on the hour grid — it renders as a chip in the strip on every surface. This predates calendar blocks and is unchanged by them, but authoring notes from a documentation page makes it more visible: a note written as "review at 3pm" has nowhere to put the 3pm. Adding an optional `time` would be additive and backward-compatible (absent = strip, present = grid), but it touches every reader of `calendarNotes`.
+`calendarNotes` had `date` but no `time`, so a day note could never sit on the hour grid; a note written "review at 3pm" had nowhere to put the 3pm.
 
-### 5. Two id generators now mint ids into the same arrays
+`time` is now optional, and **its absence is meaningful**: absent means the note is a chip in the day strip, exactly as before, so no existing note changed and no migration ran. A well-formed `HH:MM` puts it on the hour grid instead, and it leaves the strip so it is never shown twice. Writers omit the key rather than store `''`, and clearing the field in either composer deletes it.
 
-`progress.html` uses `uid()` (`Math.random().toString(36).slice(2,10)`); `documentations.html` uses `genId()` (timestamp + random). Both produce strings and neither can collide with the other or with KS02's numeric counters, so this is cosmetic rather than a defect — but `calendarNotes` and `deadlines` now contain a visible mix of two id shapes, which reads as an inconsistency to anyone inspecting stored data. A canonical id helper belongs with the schema work in Proposal 4.
+`calendar-core.js` implements the split for the two read-only surfaces by pushing timed notes into `blocks` (so they inherit hour placement and overlap layout) and adding `calNotesAll` for callers that list notes for editing. `progress.html` does not load that file and implements the same rule itself; a browser test asserts the two agree.
+
+**Remaining:** a timed note is positioned but not draggable or resizable. Wiring it into the Schedule's drag, touch and resize machinery is a much larger change and belongs with Proposal 12. It is drawn as a marker line rather than a block there precisely because a marker has no height to resize, matching how deadlines — the other date-and-time point item — are already drawn.
+
+### 5. Two id generators minted into the same arrays — unified
+
+`progress.html` used `uid()` (`Math.random().toString(36).slice(2,10)`) and `documentations.html` used `genId()` (timestamp + random), so `calendarNotes` and `deadlines` carried a visible mix of two id shapes. Nothing could collide, so this was cosmetic rather than a defect.
+
+There is now one minter, `TrackStorage.newId()` in `storage-guard.js` — the only script besides `theme.js` that every page loads. `uid()`, `genId()` and `notes-widget.js`'s `generateId()` are one-line delegates with a local fallback, so the ~40 call sites are untouched and a load-order accident cannot leave a page without an id source. **Only new ids take the shared shape; no stored id was rewritten.** `sir-ks02.html` keeps its numeric `nid()` counter for its own records, which cannot collide with a string id.
+
+A canonical id helper for the schema work in Proposal 4 can now just move this function.
 
 ### 6. `buildDaySchedule` is recomputed on every render
 
@@ -1168,9 +1168,9 @@ The month aggregations are memoised on `[slot, year, month, hiddenKey]`, but the
 | P0 | Create canonical schema and validation | Prevents new drift and supports every later fix | Medium |
 | P0 | Add migration and round-trip fixtures | Protects real stored data during refactors | Medium |
 | P0 | Add conflict/revision handling | Prevents silent tab/device overwrites | Medium–large |
-| P0 | Make the KS02 auto-save a per-key read-modify-write | It is the last writer that can revert another page's field, now including doc-authored notes and deadlines — see Proposal 2 | Small |
+| ~~P0~~ | ~~Make the KS02 auto-save a per-key read-modify-write~~ | **Done 2026-08-06.** No writer rebuilds a whole slot any more — see Proposal 2 | Small |
 | P1 | Replace UTC calendar helpers | Fixes concrete timezone errors | Small |
-| P1 | Add one-command browser smoke test | Prevents white-screen deployments | Small–medium |
+| ~~P1~~ | ~~Add one-command browser smoke test~~ | **Done 2026-08-06.** `node tests/run.js`, no dependencies — see Proposal 7 | Small–medium |
 | P1 | Version Firebase rules and deployment config | Makes security and releases reviewable | Medium |
 | P1 | Introduce Vite and a lockfile | Enables modules, builds, and reliable testing | Medium |
 | P2 | Split large pages by data and feature boundaries | Improves maintainability and agent accuracy | Large, incremental |
@@ -1181,8 +1181,8 @@ The month aggregations are memoised on `[slot, year, month, hiddenKey]`, but the
 
 ### Phase 0: Preserve the current baseline
 
-- Add the current browser smoke test as a repeatable script.
-- Add synthetic current-state and old-state fixtures.
+- ~~Add the current browser smoke test as a repeatable script.~~ Done 2026-08-06: `node tests/run.js`.
+- ~~Add synthetic current-state fixtures.~~ Partly done: `tests/lib/fixture.js` builds a current-shape slot. Old-state fixtures (pre-slots, legacy milestones, conflicting revisions, malformed import) are still missing — the suite covers a pre-calendar-block slot only.
 - Extract the current data contract into a dedicated `docs/data-contract.md`.
 - Add an explicit `.gitignore`.
 - Remove broad destructive permissions from local agent settings.

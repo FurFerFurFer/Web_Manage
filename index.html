@@ -538,13 +538,17 @@
         div.style.width = 'calc(' + (100 / n) + '% - 2px)';
         div.style.borderColor = b.color;
         div.style.background = b.color + (b.done ? '18' : '30');
-        div.title = b.kind + ' · ' + b.title + ' · ' + b.time + ' · ' + calDurLabel(b.duration) + (b.done ? ' · done' : '');
+        // metaLabel, when present, is what a block wants said about its extent —
+        // a timed day note sets it so it is not captioned with a duration the
+        // user never entered.
+        const metaText = b.metaLabel || (b.time + ' · ' + calDurLabel(b.duration));
+        div.title = b.kind + ' · ' + b.title + ' · ' + metaText + (b.done ? ' · done' : '');
         const t = document.createElement('div');
         t.className = 'cal-sched-block-title';
         t.textContent = (b.done ? '✓ ' : '') + b.title;
         const meta = document.createElement('div');
         meta.className = 'cal-sched-block-meta';
-        meta.textContent = b.time + ' · ' + calDurLabel(b.duration);
+        meta.textContent = metaText;
         div.append(t, meta);
         layer.appendChild(div);
       });

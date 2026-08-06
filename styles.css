@@ -2104,7 +2104,8 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) but
 /* a day carrying an item this calendar owns. Deliberately an edge bar, not an
    inset ring: .cal-cell.today already owns the inset box-shadow, and a dot
    would read as one more category dot. */
-.cal-cell.cal-doc-own-day::before {
+.cal-cell.cal-doc-own-day::before,
+.cal-cell.cal-doc-caution-day::before {
   content: '';
   position: absolute;
   left: 0;
@@ -2113,6 +2114,14 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) but
   width: 2px;
   border-radius: 1px;
   background: var(--color-primary);
+}
+
+/* the run-up to an owned deadline. Same bar, deliberately weaker: a caution
+   period can be weeks long, and at full strength it would read as that many
+   due dates rather than as one approaching deadline. */
+.cal-cell.cal-doc-caution-day::before {
+  background: var(--color-warning);
+  opacity: 0.45;
 }
 
 .cal-doc-row {
@@ -2288,6 +2297,15 @@ button.cal-doc-origin:hover {
   font-size: 0.625rem;
 }
 
+/* the clock time on a day note that has one. Notes without a time are the
+   default and show no chip at all. */
+.cal-item-time {
+  color: var(--color-text-muted);
+  font-family: monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.04em;
+}
+
 /* ── documentations print / export ────────────────────────── */
 @media print {
   body.docs-page {
@@ -2323,8 +2341,19 @@ button.cal-doc-origin:hover {
 
   /* Flatten the page to black-on-white — but not the calendar block, whose
      dots, milestone bars and schedule blocks carry their meaning in colour and
-     would print as an empty skeleton. .doc-cal gets its own rules below. */
-  body.docs-page .docs-editor,
+     would print as an empty skeleton. .doc-cal gets its own rules below.
+
+     The two rules below are deliberately NOT one selector list. `:not(.doc-cal *)`
+     is a Selectors-4 complex :not(); it parses everywhere today, but a browser
+     that rejected it would discard the entire list it appears in — taking the
+     plain .docs-editor baseline with it, so the whole page would print
+     dark-on-dark. Split, a parse failure costs only the calendar exemption. */
+  body.docs-page .docs-editor {
+    color: #111 !important;
+    background: transparent !important;
+    border-color: #bbb !important;
+  }
+
   body.docs-page .docs-editor *:not(.doc-cal):not(.doc-cal *) {
     color: #111 !important;
     background: transparent !important;

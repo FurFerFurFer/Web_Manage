@@ -95,11 +95,26 @@
     }
   }
 
+  // The one id shape for new records. progress.html and documentations.html both
+  // write into calendarNotes and deadlines, and each used to mint its own shape,
+  // so stored data carried a visible mix of two (NOTES Proposal 14). This file is
+  // the only script besides theme.js loaded by every page, which is why the shared
+  // helper lives here rather than in a page.
+  //
+  // Timestamp-then-random: sorts by creation, and can never collide with the plain
+  // numeric counters sir-ks02.html uses (nid()), which matters because those two id
+  // spaces meet inside one slot. Existing ids are never rewritten — only new ones
+  // take this shape, so nothing that already points at an id stops resolving.
+  function newId() {
+    return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  }
+
   window.TrackStorage = {
     DB_KEY: DB_KEY,
     saveDB: function (db) { return setItem(DB_KEY, JSON.stringify(db)); },
     setItem: setItem,
     isQuotaError: isQuotaError,
-    clearQuotaBanner: clearQuotaBanner
+    clearQuotaBanner: clearQuotaBanner,
+    newId: newId
   };
 })();

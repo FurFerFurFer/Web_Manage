@@ -68,6 +68,20 @@
       const db = _getTrackDB(); db.slots = slots;
       TrackStorage.saveDB(db);
     }
+    // Merge ONLY the keys this page owns into a fresh read of the stored slot,
+    // the same contract as _writeP in progress.html and _writeSlotKey in
+    // documentations.html. This page used to rebuild the whole slot from a
+    // React snapshot taken at mount, which reverted every field another page
+    // or tab had written since — day notes, deadlines and their docPageId,
+    // and documentation pages. See NOTES Proposal 2.
+    // A slot id that is no longer present means it was deleted elsewhere:
+    // write nothing rather than fold this workspace's data into another slot.
+    function _writeSlotKeys(slotId, patch) {
+      const db = _getTrackDB(), slots = db.slots || [];
+      if (!slots.some(s => s.id === slotId)) return;
+      db.slots = slots.map(s => s.id === slotId ? {...s, ...patch} : s);
+      TrackStorage.saveDB(db);
+    }
     function _setActiveSlotId(id) {
       const db = _getTrackDB(); db.activeSlotId = id;
       TrackStorage.saveDB(db);
@@ -2774,9 +2788,7 @@
       const [ks02SubView,setKs02SubView]=useState("wheel");
       const [expandedLinId,setExpandedLinId]=useState(null);
       const [collapsedLinDays,setCollapsedLinDays]=useState({});
-      const [slots,setSlots]=useState([]);
       const [activeSlotId,setActiveSlotId]=useState(null);
-      const slotsRef=useRef([]);
       const [ks03SubView,setKs03SubView]=useState("multiverse");
       const [mgLevelsTab,setMgLevelsTab]=useState("theory");
       const [mgSchedule,setMgSchedule]=useState({});
@@ -2794,9 +2806,6 @@
       const displayKolbs=kolbView==="unlinked"?sortedKolbs.filter(k=>!k.mmId):sortedKolbs;
       const ks02StageMMs=useMemo(()=>ks02SelectedStage?mms.filter(m=>m.ksStage===ks02SelectedStage):[],[mms,ks02SelectedStage]);
 
-      // keep ref in sync so save/switch effects see latest slots without extra deps
-      useEffect(()=>{slotsRef.current=slots;},[slots]);
-
       // on mount: load slots from unified track_db, auto-create default if none
       useEffect(()=>{
         let saved=_getSlots();
@@ -2807,19 +2816,62 @@
           _setSlots(saved);
         }
         const active=saved.find(s=>s.id===activeId)||saved[0];
-        slotsRef.current=saved;
-        setSlots(saved);
         setActiveSlotId(active.id);
         _setActiveSlotId(active.id);
         _loadSlot(active);
       },[]);
 
-      // auto-save working data into active slot on every change
+      // auto-save working data into active slot on every change.
+      // Only the keys this page owns, merged into whatever is stored right now
+      // — never a whole-slot rebuild from this page's snapshot. mgSchedule is
+      // deliberately absent: it is read here but owned by progress.html.
       useEffect(()=>{
         if (!activeSlotId) return;
-        const updated=slotsRef.current.map(s=>s.id===activeSlotId?{...s,sessions,mms,kolbs,mgChanges,linChanges,linDayTitles,pos:manualPos,levelTemplates,sourceDumps}:s);
-        _setSlots(updated);
+        _writeSlotKeys(activeSlotId,{sessions,mms,kolbs,mgChanges,linChanges,linDayTitles,pos:manualPos,levelTemplates,sourceDumps});
       },[sessions,mms,kolbs,mgChanges,linChanges,linDayTitles,manualPos,levelTemplates,sourceDumps,activeSlotId]);
+
+      // cross-tab / remote freshness, matching index, progress and documentations.
+      // Every value is compared before it is applied, so a write from another
+      // page that touches nothing this one holds causes no re-render and, in
+      // turn, no needless save or sync upload.
+      useEffect(()=>{
+        const refresh=()=>{
+          const db=_getTrackDB(), slots=db.slots||[];
+          const slot=slots.find(s=>s.id===db.activeSlotId)||slots[0];
+          if (!slot) return;
+          _bumpUid(slot);
+          const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+          const fresh=(set,val)=>set(prev=>same(prev,val)?prev:val);
+          fresh(setSessions,slot.sessions||[]);
+          fresh(setMms,slot.mms||[]);
+          fresh(setKolbs,slot.kolbs||[]);
+          fresh(setMgChanges,slot.mgChanges||[]);
+          fresh(setLinChanges,slot.linChanges||[]);
+          fresh(setLinDayTitles,slot.linDayTitles||{});
+          fresh(setManualPos,slot.pos||{});
+          fresh(setLevelTemplates,slot.levelTemplates||{});
+          fresh(setMgSchedule,slot.mgSchedule||{});
+          fresh(setSourceDumps,(slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
+        };
+        const onStorage=e=>{ if (!e.key||e.key==='track_db') refresh(); };
+        const onVis=()=>{ if (!document.hidden) refresh(); };
+        window.addEventListener('storage',onStorage);
+        document.addEventListener('visibilitychange',onVis);
+        return ()=>{
+          window.removeEventListener('storage',onStorage);
+          document.removeEventListener('visibilitychange',onVis);
+        };
+      },[]);
+
+      // nid() hands out numeric ids from a counter seeded off the highest id in
+      // the slot. Adopting another tab's records can raise that ceiling, so the
+      // counter has to follow — and only ever upwards, or ids already handed
+      // out in this tab would be minted a second time.
+      function _bumpUid(slot){
+        const dumpLinks=(slot.sourceDumps||[]).flatMap(d=>[d,...(d.mmLinks||[]),...(d.mmLinks||[]).flatMap(l=>l.links||[])]);
+        const allIds=[...(slot.sessions||[]),...(slot.mms||[]),...(slot.kolbs||[]),...(slot.mgChanges||[]),...(slot.linChanges||[]),...dumpLinks].map(x=>x.id).filter(id=>typeof id==="number");
+        if (allIds.length) uid=Math.max(uid,Math.max(...allIds)+1);
+      }
 
       function _loadSlot(slot){
         const dumpLinks=(slot.sourceDumps||[]).flatMap(d=>[d,...(d.mmLinks||[]),...(d.mmLinks||[]).flatMap(l=>l.links||[])]);

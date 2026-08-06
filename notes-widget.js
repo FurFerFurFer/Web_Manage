@@ -34,8 +34,13 @@
     } catch(e) {}
   })();
 
+  // Shared shape — TrackStorage.newId in storage-guard.js. The fallback is the
+  // pre-existing local form, so a load-order accident cannot leave this widget
+  // without an id source.
   function generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    return window.TrackStorage && window.TrackStorage.newId
+      ? window.TrackStorage.newId()
+      : Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
 
   function injectStyles() {

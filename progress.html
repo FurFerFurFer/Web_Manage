@@ -211,7 +211,24 @@
 
     // ── pure helpers ──────────────────────────────────────────────────────────
 
-    function uid() { return Math.random().toString(36).slice(2, 10); }
+    // One id shape across the project — TrackStorage.newId in storage-guard.js.
+    // calendarNotes and deadlines are written from here and from
+    // documentations.html, and each used to mint a different shape into the same
+    // arrays. Only NEW ids change; nothing already stored is rewritten. The
+    // fallback keeps this page working if the guard ever fails to load.
+    function uid() {
+      return window.TrackStorage && window.TrackStorage.newId
+        ? window.TrackStorage.newId()
+        : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    }
+
+    // A day note's `time` is optional and its ABSENCE is meaningful: without one
+    // the note is a chip in the day strip, exactly as day notes have always
+    // behaved; with one it takes a position on the hour grid. Mirrors
+    // TrackCalendar.noteTimed, which calendar-core.js applies on the read-only
+    // surfaces — this page does not load that file.
+    const NOTE_TIME_RE = /^\d{2}:\d{2}$/;
+    function noteTimed(n) { return NOTE_TIME_RE.test((n && n.time) || ''); }
 
     function isMilestoneNode(node) {
       return node?.taskType === 'milestone';
@@ -4580,10 +4597,10 @@
       const [calDate,   setCalDate]   = useState({ year: new Date().getFullYear(), month: new Date().getMonth() });
       const [selDay,    setSelDay]    = useState(null);
       const [calNoteOpenDay, setCalNoteOpenDay] = useState(null);
-      const [calNoteDraft,   setCalNoteDraft]   = useState({ title: '', detail: '' });
+      const [calNoteDraft,   setCalNoteDraft]   = useState({ title: '', detail: '', time: '' });
       const [calNoteEditing, setCalNoteEditing] = useState(null);
       const [calNoteTimelineModal, setCalNoteTimelineModal] = useState(null);
-      const [calNoteTimelineDraft, setCalNoteTimelineDraft] = useState({ title: '', detail: '' });
+      const [calNoteTimelineDraft, setCalNoteTimelineDraft] = useState({ title: '', detail: '', time: '' });
       const [dlOpenDay,   setDlOpenDay]   = useState(null);   // day number for the inline composer
       const [dlDraft,     setDlDraft]     = useState({ title: '', detail: '', time: '', startDate: '' });
       const [dlEditing,   setDlEditing]   = useState(null);   // deadline id being edited inline
@@ -5381,18 +5398,25 @@
 
       function addCalNote(date) {
         if (!calNoteDraft.title.trim()) return;
-        setCalendarNotes(prev => [...prev, { id: uid(), date, title: calNoteDraft.title.trim(), detail: calNoteDraft.detail.trim(), createdAt: Date.now() }]);
-        setCalNoteDraft({ title: '', detail: '' });
+        // `time` written only when set — absence is what keeps a note in the strip
+        const withTime = noteTimed(calNoteDraft) ? { time: calNoteDraft.time } : {};
+        setCalendarNotes(prev => [...prev, { id: uid(), date, title: calNoteDraft.title.trim(), detail: calNoteDraft.detail.trim(), createdAt: Date.now(), ...withTime }]);
+        setCalNoteDraft({ title: '', detail: '', time: '' });
       }
       function updateCalNote(id) {
         if (!calNoteDraft.title.trim()) return;
-        setCalendarNotes(prev => prev.map(n => n.id === id ? { ...n, title: calNoteDraft.title.trim(), detail: calNoteDraft.detail.trim() } : n));
+        const withTime = noteTimed(calNoteDraft) ? { time: calNoteDraft.time } : {};
+        setCalendarNotes(prev => prev.map(n => {
+          if (n.id !== id) return n;
+          const { time, ...rest } = n;   // clearing the field must actually clear it
+          return { ...rest, title: calNoteDraft.title.trim(), detail: calNoteDraft.detail.trim(), ...withTime };
+        }));
         setCalNoteEditing(null);
-        setCalNoteDraft({ title: '', detail: '' });
+        setCalNoteDraft({ title: '', detail: '', time: '' });
       }
       function deleteCalNote(id) {
         setCalendarNotes(prev => prev.filter(n => n.id !== id));
-        if (calNoteEditing === id) { setCalNoteEditing(null); setCalNoteDraft({ title: '', detail: '' }); }
+        if (calNoteEditing === id) { setCalNoteEditing(null); setCalNoteDraft({ title: '', detail: '', time: '' }); }
       }
 
       // ── Deadlines ──────────────────────────────────────────────────────────
@@ -5586,12 +5610,14 @@
 
                     {/* RIGHT STRIP — calendar notes + deadline caution markers */}
                     <div className="flex flex-col gap-0.5 pt-2 pr-1 pl-0.5 flex-shrink-0" style={{ minWidth: '60px', maxWidth: '110px' }}>
-                      {(calendarNotes || []).filter(n => n.date === ds).map(note => (
+                      {/* untimed notes only — a note with a time is drawn on the
+                          hour grid instead, so it is never in both places */}
+                      {(calendarNotes || []).filter(n => n.date === ds && !noteTimed(n)).map(note => (
                         <button key={note.id}
                           onClick={e => {
                             e.stopPropagation();
                             setCalNoteTimelineModal({ date: ds, noteId: note.id });
-                            setCalNoteTimelineDraft({ title: note.title, detail: note.detail || '' });
+                            setCalNoteTimelineDraft({ title: note.title, detail: note.detail || '', time: note.time || '' });
                           }}
                           className="w-full flex items-center gap-0.5 rounded px-0.5 py-0.5 hover:bg-gray-800/70 transition-colors text-left">
                           <span className="text-[10px] flex-shrink-0">📌</span>
@@ -5767,6 +5793,34 @@
                           <span onClick={open} title={`${d.time} · ${d.title}`}
                             className="ml-1 px-1 rounded bg-red-600 text-white text-[9px] leading-tight truncate max-w-[55%] pointer-events-auto cursor-pointer">
                             {d.time} {d.title}
+                          </span>
+                        </div>
+                      );
+                    })}
+
+                    {/* Timed day notes. A note is a point in time, not a span,
+                        so it is drawn like a deadline marker rather than as a
+                        block: no height to resize, and nothing for the drag
+                        machinery to fight over. Clicking opens the same note
+                        popup the day strip uses. */}
+                    {(calendarNotes || []).filter(n => n.date === ds && noteTimed(n)).map(note => {
+                      const [nh, nm] = String(note.time).split(':').map(Number);
+                      const top = (nh + (nm || 0) / 60 - START_HOUR) * pxPerHour;
+                      if (top < 0 || top > TOTAL_H) return null;
+                      const open = e => {
+                        e.stopPropagation();
+                        setCalNoteTimelineModal({ date: ds, noteId: note.id });
+                        setCalNoteTimelineDraft({ title: note.title, detail: note.detail || '', time: note.time || '' });
+                      };
+                      return (
+                        <div key={note.id} style={{ top: top + 'px', zIndex: 190 }}
+                          className="absolute left-0 right-0 h-[9px] -translate-y-1/2 flex items-center pointer-events-none group/note">
+                          <div onClick={open} title={`${note.time} · ${note.title}`}
+                            className="w-2 h-2 rounded-full bg-fuchsia-500 flex-shrink-0 -ml-1 pointer-events-auto cursor-pointer" />
+                          <div className="flex-1 h-px bg-fuchsia-500/70 group-hover/note:h-0.5 transition-all" />
+                          <span onClick={open} title={`${note.time} · ${note.title}`}
+                            className="ml-1 px-1 rounded bg-fuchsia-600 text-white text-[9px] leading-tight truncate max-w-[55%] pointer-events-auto cursor-pointer">
+                            📌 {note.time} {note.title}
                           </span>
                         </div>
                       );
@@ -6985,7 +7039,7 @@
           {calNoteTimelineModal && (() => {
             const { date, noteId } = calNoteTimelineModal;
             const isEdit = !!noteId;
-            const close = () => { setCalNoteTimelineModal(null); setCalNoteTimelineDraft({ title: '', detail: '' }); };
+            const close = () => { setCalNoteTimelineModal(null); setCalNoteTimelineDraft({ title: '', detail: '', time: '' }); };
             return (
               <>
                 <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
@@ -7006,6 +7060,17 @@
                       autoFocus
                       className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-indigo-600"
                     />
+                    <label className="flex items-center gap-2 text-[10px] text-gray-500 tracking-widest">
+                      AT (OPTIONAL)
+                      <input
+                        type="time"
+                        value={calNoteTimelineDraft.time || ''}
+                        onChange={e => setCalNoteTimelineDraft(p => ({ ...p, time: e.target.value }))}
+                        onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-600"
+                      />
+                      <span className="text-gray-600 normal-case tracking-normal">blank keeps it in the day strip</span>
+                    </label>
                     <textarea
                       value={calNoteTimelineDraft.detail}
                       onChange={e => setCalNoteTimelineDraft(p => ({ ...p, detail: e.target.value }))}
@@ -7018,12 +7083,18 @@
                     <button
                       onClick={() => {
                         if (!calNoteTimelineDraft.title.trim()) return;
+                        // the key is written only when there is a time, so a note
+                        // that never had one keeps the shape it always had — and
+                        // clearing the field drops the key rather than storing ''
+                        const withTime = noteTimed(calNoteTimelineDraft) ? { time: calNoteTimelineDraft.time } : {};
                         if (isEdit) {
-                          setCalendarNotes(prev => prev.map(n => n.id === noteId
-                            ? { ...n, title: calNoteTimelineDraft.title.trim(), detail: calNoteTimelineDraft.detail.trim() }
-                            : n));
+                          setCalendarNotes(prev => prev.map(n => {
+                            if (n.id !== noteId) return n;
+                            const { time, ...rest } = n;
+                            return { ...rest, title: calNoteTimelineDraft.title.trim(), detail: calNoteTimelineDraft.detail.trim(), ...withTime };
+                          }));
                         } else {
-                          setCalendarNotes(prev => [...prev, { id: uid(), date, title: calNoteTimelineDraft.title.trim(), detail: calNoteTimelineDraft.detail.trim(), createdAt: Date.now() }]);
+                          setCalendarNotes(prev => [...prev, { id: uid(), date, title: calNoteTimelineDraft.title.trim(), detail: calNoteTimelineDraft.detail.trim(), createdAt: Date.now(), ...withTime }]);
                         }
                         close();
                       }}
@@ -7173,8 +7244,8 @@
                               e.stopPropagation();
                               setSelDay(day);
                               closeDlComposer();
-                              if(calNoteOpenDay===day){setCalNoteOpenDay(null);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}
-                              else{setCalNoteOpenDay(day);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}
+                              if(calNoteOpenDay===day){setCalNoteOpenDay(null);setCalNoteDraft({title:'',detail:'',time:''});setCalNoteEditing(null);}
+                              else{setCalNoteOpenDay(day);setCalNoteDraft({title:'',detail:'',time:''});setCalNoteEditing(null);}
                             }}
                             className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-indigo-400 transition-all text-base w-4 h-4 flex items-center justify-center leading-none rounded">+</button>
                           <button
@@ -7195,7 +7266,7 @@
                       {dayCalNotes.map(n=>(
                         <div key={n.id} className="text-[9px] text-indigo-300 truncate leading-tight mt-0.5 flex items-center gap-0.5">
                           <span className="flex-shrink-0">📌</span>
-                          <span className="truncate">{n.title}</span>
+                          <span className="truncate">{noteTimed(n) ? n.time+' '+n.title : n.title}</span>
                         </div>
                       ))}
                       {dayDue.map(d=>(
@@ -7244,7 +7315,7 @@
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-[10px] text-gray-500 tracking-widest">NOTES</span>
                         {calNoteOpenDay!==selDay&&(
-                          <button onClick={()=>{closeDlComposer();setCalNoteOpenDay(selDay);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}}
+                          <button onClick={()=>{closeDlComposer();setCalNoteOpenDay(selDay);setCalNoteDraft({title:'',detail:'',time:''});setCalNoteEditing(null);}}
                             className="text-gray-600 hover:text-indigo-400 text-sm leading-none px-1 transition-colors">+</button>
                         )}
                       </div>
@@ -7253,10 +7324,13 @@
                           {dayNotes.map(n=>(
                             <div key={n.id}
                               className={`flex items-start gap-2 rounded px-2 py-1.5 border cursor-pointer group/note transition-colors ${calNoteEditing===n.id?'border-indigo-500/70 bg-indigo-900/20':'border-gray-700/60 hover:border-gray-600 bg-gray-900/50'}`}
-                              onDoubleClick={()=>{setCalNoteEditing(n.id);setCalNoteDraft({title:n.title,detail:n.detail});setCalNoteOpenDay(selDay);}}>
+                              onDoubleClick={()=>{setCalNoteEditing(n.id);setCalNoteDraft({title:n.title,detail:n.detail,time:n.time||''});setCalNoteOpenDay(selDay);}}>
                               <span className="flex-shrink-0 text-indigo-400 mt-0.5 text-[11px]">📌</span>
                               <div className="flex-1 min-w-0">
-                                <p className="text-[11px] font-semibold text-indigo-200 truncate">{n.title}</p>
+                                <p className="text-[11px] font-semibold text-indigo-200 truncate">
+                                  {noteTimed(n)&&<span className="text-gray-500 font-mono font-normal mr-1">{n.time}</span>}
+                                  {n.title}
+                                </p>
                                 {n.detail&&<p className="text-[10px] text-gray-500 mt-0.5 whitespace-pre-wrap line-clamp-3">{n.detail}</p>}
                               </div>
                               <button onClick={e=>{e.stopPropagation();if(window.confirm('Delete this note?')){deleteCalNote(n.id);}}}
@@ -7269,7 +7343,7 @@
                         <div className="bg-gray-950 border border-indigo-700/40 rounded-lg overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
                             <span className="text-[10px] text-indigo-400 tracking-widest font-semibold">{calNoteEditing?'EDIT NOTE':'NEW NOTE'}</span>
-                            <button onClick={()=>{setCalNoteOpenDay(null);setCalNoteDraft({title:'',detail:''});setCalNoteEditing(null);}}
+                            <button onClick={()=>{setCalNoteOpenDay(null);setCalNoteDraft({title:'',detail:'',time:''});setCalNoteEditing(null);}}
                               className="text-gray-500 hover:text-gray-300 text-sm leading-none px-1">×</button>
                           </div>
                           <div className="px-3 pt-2 pb-1">
@@ -7278,6 +7352,13 @@
                               onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();calNoteEditing?updateCalNote(calNoteEditing):addCalNote(ds);}}}
                               placeholder="Title…"
                               className="w-full bg-transparent text-xs text-gray-200 outline-none placeholder-gray-600 border-b border-gray-700 pb-1.5 mb-2"/>
+                            <label className="flex items-center gap-2 mb-2 text-[10px] text-gray-600 tracking-widest">
+                              AT
+                              <input type="time" value={calNoteDraft.time||''}
+                                onChange={e=>setCalNoteDraft(p=>({...p,time:e.target.value}))}
+                                className="bg-transparent text-xs text-gray-300 outline-none border-b border-gray-700"/>
+                              <span className="tracking-normal text-gray-700">optional — blank stays in the strip</span>
+                            </label>
                             <textarea value={calNoteDraft.detail}
                               onChange={e=>setCalNoteDraft(p=>({...p,detail:e.target.value}))}
                               placeholder="Details… (optional)" rows={3}

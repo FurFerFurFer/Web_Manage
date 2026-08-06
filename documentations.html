@@ -71,8 +71,14 @@
     function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
     const localToday = () => toDateStr(new Date());
 
-    // string ids: can never collide with the numeric nid() counters in sir-ks02
-    const genId = () => Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    // One id shape across the project — TrackStorage.newId in storage-guard.js,
+    // shared with progress.html's uid() because both write into calendarNotes
+    // and deadlines. String ids can never collide with the numeric nid()
+    // counters in sir-ks02. The fallback keeps this page working if the guard
+    // ever fails to load.
+    const genId = () => window.TrackStorage && window.TrackStorage.newId
+      ? window.TrackStorage.newId()
+      : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
 
     // ?page=<id> deep link, the counterpart of progress.html's ?date=<ds>.
     // Day notes and deadlines authored here point back at their source page,
@@ -457,14 +463,18 @@
               const group = overlap[b.id];
               const n = group ? group.length : 1;
               const idx = group ? group.indexOf(b.id) : 0;
+              // metaLabel, when present, is what the block wants said about its
+              // extent — a timed day note sets it so it is not captioned with a
+              // duration the user never entered.
+              const metaText = b.metaLabel || `${b.time} · ${TC.durLabel(b.duration)}`;
               return (
                 <div key={b.id} className={"cal-sched-block"+(b.done?' done':'')}
-                  title={`${b.kind} · ${b.title} · ${b.time} · ${TC.durLabel(b.duration)}${b.done?' · done':''}`}
+                  title={`${b.kind} · ${b.title} · ${metaText}${b.done?' · done':''}`}
                   style={{top: b.top+'px', height: b.height+'px',
                     left: `calc(${idx*(100/n)}% + 1px)`, width: `calc(${100/n}% - 2px)`,
                     borderColor: b.color, background: b.color + (b.done ? '18' : '30')}}>
                   <div className="cal-sched-block-title">{(b.done?'✓ ':'')+b.title}</div>
-                  <div className="cal-sched-block-meta">{b.time} · {TC.durLabel(b.duration)}</div>
+                  <div className="cal-sched-block-meta">{metaText}</div>
                 </div>
               );
             })}
@@ -478,7 +488,7 @@
       if (origin.kind === 'orphan') {
         return (
           <span className="cal-doc-origin missing"
-            title="The documentation page that added this was deleted. The item was kept.">
+            title="The documentation page that added this was deleted. The item was kept, and stays editable from the Schedule.">
             📄 source page removed
           </span>
         );
@@ -516,13 +526,25 @@
         () => block.scope === 'page' ? new Set([page.id]) : docDescendantIds(docPages, page.id),
         [block.scope, docPages, page.id]);
 
-      // days carrying an item this calendar owns, for the cell highlight.
-      // A deadline marks its due day; its caution run-up is not highlighted.
+      // Days carrying an item this calendar owns, for the cell highlight, in two
+      // strengths. A day note and a deadline's due day get the solid mark; a
+      // deadline's caution run-up gets a softer one, because the Schedule already
+      // renders those days as amber "!" chips and a three-week run-up marked at
+      // full strength would read as twenty-one due dates.
+      // Expanded per day like buildMilestoneLanes does, and clipped to the month
+      // on show, so a long run-up costs nothing outside it.
       const ownedDates = useMemo(() => {
-        const set = new Set();
-        [...(slot.calendarNotes||[]), ...(slot.deadlines||[])]
-          .forEach(x => { if (x.docPageId && owned.has(x.docPageId)) set.add(x.date); });
-        return set;
+        const due = new Set(), caution = new Set();
+        const mine = x => x.docPageId && owned.has(x.docPageId);
+        (slot.calendarNotes||[]).forEach(n => { if (mine(n)) due.add(n.date); });
+        (slot.deadlines||[]).forEach(d => {
+          if (!mine(d)) return;
+          due.add(d.date);
+          const start = TC.dlStart(d);
+          if (!start || start >= d.date) return;
+          for (const ds of TC.daysBetween(start, d.date)) if (ds !== d.date) caution.add(ds);
+        });
+        return {due, caution};
       }, [slot, owned]);
 
       function originOf(item) {
@@ -531,8 +553,12 @@
         if (!p) return {kind:'orphan'};
         return {kind: owned.has(item.docPageId) ? 'own' : 'other', page: p};
       }
-      // an orphan is editable so a deleted source page can never strand an item
-      const canEdit = o => o.kind === 'own' || o.kind === 'orphan';
+      // Only the owning page edits. An orphan — an item whose source page was
+      // deleted — is NOT editable here: it is still visible, still carries its
+      // data, and is still fully editable from the Progress Schedule, which is
+      // the surface that owns these arrays. Letting any calendar edit it instead
+      // would hand a stranger's item to whichever page happened to show it.
+      const canEdit = o => o.kind === 'own';
 
       const shiftMonth = delta => {
         setSelDs(null); closeForms();
@@ -545,25 +571,36 @@
       };
       function closeForms() {
         setComposer(null); setEditing(null);
-        setNoteDraft({title:'', detail:''});
+        setNoteDraft({title:'', detail:'', time:''});
         setDlDraft({title:'', detail:'', time:'', startDate:''});
       }
       const toggleFilter = key => onChange({...block,
         hidden: hidden.includes(key) ? hidden.filter(k => k !== key) : [...hidden, key]});
 
       // ── authoring ──
+      // `time` is optional. Blank means "no time", which is the pre-existing
+      // behaviour: the note stays a chip in the day strip instead of taking a
+      // position on the hour grid. The key is written only when it has a value,
+      // so a note that never had one keeps exactly the shape it always had.
+      const noteTime = () => TC.noteTimed(noteDraft) ? {time: noteDraft.time} : {};
       const addNote = () => {
         if (!noteDraft.title.trim() || !selDs) return;
         onMutate('calendarNotes', prev => [...prev, {
           id: genId(), date: selDs, title: noteDraft.title.trim(),
-          detail: noteDraft.detail.trim(), createdAt: Date.now(), docPageId: page.id
+          detail: noteDraft.detail.trim(), createdAt: Date.now(), docPageId: page.id,
+          ...noteTime()
         }]);
         closeForms();
       };
       const saveNote = id => {
         if (!noteDraft.title.trim()) return;
-        onMutate('calendarNotes', prev => prev.map(n => n.id === id
-          ? {...n, title: noteDraft.title.trim(), detail: noteDraft.detail.trim()} : n));
+        onMutate('calendarNotes', prev => prev.map(n => {
+          if (n.id !== id) return n;
+          // clearing the field must actually clear it, so drop the key rather
+          // than leaving a stale time behind
+          const {time, ...rest} = n;
+          return {...rest, title: noteDraft.title.trim(), detail: noteDraft.detail.trim(), ...noteTime()};
+        }));
         closeForms();
       };
       const addDeadline = () => {
@@ -594,6 +631,12 @@
             onChange={e=>setNoteDraft(d=>({...d, title: e.target.value}))} />
           <textarea rows={2} value={noteDraft.detail} placeholder="Detail (optional)"
             onChange={e=>setNoteDraft(d=>({...d, detail: e.target.value}))} />
+          {/* blank = a chip in the day strip, as day notes have always been;
+              a time puts the note on the hour grid instead */}
+          <div className="cal-doc-form-row">
+            <label>At (optional)<input type="time" value={noteDraft.time || ''}
+              onChange={e=>setNoteDraft(d=>({...d, time: e.target.value}))} /></label>
+          </div>
           <div className="cal-doc-form-acts">
             <button type="button" className="primary" disabled={!noteDraft.title.trim()} onClick={onSave}>{label}</button>
             <button type="button" onClick={closeForms}>Cancel</button>
@@ -684,7 +727,9 @@
               return (
                 <div key={ds} title={cats.map(c => c.label+': '+bucket[c.key].length).join('\n')}
                   className={"cal-cell"+(ds===todayDs?' today':'')+(dayLanes.length?' milestone':'')
-                    +(ds===selDs?' selected':'')+(ownedDates.has(ds)?' cal-doc-own-day':'')}
+                    +(ds===selDs?' selected':'')
+                    +(ownedDates.due.has(ds)?' cal-doc-own-day'
+                      :ownedDates.caution.has(ds)?' cal-doc-caution-day':'')}
                   onClick={()=>{ setSelDs(ds===selDs?null:ds); closeForms(); }}>
                   <div className="cal-day-num">{d}</div>
                   {shownLanes > 0 && (
@@ -761,11 +806,11 @@
               <div className="cal-detail-group">
                 <div className="cal-detail-cat">
                   <span className="cal-dot" style={{background:'#e879f9'}} />
-                  Day notes ({day.calNotes.length})
+                  Day notes ({day.calNotesAll.length})
                   <button type="button" className="doc-cal-add doc-chrome"
                     onClick={()=>{ closeForms(); setComposer('note'); }}>+ note</button>
                 </div>
-                {day.calNotes.map(n => {
+                {day.calNotesAll.map(n => {
                   const o = originOf(n);
                   if (editing && editing.kind === 'note' && editing.id === n.id) {
                     return <React.Fragment key={n.id}>{noteForm(()=>saveNote(n.id), 'Save')}</React.Fragment>;
@@ -773,7 +818,7 @@
                   return (
                     <div key={n.id} className={"cal-doc-row"+(o.kind==='own'?' cal-doc-own':'')}>
                       <span className="cal-doc-row-main">
-                        📌 {n.title || 'Note'}
+                        📌 {TC.noteTimed(n) && <span className="cal-item-time">{n.time}</span>} {n.title || 'Note'}
                         {n.detail && <span className="cal-item-meta"> · {n.detail}</span>}
                       </span>
                       <CalOriginChip origin={o} onOpenPage={onOpenPage} />
@@ -781,7 +826,7 @@
                         <span className="cal-doc-row-acts doc-chrome">
                           <button type="button" title="Edit" onClick={()=>{
                             closeForms(); setEditing({kind:'note', id:n.id});
-                            setNoteDraft({title: n.title||'', detail: n.detail||''});
+                            setNoteDraft({title: n.title||'', detail: n.detail||'', time: n.time||''});
                           }}>✎</button>
                           <button type="button" title="Delete" className="danger"
                             onClick={()=>removeItem('calendarNotes', n.id, 'day note')}>✕</button>
@@ -791,7 +836,7 @@
                   );
                 })}
                 {composer === 'note' && noteForm(addNote, 'Add note')}
-                {!day.calNotes.length && composer !== 'note' && <div className="cal-empty-msg">No day notes.</div>}
+                {!day.calNotesAll.length && composer !== 'note' && <div className="cal-empty-msg">No day notes.</div>}
               </div>
 
               {/* Deadlines — due today, then the run-up of anything still pending */}
@@ -1033,7 +1078,7 @@
         const stranded = [...(_readP('calendarNotes', [])), ...(_readP('deadlines', []))]
           .filter(x => toDel.has(x.docPageId)).length;
         const msg = `Delete "${(page&&page.title)||'Untitled'}"${n ? ` and ${n} sub-page${n>1?'s':''}` : ''}? This cannot be undone.`
-          + (stranded ? `\n\n${stranded} scheduled item${stranded>1?'s':''} added from ${n?'these pages':'this page'} will stay on the schedule and lose ${stranded>1?'their':'its'} source page.` : '');
+          + (stranded ? `\n\n${stranded} scheduled item${stranded>1?'s':''} added from ${n?'these pages':'this page'} will stay on the schedule and lose ${stranded>1?'their':'its'} source page. ${stranded>1?'They':'It'} can then only be edited from the Schedule.` : '');
         if (!window.confirm(msg)) return;
         setDocPages(prev => prev.filter(p => !toDel.has(p.id)));
         if (toDel.has(activePageId)) setActivePageId(null);

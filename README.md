@@ -12,19 +12,18 @@ This README is the source of truth for what the project currently contains and h
 
 ## Current Status
 
-Status reviewed: 2026-07-28
+Status reviewed: 2026-08-06
 
 - The application renders successfully in a local Chrome smoke test.
-- `index.html`, `progress.html`, and `sir-ks02.html` are the active pages.
-- The Git working tree was clean before the documentation work represented by `NOTES.md` and `AGENTS.md`.
+- `index.html`, `progress.html`, `sir-ks02.html`, `documentations.html` and `notifications.html` are the active pages.
 - Development currently happens on `master`; the inspected history contains no merge commits.
-- The repository currently has no build step, package manifest, automated test suite, or CI workflow.
-- The standalone scripts `theme.js`, `storage-guard.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
+- There is still no build step and no package manifest, but there **is** now a committed test suite: `node tests/run.js`. It uses Node's built-in `node:test` and a hand-rolled DevTools-protocol driver, so it adds no dependencies. See "Running the tests".
+- The standalone scripts `theme.js`, `storage-guard.js`, `calendar-core.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
 - React pages currently compile JSX in the browser through Babel.
 - Data is stored locally first and can optionally be synchronized through Firebase.
-- All three pages provide persistent light and dark themes with a shared accessible switch.
+- Every page provides persistent light and dark themes with a shared accessible switch.
 
-The code is operational, but current verification is mainly syntax checking plus browser smoke and manual interaction checks.
+The code is operational. Verification is syntax checking, the committed suite, and manual interaction checks for touch and drag behaviour the suite does not reach.
 
 ## Documentation Map
 
@@ -72,7 +71,7 @@ The aggregation behind this calendar lives in `calendar-core.js`, shared with th
 
 The detail appears **beside the grid above 720px** as a scrollable column, so the whole month stays visible while a day is open, and **as a fixed bottom sheet at 720px and below**, capped at `62dvh` and padded clear of the notes-widget button. Because the panel's height is definite, a long timeline scrolls inside the column instead of pushing the calendar past one screen. When no workspace exists, the "create a workspace" message renders in the empty month area rather than in the detail.
 
-**Dots** below the day number cover only what the day schedule does not already show: Kolb records and MG changes fused into one category, LIN records (titled from `linDayTitles` when present), floating notes (by local day of `createdAt`), and source-dump creations. These are listed under the timeline in the day detail, with Kolb and MG-change rows distinguished by a meta label. Scheduled goal tasks, routine occurrences, SIR sessions, supporting-action entries, MM study entries, MG focus, and calendar notes are shown in the day timeline instead of as dots. MM creations, MM comments, and Documentation-page creations are not surfaced on the calendar.
+**Dots** below the day number cover only what the day schedule does not already show: Kolb records and MG changes fused into one category, LIN records (titled from `linDayTitles` when present), floating notes (by local day of `createdAt`), and source-dump creations. These are listed under the timeline in the day detail, with Kolb and MG-change rows distinguished by a meta label. Scheduled goal tasks, routine occurrences, SIR sessions, supporting-action entries, MM study entries, MG focus, and calendar notes are shown in the day timeline instead of as dots — a day note carrying a `time` sits on the hour grid, and one without stays a chip in the strip above it. MM creations, MM comments, and Documentation-page creations are not surfaced on the calendar.
 
 ### Appearance and accessibility
 
@@ -291,11 +290,15 @@ A calendar shows the same aggregation as the Universal calendar on Home — mont
 
 **Filtering.** A new calendar shows everything. The filter bar switches any of thirteen categories off: Kolb / MG change, LIN record, Floating note, Source dump, Milestones, Goal tasks & routines, Supporting actions, MM sessions, SIR sessions, MG focus, Day notes, Deadlines, and **Documentation**. Everything added from Documentations — notes *and* deadlines, from any page — answers to that single Documentation key, and correspondingly the Day notes and Deadlines keys cover only items authored in the Schedule. The block stores the switched-**off** keys (`hidden: []` means show all), so a category added later is on by default for calendars that already exist. "Show all" clears the set. Filters are per block; Home and the Schedule are unaffected.
 
-**Ownership.** Items added from Documentations carry `docPageId`, the id of the page that added them. A calendar highlights and exclusively edits the items within its scope, which the header button toggles between **this page** and **this page + sub-pages** (the default, resolved through the same descendant walk the sidebar drag uses). Items from any other documentation page stay visible but read-only, with a `📄 <page title>` chip that opens that page. Items added in the Schedule are visible and read-only with no chip. Days carrying an owned item get an indigo edge bar on the month grid.
+**Ownership.** Items added from Documentations carry `docPageId`, the id of the page that added them. A calendar highlights and exclusively edits the items within its scope, which the header button toggles between **this page** and **this page + sub-pages** (the default, resolved through the same descendant walk the sidebar drag uses). Items from any other documentation page stay visible but read-only, with a `📄 <page title>` chip that opens that page. Items added in the Schedule are visible and read-only with no chip.
 
-Deleting a documentation page **does not** delete the notes and deadlines it authored — losing scheduled work to a page delete would be data loss. The delete confirmation says how many items will stay behind. Those items keep their `docPageId`, read as "source page removed", and stay editable from any calendar so they can never be stranded.
+Days carrying an owned item get an indigo edge bar on the month grid. For a deadline that means its due day; the days of its caution run-up get the same bar in amber at reduced opacity, so a three-week run-up reads as one approaching deadline rather than as twenty-one due dates.
+
+Deleting a documentation page **does not** delete the notes and deadlines it authored — losing scheduled work to a page delete would be data loss. The delete confirmation says how many items will stay behind. Those items keep their `docPageId` and read as "source page removed". They are **read-only in every calendar block**, including this one: an item whose owner is gone belongs to no page, and handing it to whichever calendar happens to display it would invent an ownership the user never expressed. It stays fully editable from the Progress Schedule, which is the surface that owns these arrays.
 
 Deadlines authored here use the same rules as the Schedule: a title, an `HH:MM` due time, and a caution start on or before the due day (defaulting to the due day itself).
+
+Day notes take an **optional** time. Left blank — the default, and what every existing note has — the note is a chip in the day strip, as before. Given an `HH:MM`, it is positioned on the hour grid instead and disappears from the strip, so it is never shown twice. Clearing the field removes the time again. Timed notes are positioned but not yet draggable; they are edited through the same popup as any other note.
 
 Each `docPages` entry is:
 
@@ -342,7 +345,21 @@ Current data behavior includes:
 - Offline/local-only use after skipping sign-in.
 - Per-slot export and import.
 
-Slot export serializes the whole slot object and is lossless. Slot import reconstructs the slot from an explicit field list that now includes `notes`, `mmEntries`, `calendarNotes`, `deadlines`, and `docPages` in addition to the previously restored fields, so a full export→import round trip preserves all currently known user-owned fields. The import allow-list must still be extended whenever a new slot field is introduced — see `NOTES.md` Proposal 1 for the remaining schema-centralization work.
+Slot export serializes the whole slot object and is lossless. Slot import reconstructs the slot from an explicit field list that now includes `notes`, `mmEntries`, `calendarNotes`, `deadlines`, and `docPages` in addition to the previously restored fields, so a full export→import round trip preserves all currently known user-owned fields. Because those arrays are copied whole, item-level fields such as `docPageId` and a day note's optional `time` ride along without the allow-list naming them. `tests/browser.test.js` drives the real exporter and importer and asserts exactly that. The allow-list must still be extended whenever a new *slot* field is introduced — see `NOTES.md` Proposal 1 for the remaining schema-centralization work.
+
+#### Which page owns which field
+
+Each page writes only the keys it owns, merging them into a fresh read of the stored slot, and refreshes from `storage` and `visibilitychange` events so another tab's edits appear. No page rebuilds the whole slot from its own React snapshot any more:
+
+| Page | Keys it writes |
+| --- | --- |
+| `progress.html` | `goals`, `saActions`, `saEntries`, `mmEntries`, `mgSchedule`, `calendarNotes`, `deadlines` |
+| `sir-ks02.html` | `sessions`, `mms`, `kolbs`, `mgChanges`, `linChanges`, `linDayTitles`, `pos`, `levelTemplates`, `sourceDumps` |
+| `documentations.html` | `docPages`, plus `calendarNotes` and `deadlines` through a fresh read-modify-write |
+| `notes-widget.js` | `notes` |
+| `index.html` | the slot list itself — create, rename, delete, import |
+
+`sir-ks02.html` reads `mgSchedule` but never writes it; that key belongs to `progress.html`. Adding a key to a page's write set means adding it to this table.
 
 #### Storage-quota handling
 
@@ -365,6 +382,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `index.html` | Home page, slot management, slot import/export, navigation, Universal calendar |
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule, calendar notes |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
+| `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
 | `notifications.html` | Unified Gmail/Outlook/Teams inbox, filtering, per-item tick state |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, PDF export |
 | `notifications.sample.json` | Synthetic fixture documenting the `notifications.json` feed contract |
@@ -375,6 +393,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `notes-widget.js` | Floating per-slot notes widget |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
+| `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
 | `README.md` | Current project and workflow documentation |
 | `NOTES.md` | Future ideas and possible changes |
 | `AGENTS.md` | Agent operating instructions |
@@ -400,7 +419,15 @@ Track-website/
 ├── firebase-sync.js
 ├── notes-widget.js
 ├── styles.css
-└── firestore.rules
+├── firestore.rules
+└── tests/
+    ├── run.js
+    ├── calendar-core.test.js
+    ├── browser.test.js
+    └── lib/
+        ├── cdp.js
+        ├── server.js
+        └── fixture.js
 ```
 
 Most internal complexity is inside the two React HTML pages:
@@ -478,6 +505,25 @@ The pages currently read or write fields including:
 ```
 
 Not every constructor or importer currently initializes every field. Code must therefore continue using safe fallbacks until a canonical schema migration is implemented.
+
+Two item-level fields inside `calendarNotes` and `deadlines` are optional, and
+their **absence carries meaning**:
+
+- `docPageId` names the `docPages` entry that authored the item. Absent means the
+  Schedule authored it. Preserve it by spreading (`{...item, …}`), never by
+  rebuilding an item from a field list.
+- `time` (`calendarNotes` only) places a day note on the hour grid. Absent means
+  the note is a chip in the day strip, which is how every day note behaved before
+  the field existed — so a writer must **omit the key** rather than store `''`,
+  and clearing the field in the UI deletes the key. `deadlines` have always had a
+  required `time`; this is the note-only addition.
+
+Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`
+(timestamp + random, e.g. `mshajngq-ehhoj`), which `progress.html`'s `uid()`,
+`documentations.html`'s `genId()` and `notes-widget.js` all delegate to, so the
+shared arrays no longer mix id shapes. `sir-ks02.html` keeps its own plain
+numeric counter (`nid()`) for its own records; the two spaces cannot collide, and
+no stored id is ever rewritten.
 
 ### Additional browser keys
 
@@ -577,6 +623,54 @@ http://127.0.0.1:8765/notifications.html
 
 Stop the server with `Ctrl+C`.
 
+## Running the tests
+
+One command, no dependencies, no `package.json`:
+
+```bash
+node tests/run.js
+```
+
+It runs two layers:
+
+| Layer | File | What it covers |
+| --- | --- | --- |
+| Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, caution ranges, deadline validation, run-ups across month/year/DST boundaries, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
+| Browser tests | `tests/browser.test.js` | All four pages mounting with no uncaught error, the two-tab regression that `sir-ks02.html` must not revert another page's fields, day-note authoring from a Documentations calendar block, the print flatten rule's split, orphan read-only behaviour, the caution-run-up highlight, timed notes on the hour grid in both implementations, one id shape across pages, and an export → import round trip including a rejected invalid file |
+
+The offline layer runs **once per timezone** — `UTC`, `Pacific/Kiritimati`
+(UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
+That sweep is the point, not a detail: `calendar-core.js` exists to turn instants
+into *local* calendar days, and the usual way to get that wrong
+(`toISOString().split('T')[0]`) is invisible on a machine running in UTC.
+
+Useful variations:
+
+```bash
+node --test tests/calendar-core.test.js         # one file, ambient timezone
+TZ=Pacific/Midway node --test tests/            # both suites under one zone
+node tests/run.js --offline                     # skip the browser layer
+node tests/run.js --tz=UTC,Asia/Tokyo           # a different sweep
+```
+
+The browser layer drives the system Chrome (`/usr/bin/google-chrome`, or
+`CHROME_PATH`) over the DevTools protocol using Node 22's built-in `WebSocket` —
+no Playwright or Puppeteer in the tree. If no Chrome is found the run **fails**
+rather than passing quietly, because a skipped browser layer is not a pass.
+
+To prove a regression test actually catches the bug it names, serve a scratch
+directory instead of the repository:
+
+```bash
+TRACK_TEST_ROOT=/tmp/prefix-root node --test tests/browser.test.js
+```
+
+Fill that directory with symlinks to the repository plus the single pre-fix file
+under test. Never put a baseline copy in the repository itself.
+
+All fixtures are synthetic (`tests/lib/fixture.js`). A real personal export must
+never be used as test data.
+
 ## Current Development Workflow
 
 Until automated scripts are introduced, use the following workflow for every change.
@@ -642,8 +736,16 @@ For shared standalone scripts:
 ```bash
 node --check theme.js
 node --check storage-guard.js
+node --check calendar-core.js
 node --check firebase-sync.js
 node --check notes-widget.js
+```
+
+Then the committed suite, which is the fastest way to find out whether a change
+broke something (it also parses the inline JSX, by running it):
+
+```bash
+node tests/run.js
 ```
 
 Check the patch:
@@ -724,7 +826,21 @@ rather than a message that records only the editing attempt.
 
 ## Current Verification Baseline
 
-The latest audit established:
+**Anything below that is not in `tests/` was run once and cannot be re-run.**
+The committed suite is the part of this baseline a reader can reproduce:
+
+```bash
+node tests/run.js
+```
+
+As of 2026-08-06 that is 51 offline cases (several hundred assertions) executed
+under five timezones from UTC+14 to UTC-11, plus 16 browser cases in headless
+Chrome — 6 suites, all passing. The two KS02 regression cases were confirmed to
+**fail** against the pre-fix `sir-ks02.html` served through `TRACK_TEST_ROOT`,
+with the other 14 still passing, which is what makes them evidence rather than
+decoration.
+
+The older entries below record one-off audits kept for their detail:
 
 ```text
 firebase-sync.js: node syntax check passed
@@ -751,7 +867,9 @@ documentations calendar block: 71 assertions passed in headless Chrome — all f
   fields; a docPages write does not drop a concurrent calendarNotes write from another tab;
   and deleting a page keeps every item it authored
 documentations calendar block, styling and chrome: 10 assertions passed — the print flatten
-  rule parses with its :not(.doc-cal) exemption and the calendar print rules are live, the
+  rule parses with its :not(.doc-cal) exemption and the calendar print rules are live (the
+  rule has since been SPLIT in two so a parse failure can only cost the exemption; the
+  committed suite asserts the split), the
   block picks up its own padding/border with 52px day cells, no horizontal overflow of the
   editor column, and the block's move/delete chrome plus sidebar drag-to-nest still work
 localStorage quota guard: 43 assertions passed in headless Chrome against a synthetic slot —
@@ -842,6 +960,9 @@ The latest commits before this documentation update show current work concentrat
 - Source visibility in Schedule.
 - Expanded and filtered task-directory views.
 - Repeated stabilization of touch schedule behavior and Firebase reload behavior.
+- Documentations calendar blocks, and the four judgement calls recorded with them.
+- Removing the last writer that could revert another page's fields (`sir-ks02.html`).
+- The first committed automated tests.
 
 These are implemented areas, not roadmap items. Possible follow-up work belongs in `NOTES.md`.
 
@@ -851,13 +972,13 @@ The following describe the project today:
 
 - Slot schema definitions are duplicated across pages.
 - The import allow-list restores all currently known fields but must be extended by hand for every new slot field.
-- Two pages can hold stale in-memory views of the same `track_db`.
+- Two pages can still hold stale in-memory views of the same `track_db` between `storage` events, but no page rebuilds the whole slot from its own snapshot any more, so a stale view can no longer revert a field another page owns. Two tabs of the *same* page remain last-write-wins.
 - Firebase synchronization rewrites the whole serialized database on every save.
 - Some user-visible dates are created through UTC-based helpers.
 - A `localStorage` quota failure is reported but not rolled back: the unsaved edit stays on screen until reload.
 - React, Babel, Tailwind, and Firebase are runtime CDN dependencies.
 - There is no package lockfile or production build.
-- There is no automated unit, browser, or CI test suite.
+- There is an automated test suite (`node tests/run.js`) but no CI: nothing runs it but a person. It covers `calendar-core.js` thoroughly and the pages at the level of mounting, persistence contracts, and the specific regressions listed in "Running the tests" — it does not cover touch or drag interaction, the signed-in Firebase path, or most of the UI.
 - Firebase rules and deployment configuration are not versioned here.
 - The two main React pages are large monoliths.
 - A missing favicon currently produces a harmless local `404`.

@@ -134,6 +134,25 @@
       && draft.startDate <= dueDate;
   }
 
+  // Every local calendar day from `from` through `to`, inclusive. Stepping a
+  // Date anchored at noon means a 23- or 25-hour DST day can neither skip nor
+  // repeat a date, which plain +86400000 arithmetic would. Both ends must be
+  // well-formed day strings: a malformed `to` would otherwise compare in a way
+  // that never terminates, so the format check is load-bearing, not decorative.
+  const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  function daysBetween(from, to) {
+    const out = [];
+    if (!DAY_RE.test(from || '') || !DAY_RE.test(to || '') || from > to) return out;
+    const d = new Date(from + 'T12:00:00');
+    while (out.length < 4000) {
+      const ds = toDateStr(d);
+      if (ds > to) break;
+      out.push(ds);
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  }
+
   // ── month dots ───────────────────────────────────────────────────────────
 
   function buildBuckets(slot, y, m, opts) {
@@ -213,6 +232,15 @@
     return { lanesByDate, laneCount: laneEnds.length };
   }
 
+  // ── day notes ────────────────────────────────────────────────────────────
+  // `time` is optional on a calendarNotes item. Absent, empty or malformed all
+  // mean "no time", which is the pre-existing behaviour and stays the default;
+  // only a well-formed HH:MM puts a note on the hour grid.
+  const TIME_RE = /^\d{2}:\d{2}$/;
+  const noteTimed = n => TIME_RE.test((n && n.time) || '');
+  const NOTE_BLOCK_MIN = 30;   // block height only — a note has no duration
+  const NOTE_COLOR = '#e879f9';
+
   // ── read-only day schedule ───────────────────────────────────────────────
   // Mirrors the geometry and collectors of SchedulePanel in progress.html so
   // the preview reads the same as the real thing. Nothing here writes.
@@ -287,10 +315,34 @@
     // still read docPageId to decide highlighting and edit rights.
     const allDl = slot.deadlines || [];
 
+    // A day note's `time` is optional and its ABSENCE is meaningful: a note
+    // without one has no position on an hour grid, so it stays a chip in the
+    // day strip — exactly how every day note behaved before the field existed.
+    // One WITH a time joins `blocks`, which buys it hour placement and overlap
+    // layout on every surface for free.
+    // `calNotes` is therefore the strip's list and `calNotesAll` is the whole
+    // day's, for callers that list notes for editing rather than by position.
+    const dayNotes = (slot.calendarNotes || []).filter(n => n.date === ds && show(originKey(n, 'daynote')));
+    dayNotes.filter(noteTimed).forEach(n => blocks.push({
+      id: n.id,
+      title: n.title || 'Note',
+      kind: 'Day note',
+      time: n.time,
+      duration: NOTE_BLOCK_MIN,
+      // a note is a point in time, not a span. NOTE_BLOCK_MIN only gives the
+      // block a height; metaLabel keeps the surface from captioning it with a
+      // duration the user never entered.
+      metaLabel: n.time,
+      done: false,
+      color: NOTE_COLOR,
+      item: n
+    }));
+
     return {
       blocks,
       sir,
-      calNotes: (slot.calendarNotes || []).filter(n => n.date === ds && show(originKey(n, 'daynote'))),
+      calNotes: dayNotes.filter(n => !noteTimed(n)),
+      calNotesAll: dayNotes,
       deadlines: allDl.filter(d => d.date === ds && show(originKey(d, 'deadline'))).sort(dlByTime),
       // the due day is already covered by `deadlines` — caution lists the run-up only
       deadlinesCaution: allDl.filter(d => d.date !== ds && dlInCaution(d, ds) && show(originKey(d, 'deadline'))).sort(dlByDate),
@@ -337,8 +389,8 @@
     toDateStr, dim, firstDay, dStr, MONTHS, DOWS,
     CATS, FILTERS, MS_PALETTE, MS_MAX_LANES,
     SCHED_START_HOUR, SCHED_END_HOUR, SCHED_PX_PER_HOUR,
-    flattenGoals, goalDuration, goalDone, mgsForDay,
-    dlStart, dlInCaution, dlByTime, dlByDate, dlDayCount, dlValid,
+    flattenGoals, goalDuration, goalDone, mgsForDay, noteTimed,
+    dlStart, dlInCaution, dlByTime, dlByDate, dlDayCount, dlValid, daysBetween,
     originKey,
     buildBuckets, buildMilestoneLanes, buildDaySchedule, overlapInfo, durLabel
   };
