@@ -64,7 +64,11 @@ The Universal calendar is a month grid with a legend, a today highlight, milesto
 
 **Milestone periods** render as thin horizontal bars rather than repeated dots. Milestones are deduplicated by id (definitions are cloned across linked goal nodes), packed greedily into lanes so each keeps one row for its whole `startDate`–`endDate` span, and coloured from the same palette the Progress Milestones tab uses. A bar bridges the gap into the next day cell so a period reads as one continuous line, with rounded caps on its real start and end days and no bridge across a week wrap. Hovering a bar shows its title, owning goal, and dates. Days carrying more than three concurrent milestones show a `+N` badge.
 
-**Clicking a day** opens a read-only preview of that day's schedule, mirroring the Progress Schedule day view: a 00:00–24:00 timeline at 28px/hour with blocks positioned by time and duration, overlapping blocks split side by side using the same connected-component algorithm as `SchedulePanel`, plus a strip above it for MG focus (with the same 30-day carry-forward and `↑ carried` hint as Progress), SIR sessions due that day (shown on `finishDate` when done, skipped sessions excluded), and calendar notes. The preview has no handlers or inputs and never writes to `track_db`. A `→` button beside the date opens `progress.html?date=YYYY-MM-DD#schedule`, which loads the Schedule tab in day mode focused on that date; the date rides in the query string so the existing `#hash` tab routing is untouched. A `×` button beside it closes the day again.
+**Clicking a day** opens a read-only preview of that day's schedule, mirroring the Progress Schedule day view: a 00:00–24:00 timeline at 28px/hour with blocks positioned by time and duration, overlapping blocks split side by side using the same connected-component algorithm as `SchedulePanel`, plus a strip above it for MG focus (with the same 30-day carry-forward and `↑ carried` hint as Progress), SIR sessions due that day (shown on `finishDate` when done, skipped sessions excluded), calendar notes, and deadlines. The preview has no handlers or inputs and never writes to `track_db`. A `→` button beside the date opens `progress.html?date=YYYY-MM-DD#schedule`, which loads the Schedule tab in day mode focused on that date; the date rides in the query string so the existing `#hash` tab routing is untouched. A `×` button beside it closes the day again.
+
+**Deadlines** appear in that strip as red `⏰ HH:MM Title` chips on their due day, followed by amber `! Title` chips for any caution period still running through the day (the due day itself is not repeated as a caution). Hovering a note or deadline shows where it came from — "Added in the Schedule", or the documentation page that added it. The Home calendar stays read-only, so provenance is a tooltip here; Progress and Documentations render it as a link.
+
+The aggregation behind this calendar lives in `calendar-core.js`, shared with the calendar blocks in Documentations. Home renders all of it — it passes no filter set.
 
 The detail appears **beside the grid above 720px** as a scrollable column, so the whole month stays visible while a day is open, and **as a fixed bottom sheet at 720px and below**, capped at `62dvh` and padded clear of the notes-widget button. Because the panel's height is definite, a long timeline scrolls inside the column instead of pushing the calendar past one screen. When no workspace exists, the "create a workspace" message renders in the empty month area rather than in the detail.
 
@@ -272,9 +276,26 @@ Because browsers block `fetch` against `file://`, the feed only loads automatica
 - Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
 - A **Reference source dump** popup that shows the active slot's source-dump tree fully expanded — every nesting level and every leaf `{label, url}` link visible at once — and inserts a picked link as a link block carrying `dumpRef: {dumpId, linkId, urlId}` provenance. The block shows a "from: <dump title>" badge that degrades to "source removed" if the source is later deleted.
 - Images chosen from disk are downscaled (max dimension 1000px) and stored as compressed JPEG data-URIs inside the page, so they export, import, and cloud-sync with the slot. There is no size gate on inserting one: cloud sync gzips and chunks the workspace, so images no longer threaten it. The header instead shows a plain workspace-size readout plus a cloud sync state (`✓ synced`, `↻ syncing…`, `⚠ sync failed`, `⚠ conflict`, or `· local only`), read from `window.TrackSync`. The size turns amber only past ~4 MB, which tracks the browser's own `localStorage` quota rather than any cloud limit.
-- Export/share via **Export / PDF**: a print stylesheet hides all app chrome and forces light colors; the browser print dialog then saves the page as PDF (or prints it).
+- **Calendar blocks** — see below.
+- Export/share via **Export / PDF**: a print stylesheet hides all app chrome and forces light colors; the browser print dialog then saves the page as PDF (or prints it). Calendar blocks are exempt from the colour flattening, since their dots and milestone bars carry meaning in colour; their controls, filter bar and composers are hidden instead.
 
-Pages are stored in the per-slot `docPages` field. The page only ever writes that one field, always through a fresh read-modify-write of `track_db`, and refreshes from `storage` events so other tabs' edits appear. On a completely empty install it creates a default slot; if unmigrated legacy Progress/KS02 data is detected instead, it asks the user to open those pages (or Home) first rather than risk orphaning the legacy data.
+Pages are stored in the per-slot `docPages` field, and day notes and deadlines authored from a page go into the shared `calendarNotes` and `deadlines` fields. Every write touches exactly one slot key and is a fresh read-modify-write of `track_db`, so nothing another page or tab owns is ever rebuilt from this page's snapshot; the page also refreshes from `storage` events so other tabs' edits appear. On a completely empty install it creates a default slot; if unmigrated legacy Progress/KS02 data is detected instead, it asks the user to open those pages (or Home) first rather than risk orphaning the legacy data.
+
+`documentations.html?page=<docPages id>` opens straight to that page — the counterpart of `progress.html?date=`, and what the origin links in the Schedule point at. An unknown id is ignored and the usual "first favorite, else first root" selection applies.
+
+#### Calendar blocks
+
+**🗓 Calendar** in the add-block menu drops a calendar into the page body. It behaves like any other block: several can coexist on a page, and the hover chrome moves and deletes them.
+
+A calendar shows the same aggregation as the Universal calendar on Home — month grid, today highlight, milestone period bars, category dots, and a click-to-open day detail with the read-only day timeline — plus the two things a documentation page can author itself: **day notes** and **deadlines**. Both are written into the shared slot arrays, so they appear on the Progress Schedule and the Home calendar like any others.
+
+**Filtering.** A new calendar shows everything. The filter bar switches any of thirteen categories off: Kolb / MG change, LIN record, Floating note, Source dump, Milestones, Goal tasks & routines, Supporting actions, MM sessions, SIR sessions, MG focus, Day notes, Deadlines, and **Documentation**. Everything added from Documentations — notes *and* deadlines, from any page — answers to that single Documentation key, and correspondingly the Day notes and Deadlines keys cover only items authored in the Schedule. The block stores the switched-**off** keys (`hidden: []` means show all), so a category added later is on by default for calendars that already exist. "Show all" clears the set. Filters are per block; Home and the Schedule are unaffected.
+
+**Ownership.** Items added from Documentations carry `docPageId`, the id of the page that added them. A calendar highlights and exclusively edits the items within its scope, which the header button toggles between **this page** and **this page + sub-pages** (the default, resolved through the same descendant walk the sidebar drag uses). Items from any other documentation page stay visible but read-only, with a `📄 <page title>` chip that opens that page. Items added in the Schedule are visible and read-only with no chip. Days carrying an owned item get an indigo edge bar on the month grid.
+
+Deleting a documentation page **does not** delete the notes and deadlines it authored — losing scheduled work to a page delete would be data loss. The delete confirmation says how many items will stay behind. Those items keep their `docPageId`, read as "source page removed", and stay editable from any calendar so they can never be stranded.
+
+Deadlines authored here use the same rules as the Schedule: a title, an `HH:MM` due time, and a caution start on or before the due day (defaulting to the due day itself).
 
 Each `docPages` entry is:
 
@@ -291,10 +312,21 @@ Each `docPages` entry is:
     { id, type: 'image', src /* jpeg data-URI */, alt },
     { id, type: 'table', rows: [[string]] },
     { id, type: 'link', label, url, dumpRef: {dumpId, linkId, urlId}|null, addedAt },
-    { id, type: 'divider' }
+    { id, type: 'divider' },
+    { id, type: 'calendar',
+      hidden: [],          // switched-OFF filter keys; [] = show all
+      scope: 'subtree' }   // 'subtree' = this page + sub-pages | 'page'
   ]
 }
 ```
+
+A day note or deadline authored from a documentation page carries one extra field:
+
+```js
+{ ...existing calendarNotes / deadlines fields, docPageId }
+```
+
+Its absence means the item was added in the Schedule, so existing data reads exactly as before and no migration is needed. Because it is a field on an item inside an already-registered slot array, it needs no slot-constructor default and no import allow-list entry — whole-object export, the array-level import copy, and the opaque Firebase blob all carry it, and every edit path in `progress.html` spreads the item rather than rebuilding it.
 
 Sibling order in the sidebar is the pages' relative order inside the flat `docPages` array — there is no separate order field. Drag-to-arrange therefore persists by splicing the one moved page to a new array position (and re-parenting is just a `parentId` change), so export/import, Firebase sync, and the slot constructors need no order-specific handling.
 
@@ -334,8 +366,9 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule, calendar notes |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `notifications.html` | Unified Gmail/Outlook/Teams inbox, filtering, per-item tick state |
-| `documentations.html` | Notion-style nested documentation pages, source-dump references, PDF export |
+| `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, PDF export |
 | `notifications.sample.json` | Synthetic fixture documenting the `notifications.json` feed contract |
+| `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry and deadline rules (`window.TrackCalendar`) |
 | `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
 | `storage-guard.js` | `localStorage` quota guard for every whole-database write, plus the quota banner (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
@@ -361,6 +394,7 @@ Track-website/
 ├── notifications.html
 ├── documentations.html
 ├── notifications.sample.json
+├── calendar-core.js
 ├── theme.js
 ├── storage-guard.js
 ├── firebase-sync.js
@@ -696,6 +730,30 @@ The latest audit established:
 firebase-sync.js: node syntax check passed
 notes-widget.js: node syntax check passed
 storage-guard.js: node syntax check passed
+calendar-core.js: node syntax check passed
+calendar-core.js: 80 assertions passed against a synthetic slot, re-run under
+  Pacific/Kiritimati (UTC+14), Pacific/Midway (UTC-11), America/Los_Angeles, Asia/Kathmandu
+  and UTC with identical results — local day preserved at 00:15 and 23:30, leap-year and
+  month/year lengths, dot buckets, greedy milestone lane packing, per-source filtering,
+  Documentation as one key covering both notes and deadlines, caution ranges excluding the
+  due day, deadline validation, run-ups spanning month/year/DST boundaries, MG 30-day
+  carry-forward, and bare/legacy slots returning empty instead of throwing
+documentations calendar block: 71 assertions passed in headless Chrome — all four pages
+  mount a non-empty React root with the notes widget and no page errors; ?page= deep link
+  selects its page; a new block persists as hidden:[] scope:'subtree' with all 13 filters on;
+  authored notes and deadlines land in the shared arrays tagged with docPageId on the local
+  calendar date without disturbing existing items; owned items are highlighted and are the
+  only rows with edit controls; the Documentation filter hides doc notes and doc deadlines
+  together while leaving schedule-authored ones, and Day notes/Deadlines do the converse;
+  scope toggling changes ownership across sub-pages; unowned doc items show an origin chip;
+  authored items reach the Schedule and its popup links back to the source page; an
+  export→import allow-list replay preserves docPageId and calendar blocks across all 21
+  fields; a docPages write does not drop a concurrent calendarNotes write from another tab;
+  and deleting a page keeps every item it authored
+documentations calendar block, styling and chrome: 10 assertions passed — the print flatten
+  rule parses with its :not(.doc-cal) exemption and the calendar print rules are live, the
+  block picks up its own padding/border with 52px day cells, no horizontal overflow of the
+  editor column, and the block's move/delete chrome plus sidebar drag-to-nest still work
 localStorage quota guard: 43 assertions passed in headless Chrome against a synthetic slot —
   all five pages mount with window.TrackStorage present and the notes widget attached; with
   the real quota exhausted by filler keys, TrackStorage.saveDB returns false, the quota
@@ -706,7 +764,8 @@ quota guard composition with firebase-sync: 9 assertions passed — storage-guar
   Storage.prototype.setItem owned by firebase-sync, saveDB dispatches through that patch
   rather than a captured native reference, a quota throw runs no trailing patch statement,
   and a non-quota error is rethrown instead of swallowed
-index.html: loaded in headless Chrome; Universal calendar rendered, day detail opened
+index.html: loaded in headless Chrome; Universal calendar rendered, day detail opened,
+  deadlines listed in the day strip after the collectors moved to calendar-core.js
 Universal calendar full-screen layout: 134 assertions passed against a synthetic slot at
   390x844, 844x390, 820x1180, 1180x820 and 1440x900 in both themes — panel spans the full
   viewport width with no horizontal page scroll, is exactly one screen tall wherever there

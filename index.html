@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js"></script>
+  <script src="calendar-core.js"></script>
   <link rel="stylesheet" href="styles.css">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -365,235 +366,37 @@
 
 
     // ── universal calendar (read-only aggregation of the active slot) ──────
-    // Local calendar dates only — toISOString would give the UTC day.
+    // The collectors live in calendar-core.js so documentations.html renders
+    // the same aggregation. This page renders all of it, unfiltered: it passes
+    // no `hidden` set, so every category is shown.
 
-    function calToDateStr(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
-    const calDIM = (y,m) => new Date(y, m+1, 0).getDate();
-    const calFirstDay = (y,m) => new Date(y, m, 1).getDay();
-    const calDStr = (y,m,d) => y + '-' + String(m+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
-    const CAL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-    const CAL_DOWS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const calToDateStr = TrackCalendar.toDateStr;
+    const calDIM = TrackCalendar.dim;
+    const calFirstDay = TrackCalendar.firstDay;
+    const calDStr = TrackCalendar.dStr;
+    const CAL_MONTHS = TrackCalendar.MONTHS;
+    const CAL_DOWS = TrackCalendar.DOWS;
+    const CAL_CATS = TrackCalendar.CATS;
+    const CAL_MS_MAX_LANES = TrackCalendar.MS_MAX_LANES;
+    const CAL_SCHED_START_HOUR = TrackCalendar.SCHED_START_HOUR;
+    const CAL_SCHED_END_HOUR = TrackCalendar.SCHED_END_HOUR;
+    const CAL_SCHED_PX_PER_HOUR = TrackCalendar.SCHED_PX_PER_HOUR;
+    const calBuildBuckets = TrackCalendar.buildBuckets;
+    const calBuildMilestoneLanes = TrackCalendar.buildMilestoneLanes;
+    const calBuildDaySchedule = TrackCalendar.buildDaySchedule;
+    const calOverlapInfo = TrackCalendar.overlapInfo;
+    const calDurLabel = TrackCalendar.durLabel;
 
-    // Dots cover only what the day schedule does not already show.
-    // Schedule items (tasks, routines, SIR, supporting actions, MM sessions, MG
-    // focus, calendar notes) render in the read-only day timeline instead, and
-    // milestones render as spanning lane bars — see calBuildMilestoneLanes.
-    const CAL_CATS = [
-      {key:'kolbmg', label:'Kolb / MG change', color:'#38bdf8'},
-      {key:'lin',    label:'LIN record',       color:'#2dd4bf'},
-      {key:'note',   label:'Floating note',    color:'#e879f9'},
-      {key:'dump',   label:'Source dump',      color:'#a8a29e'}
-    ];
-
-    // milestone bar colours — same palette progress.html uses for chipColor
-    const CAL_MS_PALETTE = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#14b8a6','#f97316','#06b6d4','#a3e635'];
-    const CAL_MS_MAX_LANES = 3;
-
-    // same semantics as progress.html getMGsForDay: exact key, else walk back ≤30 days
-    function calMGsForDay(ds, mgSchedule) {
-      if (Object.prototype.hasOwnProperty.call(mgSchedule, ds)) return mgSchedule[ds] || [];
-      const d = new Date(ds + 'T12:00:00');
-      for (let i = 1; i <= 30; i++) {
-        d.setDate(d.getDate() - 1);
-        const prev = calToDateStr(d);
-        if (Object.prototype.hasOwnProperty.call(mgSchedule, prev)) return mgSchedule[prev] || [];
-      }
-      return [];
-    }
-
-    function calFlattenGoals(goals) {
-      const out = [];
-      (function walk(list) { (list||[]).forEach(g => { out.push(g); walk(g.children); }); })(goals);
-      return out;
-    }
-
-    function calBuildBuckets(slot, y, m) {
-      const buckets = {};
-      const first = calDStr(y, m, 1), last = calDStr(y, m, calDIM(y, m));
-      const add = (ds, cat, label, meta) => {
-        if (!ds || ds < first || ds > last) return;
-        (buckets[ds] = buckets[ds] || {});
-        (buckets[ds][cat] = buckets[ds][cat] || []).push({label, meta});
-      };
-      const mms = slot.mms || [];
-      const mmName = id => { const mm = mms.find(x => x.id === id); return mm ? mm.name : 'MM ' + id; };
-
-      // Kolb records and MG changes share one dot — they almost always land together.
-      (slot.kolbs||[]).forEach(k => add(k.date, 'kolbmg', k.mmId != null ? mmName(k.mmId) : 'Free Kolb', 'Kolb'));
-      (slot.mgChanges||[]).forEach(c => add(c.date, 'kolbmg', mmName(c.mmId) + (c.newMG ? ': ' + c.newMG : ''), 'MG change'));
-      (slot.linChanges||[]).forEach(r => add(r.date, 'lin', ((slot.linDayTitles||{})[r.date]) || r.title || r.date, (r.items||[]).length + ' change(s)'));
-      (slot.notes||[]).forEach(n => { if (n.createdAt) add(calToDateStr(new Date(n.createdAt)), 'note', n.topic || String(n.content||'').slice(0, 40) || 'Note'); });
-      (slot.sourceDumps||[]).forEach(dp => { if (dp.createdAt) add(dp.createdAt, 'dump', dp.title || 'Untitled'); });
-
-      return buckets;
-    }
-
-    // ── milestone lanes ───────────────────────────────────────────────────
-    // Milestones are periods, so they render as thin bars spanning their days
-    // rather than as a repeated dot. Lane index is stable across the month so a
-    // bar stays on the same row from its start day to its end day.
-    function calBuildMilestoneLanes(slot, y, m) {
-      const first = calDStr(y, m, 1), last = calDStr(y, m, calDIM(y, m));
-
-      // milestone definitions are cloned across linked goal nodes — dedupe by id
-      const seenMs = new Set();
-      const items = [];
-      calFlattenGoals(slot.goals||[]).forEach(g => (g.milestones||[]).forEach(mst => {
-        if (seenMs.has(mst.id)) return;
-        seenMs.add(mst.id);
-        if (!mst.startDate || !mst.endDate) return;
-        if (mst.endDate < first || mst.startDate > last) return;
-        items.push({ id: mst.id, title: mst.title || 'Milestone', owner: g.title || '', startDate: mst.startDate, endDate: mst.endDate });
-      }));
-
-      items.sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
-
-      // greedy lane packing: lowest lane whose intervals do not overlap
-      const laneEnds = [];
-      items.forEach((it, idx) => {
-        it.color = CAL_MS_PALETTE[idx % CAL_MS_PALETTE.length];
-        let lane = 0;
-        while (lane < laneEnds.length && laneEnds[lane] >= it.startDate) lane++;
-        laneEnds[lane] = it.endDate;
-        it.lane = lane;
-      });
-
-      const lanesByDate = {};
-      items.forEach(it => {
-        for (let d = 1; d <= calDIM(y, m); d++) {
-          const ds = calDStr(y, m, d);
-          if (ds < it.startDate || ds > it.endDate) continue;
-          (lanesByDate[ds] = lanesByDate[ds] || []).push({
-            lane: it.lane, color: it.color, title: it.title, owner: it.owner,
-            startDate: it.startDate, endDate: it.endDate,
-            isStart: ds === it.startDate, isEnd: ds === it.endDate
-          });
-        }
-      });
-
-      return { lanesByDate, laneCount: laneEnds.length };
-    }
-
-    // ── read-only day schedule ────────────────────────────────────────────
-    // Mirrors the geometry and collectors of SchedulePanel in progress.html so
-    // the preview reads the same as the real thing. Nothing here writes.
-    const CAL_SCHED_START_HOUR = 0, CAL_SCHED_END_HOUR = 24, CAL_SCHED_PX_PER_HOUR = 28;
-
-    // same fallback chain as goalDurationFor in progress.html
-    function calGoalDuration(t, ds) {
-      const perDate = t.taskType === 'routine' ? (t.routineDates && t.routineDates[ds] || {}).duration : undefined;
-      return (perDate != null ? perDate : t.duration) || 60;
-    }
-
-    function calGoalDone(node, ds) {
-      if (!node) return false;
-      if (node.taskType === 'routine') return !!((node.routineDates || {})[ds] || {}).done;
-      const kids = node.children || [];
-      if (!kids.length) return !!node.completed;
-      return kids.every(c => calGoalDone(c, ds));
-    }
-
-    function calBuildDaySchedule(slot, ds) {
-      const mms = slot.mms || [];
-      const mmName = id => { const mm = mms.find(x => x.id === id); return mm ? mm.name : 'MM ' + id; };
-      const blocks = [];
-
-      calFlattenGoals(slot.goals||[]).forEach(t => {
-        if (t.isLink) return;
-        const kids = t.children || [];
-        const scheduled = t.taskType === 'routine'
-          ? (t.routineDates ? Object.prototype.hasOwnProperty.call(t.routineDates, ds) : t.scheduledDate === ds)
-          : t.scheduledDate === ds;
-        if (!scheduled) return;
-        if (t.taskType === 'milestone' && !kids.length) return;
-        // a parent whose child sits on the same day is represented by the child
-        if (kids.some(c => c.scheduledDate === ds)) return;
-        const rd = (t.routineDates || {})[ds] || {};
-        blocks.push({
-          id: t.id,
-          title: t.title || 'Untitled',
-          kind: t.taskType === 'routine' ? 'Routine' : 'Goal task',
-          time: (t.taskType === 'routine' ? rd.time || t.scheduledTime : t.scheduledTime) || '09:00',
-          duration: calGoalDuration(t, ds),
-          done: calGoalDone(t, ds),
-          color: '#6366f1'
-        });
-      });
-
-      (slot.saEntries||[]).filter(e => e.date === ds).forEach(e => {
-        const a = (slot.saActions||[]).find(x => x.id === e.actionId);
-        blocks.push({
-          id: e.id,
-          title: a ? ((a.emoji ? a.emoji + ' ' : '') + a.title) : 'Action ' + e.actionId,
-          kind: 'Supporting action',
-          time: e.time || '09:00',
-          duration: e.duration || 60,
-          done: !!e.done,
-          color: (a && a.color) || '#fb923c'
-        });
-      });
-
-      (slot.mmEntries||[]).filter(e => e.date === ds).forEach(e => {
-        const mm = mms.find(x => x.id === e.mmId);
-        blocks.push({
-          id: e.id,
-          title: mm ? mm.name : mmName(e.mmId),
-          kind: 'MM session',
-          time: e.time || '09:00',
-          duration: e.duration || 60,
-          done: !!e.done,
-          color: (mm && mm.color) || '#6366f1'
-        });
-      });
-
-      const sir = (slot.sessions||[])
-        .filter(s => !s.skipped && (s.done && s.finishDate ? s.finishDate : s.date) === ds)
-        .map(s => ({ label: mmName(s.mmId) + ' · rep ' + ((s.repIndex||0)+1), done: !!s.done }));
-
-      const mgSchedule = slot.mgSchedule || {};
-      const mgIds = calMGsForDay(ds, mgSchedule);
-
-      return {
-        blocks,
-        sir,
-        calNotes: (slot.calendarNotes||[]).filter(n => n.date === ds),
-        mgs: mgIds.map(mmName),
-        mgCarried: mgIds.length > 0 && !Object.prototype.hasOwnProperty.call(mgSchedule, ds)
-      };
-    }
-
-    // port of computeOverlapInfo in progress.html: connected components over
-    // intersecting [top, top+height) ranges, so overlaps sit side by side
-    function calOverlapInfo(blocks) {
-      const n = blocks.length;
-      const adj = Array.from({length: n}, () => []);
-      for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-          if (blocks[i].top < blocks[j].top + blocks[j].height &&
-              blocks[j].top < blocks[i].top + blocks[i].height) { adj[i].push(j); adj[j].push(i); }
-        }
-      }
-      const visited = new Set(), info = {};
-      for (let i = 0; i < n; i++) {
-        if (visited.has(i)) continue;
-        const group = [], stack = [i];
-        while (stack.length) {
-          const v = stack.pop();
-          if (visited.has(v)) continue;
-          visited.add(v); group.push(v);
-          adj[v].forEach(u => stack.push(u));
-        }
-        if (group.length < 2) continue;
-        const orderedIds = group.sort((a, b) => a - b).map(idx => blocks[idx].id);
-        orderedIds.forEach(id => { info[id] = orderedIds; });
-      }
-      return info;
-    }
-
-    function calDurLabel(min) {
-      if (min < 60) return min + 'min';
-      const h = Math.floor(min / 60), r = min % 60;
-      return h + 'h' + (r ? ' ' + r + 'min' : '');
+    // A day note or deadline authored from a Documentations page carries that
+    // page's id; absence means it was authored in the Schedule. This calendar
+    // is read-only, so the provenance goes in the tooltip — documentations.html
+    // and progress.html render it as a link instead.
+    function calOriginLabel(slot, item) {
+      if (!item.docPageId) return 'Added in the Schedule';
+      const page = (slot.docPages || []).find(p => p.id === item.docPageId);
+      return page
+        ? 'From documentation: ' + (page.title || 'Untitled')
+        : 'From documentation (source page removed)';
     }
 
     function renderCalDaySchedule(el, slot, ds) {
@@ -601,7 +404,8 @@
       const wrap = document.createElement('div');
       wrap.className = 'cal-sched';
 
-      if (day.mgs.length || day.calNotes.length || day.sir.length) {
+      if (day.mgs.length || day.calNotes.length || day.sir.length
+          || day.deadlines.length || day.deadlinesCaution.length) {
         const strip = document.createElement('div');
         strip.className = 'cal-sched-strip';
 
@@ -644,7 +448,32 @@
             const chip = document.createElement('span');
             chip.className = 'cal-sched-note';
             chip.textContent = '📌 ' + (n.title || n.detail || 'Note');
-            if (n.detail) chip.title = n.detail;
+            chip.title = (n.detail ? n.detail + '\n' : '') + calOriginLabel(slot, n);
+            row.appendChild(chip);
+          });
+          strip.appendChild(row);
+        }
+
+        // Deadlines: due today first, then the tail of any caution period
+        // running through today. Both are date-and-time items, so they belong
+        // beside the notes rather than in the hour grid.
+        if (day.deadlines.length || day.deadlinesCaution.length) {
+          const row = document.createElement('div');
+          row.className = 'cal-sched-dls';
+          day.deadlines.forEach(d => {
+            const chip = document.createElement('span');
+            chip.className = 'cal-sched-dl due';
+            chip.textContent = '⏰ ' + d.time + ' ' + (d.title || 'Deadline');
+            chip.title = 'Due today at ' + d.time
+              + (d.detail ? '\n' + d.detail : '') + '\n' + calOriginLabel(slot, d);
+            row.appendChild(chip);
+          });
+          day.deadlinesCaution.forEach(d => {
+            const chip = document.createElement('span');
+            chip.className = 'cal-sched-dl caution';
+            chip.textContent = '! ' + (d.title || 'Deadline');
+            chip.title = 'Caution period · due ' + d.date + ' at ' + d.time
+              + (d.detail ? '\n' + d.detail : '') + '\n' + calOriginLabel(slot, d);
             row.appendChild(chip);
           });
           strip.appendChild(row);

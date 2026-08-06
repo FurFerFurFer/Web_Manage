@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%230d9488%22/%3E%3Cpath d=%22M10 9h12M10 15h12M10 21h8%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js"></script>
+  <script src="calendar-core.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -40,14 +41,29 @@
     function _readP(key, fallback) {
       const s=_activeSlot(); return (s && s[key]!==undefined) ? s[key] : fallback;
     }
-    // this page only ever writes the docPages key, always as a fresh
-    // read-modify-write so other pages' fields are never rebuilt from stale state
-    function _writeDocPages(val) {
+    // Every write here touches exactly ONE slot key and is a fresh
+    // read-modify-write, so a field another page owns is never rebuilt from
+    // this page's stale state.
+    function _writeSlotKey(key, val) {
       const db=_getTrackDB(), slots=db.slots||[];
       if (!slots.length) return;
       const id=(slots.find(s=>s.id===db.activeSlotId)||slots[0]).id;
-      db.slots=slots.map(s=>s.id===id?{...s,docPages:val}:s);
+      db.slots=slots.map(s=>s.id===id?{...s,[key]:val}:s);
       TrackStorage.saveDB(db);
+    }
+    // calendarNotes and deadlines are owned by progress.html. Holding them in
+    // React state and writing the array back would clobber anything that page
+    // (or another tab) added since this one mounted, so every edit derives the
+    // next array from what is stored RIGHT NOW and returns it for rendering.
+    function _mutateSlotKey(key, fn) {
+      const db=_getTrackDB(), slots=db.slots||[];
+      if (!slots.length) return [];
+      const id=(slots.find(s=>s.id===db.activeSlotId)||slots[0]).id;
+      const cur=slots.find(s=>s.id===id);
+      const next=fn((cur && cur[key]) || []);
+      db.slots=slots.map(s=>s.id===id?{...s,[key]:next}:s);
+      TrackStorage.saveDB(db);
+      return next;
     }
 
     // ── local calendar dates (never toISOString — that is a UTC day) ─────────
@@ -57,6 +73,16 @@
 
     // string ids: can never collide with the numeric nid() counters in sir-ks02
     const genId = () => Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+
+    // ?page=<id> deep link, the counterpart of progress.html's ?date=<ds>.
+    // Day notes and deadlines authored here point back at their source page,
+    // so the Schedule can link straight to it.
+    function _deepLinkPageId() {
+      try {
+        const id = new URLSearchParams(location.search).get('page');
+        return id && _readP('docPages', []).some(p => p.id === id) ? id : null;
+      } catch { return null; }
+    }
 
     // every page at or under `id`, walked as a fixed point over the flat parentId
     // links (a subtree is not contiguous in the array, so adjacency proves nothing).
@@ -388,6 +414,460 @@
       );
     }
 
+    // ── calendar block ───────────────────────────────────────────────────────
+    // Shows the whole workspace by day using the same collectors as the
+    // universal calendar on Home (calendar-core.js), and lets this page author
+    // the two things a document can put on the schedule: day notes and
+    // deadlines. Those are written into the shared slot arrays, so they appear
+    // in the Schedule and on the Home calendar like any others — the only
+    // difference is a docPageId pointing back at the page that added them.
+
+    const CAL_DATE_FMT = {weekday:'long', year:'numeric', month:'long', day:'numeric'};
+
+    // read-only day timeline; a JSX port of renderCalDaySchedule in index.html
+    function CalDaySched({day}) {
+      const TC = TrackCalendar;
+      if (!day.blocks.length) return <div className="cal-empty-msg">Nothing scheduled.</div>;
+      const totalH = (TC.SCHED_END_HOUR - TC.SCHED_START_HOUR) * TC.SCHED_PX_PER_HOUR;
+      const laid = day.blocks.map(b => {
+        const parts = String(b.time).split(':');
+        const h = Number(parts[0]) || 0, mi = Number(parts[1]) || 0;
+        return {...b,
+          top: (h + mi/60 - TC.SCHED_START_HOUR) * TC.SCHED_PX_PER_HOUR,
+          height: Math.max(16, (b.duration/60) * TC.SCHED_PX_PER_HOUR)};
+      });
+      const overlap = TC.overlapInfo(laid);
+      const hours = [];
+      for (let h = TC.SCHED_START_HOUR; h < TC.SCHED_END_HOUR; h++) hours.push(h);
+      return (
+        <div className="cal-sched-grid" style={{height: totalH+'px'}}>
+          {hours.map(h => {
+            const top = (h - TC.SCHED_START_HOUR) * TC.SCHED_PX_PER_HOUR;
+            return (
+              <React.Fragment key={h}>
+                <div className="cal-sched-line" style={{top: top+'px'}} />
+                <div className="cal-sched-hour" style={{top: top+'px'}}>{String(h).padStart(2,'0')}:00</div>
+              </React.Fragment>
+            );
+          })}
+          {/* blocks live in their own layer so their percentage widths are
+              measured against the track area, not the hour-label gutter */}
+          <div className="cal-sched-blocks">
+            {laid.filter(b => b.top >= -b.height && b.top < totalH).map(b => {
+              const group = overlap[b.id];
+              const n = group ? group.length : 1;
+              const idx = group ? group.indexOf(b.id) : 0;
+              return (
+                <div key={b.id} className={"cal-sched-block"+(b.done?' done':'')}
+                  title={`${b.kind} · ${b.title} · ${b.time} · ${TC.durLabel(b.duration)}${b.done?' · done':''}`}
+                  style={{top: b.top+'px', height: b.height+'px',
+                    left: `calc(${idx*(100/n)}% + 1px)`, width: `calc(${100/n}% - 2px)`,
+                    borderColor: b.color, background: b.color + (b.done ? '18' : '30')}}>
+                  <div className="cal-sched-block-title">{(b.done?'✓ ':'')+b.title}</div>
+                  <div className="cal-sched-block-meta">{b.time} · {TC.durLabel(b.duration)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    function CalOriginChip({origin, onOpenPage}) {
+      if (origin.kind === 'schedule') return null;
+      if (origin.kind === 'orphan') {
+        return (
+          <span className="cal-doc-origin missing"
+            title="The documentation page that added this was deleted. The item was kept.">
+            📄 source page removed
+          </span>
+        );
+      }
+      return (
+        <button type="button" className={"cal-doc-origin"+(origin.kind==='own'?' own':'')}
+          onClick={()=>onOpenPage(origin.page.id)}
+          title={`Added from "${origin.page.title || 'Untitled'}" — click to open that page`}>
+          📄 {origin.page.title || 'Untitled'}
+        </button>
+      );
+    }
+
+    function CalendarBlock({block, page, docPages, slot, onChange, onFocus, onOpenPage, onMutate}) {
+      const TC = TrackCalendar;
+      const [cur, setCur] = useState(() => { const d = new Date(); return {y: d.getFullYear(), m: d.getMonth()}; });
+      const [selDs, setSelDs] = useState(null);
+      const [showFilters, setShowFilters] = useState(false);
+      const [composer, setComposer] = useState(null);            // null | 'note' | 'deadline'
+      const [editing, setEditing] = useState(null);              // null | {kind, id}
+      const [noteDraft, setNoteDraft] = useState({title:'', detail:''});
+      const [dlDraft, setDlDraft] = useState({title:'', detail:'', time:'', startDate:''});
+
+      const hidden = block.hidden || [];
+      const hiddenKey = hidden.join(',');
+      const opts = {hidden};
+
+      const buckets = useMemo(() => TC.buildBuckets(slot, cur.y, cur.m, opts), [slot, cur.y, cur.m, hiddenKey]);
+      const ms = useMemo(() => TC.buildMilestoneLanes(slot, cur.y, cur.m, opts), [slot, cur.y, cur.m, hiddenKey]);
+      const day = selDs ? TC.buildDaySchedule(slot, selDs, opts) : null;
+
+      // "Exclusively editable" scope: this page, or this page and everything
+      // nested under it. Items from any other page stay visible but read-only.
+      const owned = useMemo(
+        () => block.scope === 'page' ? new Set([page.id]) : docDescendantIds(docPages, page.id),
+        [block.scope, docPages, page.id]);
+
+      // days carrying an item this calendar owns, for the cell highlight.
+      // A deadline marks its due day; its caution run-up is not highlighted.
+      const ownedDates = useMemo(() => {
+        const set = new Set();
+        [...(slot.calendarNotes||[]), ...(slot.deadlines||[])]
+          .forEach(x => { if (x.docPageId && owned.has(x.docPageId)) set.add(x.date); });
+        return set;
+      }, [slot, owned]);
+
+      function originOf(item) {
+        if (!item.docPageId) return {kind:'schedule'};
+        const p = docPages.find(x => x.id === item.docPageId);
+        if (!p) return {kind:'orphan'};
+        return {kind: owned.has(item.docPageId) ? 'own' : 'other', page: p};
+      }
+      // an orphan is editable so a deleted source page can never strand an item
+      const canEdit = o => o.kind === 'own' || o.kind === 'orphan';
+
+      const shiftMonth = delta => {
+        setSelDs(null); closeForms();
+        setCur(c => {
+          let y = c.y, m = c.m + delta;
+          if (m < 0) { m = 11; y--; }
+          if (m > 11) { m = 0; y++; }
+          return {y, m};
+        });
+      };
+      function closeForms() {
+        setComposer(null); setEditing(null);
+        setNoteDraft({title:'', detail:''});
+        setDlDraft({title:'', detail:'', time:'', startDate:''});
+      }
+      const toggleFilter = key => onChange({...block,
+        hidden: hidden.includes(key) ? hidden.filter(k => k !== key) : [...hidden, key]});
+
+      // ── authoring ──
+      const addNote = () => {
+        if (!noteDraft.title.trim() || !selDs) return;
+        onMutate('calendarNotes', prev => [...prev, {
+          id: genId(), date: selDs, title: noteDraft.title.trim(),
+          detail: noteDraft.detail.trim(), createdAt: Date.now(), docPageId: page.id
+        }]);
+        closeForms();
+      };
+      const saveNote = id => {
+        if (!noteDraft.title.trim()) return;
+        onMutate('calendarNotes', prev => prev.map(n => n.id === id
+          ? {...n, title: noteDraft.title.trim(), detail: noteDraft.detail.trim()} : n));
+        closeForms();
+      };
+      const addDeadline = () => {
+        if (!selDs || !TC.dlValid(dlDraft, selDs)) return;
+        onMutate('deadlines', prev => [...prev, {
+          id: genId(), date: selDs, time: dlDraft.time, startDate: dlDraft.startDate,
+          title: dlDraft.title.trim(), detail: dlDraft.detail.trim(),
+          createdAt: Date.now(), docPageId: page.id
+        }]);
+        closeForms();
+      };
+      const saveDeadline = (id, dueDate) => {
+        if (!TC.dlValid(dlDraft, dueDate)) return;
+        onMutate('deadlines', prev => prev.map(d => d.id === id ? {...d,
+          time: dlDraft.time, startDate: dlDraft.startDate,
+          title: dlDraft.title.trim(), detail: dlDraft.detail.trim()} : d));
+        closeForms();
+      };
+      const removeItem = (key, id, what) => {
+        if (!window.confirm(`Delete this ${what}? It will disappear from the schedule too.`)) return;
+        onMutate(key, prev => prev.filter(x => x.id !== id));
+        closeForms();
+      };
+
+      const noteForm = (onSave, label) => (
+        <div className="cal-doc-form doc-chrome">
+          <input value={noteDraft.title} autoFocus placeholder="Note title"
+            onChange={e=>setNoteDraft(d=>({...d, title: e.target.value}))} />
+          <textarea rows={2} value={noteDraft.detail} placeholder="Detail (optional)"
+            onChange={e=>setNoteDraft(d=>({...d, detail: e.target.value}))} />
+          <div className="cal-doc-form-acts">
+            <button type="button" className="primary" disabled={!noteDraft.title.trim()} onClick={onSave}>{label}</button>
+            <button type="button" onClick={closeForms}>Cancel</button>
+          </div>
+        </div>
+      );
+      const dlForm = (onSave, label, dueDate) => (
+        <div className="cal-doc-form doc-chrome">
+          <input value={dlDraft.title} autoFocus placeholder="Deadline title"
+            onChange={e=>setDlDraft(d=>({...d, title: e.target.value}))} />
+          <div className="cal-doc-form-row">
+            <label>Due at<input type="time" value={dlDraft.time}
+              onChange={e=>setDlDraft(d=>({...d, time: e.target.value}))} /></label>
+            <label>Caution from<input type="date" value={dlDraft.startDate} max={dueDate}
+              onChange={e=>setDlDraft(d=>({...d, startDate: e.target.value}))} /></label>
+          </div>
+          <textarea rows={2} value={dlDraft.detail} placeholder="Detail (optional)"
+            onChange={e=>setDlDraft(d=>({...d, detail: e.target.value}))} />
+          <div className="cal-doc-form-acts">
+            <button type="button" className="primary" disabled={!TC.dlValid(dlDraft, dueDate)} onClick={onSave}>{label}</button>
+            <button type="button" onClick={closeForms}>Cancel</button>
+            {!TC.dlValid(dlDraft, dueDate) && dlDraft.title.trim() && (
+              <span className="cal-doc-hint">Needs a time, and a caution start on or before {dueDate}.</span>
+            )}
+          </div>
+        </div>
+      );
+
+      const shownLanes = Math.min(ms.laneCount, TC.MS_MAX_LANES);
+      const todayDs = TC.toDateStr(new Date());
+      const firstCol = TC.firstDay(cur.y, cur.m);
+      const dayCount = TC.dim(cur.y, cur.m);
+
+      return (
+        <div className="doc-cal" onFocus={onFocus} onClick={onFocus}>
+          <div className="doc-cal-head doc-chrome">
+            <div className="cal-month-nav">
+              <button type="button" className="cal-nav-btn" onClick={()=>shiftMonth(-1)} aria-label="Previous month">‹</button>
+              <span className="cal-month-label">{TC.MONTHS[cur.m]} {cur.y}</span>
+              <button type="button" className="cal-nav-btn" onClick={()=>shiftMonth(1)} aria-label="Next month">›</button>
+            </div>
+            <div className="doc-cal-head-acts">
+              <button type="button" className="doc-cal-btn"
+                title="Which pages' items this calendar may edit"
+                onClick={()=>onChange({...block, scope: block.scope === 'page' ? 'subtree' : 'page'})}>
+                {block.scope === 'page' ? '⌾ This page' : '⌾ This page + sub-pages'}
+              </button>
+              <button type="button" className={"doc-cal-btn"+(hidden.length?' on':'')}
+                aria-expanded={showFilters} onClick={()=>setShowFilters(v=>!v)}
+                title="Choose which categories appear">
+                ⚟ Filter{hidden.length ? ` (${TC.FILTERS.length - hidden.length}/${TC.FILTERS.length})` : ''}
+              </button>
+            </div>
+          </div>
+
+          {showFilters && (
+            <div className="doc-cal-filters doc-chrome">
+              {TC.FILTERS.map(f => {
+                const on = !hidden.includes(f.key);
+                return (
+                  <button type="button" key={f.key} aria-pressed={on}
+                    className={"doc-cal-filter"+(on?' on':'')} onClick={()=>toggleFilter(f.key)}>
+                    <span className="cal-dot" style={{background: on ? f.color : 'transparent', borderColor: f.color}} />
+                    {f.label}
+                  </button>
+                );
+              })}
+              <button type="button" className="doc-cal-filter reset" onClick={()=>onChange({...block, hidden: []})}>
+                Show all
+              </button>
+            </div>
+          )}
+
+          <div className="cal-dow-row">
+            {TC.DOWS.map(d => <div key={d} className="cal-dow">{d}</div>)}
+          </div>
+          <div className="cal-grid">
+            {Array.from({length: firstCol}).map((_, i) => <div key={'e'+i} className="cal-cell empty" />)}
+            {Array.from({length: dayCount}).map((_, i) => {
+              const d = i + 1, ds = TC.dStr(cur.y, cur.m, d);
+              const bucket = buckets[ds] || {};
+              const dayLanes = ms.lanesByDate[ds] || [];
+              const cats = TC.CATS.filter(c => bucket[c.key] && bucket[c.key].length);
+              const byLane = {};
+              dayLanes.forEach(seg => { byLane[seg.lane] = seg; });
+              const overflow = dayLanes.filter(seg => seg.lane >= TC.MS_MAX_LANES);
+              const col = (firstCol + d - 1) % 7;
+              return (
+                <div key={ds} title={cats.map(c => c.label+': '+bucket[c.key].length).join('\n')}
+                  className={"cal-cell"+(ds===todayDs?' today':'')+(dayLanes.length?' milestone':'')
+                    +(ds===selDs?' selected':'')+(ownedDates.has(ds)?' cal-doc-own-day':'')}
+                  onClick={()=>{ setSelDs(ds===selDs?null:ds); closeForms(); }}>
+                  <div className="cal-day-num">{d}</div>
+                  {shownLanes > 0 && (
+                    <div className="cal-ms-lanes">
+                      {Array.from({length: shownLanes}).map((__, l) => {
+                        const seg = byLane[l];
+                        return (
+                          <div key={l} className="cal-ms-lane">
+                            {seg && (
+                              /* bridge into the neighbouring cell so a period reads as
+                                 one line; never bridge across a week wrap */
+                              <span className={"cal-ms-line"
+                                  +(seg.isStart ? ' cap-start' : (col !== 0 ? ' bridge-left' : ''))
+                                  +(seg.isEnd ? ' cap-end' : (col !== 6 ? ' bridge-right' : ''))}
+                                style={{background: seg.color}}
+                                title={`${seg.title}${seg.owner ? ' — '+seg.owner : ''} · ${seg.startDate} → ${seg.endDate}`} />
+                            )}
+                          </div>
+                        );
+                      })}
+                      {overflow.length > 0 && (
+                        <span className="cal-ms-more" title={overflow.map(s=>s.title).join('\n')}>+{overflow.length}</span>
+                      )}
+                    </div>
+                  )}
+                  {cats.length > 0 && (
+                    <div className="cal-dots">
+                      {cats.map(c => <span key={c.key} className="cal-dot" style={{background: c.color}} />)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {day && (
+            <div className="cal-detail doc-cal-detail">
+              <div className="cal-detail-head">
+                <span className="cal-detail-date">
+                  {new Date(selDs + 'T12:00:00').toLocaleDateString(undefined, CAL_DATE_FMT)}
+                </span>
+                <div className="cal-detail-acts doc-chrome">
+                  <a className="cal-detail-link" href={'progress.html?date='+selDs+'#schedule'}
+                    title="Open this day in the Schedule" aria-label={'Open '+selDs+' in the Schedule'}>→</a>
+                  <button type="button" className="cal-detail-link cal-detail-close"
+                    title="Close day detail" aria-label="Close day detail"
+                    onClick={()=>{ setSelDs(null); closeForms(); }}>×</button>
+                </div>
+              </div>
+
+              <div className="cal-sched">
+                {(day.mgs.length > 0 || day.sir.length > 0) && (
+                  <div className="cal-sched-strip">
+                    {day.mgs.length > 0 && (
+                      <div className="cal-sched-mg">
+                        <span className="cal-sched-strip-lbl">{day.mgCarried ? 'MG focus ↑ carried' : 'MG focus'}</span>
+                        {day.mgs.map((name, i) => <span key={i} className="cal-sched-mg-item">• {name}</span>)}
+                      </div>
+                    )}
+                    {day.sir.length > 0 && (
+                      <div className="cal-sched-sirs">
+                        <span className="cal-sched-strip-lbl">SIR</span>
+                        {day.sir.map((s, i) => (
+                          <span key={i} className={"cal-sched-sir"+(s.done?' done':'')}>{s.label}{s.done?' ✓':''}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <CalDaySched day={day} />
+              </div>
+
+              {/* Day notes — this page may add them, and may edit the ones in its scope */}
+              <div className="cal-detail-group">
+                <div className="cal-detail-cat">
+                  <span className="cal-dot" style={{background:'#e879f9'}} />
+                  Day notes ({day.calNotes.length})
+                  <button type="button" className="doc-cal-add doc-chrome"
+                    onClick={()=>{ closeForms(); setComposer('note'); }}>+ note</button>
+                </div>
+                {day.calNotes.map(n => {
+                  const o = originOf(n);
+                  if (editing && editing.kind === 'note' && editing.id === n.id) {
+                    return <React.Fragment key={n.id}>{noteForm(()=>saveNote(n.id), 'Save')}</React.Fragment>;
+                  }
+                  return (
+                    <div key={n.id} className={"cal-doc-row"+(o.kind==='own'?' cal-doc-own':'')}>
+                      <span className="cal-doc-row-main">
+                        📌 {n.title || 'Note'}
+                        {n.detail && <span className="cal-item-meta"> · {n.detail}</span>}
+                      </span>
+                      <CalOriginChip origin={o} onOpenPage={onOpenPage} />
+                      {canEdit(o) && (
+                        <span className="cal-doc-row-acts doc-chrome">
+                          <button type="button" title="Edit" onClick={()=>{
+                            closeForms(); setEditing({kind:'note', id:n.id});
+                            setNoteDraft({title: n.title||'', detail: n.detail||''});
+                          }}>✎</button>
+                          <button type="button" title="Delete" className="danger"
+                            onClick={()=>removeItem('calendarNotes', n.id, 'day note')}>✕</button>
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                {composer === 'note' && noteForm(addNote, 'Add note')}
+                {!day.calNotes.length && composer !== 'note' && <div className="cal-empty-msg">No day notes.</div>}
+              </div>
+
+              {/* Deadlines — due today, then the run-up of anything still pending */}
+              <div className="cal-detail-group">
+                <div className="cal-detail-cat">
+                  <span className="cal-dot" style={{background:'#f87171'}} />
+                  Deadlines ({day.deadlines.length})
+                  <button type="button" className="doc-cal-add doc-chrome"
+                    onClick={()=>{ closeForms(); setComposer('deadline');
+                      setDlDraft({title:'', detail:'', time:'', startDate: selDs}); }}>+ deadline</button>
+                </div>
+                {day.deadlines.map(dl => {
+                  const o = originOf(dl);
+                  if (editing && editing.kind === 'deadline' && editing.id === dl.id) {
+                    return <React.Fragment key={dl.id}>{dlForm(()=>saveDeadline(dl.id, dl.date), 'Save', dl.date)}</React.Fragment>;
+                  }
+                  return (
+                    <div key={dl.id} className={"cal-doc-row"+(o.kind==='own'?' cal-doc-own':'')}>
+                      <span className="cal-doc-row-main">
+                        ⏰ {dl.time} {dl.title || 'Deadline'}
+                        <span className="cal-item-meta"> · {TC.dlDayCount(dl)}-day run-up</span>
+                        {dl.detail && <span className="cal-item-meta"> · {dl.detail}</span>}
+                      </span>
+                      <CalOriginChip origin={o} onOpenPage={onOpenPage} />
+                      {canEdit(o) && (
+                        <span className="cal-doc-row-acts doc-chrome">
+                          <button type="button" title="Edit" onClick={()=>{
+                            closeForms(); setEditing({kind:'deadline', id:dl.id});
+                            setDlDraft({title: dl.title||'', detail: dl.detail||'',
+                              time: dl.time||'', startDate: TC.dlStart(dl)});
+                          }}>✎</button>
+                          <button type="button" title="Delete" className="danger"
+                            onClick={()=>removeItem('deadlines', dl.id, 'deadline')}>✕</button>
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                {composer === 'deadline' && dlForm(addDeadline, 'Add deadline', selDs)}
+                {day.deadlinesCaution.map(dl => (
+                  <div key={dl.id} className="cal-doc-row caution">
+                    <span className="cal-doc-row-main">
+                      <span className="cal-doc-bang">!</span> {dl.title || 'Deadline'}
+                      <span className="cal-item-meta"> · due {dl.date} at {dl.time}</span>
+                    </span>
+                    <CalOriginChip origin={originOf(dl)} onOpenPage={onOpenPage} />
+                  </div>
+                ))}
+                {!day.deadlines.length && !day.deadlinesCaution.length && composer !== 'deadline' && (
+                  <div className="cal-empty-msg">No deadlines.</div>
+                )}
+              </div>
+
+              {/* everything else the workspace recorded on this day, read-only */}
+              {TC.CATS.filter(c => (buckets[selDs]||{})[c.key] && buckets[selDs][c.key].length).map(c => (
+                <div key={c.key} className="cal-detail-group">
+                  <div className="cal-detail-cat">
+                    <span className="cal-dot" style={{background: c.color}} />
+                    {c.label} ({buckets[selDs][c.key].length})
+                  </div>
+                  {buckets[selDs][c.key].map((item, i) => (
+                    <div key={i} className="cal-detail-item">
+                      {item.label}
+                      {item.meta && <span className="cal-item-meta"> · {item.meta}</span>}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!day && <div className="doc-cal-hint doc-chrome">Pick a day to see what is on it, or to add a day note or deadline.</div>}
+        </div>
+      );
+    }
+
     // ── sidebar ──────────────────────────────────────────────────────────────
 
     function PageTreeItem({page, pages, depth, activePageId, collapsed, onToggleCollapse, onSelect, onAddChild, onToggleFav, onDelete, onNest, onArrange}) {
@@ -466,8 +946,13 @@
     function App() {
       const [slotReady] = useState(() => _bootstrapSlotIfSafe());
       const [docPages, setDocPages] = useState(() => slotReady ? _readP('docPages', []) : []);
-      const [activePageId, setActivePageId] = useState(null);
+      // seeded from ?page= so the deep link wins over the "keep something
+      // selected" effect below, which only fills in when nothing is selected
+      const [activePageId, setActivePageId] = useState(() => slotReady ? _deepLinkPageId() : null);
       const [activeBlockId, setActiveBlockId] = useState(null);
+      // read-only mirror of the whole slot, for calendar blocks. docPages is
+      // NOT read from here — that stays owned by the docPages state above.
+      const [slot, setSlot] = useState(() => _activeSlot() || {});
       const [collapsed, setCollapsed] = useState({});
       const [showDumpModal, setShowDumpModal] = useState(false);
       const [rootDragOver, setRootDragOver] = useState(false);
@@ -487,7 +972,7 @@
         if (!slotReady) return;
         const stored = JSON.stringify(_readP('docPages', []));
         const next = JSON.stringify(docPages);
-        if (stored !== next) _writeDocPages(docPages);
+        if (stored !== next) _writeSlotKey('docPages', docPages);
         setDbSize(dbSizeBytes());
       }, [docPages]);
 
@@ -500,6 +985,7 @@
             dumps: _readP('sourceDumps', []).filter(d => d.parentId !== d.id),
             mms: _readP('mms', [])
           });
+          setSlot(_activeSlot() || {});
           setDbSize(dbSizeBytes());
         };
         const onStorage = e => { if (!e.key || e.key === 'track_db') refresh(); };
@@ -540,7 +1026,15 @@
         const toDel = docDescendantIds(docPages, id);
         const page = docPages.find(p => p.id === id);
         const n = toDel.size - 1;
-        if (!window.confirm(`Delete "${(page&&page.title)||'Untitled'}"${n ? ` and ${n} sub-page${n>1?'s':''}` : ''}? This cannot be undone.`)) return;
+        // Day notes and deadlines these pages authored live on the shared
+        // schedule and are NOT deleted with the page — losing scheduled work
+        // to a page delete would be data loss. They keep their docPageId and
+        // read as "source page removed" wherever provenance is shown.
+        const stranded = [...(_readP('calendarNotes', [])), ...(_readP('deadlines', []))]
+          .filter(x => toDel.has(x.docPageId)).length;
+        const msg = `Delete "${(page&&page.title)||'Untitled'}"${n ? ` and ${n} sub-page${n>1?'s':''}` : ''}? This cannot be undone.`
+          + (stranded ? `\n\n${stranded} scheduled item${stranded>1?'s':''} added from ${n?'these pages':'this page'} will stay on the schedule and lose ${stranded>1?'their':'its'} source page.` : '');
+        if (!window.confirm(msg)) return;
         setDocPages(prev => prev.filter(p => !toDel.has(p.id)));
         if (toDel.has(activePageId)) setActivePageId(null);
       }
@@ -605,6 +1099,10 @@
         if (type === 'image') { base.src = ''; base.alt = ''; }
         if (type === 'table') base.rows = [['',''],['','']];
         if (type === 'link') { base.label=''; base.url=''; base.dumpRef=null; base.addedAt=Date.now(); }
+        // hidden holds the switched-OFF categories, so a new calendar shows
+        // everything and any category added to calendar-core.js later is on by
+        // default for calendars that already exist
+        if (type === 'calendar') { base.hidden = []; base.scope = 'subtree'; }
         return {...base, ...(extra||{})};
       }
       function addBlock(type, extra) {
@@ -625,6 +1123,16 @@
         const next = [...blocks]; [next[i], next[j]] = [next[j], next[i]];
         return next;
       });
+
+      // Calendar blocks author into calendarNotes / deadlines, which
+      // progress.html owns. Each edit re-reads the stored array, applies fn to
+      // it and writes only that key, so nothing another page or tab wrote in
+      // the meantime is rebuilt from this page's snapshot.
+      function mutateSlotArray(key, fn) {
+        const next = _mutateSlotKey(key, fn);
+        setSlot(s => ({...s, [key]: next}));
+        setDbSize(dbSizeBytes());
+      }
 
       const dumpTitleFor = ref => {
         const d = dumpsSnapshot.dumps.find(d => d.id === ref.dumpId);
@@ -822,13 +1330,18 @@
                         {b.type === 'table' && <TableBlock block={b} onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)} />}
                         {b.type === 'link' && <LinkBlock block={b} onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)} dumpTitleFor={dumpTitleFor} />}
                         {b.type === 'image' && <ImageBlock block={b} onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)} />}
+                        {b.type === 'calendar' && (
+                          <CalendarBlock block={b} page={activePage} docPages={docPages} slot={slot}
+                            onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)}
+                            onOpenPage={setActivePageId} onMutate={mutateSlotArray} />
+                        )}
                       </BlockShell>
                     ))}
                   </div>
 
                   {/* add-block menu */}
                   <div className="docs-addmenu mt-4 flex flex-wrap gap-1 border-t border-gray-800/70 pt-3 text-[11px]">
-                    {[['h1','H1'],['h2','H2'],['h3','H3'],['p','Text'],['dump','⛁ Reference source dump'],['link','🔗 Link'],['table','▦ Table'],['image','🖼 Image'],['divider','― Divider']].map(([t,l]) => (
+                    {[['h1','H1'],['h2','H2'],['h3','H3'],['p','Text'],['dump','⛁ Reference source dump'],['link','🔗 Link'],['table','▦ Table'],['image','🖼 Image'],['divider','― Divider'],['calendar','🗓 Calendar']].map(([t,l]) => (
                       <button key={t} onClick={()=> t==='dump' ? openDumpModal() : addBlock(t)}
                         className="rounded border border-gray-800 bg-gray-900 px-2 py-1 text-gray-400 hover:border-gray-600 hover:text-gray-200">
                         {l}

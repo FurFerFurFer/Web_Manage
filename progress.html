@@ -4519,7 +4519,7 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, initialDate }) {
+    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, initialDate }) {
       const START_HOUR  = 0;
       const END_HOUR    = 24;
       const TIME_COL_W  = 56;
@@ -5355,6 +5355,29 @@
         setMatrixDragId(null);
         setMatrixDragOver(null);
       };
+
+      // A day note or deadline added from a documentation page carries that
+      // page's id; absence means it was added here. Show where it came from and
+      // link straight back to it — documentations.html reads ?page=<id>.
+      function DocOrigin({ item }) {
+        if (!item || !item.docPageId) return null;
+        const page = (docPages || []).find(p => p.id === item.docPageId);
+        if (!page) {
+          return (
+            <span className="text-[10px] text-gray-600 italic"
+              title="The documentation page that added this was deleted. The item was kept.">
+              📄 source page removed
+            </span>
+          );
+        }
+        return (
+          <a href={'documentations.html?page=' + encodeURIComponent(page.id)}
+            title={`Added from "${page.title || 'Untitled'}" — open that page`}
+            className="text-[10px] text-teal-300/90 hover:text-teal-200 underline decoration-teal-700 truncate max-w-[16rem]">
+            📄 {page.icon ? page.icon + ' ' : ''}{page.title || 'Untitled'}
+          </a>
+        );
+      }
 
       function addCalNote(date) {
         if (!calNoteDraft.title.trim()) return;
@@ -6967,9 +6990,12 @@
               <>
                 <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
                 <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-                  <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+                  <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex items-center justify-between gap-2 flex-shrink-0">
                     <span>{isEdit ? 'EDIT NOTE' : 'NEW NOTE'} · {date}</span>
-                    <button onClick={close} className="text-gray-600 hover:text-gray-300 text-base leading-none">×</button>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <DocOrigin item={isEdit ? (calendarNotes || []).find(n => n.id === noteId) : null} />
+                      <button onClick={close} className="text-gray-600 hover:text-gray-300 text-base leading-none">×</button>
+                    </div>
                   </div>
                   <div className="p-3 flex flex-col gap-2 flex-1 overflow-y-auto">
                     <input
@@ -7039,9 +7065,12 @@
               <>
                 <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
                 <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-                  <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+                  <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex items-center justify-between gap-2 flex-shrink-0">
                     <span>{dlPopupEdit ? 'EDIT DEADLINE' : 'DEADLINE'} · {d.date}</span>
-                    <button onClick={close} className="text-gray-600 hover:text-gray-300 text-base leading-none">×</button>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <DocOrigin item={d} />
+                      <button onClick={close} className="text-gray-600 hover:text-gray-300 text-base leading-none">×</button>
+                    </div>
                   </div>
                   {dlPopupEdit ? (
                     <>
@@ -7465,6 +7494,10 @@
       const [linChanges] = useState(() => _readP('linChanges', []));
       const [calendarNotes, setCalendarNotes] = useState(() => _readP('calendarNotes', []));
       const [deadlines, setDeadlines] = useState(() => _readP('deadlines', []));
+      // owned by documentations.html, read-only here: a day note or deadline
+      // added from a documentation page carries that page's id, and the note /
+      // deadline popups link back to it
+      const [docPages, setDocPages] = useState(() => _readP('docPages', []));
       const [tab, setTab] = useState(() => window.location.hash.slice(1) || 'progress');
       const [selectedMilestone, setSelectedMilestone] = useState(null);
 
@@ -7488,6 +7521,7 @@
           const freshMms = _readMMs();
           setMms(freshMms);
           setSessions(_readSessions());
+          setDocPages(_readP('docPages', []));
           return freshMms;
         }
         function onVisible() {
@@ -7665,6 +7699,7 @@
                 selectedMilestone={selectedMilestone}
                 calendarNotes={calendarNotes} setCalendarNotes={setCalendarNotes}
                 deadlines={deadlines} setDeadlines={setDeadlines}
+                docPages={docPages}
                 initialDate={initialScheduleDate}
               />
             </div>

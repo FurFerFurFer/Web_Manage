@@ -1938,6 +1938,356 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) but
   }
 }
 
+/* ── universal calendar: deadline chips ───────────────────── */
+/* Deadlines carry a date AND a time, so they sit in the day strip beside the
+   notes rather than in the hour grid. Due-today first, then the tail of any
+   caution period still running. */
+.cal-sched-dls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.cal-sched-dl {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  font-size: 0.625rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.cal-sched-dl.due {
+  border-color: rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--color-danger);
+}
+
+.cal-sched-dl.caution {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--color-warning);
+}
+
+/* ── documentations: embedded calendar block ──────────────── */
+/* The same month grid and day detail as the universal calendar, but sized for
+   the editor column (max-w-3xl) and stacked instead of side-by-side. The
+   .cal-* custom properties are declared on .cal-panel on the Home page, so the
+   block declares its own. */
+.doc-cal {
+  --cal-gap: 2px;
+  --cal-cell-pad-x: 0.25rem;
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(var(--color-surface-rgb), 0.55);
+  font-family: var(--font-ui);
+}
+
+/* .cal-grid stretches to a flex parent on Home; here the block has no definite
+   height, so the rows need a floor of their own or they collapse to 2rem */
+.doc-cal .cal-grid {
+  grid-auto-rows: minmax(3.25rem, auto);
+  flex: none;
+}
+
+.doc-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.doc-cal-head-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.doc-cal-btn {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-ui),
+    color var(--motion-fast) var(--ease-ui);
+}
+
+.doc-cal-btn:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.doc-cal-btn.on {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary-text);
+}
+
+.doc-cal-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+  padding: 0.4rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+}
+
+.doc-cal-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.6rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
+  cursor: pointer;
+}
+
+.doc-cal-filter .cal-dot {
+  border: 1px solid transparent;
+}
+
+.doc-cal-filter.on {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.doc-cal-filter:not(.on):not(.reset) {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.doc-cal-filter.reset {
+  border-style: dashed;
+}
+
+.doc-cal-detail {
+  margin-top: 0.5rem;
+}
+
+.doc-cal-hint {
+  margin-top: 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
+}
+
+.doc-cal-add {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  color: var(--color-text-muted);
+  font-size: 0.625rem;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.doc-cal-add:hover {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary-text);
+}
+
+/* a day carrying an item this calendar owns. Deliberately an edge bar, not an
+   inset ring: .cal-cell.today already owns the inset box-shadow, and a dot
+   would read as one more category dot. */
+.cal-cell.cal-doc-own-day::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-primary);
+}
+
+.cal-doc-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.cal-doc-row-main {
+  flex: 1 1 12rem;
+  overflow-wrap: anywhere;
+}
+
+/* in this calendar's scope: highlighted, and the only rows with edit controls */
+.cal-doc-row.cal-doc-own {
+  background: var(--color-primary-soft);
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+.cal-doc-row.caution {
+  color: var(--color-warning);
+}
+
+.cal-doc-bang {
+  color: var(--color-warning);
+  font-weight: 800;
+}
+
+.cal-doc-row-acts {
+  display: inline-flex;
+  gap: 0.15rem;
+}
+
+.cal-doc-row-acts button {
+  min-width: 1.4rem;
+  padding: 0 0.3rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.cal-doc-row-acts button:hover {
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.cal-doc-row-acts button.danger:hover {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.cal-doc-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  max-width: 13rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-app-bg);
+  color: var(--color-text-muted);
+  font-size: 0.625rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.cal-doc-origin {
+  cursor: pointer;
+}
+
+button.cal-doc-origin:hover {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary-text);
+}
+
+.cal-doc-origin.own {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary-text);
+}
+
+.cal-doc-origin.missing {
+  font-style: italic;
+}
+
+.cal-doc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.3rem 0;
+  padding: 0.45rem;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+}
+
+.cal-doc-form input,
+.cal-doc-form textarea {
+  width: 100%;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.cal-doc-form textarea {
+  resize: vertical;
+}
+
+.cal-doc-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.cal-doc-form-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--color-text-muted);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cal-doc-form-row label input {
+  width: auto;
+}
+
+.cal-doc-form-acts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.cal-doc-form-acts button {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  cursor: pointer;
+}
+
+.cal-doc-form-acts button.primary {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+}
+
+.cal-doc-form-acts button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cal-doc-hint {
+  color: var(--color-warning);
+  font-size: 0.625rem;
+}
+
 /* ── documentations print / export ────────────────────────── */
 @media print {
   body.docs-page {
@@ -1971,11 +2321,54 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) but
     overflow: visible !important;
   }
 
+  /* Flatten the page to black-on-white — but not the calendar block, whose
+     dots, milestone bars and schedule blocks carry their meaning in colour and
+     would print as an empty skeleton. .doc-cal gets its own rules below. */
   body.docs-page .docs-editor,
-  body.docs-page .docs-editor * {
+  body.docs-page .docs-editor *:not(.doc-cal):not(.doc-cal *) {
     color: #111 !important;
     background: transparent !important;
     border-color: #bbb !important;
+  }
+
+  /* controls, not content */
+  body.docs-page .doc-cal-head-acts,
+  body.docs-page .doc-cal-filters,
+  body.docs-page .doc-cal-add,
+  body.docs-page .doc-cal-hint,
+  body.docs-page .cal-doc-form,
+  body.docs-page .cal-doc-row-acts,
+  body.docs-page .doc-cal .cal-detail-acts {
+    display: none !important;
+  }
+
+  body.docs-page .doc-cal {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    break-inside: avoid;
+    border-color: #bbb !important;
+    background: transparent !important;
+  }
+
+  body.docs-page .doc-cal,
+  body.docs-page .doc-cal .cal-day-num,
+  body.docs-page .doc-cal .cal-dow,
+  body.docs-page .doc-cal .cal-detail-date,
+  body.docs-page .doc-cal .cal-doc-row,
+  body.docs-page .doc-cal .cal-detail-item,
+  body.docs-page .doc-cal .cal-empty-msg {
+    color: #111 !important;
+  }
+
+  body.docs-page .doc-cal .cal-cell,
+  body.docs-page .doc-cal .cal-detail,
+  body.docs-page .doc-cal .cal-sched-grid {
+    border-color: #999 !important;
+    background: #fff !important;
+  }
+
+  body.docs-page .doc-cal .cal-cell.empty {
+    border-color: transparent !important;
   }
 
   body.docs-page .doc-block {

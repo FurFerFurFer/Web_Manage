@@ -56,6 +56,7 @@ Active files:
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
 | `notifications.html` | Unified inbox view over `notifications.json`, filtering, per-item tick state |
+| `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
 | `storage-guard.js` | `localStorage` quota guard for every whole-database write, quota banner (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
@@ -120,6 +121,8 @@ Current slot fields include:
 
 The schema is not yet centralized. Defaults, migrations, readers, writers, and import logic are distributed across multiple files.
 
+Items inside `calendarNotes` and `deadlines` may carry an optional `docPageId` naming the `docPages` entry that authored them; its absence means the item was authored in the Schedule. Preserve it: edit these items by spreading (`{...item, …}`), never by rebuilding them from a field list, and never delete such an item as a side effect of deleting its documentation page.
+
 Every write of `track_db` must go through `TrackStorage.saveDB(db)` from `storage-guard.js`, never a bare `localStorage.setItem('track_db', …)`. It returns `false` when the browser quota rejected the write, so a full quota is a visible banner instead of an uncaught throw out of a React effect. Two rules follow:
 
 - Do not make `storage-guard.js` patch `Storage.prototype.setItem`. `firebase-sync.js` owns that patch and calls the captured native `_origSet` before it marks `track_db_pending` and arms the upload debounce. The guard must stay a plain function that dispatches through the patch, so a quota throw aborts before any upload is armed for a write that never landed.
@@ -154,6 +157,7 @@ progress.html
 sir-ks02.html
 documentations.html
 notifications.html
+calendar-core.js
 storage-guard.js
 firebase-sync.js
 notes-widget.js
@@ -356,6 +360,7 @@ For changes affecting shared JavaScript:
 ```bash
 node --check theme.js
 node --check storage-guard.js
+node --check calendar-core.js
 node --check firebase-sync.js
 node --check notes-widget.js
 ```
@@ -562,6 +567,13 @@ As of 2026-08-05:
 Not verified: behavior against the live Firebase project, which needs `firestore.rules` published in the console and explicit user authorization. Real multi-device and touch interaction were not exercised.
 
 This is a render-plus-sync-logic baseline, not proof of full behavioral correctness.
+
+### Documentations calendar blocks (2026-08-06)
+
+- `calendar-core.js` passes `node --check`, and 80 offline assertions against a synthetic slot — re-run under `Pacific/Kiritimati` (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles`, `Asia/Kathmandu` and `UTC` with identical results, which is what rules out a UTC-day regression in the new date code.
+- 71 headless assertions covering the block end to end: all four pages mount with the notes widget and no page errors, the `?page=` deep link, block creation and persistence, authoring notes and deadlines into the shared arrays with a `docPageId` and a local calendar date, ownership highlighting and exclusive edit controls, all three filter behaviours (Documentation covering both kinds, Day notes and Deadlines covering only schedule-authored ones), scope toggling across sub-pages, the origin chip and the Schedule's link back, an export→import allow-list replay preserving `docPageId`, a concurrent cross-tab write surviving a `docPages` write, and page deletion keeping every item the page authored.
+- 10 further assertions on styling and chrome: the print flatten rule parses with its `:not(.doc-cal)` exemption, the calendar print rules are live, day cells are 52px, the block causes no horizontal overflow, and both the block's move/delete chrome and the sidebar drag-to-nest still work with a calendar on the page.
+- Not verified: real touch hardware, and the live Firebase project.
 
 ### Re-verified after the 2026-08-05 revert and restore
 
