@@ -74,6 +74,8 @@ Current runtime dependencies are loaded through CDNs:
 
 Do not assume Vite, npm scripts, TypeScript, JSX modules, a test framework, or CI exists until the repository actually contains them.
 
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=1`, `calendar-core.js?v=1`, `firebase-sync.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js`, `storage-guard.js`, and `notes-widget.js` are not yet versioned.
+
 ## Current Data Contract
 
 The main local database key is:
