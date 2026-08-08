@@ -28,19 +28,24 @@ Read these files before substantial work:
 | File | Source of truth |
 | --- | --- |
 | `README.md` | Current product behavior, current architecture, current progress, and the workflow used now |
-| `NOTES.md` | Unimplemented ideas, possible changes, risks, options, and roadmap |
+| `NOTES.md` | Unfinished tasks, open decisions or risks, possible ideas, and the future roadmap only |
 | `AGENTS.md` | Mandatory agent procedure and project safety rules |
 
 Keep their responsibilities separate:
 
 - Do not describe an unimplemented proposal as current behavior in README.
-- Do not leave an implemented feature documented only as an idea in NOTES.
+- Keep `NOTES.md` strictly forward-looking. Do not retain completed work, implementation
+  history, fixed or superseded proposals, status-update narratives, or struck-through
+  "done" items there.
+- When work is completed, document the resulting current behavior in `README.md` and
+  remove the completed proposal or completed portion from `NOTES.md`.
 - Do not put general product descriptions in AGENTS unless they affect how work must be performed.
 
 When implementing a proposal from `NOTES.md`:
 
 1. Update `README.md` with the resulting current behavior.
-2. Update, remove, or mark the matching NOTES proposal appropriately.
+2. Remove the completed proposal or completed portion from `NOTES.md`, leaving only work
+   and ideas that remain unfinished.
 3. Update `AGENTS.md` if required commands, invariants, or safety gates changed.
 
 ## Current Architecture
@@ -58,12 +63,13 @@ Active files:
 | `notifications.html` | Unified inbox view over `notifications.json`, filtering, per-item tick state |
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
+| `schema.js` | The canonical slot definition (`window.TrackSchema`): the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
 | `storage-guard.js` | `localStorage` quota guard for every whole-database write, quota banner (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js` is offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js` and `schema.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -77,7 +83,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=1`, `calendar-core.js?v=1`, `firebase-sync.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js`, `storage-guard.js`, and `notes-widget.js` are not yet versioned.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=1`, `schema.js?v=1`, `calendar-core.js?v=1`, `firebase-sync.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js`, `storage-guard.js`, and `notes-widget.js` are not yet versioned.
 
 ## Current Data Contract
 
@@ -124,7 +130,45 @@ Current slot fields include:
 }
 ```
 
-The schema is not yet centralized. Defaults, migrations, readers, writers, and import logic are distributed across multiple files.
+The field list, its defaults, and its validation are centralized in `schema.js`
+(`window.TrackSchema`). **Adding or changing a slot field means editing the
+`SLOT_FIELDS` table there and nothing else** — `createEmptySlot`, `normalizeSlot`,
+`validateSlot` and `validateDatabase` all derive from that one table, and every
+new-slot creation site and the whole-slot importer go through it.
+
+Two rules follow:
+
+- Do not reintroduce a slot literal. All six creation sites — `index.html`
+  `createSlot`, the legacy bootstrap IIFEs in `progress.html` and `sir-ks02.html`,
+  `sir-ks02.html`'s on-mount auto-create, `documentations.html`'s
+  `_bootstrapSlotIfSafe`, and the importer — call `TrackSchema.createEmptySlot`
+  or `TrackSchema.normalizeSlot`. They used to build 10, 11, 13, 13, 14 and 21
+  fields respectively.
+- `normalizeSlot` repairs and always succeeds; `validateSlot` and
+  `validateDatabase` report and never repair. Keep that split. The legacy rescue
+  paths need a total function — refusing there strands the user's oldest data —
+  while import must refuse without writing, so it validates *before* reading the
+  database.
+
+`normalizeSlot` preserves keys it does not know about, so a field added by a later
+version survives an export/import round trip. Do not "tidy" that into an
+allow-list, and do not filter export through `SLOT_FIELDS` for the same reason.
+That unknown-key branch must use an **own-property** test against `SLOT_FIELDS`
+(`isCanonical`), never `SLOT_FIELDS[key]` — truthiness inherits from
+`Object.prototype`, so a key called `constructor` or `toString` would look
+canonical and be silently dropped.
+
+Validation checks list **items**, not just the field. A field being a list is not
+enough: every list field holds records, and a stray `null` inside one imports
+cleanly under a field-only check and then throws out of `flattenGoals` or
+`buildBuckets` on the next render. `null` as a whole field counts as missing
+rather than wrong — it holds no data, so the default loses nothing.
+
+Readers and migrations are **not** yet centralized: the five `_getTrackDB()`
+parsers and the field-presence migration IIFEs in `progress.html` and
+`sir-ks02.html` are still per-page. There is no `schemaVersion` on `track_db`;
+adding one is gated on the migration registry in NOTES Proposal 2. Nothing calls
+`normalizeSlot` over already-stored slots — that would be a migration.
 
 Items inside `calendarNotes` and `deadlines` may carry an optional `docPageId` naming the `docPages` entry that authored them; its absence means the item was authored in the Schedule. Preserve it: edit these items by spreading (`{...item, …}`), never by rebuilding them from a field list, and never delete such an item as a side effect of deleting its documentation page.
 
@@ -373,6 +417,7 @@ For changes affecting shared JavaScript:
 
 ```bash
 node --check theme.js
+node --check schema.js
 node --check storage-guard.js
 node --check calendar-core.js
 node --check firebase-sync.js
@@ -385,7 +430,7 @@ Then run the committed suite — it is the only automated check that sees the in
 node tests/run.js
 ```
 
-It runs `tests/calendar-core.test.js` under five timezones (UTC+14 through UTC-11) and then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11) and then `tests/browser.test.js` in headless Chrome. Rules for working with it:
 
 - Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
 - A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.
@@ -603,7 +648,14 @@ Everything in this section that is not `node tests/run.js` was run once and cann
 node tests/run.js
 ```
 
-51 offline cases under five timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) plus 16 headless-Chrome cases — 6 suites, all passing on 2026-08-06. The two `sir-ks02.html` regression cases were confirmed to **fail** against the pre-fix page served through `TRACK_TEST_ROOT`, with the other 14 still passing.
+96 offline cases under five timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) plus 27 headless-Chrome cases — 11 suites, all passing on 2026-08-08. The two `sir-ks02.html` regression cases were confirmed to **fail** against the pre-fix page served through `TRACK_TEST_ROOT`.
+
+### Canonical slot schema (2026-08-08)
+
+- `schema.js` passes `node --check`; `tests/schema.test.js` contributes 39 offline cases, identical under all five swept timezones.
+- Six browser cases were seen failing against the pre-change pages before the fix: the four `window.TrackSchema` smoke assertions, canonical shape from every entry point (`index.html` built 13 of 21 fields), local-day `createdAt` and a collision-free id (with `Date.now` frozen, both workspaces got the identical id `slot-1786180119615`), unknown-key survival through import, refusal of a wrong-typed field (`{"goals":"hello"}` imported silently and would break the calendar on the next load), and a synthetic legacy install migrating into a complete slot (10 of 21 fields).
+- The `index.html` cases were re-confirmed through a `TRACK_TEST_ROOT` scratch directory of symlinks plus the single pre-change `index.html`, with the other 20 browser cases still passing.
+- Not covered: real touch hardware, the live Firebase project, and a **real** legacy install. The legacy rescue path is exercised only against synthetic pre-`track_db` localStorage keys — it runs once per user and can never run again, so that residual risk is real and is not claimed as covered.
 
 Not covered by the suite, and still requiring manual checks: touch and drag interaction, the signed-in Firebase path, real multi-device behaviour, print output, and most of the UI.
 

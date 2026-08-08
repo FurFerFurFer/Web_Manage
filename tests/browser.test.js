@@ -85,13 +85,32 @@ test('browser suites', skipUnlessChrome, async t => {
      deliberately guarded against overwriting, so the stale data wins silently.
      The second tab of a two-tab test must pass fresh:false, or it erases the
      state the first tab is under test with. */
-  const open = async (file, { db = null, hash = '', fresh = true } = {}) => {
+  const open = async (file, { db = null, hash = '', fresh = true, extra = null } = {}) => {
     const page = await browser.newPage();
     if (fresh) await page.clearStorage(server.origin);
-    if (db) await page.seed(db);
+    if (db || extra) await page.seed(db || {}, extra || {});
     await page.goto(server.url(file) + hash);
     await page.skipFirebase();
     return page;
+  };
+
+  /* index.html has several file inputs. Pick the one wired to importSlot, or a
+     dump importer runs and the test "passes" having imported nothing. */
+  const IMPORT_FILE = function (text) {
+    var input = Array.prototype.find.call(document.querySelectorAll('input[type=file]'),
+      function (i) { return (i.getAttribute('onchange') || '').indexOf('importSlot') >= 0; });
+    var dt = new DataTransfer();
+    dt.items.add(new File([text], 'synthetic-slot.json', { type: 'application/json' }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  };
+
+  // FileReader is async, so an import failure only shows up a tick later.
+  const waitForDialog = async page => {
+    const until = Date.now() + 10000;
+    while (!page.dialogs.length && Date.now() < until) await sleep(50);
+    return page.dialogs;
   };
 
   // ── 1. smoke ────────────────────────────────────────────────────────────
@@ -110,6 +129,8 @@ test('browser suites', skipUnlessChrome, async t => {
 
       assert.equal(await page.evaluate(function () { return typeof window.TrackStorage; }), 'object',
         'the quota guard is present');
+      assert.equal(await page.evaluate(function () { return typeof window.TrackSchema; }), 'object',
+        'the canonical schema is present');
       assert.equal(await page.evaluate(function () { return !!document.getElementById('nw-btn'); }), true,
         'the notes widget mounted');
       assert.equal(await page.evaluate(function () {
@@ -560,18 +581,7 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(parsed.calendarNotes.find(n => n.id === 'cn-doc').docPageId, 'p-1',
       'docPageId is in the exported file');
 
-    // feed it back through the real importer. index.html has several file
-    // inputs — pick the one wired to importSlot, or a dump importer runs and
-    // the test "passes" having imported nothing.
-    await page.evaluate(function (text) {
-      var input = Array.prototype.find.call(document.querySelectorAll('input[type=file]'),
-        function (i) { return (i.getAttribute('onchange') || '').indexOf('importSlot') >= 0; });
-      var dt = new DataTransfer();
-      dt.items.add(new File([text], 'synthetic-slot.json', { type: 'application/json' }));
-      input.files = dt.files;
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    }, exported);
+    await page.evaluate(IMPORT_FILE, exported); // back through the real importer
 
     const slots = await page.waitFor(function () {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
@@ -596,6 +606,9 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.deepEqual(imported[key], original[key], key + ' round-tripped unchanged');
     }
 
+    // The allow-list must not silently shrink back.
+    assert.equal(Object.keys(imported).length, 21, 'the imported slot carries all 21 canonical fields');
+
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -605,23 +618,192 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.waitFor(function () { return !!window.importSlot; }, { message: 'index.html globals' });
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
 
-    await page.evaluate(function () {
-      var input = Array.prototype.find.call(document.querySelectorAll('input[type=file]'),
-        function (i) { return (i.getAttribute('onchange') || '').indexOf('importSlot') >= 0; });
-      var dt = new DataTransfer();
-      dt.items.add(new File(['{ not json at all'], 'broken.json', { type: 'application/json' }));
-      input.files = dt.files;
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    });
-
-    // FileReader is async — wait for the failure the user actually sees
-    const deadline = Date.now() + 10000;
-    while (!page.dialogs.length && Date.now() < deadline) await sleep(50);
+    await page.evaluate(IMPORT_FILE, '{ not json at all');
+    await waitForDialog(page);
 
     assert.ok(page.dialogs.some(d => /invalid/i.test(d)), 'the user was told the file was invalid');
     assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
       'the database is byte-identical after a rejected import');
+    await page.close();
+  });
+
+  // ── 4. the canonical slot schema ────────────────────────────────────────
+  // Six places used to build a new slot and each built a different one — 10,
+  // 11, 12, 13, 14 and 21 fields. Readers masked it with `slot.goals || []`,
+  // so nothing here fails loudly against the old pages except by counting.
+
+  const CONTRACT = [
+    'id', 'name', 'createdAt', 'sessions', 'mms', 'kolbs', 'mgChanges',
+    'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
+    'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
+    'levelTemplates', 'docPages'
+  ];
+
+  await t.test('every entry point creates a slot with the same canonical shape', async () => {
+    for (const file of PAGES) {
+      const page = await open(file);
+      // index.html does not auto-create — it renders "No slots — open a tracker
+      // to auto-create one" — so drive its constructor directly.
+      if (file === 'index.html') {
+        await page.waitFor(function () { return !!window.createSlot; }, { message: 'index.html globals' });
+        await page.evaluate(function (setInput) {
+          var el = document.getElementById('new-slot-name');
+          eval('(' + setInput + ')')(el, 'Made on Home');
+          window.createSlot();
+        }, SET_REACT_INPUT);
+      }
+
+      const slot = await page.waitFor(READ_SLOT, { message: file + ' creating its default slot' });
+      assert.deepEqual(Object.keys(slot).sort(), CONTRACT.slice().sort(),
+        file + ' builds the full 21-field contract, not its own subset');
+      assert.match(slot.id, /^slot-/, file + ' keeps the readable id prefix');
+      assert.deepEqual(realErrors(page), [], 'no page error while bootstrapping ' + file);
+      await page.close();
+    }
+  });
+
+  await t.test('Home stamps a new slot with the LOCAL day and a collision-free id', async () => {
+    const page = await open('index.html');
+    await page.waitFor(function () { return !!window.createSlot; }, { message: 'index.html globals' });
+
+    // Two creates with the clock FROZEN. 'slot-'+Date.now() returns the same
+    // string for both, so the two slots become indistinguishable to
+    // activeSlotId. Freezing is what makes this deterministic — left to the
+    // real clock, the two calls usually land a millisecond apart and the test
+    // passes against the very code it is meant to catch.
+    const made = await page.evaluate(function (setInput) {
+      var set = eval('(' + setInput + ')');
+      var el = document.getElementById('new-slot-name');
+      var realNow = Date.now, frozen = realNow.call(Date);
+      Date.now = function () { return frozen; };
+      try {
+        set(el, 'First'); window.createSlot();
+        set(el, 'Second'); window.createSlot();
+      } finally { Date.now = realNow; }
+      var d = new Date();
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return {
+        ids: (db.slots || []).map(function (s) { return s.id; }),
+        createdAt: (db.slots || []).map(function (s) { return s.createdAt; }),
+        localDay: d.getFullYear() + '-' +
+          String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'),
+        utcDay: d.toISOString().slice(0, 10)
+      };
+    }, SET_REACT_INPUT);
+
+    assert.equal(made.ids.length, 2, 'both workspaces were stored');
+    assert.notEqual(made.ids[0], made.ids[1], 'two creates in one millisecond get different ids');
+    for (const stamp of made.createdAt) {
+      assert.equal(stamp, made.localDay,
+        'createdAt is the local calendar day' +
+        (made.localDay === made.utcDay ? ' (this run is in UTC, where the two agree)' : ', not the UTC day'));
+    }
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('import fills in the fields an older export never had', async () => {
+    const page = await open('index.html', { db: seedDb() });
+    await page.waitFor(function () { return !!window.importSlot; }, { message: 'index.html globals' });
+
+    const legacy = F.preCalendarSlot({ id: 'slot-old', name: 'Old Export', createdAt: '2025-01-01' });
+    await page.evaluate(IMPORT_FILE, JSON.stringify(legacy));
+
+    const imported = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return (db.slots || []).length === 2 ? db.slots[1] : false;
+    }, { message: 'the imported slot appearing' });
+
+    assert.deepEqual(Object.keys(imported).sort(), CONTRACT.slice().sort(),
+      'the fields that export predates are filled with safe defaults');
+    for (const key of ['calendarNotes', 'deadlines', 'docPages', 'notes', 'mmEntries']) {
+      assert.deepEqual(imported[key], [], key + ' defaulted to an empty list');
+    }
+    for (const key of ['pos', 'levelTemplates', 'mgSchedule', 'linDayTitles']) {
+      assert.deepEqual(imported[key], {}, key + ' defaulted to an empty map');
+    }
+    assert.deepEqual(imported.mms, legacy.mms, 'and what it did carry survived');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('import keeps a field written by a later version', async () => {
+    // Import must not have a narrower contract than an ordinary page write,
+    // which already preserves unknown keys. Otherwise every export made before
+    // a new field exists loses it on the way back in.
+    const page = await open('index.html', { db: seedDb() });
+    await page.waitFor(function () { return !!window.importSlot; }, { message: 'index.html globals' });
+
+    await page.evaluate(IMPORT_FILE, JSON.stringify(
+      F.emptySlot({ id: 'slot-future', name: 'Future', futureField: { written: 'by a later version' } })));
+
+    const imported = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return (db.slots || []).length === 2 ? db.slots[1] : false;
+    }, { message: 'the imported slot appearing' });
+
+    assert.deepEqual(imported.futureField, { written: 'by a later version' },
+      'a key this version has never heard of came through import intact');
+    await page.close();
+  });
+
+  for (const [label, body, expect] of [
+    ['a wrong-typed field', JSON.stringify({ name: 'Broken', goals: 'hello' }), /goals/],
+    ['junk inside a list', JSON.stringify({ name: 'Broken', goals: [null] }), /goals\[0\]/],
+    ['a whole database', JSON.stringify({ slots: [F.populatedSlot()], activeSlotId: 'slot-test-1' }),
+      /whole database/i],
+    ['a null file', 'null', /invalid|cannot import/i],
+    ['an array', '[1,2]', /invalid|cannot import/i]
+  ]) {
+    await t.test('import refuses ' + label + ' and leaves the database byte-identical', async () => {
+      const page = await open('index.html', { db: seedDb() });
+      await page.waitFor(function () { return !!window.importSlot; }, { message: 'index.html globals' });
+      const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+      await page.evaluate(IMPORT_FILE, body);
+      await waitForDialog(page);
+
+      assert.ok(page.dialogs.length, 'the user was told, rather than left with a broken workspace');
+      assert.match(page.dialogs.join('\n'), expect, 'the message names what is wrong');
+      assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+        'nothing was written');
+      assert.equal(await page.evaluate(function () {
+        return (JSON.parse(localStorage.getItem('track_db') || '{}').slots || []).length;
+      }), 1, 'no slot was added');
+      await page.close();
+    });
+  }
+
+  await t.test('a legacy install still migrates into one canonical slot', async () => {
+    // The pre-track_db rescue path. It runs once per user, on a machine that
+    // still holds the old keys, and can never run again — so the only way to
+    // cover it is to fake the old keys.
+    for (const file of ['progress.html', 'sir-ks02.html']) {
+      const page = await open(file, { extra: F.legacyLocalKeys() });
+
+      const slot = await page.waitFor(READ_SLOT, { message: file + ' migrating the legacy keys' });
+      assert.deepEqual(Object.keys(slot).sort(), CONTRACT.slice().sort(),
+        file + ' rescues legacy data into a complete slot');
+      assert.equal(slot.goals.length, 1, file + ': the legacy goal survived');
+      assert.equal(slot.goals[0].title, 'Legacy goal');
+      assert.equal(slot.saActions[0].title, 'Legacy action', file + ': the legacy action survived');
+      assert.equal(slot.saEntries.length, 1, file + ': the legacy entry survived');
+      assert.deepEqual(realErrors(page), [], 'no page error during the legacy migration in ' + file);
+      await page.close();
+    }
+  });
+
+  await t.test('a quota-rejected import adds no slot', async () => {
+    const page = await open('index.html', { db: seedDb() });
+    await page.waitFor(function () { return !!window.importSlot; }, { message: 'index.html globals' });
+
+    await page.evaluate(function () { window.TrackStorage.saveDB = function () { return false; }; });
+    await page.evaluate(IMPORT_FILE, JSON.stringify(F.emptySlot({ id: 'slot-x', name: 'Rejected' })));
+    await sleep(600);
+
+    assert.equal(await page.evaluate(function () {
+      return (JSON.parse(localStorage.getItem('track_db') || '{}').slots || []).length;
+    }), 1, 'a write the quota guard refused does not appear as an imported slot');
     await page.close();
   });
 });

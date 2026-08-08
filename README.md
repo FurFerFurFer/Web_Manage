@@ -18,7 +18,7 @@ Status reviewed: 2026-08-06
 - `index.html`, `progress.html`, `sir-ks02.html`, `documentations.html` and `notifications.html` are the active pages.
 - Development currently happens on `master`; the inspected history contains no merge commits.
 - There is still no build step and no package manifest, but there **is** now a committed test suite: `node tests/run.js`. It uses Node's built-in `node:test` and a hand-rolled DevTools-protocol driver, so it adds no dependencies. See "Running the tests".
-- The standalone scripts `theme.js`, `storage-guard.js`, `calendar-core.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
+- The standalone scripts `theme.js`, `schema.js`, `storage-guard.js`, `calendar-core.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
 - React pages currently compile JSX in the browser through Babel.
 - Data is stored locally first and can optionally be synchronized through Firebase.
 - Every page provides persistent light and dark themes with a shared accessible switch.
@@ -345,7 +345,17 @@ Current data behavior includes:
 - Offline/local-only use after skipping sign-in.
 - Per-slot export and import.
 
-Slot export serializes the whole slot object and is lossless. Slot import reconstructs the slot from an explicit field list that now includes `notes`, `mmEntries`, `calendarNotes`, `deadlines`, and `docPages` in addition to the previously restored fields, so a full export→import round trip preserves all currently known user-owned fields. Because those arrays are copied whole, item-level fields such as `docPageId` and a day note's optional `time` ride along without the allow-list naming them. `tests/browser.test.js` drives the real exporter and importer and asserts exactly that. The allow-list must still be extended whenever a new *slot* field is introduced — see `NOTES.md` Proposal 1 for the remaining schema-centralization work.
+Slot export serializes the whole slot object and is lossless. It is deliberately not filtered through `SLOT_FIELDS` — an allow-list on the way out would discard exactly the unknown keys the importer now preserves.
+
+Slot import goes through `schema.js` in four steps: parse, `TrackSchema.looksLikeDatabase`, `TrackSchema.validateSlot`, then `TrackSchema.normalizeSlot`. Validation runs **before** the database is read, so a refused file cannot write. What gets refused, with the offending field named in the alert:
+
+- A wrong-typed field. `{"goals": "hello"}` used to import cleanly and then break the calendar on the next load.
+- Junk inside a correctly-typed list. `{"goals": [null]}` also used to import cleanly, then throw out of `flattenGoals` on the next render — a field being a list is not enough, because every list field holds records.
+- A whole-database file offered instead of a single workspace. It is structurally a valid but empty slot, so it would otherwise import as a blank workspace with the real data stranded under an unknown `slots` key.
+
+A field stored as `null` counts as **missing**, not as wrong: a null list holds no data, so filling in the default discards nothing, and refusing the whole file over an empty field would only cost the import. A file that passes is normalized: fields an older export predates are filled with safe defaults, and **keys this version has never heard of are carried through**, so a field added later is not lost by an export made before it. The slot gets a fresh id and a local-day `createdAt`; nested ids inside the slot are preserved verbatim (remapping is deferred — see `NOTES.md` Proposal 1). Adding a slot field now means adding one row to `SLOT_FIELDS`, not extending an importer allow-list.
+
+`tests/browser.test.js` drives the real exporter and importer and asserts all of it, including the round trip of `docPageId`, a day note's optional `time`, and an unknown `futureField`.
 
 #### Which page owns which field
 
@@ -388,12 +398,13 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `notifications.sample.json` | Synthetic fixture documenting the `notifications.json` feed contract |
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry and deadline rules (`window.TrackCalendar`) |
 | `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
+| `schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
 | `storage-guard.js` | `localStorage` quota guard for every whole-database write, plus the quota banner (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
 | `notes-widget.js` | Floating per-slot notes widget |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
-| `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
+| `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
 | `README.md` | Current project and workflow documentation |
 | `NOTES.md` | Future ideas and possible changes |
 | `AGENTS.md` | Agent operating instructions |
@@ -415,6 +426,7 @@ Track-website/
 ├── notifications.sample.json
 ├── calendar-core.js
 ├── theme.js
+├── schema.js
 ├── storage-guard.js
 ├── firebase-sync.js
 ├── notes-widget.js
@@ -423,6 +435,7 @@ Track-website/
 └── tests/
     ├── run.js
     ├── calendar-core.test.js
+    ├── schema.test.js
     ├── browser.test.js
     └── lib/
         ├── cdp.js
@@ -504,7 +517,51 @@ The pages currently read or write fields including:
 }
 ```
 
-Not every constructor or importer currently initializes every field. Code must therefore continue using safe fallbacks until a canonical schema migration is implemented.
+#### Canonical slot schema
+
+`schema.js` holds the one definition of a slot and publishes `window.TrackSchema`. It is a
+classic script loaded in `<head>` on all four workspace pages, before their own scripts, so
+the bootstrap code that runs at page-script load can use it.
+
+| Member | What it does |
+| --- | --- |
+| `SLOT_FIELDS`, `SLOT_KEYS` | The field table: name → kind (`text`, `date`, `list`, `map`). Frozen. **Adding a slot field means adding one row here and nothing else** — every function below derives from it |
+| `createEmptySlot({id, name, createdAt})` | A complete 21-field slot, in table order, with a minted id and a local-day `createdAt` |
+| `normalizeSlot(input, opts)` | Fills missing fields, replaces wrong-typed ones with their default, **keeps unknown keys**, never mutates `input`, never rewrites an id it was given |
+| `validateSlot(input)`, `validateDatabase(db)` | `{ok, errors:[{field, message}]}`. Report only. Checks field kinds, that every item in a list field is an object, calendar-item dates, and an optional day-note `time`. `null` counts as missing |
+| `looksLikeDatabase(input)` | True when a file is a whole database rather than one workspace — a `slots` array and no slot data of its own |
+| `localToday(date)`, `newSlotId()`, `describeErrors(errors)`, `isList`/`isMap`/`isDay`/`isTime` | Supporting helpers |
+
+Two functions give two different answers to bad data, and the split is deliberate:
+`normalizeSlot` **repairs and always succeeds**, because the legacy rescue paths need a
+total function — refusing there would strand the oldest data on the machine. `validateSlot`
+and `validateDatabase` **report and never repair**, so import can refuse a file before the
+database is even read.
+
+All six places that used to build a slot literal now call one of these. They previously
+produced 10, 11, 13, 13, 14 and 21 fields respectively, and five of the six stamped
+`createdAt` with the **UTC** day, so a workspace created after 5pm in UTC-7 was dated
+tomorrow. Slot ids are now `'slot-' + TrackStorage.newId()`; `'slot-' + Date.now()` returned
+the same string for two workspaces created in the same millisecond.
+
+| Site | Now calls |
+| --- | --- |
+| `index.html` `createSlot()` | `createEmptySlot` |
+| `index.html` `importSlot()` | `validateSlot` then `normalizeSlot` |
+| `progress.html` legacy bootstrap IIFE | `normalizeSlot` |
+| `sir-ks02.html` legacy bootstrap IIFE | `normalizeSlot` |
+| `sir-ks02.html` on-mount auto-create | `createEmptySlot` |
+| `documentations.html` `_bootstrapSlotIfSafe()` | `createEmptySlot` |
+
+The two legacy bootstraps use `normalizeSlot` rather than `createEmptySlot` because the
+values they harvest come from `JSON.parse` of a pre-`track_db` localStorage key, so a
+corrupt one is repaired to `[]` instead of crashing the one rescue that install will ever
+get.
+
+Nothing rewrites data already in `track_db`: these run at creation and import only. Readers
+still apply their own `slot.goals || []` fallbacks, and the per-page field-presence
+migration IIFEs are unchanged — centralizing those is `NOTES.md` Proposal 2, along with
+`schemaVersion`.
 
 Two item-level fields inside `calendarNotes` and `deadlines` are optional, and
 their **absence carries meaning**:
@@ -636,13 +693,15 @@ It runs two layers:
 | Layer | File | What it covers |
 | --- | --- | --- |
 | Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, caution ranges, deadline validation, run-ups across month/year/DST boundaries, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
-| Browser tests | `tests/browser.test.js` | All four pages mounting with no uncaught error, the two-tab regression that `sir-ks02.html` must not revert another page's fields, day-note authoring from a Documentations calendar block, the print flatten rule's split, orphan read-only behaviour, the caution-run-up highlight, timed notes on the hour grid in both implementations, one id shape across pages, and an export → import round trip including a rejected invalid file |
+| Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: the field table matching the documented contract, a local-day `createdAt`, collision-free ids, `normalizeSlot` filling legacy shapes, preserving unknown keys, repairing wrong types, never mutating its input and never rewriting a stored id, `validateSlot`/`validateDatabase` naming every bad field without repairing anything, and every malformed stored database being reported rather than accepted |
+| Browser tests | `tests/browser.test.js` | All four pages mounting with no uncaught error, the two-tab regression that `sir-ks02.html` must not revert another page's fields, day-note authoring from a Documentations calendar block, the print flatten rule's split, orphan read-only behaviour, the caution-run-up highlight, timed notes on the hour grid in both implementations, one id shape across pages, an export → import round trip including refused invalid files, every entry point creating the same canonical slot, and a synthetic legacy install migrating into one |
 
-The offline layer runs **once per timezone** — `UTC`, `Pacific/Kiritimati`
+Both offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
 That sweep is the point, not a detail: `calendar-core.js` exists to turn instants
-into *local* calendar days, and the usual way to get that wrong
-(`toISOString().split('T')[0]`) is invisible on a machine running in UTC.
+into *local* calendar days and `schema.js` stamps a new slot with one, and the
+usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
+machine running in UTC.
 
 Useful variations:
 
@@ -735,6 +794,7 @@ For shared standalone scripts:
 
 ```bash
 node --check theme.js
+node --check schema.js
 node --check storage-guard.js
 node --check calendar-core.js
 node --check firebase-sync.js
@@ -833,12 +893,27 @@ The committed suite is the part of this baseline a reader can reproduce:
 node tests/run.js
 ```
 
-As of 2026-08-06 that is 51 offline cases (several hundred assertions) executed
-under five timezones from UTC+14 to UTC-11, plus 16 browser cases in headless
-Chrome — 6 suites, all passing. The two KS02 regression cases were confirmed to
-**fail** against the pre-fix `sir-ks02.html` served through `TRACK_TEST_ROOT`,
-with the other 14 still passing, which is what makes them evidence rather than
-decoration.
+As of 2026-08-08 that is 96 offline cases (51 in `calendar-core.test.js`, 45 in
+`schema.test.js`, several hundred assertions) executed under five timezones from
+UTC+14 to UTC-11, plus 27 browser cases in headless Chrome — 11 suites, all
+passing.
+
+Two sets of regression cases were confirmed to **fail** before their fix, which
+is what makes them evidence rather than decoration:
+
+- The two KS02 field-ownership cases, against the pre-fix `sir-ks02.html`.
+- Six canonical-schema cases, against the pre-change pages: the four
+  `window.TrackSchema` smoke assertions, "every entry point creates a slot with
+  the same canonical shape" (`index.html` built 13 of 21 fields), "Home stamps a
+  new slot with the LOCAL day and a collision-free id" (both slots got the
+  identical id `slot-1786180119615` with the clock frozen), "import keeps a field
+  written by a later version" (the old allow-list dropped it), "import refuses a
+  wrong-typed field" (`{"goals":"hello"}` imported silently), and "a legacy
+  install still migrates into one canonical slot" (10 of 21 fields).
+
+The `index.html` cases were re-confirmed against a `TRACK_TEST_ROOT` scratch
+directory holding symlinks to the repository plus the single pre-change
+`index.html`, with the other 20 browser cases still passing.
 
 The older entries below record one-off audits kept for their detail:
 
@@ -971,7 +1046,7 @@ These are implemented areas, not roadmap items. Possible follow-up work belongs 
 The following describe the project today:
 
 - Slot schema definitions are duplicated across pages.
-- The import allow-list restores all currently known fields but must be extended by hand for every new slot field.
+- Import validates and normalizes through the one `SLOT_FIELDS` table in `schema.js`, and preserves unknown keys, so a new slot field no longer needs an importer change. Nested ids inside an imported slot are preserved verbatim rather than remapped.
 - Two pages can still hold stale in-memory views of the same `track_db` between `storage` events, but no page rebuilds the whole slot from its own snapshot any more, so a stale view can no longer revert a field another page owns. Two tabs of the *same* page remain last-write-wins.
 - Firebase synchronization rewrites the whole serialized database on every save.
 - Some user-visible dates are created through UTC-based helpers.

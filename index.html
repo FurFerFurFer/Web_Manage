@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js"></script>
+  <script src="schema.js?v=1"></script>
   <script src="calendar-core.js?v=1"></script>
   <link rel="stylesheet" href="styles.css?v=1">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -277,11 +278,13 @@
       const input = document.getElementById('new-slot-name');
       const name = input.value.trim();
       if (!name) return;
-      const createdAt = new Date().toISOString().slice(0,10);
-      const slot = {id:'slot-'+Date.now(), name, createdAt, sessions:[], mms:[], kolbs:[], mgChanges:[], goals:[], saActions:[], saEntries:[], notes:[], deadlines:[], docPages:[]};
+      // One canonical definition, in schema.js. This used to be a 13-field
+      // literal, so a workspace made here was missing 8 fields that a workspace
+      // made anywhere else had — and its createdAt was the UTC day.
+      const slot = TrackSchema.createEmptySlot({ name });
       const db = getDB();
       db.slots = [...(db.slots||[]), slot];
-      saveDB(db);
+      if (!saveDB(db)) return;   // quota: the guard has shown its banner
       input.value = '';
       renderSlots();
     }
@@ -331,34 +334,41 @@
       if (!file) return;
       const reader = new FileReader();
       reader.onload = ev => {
-        try {
-          const data = JSON.parse(ev.target.result);
-          if (typeof data !== 'object' || Array.isArray(data)) throw new Error();
-          const createdAt = new Date().toISOString().slice(0,10);
-          const slot = {
-            id: 'slot-'+Date.now(),
-            name: (data.name||'Imported')+' (import)',
-            createdAt,
-            sessions: data.sessions||[], mms: data.mms||[], kolbs: data.kolbs||[],
-            mgChanges: data.mgChanges||[], goals: data.goals||[],
-            saActions: data.saActions||[], saEntries: data.saEntries||[],
-            sourceDumps: data.sourceDumps||[],
-            linChanges: data.linChanges||[],
-            linDayTitles: data.linDayTitles||{},
-            pos: data.pos||{},
-            levelTemplates: data.levelTemplates||{},
-            mgSchedule: data.mgSchedule||{},
-            notes: data.notes||[],
-            mmEntries: data.mmEntries||[],
-            calendarNotes: data.calendarNotes||[],
-            deadlines: Array.isArray(data.deadlines) ? data.deadlines : [],
-            docPages: Array.isArray(data.docPages) ? data.docPages : []
-          };
-          const db = getDB();
-          db.slots = [...(db.slots||[]), slot];
-          saveDB(db);
-          renderSlots();
-        } catch { alert('Invalid slot file'); }
+        let data;
+        try { data = JSON.parse(ev.target.result); }
+        catch { alert('Invalid slot file: this is not valid JSON.'); return; }
+
+        // A whole database is structurally an empty slot, so without this it
+        // would import as a blank workspace with the real data stranded.
+        if (TrackSchema.looksLikeDatabase(data)) {
+          alert('This looks like a whole database, not a single workspace.\n\n'
+            + 'Export one workspace from Home and import that instead.\n\nNothing was changed.');
+          return;
+        }
+
+        // Validate BEFORE reading the database, so a refusal cannot write.
+        // This used to be a hand-maintained allow-list with no type checks at
+        // all: {"goals":"hello"} imported cleanly and then broke the calendar
+        // on the next load.
+        const report = TrackSchema.validateSlot(data);
+        if (!report.ok) {
+          alert('Cannot import this file:\n\n' + TrackSchema.describeErrors(report.errors)
+            + '\n\nNothing was changed.');
+          return;
+        }
+
+        // normalizeSlot fills in what an older export never had and carries
+        // through any field a later version may add, so the importer no longer
+        // has to name every field.
+        const slot = TrackSchema.normalizeSlot(data, {
+          id: TrackSchema.newSlotId(),
+          name: (data.name||'Imported')+' (import)',
+          createdAt: TrackSchema.localToday()
+        });
+        const db = getDB();
+        db.slots = [...(db.slots||[]), slot];
+        if (!saveDB(db)) return;   // quota: the guard has shown its banner
+        renderSlots();
       };
       reader.readAsText(file);
       e.target.value = '';

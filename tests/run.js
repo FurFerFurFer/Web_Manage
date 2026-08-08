@@ -4,14 +4,15 @@
 
        node tests/run.js
 
-   Runs the offline calendar-core suite once per timezone, then the browser
-   suite once. Exits non-zero if anything fails.
+   Runs each offline suite once per timezone, then the browser suite once.
+   Exits non-zero if anything fails.
 
    Why the timezone sweep is the default and not an extra: calendar-core.js
-   exists to turn instants into LOCAL calendar days, and the usual way to get
-   that wrong — toISOString().split('T')[0] — is completely invisible when the
-   machine runs in UTC. UTC+14 and UTC-11 are the two ends that catch it; the
-   others are ordinary zones and a half-hour offset.
+   exists to turn instants into LOCAL calendar days, and schema.js stamps a new
+   slot with one. The usual way to get that wrong — toISOString().split('T')[0]
+   — is completely invisible when the machine runs in UTC. UTC+14 and UTC-11 are
+   the two ends that catch it; the others are ordinary zones and a half-hour
+   offset.
 
    Options:
      --offline     skip the browser suite
@@ -55,7 +56,14 @@ function run(label, file, env) {
   return ok;
 }
 
-for (const tz of zones) run('calendar-core  TZ=' + tz, 'calendar-core.test.js', { TZ: tz });
+// Both files sweep every zone: calendar-core.js turns instants into local days,
+// and schema.js stamps createdAt with one. Either can regress to a UTC day
+// invisibly on a machine running in UTC.
+const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js'];
+
+for (const tz of zones)
+  for (const file of OFFLINE_FILES)
+    run(file.replace(/\.test\.js$/, '') + '  TZ=' + tz, file, { TZ: tz });
 
 if (offlineOnly) {
   console.log('\n(browser suite skipped: --offline)');

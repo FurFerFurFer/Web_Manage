@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js"></script>
+  <script src="schema.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -113,7 +114,10 @@
       }
 
       if (!slots.length) {
-        const s={id:"slot-"+Date.now(),name:"Default",createdAt:today(),sessions:[],mms:[],kolbs:[],mgChanges:[],linChanges:[],goals:pGoals,saActions:pSA,saEntries:pSE};
+        // normalizeSlot rather than createEmptySlot: the harvested values came
+        // out of JSON.parse of a legacy key, so a corrupt one is repaired to []
+        // instead of crashing the one rescue this install will ever get.
+        const s=TrackSchema.normalizeSlot({name:"Default",goals:pGoals,saActions:pSA,saEntries:pSE});
         slots=[s]; activeId=s.id;
       } else {
         const idx=activeId?Math.max(0,slots.findIndex(s=>s.id===activeId)):0;
@@ -2811,7 +2815,7 @@
         let saved=_getSlots();
         const activeId=_getActiveSlotId();
         if (!saved.length){
-          const def={id:"slot-"+Date.now(),name:"Default",createdAt:today(),sessions:[],mms:[],kolbs:[],mgChanges:[],linChanges:[],goals:[],saActions:[],saEntries:[],sourceDumps:[],docPages:[]};
+          const def=TrackSchema.createEmptySlot({name:"Default"});
           saved=[def];
           _setSlots(saved);
         }

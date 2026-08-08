@@ -126,8 +126,75 @@ function populatedSlot(over = {}) {
   }, over));
 }
 
+// ── legacy shapes ────────────────────────────────────────────────────────
+// emptySlot merges with Object.assign, so `over` can add or override a key but
+// never DELETE one — and an old slot is defined by which keys are ABSENT, not
+// by which are empty. `slot.docPages || []` and `slot.docPages` behave the same
+// for a reader but not for a normalizer, which is the thing under test here.
+
+function slotWithout(missing, over = {}) {
+  const s = emptySlot(over);
+  for (const k of missing) delete s[k];
+  return s;
+}
+
+// The shape stored before the Documentations calendar blocks existed. Anything
+// that claims to load old data has to survive this one.
+const preCalendarSlot = (over = {}) => slotWithout(
+  ['linDayTitles', 'notes', 'mmEntries', 'mgSchedule', 'calendarNotes',
+    'deadlines', 'pos', 'levelTemplates', 'docPages'], over);
+
+// The oldest shape: what a slot looked like before Progress and KS02 were
+// unified under one track_db, when a slot held only KS02 records.
+const preUnifiedSlot = (over = {}) => slotWithout(
+  ['linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
+    'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
+    'levelTemplates', 'docPages'], over);
+
+// ── malformed input ──────────────────────────────────────────────────────
+// Raw STRINGS, because the failure mode is what is stored, not what a caller
+// passes in. Every one of these parses (except the first) and then either
+// white-screens a page on `db.slots` or is silently replaced by the next
+// bootstrap write. See AGENTS.md, "Preserve old data".
+
+const MALFORMED_DB_STRINGS = {
+  'not json at all': '{oh no',
+  'json null': 'null',
+  'json number': '42',
+  'json string': '"hello"',
+  'json array': '[1,2]',
+  'json true': 'true',
+  'slots is a map': '{"slots":{}}',
+  'slots is a string': '{"slots":"none"}',
+  'a slot is null': '{"slots":[null],"activeSlotId":null}',
+  'a slot is a string': '{"slots":["nope"],"activeSlotId":null}'
+};
+
+// The pre-track_db localStorage keys the bootstrap IIFEs in progress.html and
+// sir-ks02.html migrate FROM. Values are strings because page.seed writes them
+// with setItem directly. Only the Progress keys by default: with no ks02_slots
+// there is nothing to attach them to, which is the branch that has to CREATE a
+// slot, and that is the one routed through the canonical constructor.
+function legacyLocalKeys(over = {}) {
+  return Object.assign({
+    progress_goals: JSON.stringify([task('lg-1', { title: 'Legacy goal' })]),
+    progress_sa_actions: JSON.stringify([saAction('la-1', { title: 'Legacy action' })]),
+    progress_sa_entries: JSON.stringify([saEntry('le-1', '2026-03-10', 'la-1')])
+  }, over);
+}
+
+// A structurally fine database whose one slot has a single wrong-typed field —
+// the case that imports cleanly today and crashes calendar-core.js later.
+const malformedSlot = (field, value) => emptySlot({ [field]: value });
+const dbWith = (slots, activeSlotId) => ({
+  slots,
+  activeSlotId: activeSlotId === undefined ? (slots[0] ? slots[0].id : null) : activeSlotId
+});
+
 module.exports = {
   localTs, emptySlot, populatedSlot,
+  slotWithout, preCalendarSlot, preUnifiedSlot,
+  MALFORMED_DB_STRINGS, malformedSlot, dbWith, legacyLocalKeys,
   mm, kolb, mgChange, linChange, note, dump, task, milestone,
   saAction, saEntry, mmEntry, session, calNote, deadline, docPage
 };

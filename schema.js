@@ -1,0 +1,381 @@
+/* ── schema.js ─────────────────────────────────────────────────────────────
+   The one definition of what a Track slot is.
+
+   Six places used to build a new slot and each built a different one — 10, 11,
+   12, 13, 14 and 21 fields. Nothing broke visibly, because every reader defends
+   itself with `slot.goals || []`, but that meant the real shape of a slot lived
+   in ~120 scattered fallbacks instead of one place. SLOT_FIELDS below is now
+   that place: defaults, validation and normalization all derive from it, so
+   adding a slot field means editing one object.
+
+   Loaded as a classic script before the page's own script, and before the
+   inline bootstrap IIFEs in progress.html and sir-ks02.html, which create slots
+   at page-script load. Publishes window.TrackSchema.
+
+   Two functions, two different answers to bad data, and the split is
+   deliberate:
+
+     normalizeSlot   always succeeds. It repairs. The legacy rescue paths need
+                     this — refusing there would strand the user's oldest data.
+     validateSlot    only reports. It never repairs. Import calls it FIRST and
+                     refuses on any error, so a corrupt file cannot reach
+                     localStorage at all.
+
+   Dates are LOCAL calendar days. toISOString is never used: it returns the UTC
+   day, so a workspace created at 6pm in UTC-7 was stamped tomorrow. This file
+   carries its own localToday rather than calling calendar-core.js, because
+   progress.html and sir-ks02.html do not load calendar-core.js.
+
+   NOTE: nothing here rewrites data already in track_db. normalizeSlot runs at
+   creation and import only. Running it over stored slots is a migration, and
+   migrations belong behind a schemaVersion that does not exist yet.
+*/
+(function (global) {
+  'use strict';
+
+  // ── the schema ───────────────────────────────────────────────────────────
+  // field name → kind:
+  //   text  a string
+  //   date  a 'YYYY-MM-DD' local calendar day
+  //   list  an array
+  //   map   a plain object used as a keyed map
+  var SLOT_FIELDS = {
+    id: 'text',
+    name: 'text',
+    createdAt: 'date',
+    sessions: 'list',
+    mms: 'list',
+    kolbs: 'list',
+    mgChanges: 'list',
+    linChanges: 'list',
+    linDayTitles: 'map',
+    goals: 'list',
+    saActions: 'list',
+    saEntries: 'list',
+    sourceDumps: 'list',
+    notes: 'list',
+    mmEntries: 'list',
+    mgSchedule: 'map',
+    calendarNotes: 'list',
+    deadlines: 'list',
+    pos: 'map',
+    levelTemplates: 'map',
+    docPages: 'list'
+  };
+
+  var SLOT_KEYS = Object.keys(SLOT_FIELDS);
+
+  // Must be an own-property test, not `SLOT_FIELDS[key]`. Truthiness inherits
+  // from Object.prototype, so 'constructor', 'toString', 'valueOf' and
+  // 'hasOwnProperty' would all look like canonical fields and get dropped by
+  // the unknown-key branch of normalizeSlot.
+  function isCanonical(key) {
+    return Object.prototype.hasOwnProperty.call(SLOT_FIELDS, key);
+  }
+
+  // ── kinds ────────────────────────────────────────────────────────────────
+
+  var DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  var TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+  function isList(v) { return Array.isArray(v); }
+
+  // Arrays and null are both typeof 'object', and broken imports have stored
+  // both in fields that readers then treat as maps.
+  function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+
+  function isText(v) { return typeof v === 'string'; }
+
+  // The shape AND a real day: '2026-13-45' matches the regex but is not a date.
+  // Built with local Date components — day 0 of the next month is the last day
+  // of this one — so this never touches UTC.
+  function isDay(v) {
+    if (typeof v !== 'string' || !DAY_RE.test(v)) return false;
+    var y = +v.slice(0, 4), m = +v.slice(5, 7), d = +v.slice(8, 10);
+    if (m < 1 || m > 12 || d < 1) return false;
+    return d <= new Date(y, m, 0).getDate();
+  }
+
+  function isTime(v) { return typeof v === 'string' && TIME_RE.test(v); }
+
+  function matches(kind, v) {
+    if (kind === 'list') return isList(v);
+    if (kind === 'map') return isMap(v);
+    if (kind === 'date') return isDay(v);
+    return isText(v);
+  }
+
+  function defaultFor(kind) {
+    if (kind === 'list') return [];
+    if (kind === 'map') return {};
+    return '';
+  }
+
+  // ── local calendar day ───────────────────────────────────────────────────
+
+  // Takes an optional Date so the local-day contract is testable at both ends
+  // of a day, the way calendar-core.js's toDateStr is. This is a fourth copy of
+  // that expression (calendar-core.js, documentations.html, progress.html are
+  // the others) because two of the four pages do not load calendar-core.js.
+  // NOTES Proposal 3 consolidates all four.
+  function localToday(date) {
+    var d = date || new Date();
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+
+  // TrackStorage is read at call time, not load time, so script order between
+  // this file and storage-guard.js cannot matter. The 'slot-' prefix is
+  // cosmetic — nothing anywhere parses it — but it keeps an export readable.
+  // The random tail removes the same-millisecond collision 'slot-'+Date.now()
+  // had.
+  function newSlotId() {
+    var store = global.TrackStorage;
+    var tail = (store && store.newId)
+      ? store.newId()
+      : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    return 'slot-' + tail;
+  }
+
+  // ── normalize ────────────────────────────────────────────────────────────
+
+  // Returns a complete slot. Never throws, never mutates `input`, never returns
+  // a field of the wrong kind. `opts` ({id, name, createdAt}) wins over `input`,
+  // which wins over the default.
+  //
+  // Sub-objects are shared with `input` rather than deep-copied: the caller's
+  // object is left untouched, which is what matters, and import always hands us
+  // a freshly parsed tree anyway.
+  function normalizeSlot(input, opts) {
+    var src = isMap(input) ? input : {};
+    var o = opts || {};
+    var out = {};
+    var i, key, kind, v;
+
+    // Unknown keys first, so a field this version has never heard of survives
+    // an export/import round trip instead of being dropped by a hand-maintained
+    // allow-list — the exact problem NOTES Proposal 1 opens with. The per-page
+    // writers already guarantee this for ordinary edits.
+    //
+    // __proto__ is skipped: JSON.parse makes it an own property, and assigning
+    // it here would set the prototype of the slot we are building.
+    for (key in src) {
+      if (!Object.prototype.hasOwnProperty.call(src, key)) continue;
+      if (key === '__proto__' || isCanonical(key)) continue;
+      out[key] = src[key];
+    }
+
+    // Table order, so JSON.stringify of a fresh slot is byte-stable whichever
+    // page built it. The fixups below overwrite these keys rather than adding
+    // them, which leaves that order intact.
+    for (i = 0; i < SLOT_KEYS.length; i++) {
+      key = SLOT_KEYS[i];
+      kind = SLOT_FIELDS[key];
+      if (key === 'id') {
+        // An id already present is copied through verbatim whatever its type,
+        // because an id is a reference: activeSlotId and every export point at
+        // it, and AGENTS.md is explicit that a stored id is never rewritten. A
+        // bad one is reported by validateSlot instead of being repaired here.
+        out.id = (o.id !== undefined) ? o.id : src.id;
+        continue;
+      }
+      v = Object.prototype.hasOwnProperty.call(src, key) ? src[key] : undefined;
+      out[key] = matches(kind, v) ? v : defaultFor(kind);
+    }
+
+    // Minted only when there is no id to preserve.
+    if (!out.id) out.id = newSlotId();
+
+    if (o.name !== undefined) out.name = o.name;
+    if (!out.name) out.name = 'Untitled';
+
+    if (o.createdAt !== undefined) out.createdAt = o.createdAt;
+    if (!isDay(out.createdAt)) out.createdAt = localToday();
+
+    return out;
+  }
+
+  function createEmptySlot(opts) {
+    return normalizeSlot({}, opts);
+  }
+
+  // ── validate ─────────────────────────────────────────────────────────────
+
+  function describe(v) {
+    if (v === null) return 'null';
+    if (v === undefined) return 'nothing';
+    if (Array.isArray(v)) return 'a list';
+    if (typeof v === 'object') return 'an object';
+    if (typeof v === 'string') return 'text';
+    return 'a ' + typeof v;
+  }
+
+  function kindLabel(kind) {
+    if (kind === 'list') return 'a list';
+    if (kind === 'map') return 'an object';
+    if (kind === 'date') return 'a YYYY-MM-DD date';
+    return 'text';
+  }
+
+  // Every list field holds records. A field being a list is not enough: a stray
+  // null or string inside one imports cleanly under a type check that only looks
+  // at the field, and then throws out of flattenGoals or buildBuckets on the
+  // next render, which is a white screen with no way back except editing
+  // localStorage by hand.
+  function listItemErrors(slot) {
+    var errors = [];
+    for (var i = 0; i < SLOT_KEYS.length; i++) {
+      var key = SLOT_KEYS[i];
+      if (SLOT_FIELDS[key] !== 'list') continue;
+      var list = slot[key];
+      if (!isList(list)) continue; // the kind check already reported this
+      /* jshint loopfunc:true */
+      list.forEach(function (item, n) {
+        if (!isMap(item)) {
+          errors.push({
+            field: key,
+            message: '"' + key + '[' + n + ']" must be an object, found ' + describe(item)
+          });
+        }
+      });
+    }
+    return errors;
+  }
+
+  // calendarNotes and deadlines are the two arrays whose items carry dates that
+  // the calendar reads directly, so a bad one there is what actually breaks a
+  // render.
+  function datedItemErrors(slot) {
+    var errors = [];
+    ['calendarNotes', 'deadlines'].forEach(function (key) {
+      var list = slot[key];
+      if (!isList(list)) return; // the kind check already reported this
+      list.forEach(function (item, n) {
+        var at = '"' + key + '[' + n + ']"';
+        if (!isMap(item)) return; // listItemErrors reports this one
+        if (!isDay(item.date)) {
+          errors.push({ field: key, message: at + ' needs a YYYY-MM-DD date, found ' + describe(item.date) });
+        }
+        if (item.startDate !== undefined && !isDay(item.startDate)) {
+          errors.push({ field: key, message: at + ' has an invalid startDate, found ' + describe(item.startDate) });
+        }
+        // ABSENCE IS THE DEFAULT AND IT IS MEANINGFUL: a note with no `time` is
+        // a chip in the day strip, which is how every day note behaved before
+        // the field existed. Only a value that is present is checked, and ''
+        // is not a value — see AGENTS.md on the `time` key.
+        if (item.time !== undefined && !isTime(item.time)) {
+          errors.push({ field: key, message: at + ' has an invalid time ' + describe(item.time) + ', expected HH:MM' });
+        }
+      });
+    });
+    return errors;
+  }
+
+  // Reports; never repairs, never throws. A field that is ABSENT is not an
+  // error — that is simply an older export, and normalizeSlot fills it in.
+  function validateSlot(input, label) {
+    var where = label || 'slot';
+    if (!isMap(input)) {
+      return { ok: false, errors: [{ field: where, message: where + ' must be an object, found ' + describe(input) }] };
+    }
+    var errors = [];
+    for (var i = 0; i < SLOT_KEYS.length; i++) {
+      var key = SLOT_KEYS[i];
+      var v = input[key];
+      // null counts as missing, not as wrong. A null list holds no data, so
+      // normalizeSlot filling in the default discards nothing — refusing the
+      // whole file over an empty field would just cost the user the import.
+      if (v === undefined || v === null) continue;
+      if (!matches(SLOT_FIELDS[key], v)) {
+        errors.push({
+          field: key,
+          message: '"' + key + '" must be ' + kindLabel(SLOT_FIELDS[key]) + ', found ' + describe(v)
+        });
+      }
+    }
+    errors = errors.concat(listItemErrors(input), datedItemErrors(input));
+    return { ok: !errors.length, errors: errors };
+  }
+
+  // A whole database offered to the slot importer is structurally a valid but
+  // completely empty slot, so it would import as a blank workspace with the real
+  // data stranded under an unknown `slots` key. Worth naming rather than
+  // silently accepting.
+  var DATA_KEYS = SLOT_KEYS.filter(function (k) {
+    return k !== 'id' && k !== 'name' && k !== 'createdAt';
+  });
+
+  function looksLikeDatabase(input) {
+    if (!isMap(input) || !isList(input.slots)) return false;
+    for (var i = 0; i < DATA_KEYS.length; i++) {
+      // Any real slot data present means treat it as a slot that merely happens
+      // to carry a `slots` key.
+      if (input[DATA_KEYS[i]] !== undefined) return false;
+    }
+    return true;
+  }
+
+  // The invariants NOTES.md lists that are cheap and structural. Deliberately
+  // NOT covered yet, and belonging with the migration registry: goal and task
+  // id uniqueness, whether linked task/mind-map references resolve, source-dump
+  // nested block id uniqueness, and schema-version support.
+  function validateDatabase(db) {
+    if (!isMap(db)) {
+      return { ok: false, errors: [{ field: 'database', message: 'the database must be an object, found ' + describe(db) }] };
+    }
+    if (!isList(db.slots)) {
+      // Nothing below can run without a slot list, so stop here rather than
+      // pile on errors that are all the same error.
+      return { ok: false, errors: [{ field: 'slots', message: '"slots" must be a list, found ' + describe(db.slots) }] };
+    }
+
+    var errors = [];
+    var seen = Object.create(null);
+
+    db.slots.forEach(function (slot, n) {
+      var where = 'slots[' + n + ']';
+      errors = errors.concat(validateSlot(slot, where).errors);
+      if (!isMap(slot)) return;
+      if (!slot.id) {
+        errors.push({ field: 'slots', message: where + ' has no id' });
+        return;
+      }
+      var k = String(slot.id);
+      if (seen[k]) errors.push({ field: 'slots', message: 'two slots share the id "' + k + '"' });
+      seen[k] = true;
+    });
+
+    var active = db.activeSlotId;
+    if (active !== undefined && active !== null && !seen[String(active)]) {
+      errors.push({ field: 'activeSlotId', message: 'activeSlotId "' + active + '" does not match any slot' });
+    }
+
+    return { ok: !errors.length, errors: errors };
+  }
+
+  // For the one-line summary an alert can show without becoming a wall of text.
+  function describeErrors(errors, limit) {
+    var max = limit || 6;
+    var lines = (errors || []).slice(0, max).map(function (e) { return '  • ' + e.message; });
+    if (errors && errors.length > max) lines.push('  • …and ' + (errors.length - max) + ' more');
+    return lines.join('\n');
+  }
+
+  global.TrackSchema = {
+    SLOT_FIELDS: Object.freeze(SLOT_FIELDS),
+    SLOT_KEYS: Object.freeze(SLOT_KEYS),
+    localToday: localToday,
+    newSlotId: newSlotId,
+    createEmptySlot: createEmptySlot,
+    normalizeSlot: normalizeSlot,
+    validateSlot: validateSlot,
+    validateDatabase: validateDatabase,
+    looksLikeDatabase: looksLikeDatabase,
+    describeErrors: describeErrors,
+    isList: isList,
+    isMap: isMap,
+    isDay: isDay,
+    isTime: isTime
+  };
+})(window);
