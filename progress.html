@@ -4639,7 +4639,7 @@
         initialDeadlineId && (deadlines || []).some(d => d.id === initialDeadlineId)
           ? initialDeadlineId : null);
       const [dlPopupEdit, setDlPopupEdit] = useState(false);  // popup view ⇄ edit toggle
-      const [dlPopupDraft,setDlPopupDraft]= useState({ title: '', detail: '', time: '', startDate: '' });
+      const [dlPopupDraft,setDlPopupDraft]= useState({ title: '', detail: '', time: '', startDate: '', date: '' });
       const [sirSessionPopup, setSirSessionPopup] = useState(null);
 
       const [timelineMode,  setTimelineMode]  = useState(() => linkedDay ? 'day' : 'week'); // 'week' | 'day'
@@ -5472,6 +5472,17 @@
         && /^\d{2}:\d{2}$/.test(draft.time)
         && /^\d{4}-\d{2}-\d{2}$/.test(draft.startDate)
         && draft.startDate <= dueDate;
+      // The popup's Edit form is the only place the due day is TYPED rather
+      // than taken from a calendar cell, so it is the only caller that has to
+      // format-check it — everyone else hands dlValid a value that is already
+      // a day string. The ordering rule itself is unchanged; this just feeds
+      // dlValid the draft's own date, so `startDate <= dueDate` now also
+      // refuses a due day dragged back past the caution start. Refusing here
+      // is what keeps an inverted span out of storage: nothing validates
+      // startDate <= date on a STORED record, and such a record soft-locks
+      // the Documentations edit form, whose Save is gated on dlValid.
+      const dlDraftValid = draft =>
+        /^\d{4}-\d{2}-\d{2}$/.test(draft.date) && dlValid(draft, draft.date);
       // T12:00:00 keeps both parses on their local calendar day, so the span is
       // whole days regardless of a DST shift in between.
       const dlDayCount = d => Math.round(
@@ -5510,6 +5521,29 @@
         setDlOpenDay(null);
         setDlEditing(null);
         setDlDraft({ title: '', detail: '', time: '', startDate: '' });
+      }
+      // Move whichever schedule view is on screen onto `ds`. Used when an edit
+      // re-homes a record to another day, so closing the popup does not leave
+      // the user on the day the record just left. T12:00:00 keeps the parse on
+      // the local calendar day; a bare 'YYYY-MM-DD' is UTC midnight and lands
+      // a day early west of UTC. All three view states move together, so the
+      // view is right whichever one is showing and whichever the user opens
+      // next.
+      function focusScheduleDay(ds) {
+        const t = new Date(ds + 'T12:00:00');
+        t.setHours(0, 0, 0, 0);
+        setAnchor(new Date(t));          // timeline, week mode
+        setDayFocusDate(new Date(t));    // timeline, day mode
+        setCalDate({ year: t.getFullYear(), month: t.getMonth() });
+        // Follow with the day panel only if one was already open — do not open
+        // a panel the user never asked for. This is deliberately the opposite
+        // of the month arrows, which drop the selection; following the record
+        // is the whole point here.
+        setSelDay(prev => prev === null ? null : t.getDate());
+        // The inline composer is keyed by day NUMBER, so a cross-month move
+        // could otherwise leave it open on the same number in another month,
+        // with a draft still aimed at the old day.
+        closeDlComposer();
       }
       function openDlPopup(id) { setDlPopup(id); setDlPopupEdit(false); }
       // The one write behind the popup's inline caution picker. It REFUSES a
@@ -7200,15 +7234,23 @@
             if (!d) { return null; }
             const close = () => { setDlPopup(null); setDlPopupEdit(false); };
             const startEdit = () => {
-              setDlPopupDraft({ title: d.title, detail: d.detail || '', time: d.time, startDate: dlStart(d) });
+              setDlPopupDraft({ title: d.title, detail: d.detail || '', time: d.time, startDate: dlStart(d), date: d.date });
               setDlPopupEdit(true);
             };
+            // The due day and the caution start are two independent stored
+            // dates with one ordering rule between them. Moving the due day
+            // must never rewrite startDate to make room — a caution period the
+            // user set deliberately is not ours to clamp or shift — so an
+            // out-of-order draft is REFUSED here rather than repaired.
             const save = () => {
-              if (!dlValid(dlPopupDraft, d.date)) return;
+              if (!dlDraftValid(dlPopupDraft)) return;
+              const nextDate = dlPopupDraft.date;
+              // spreading `x` is what keeps id, createdAt, done and docPageId
               setDeadlines(prev => prev.map(x => x.id === d.id ? {
-                ...x, time: dlPopupDraft.time, startDate: dlPopupDraft.startDate,
+                ...x, date: nextDate, time: dlPopupDraft.time, startDate: dlPopupDraft.startDate,
                 title: dlPopupDraft.title.trim(), detail: dlPopupDraft.detail.trim()
               } : x));
+              if (nextDate !== d.date) focusScheduleDay(nextDate);
               setDlPopupEdit(false);
             };
             return (
@@ -7216,7 +7258,9 @@
                 <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
                 <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
                   <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex items-center justify-between gap-2 flex-shrink-0">
-                    <span>{dlPopupEdit ? 'EDIT DEADLINE' : 'DEADLINE'} · {d.date}</span>
+                    {/* while editing, the header tracks the draft — it would
+                        otherwise show a stale day above the field changing it */}
+                    <span>{dlPopupEdit ? 'EDIT DEADLINE' : 'DEADLINE'} · {dlPopupEdit ? (dlPopupDraft.date || d.date) : d.date}</span>
                     <div className="flex items-center gap-2 min-w-0">
                       <DocOrigin item={d} />
                       <button onClick={close} className="text-gray-600 hover:text-gray-300 text-base leading-none">×</button>
@@ -7225,6 +7269,19 @@
                   {dlPopupEdit ? (
                     <>
                       <div className="p-3 flex flex-col gap-2 flex-1 overflow-y-auto">
+                        {/* The due day is editable here and nowhere else. The
+                            two date fields cap each other from opposite sides —
+                            the deadline may not precede its caution start —
+                            and both read the DRAFT, so the pair can be moved in
+                            either order within one edit. min/max only grey out
+                            the picker; dlDraftValid is the actual gate. */}
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] text-gray-500 w-20 flex-shrink-0" htmlFor="dl-due-date">Due date</label>
+                          <input id="dl-due-date" type="date" value={dlPopupDraft.date} min={dlPopupDraft.startDate}
+                            onChange={e => setDlPopupDraft(p => ({ ...p, date: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-red-600" />
+                        </div>
                         <div className="flex items-center gap-2">
                           <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Due time</label>
                           <input type="time" value={dlPopupDraft.time}
@@ -7234,7 +7291,7 @@
                         </div>
                         <div className="flex items-center gap-2">
                           <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Caution from</label>
-                          <input type="date" value={dlPopupDraft.startDate} max={d.date}
+                          <input type="date" value={dlPopupDraft.startDate} max={dlPopupDraft.date}
                             onChange={e => setDlPopupDraft(p => ({ ...p, startDate: e.target.value }))}
                             onKeyDown={e => { if (e.key === 'Escape') close(); }}
                             className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-amber-600" />
@@ -7250,12 +7307,19 @@
                           onKeyDown={e => { if (e.key === 'Escape') close(); }}
                           placeholder="Details (optional)..." rows={5}
                           className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-red-600 resize-none" />
-                        {dlPopupDraft.startDate > d.date && (
+                        {/* One fault, one message. The ordering line is gated
+                            on there BEING a due day: every non-empty string
+                            sorts above '', so a cleared field would otherwise
+                            also read as an out-of-order caution start. */}
+                        {!dlPopupDraft.date && (
+                          <p className="text-[10px] text-amber-400">Pick a due date.</p>
+                        )}
+                        {!!dlPopupDraft.date && dlPopupDraft.startDate > dlPopupDraft.date && (
                           <p className="text-[10px] text-amber-400">Caution start must be on or before the deadline.</p>
                         )}
                       </div>
                       <div className="px-3 py-2 border-t border-gray-800 flex gap-2 flex-shrink-0">
-                        <button onClick={save} disabled={!dlValid(dlPopupDraft, d.date)}
+                        <button onClick={save} disabled={!dlDraftValid(dlPopupDraft)}
                           className="flex-1 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-default text-white text-xs rounded transition-colors">Save</button>
                         <button onClick={() => setDlPopupEdit(false)}
                           className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded transition-colors">Cancel</button>

@@ -228,6 +228,24 @@ the due day, so `startDate` is never blank and never inverted; `reset` is what u
 period. `Edit` still exists for changing the time, title and description together, and carries the
 same field.
 
+**Moving the due day.** `Edit` also carries a `Due date` row, above `Due time`. It is the only place
+a deadline's own date can change — the day-cell composer and the Documentations editor still take the
+due day from the calendar cell they were opened on. The two date fields cap each other from opposite
+sides: `Due date` will not go below the caution start, `Caution from` will not go above the due day,
+and because both read the draft rather than the stored record, the pair can be moved in either order
+inside one edit. An out-of-order or cleared date is **refused** — Save is disabled and the form says
+which — rather than repaired: the caution start is a period the user chose and is never clamped or
+shifted to make room for a new due day. Saving keeps the record itself, so `createdAt`, `docPageId`,
+the tick and above all the **id** survive, and every `progress.html?date=…&dl=…` link still opens the
+deadline even though its `date` parameter now names the old day. The Schedule follows the move: the
+timeline re-anchors and the month grid opens on the new month, and a day panel that was already open
+moves to the new due day while a closed one stays closed.
+
+That refusal is load-bearing rather than fussy. Nothing validates `startDate <= date` on a *stored*
+record — `schema.js` checks each date's format on its own — and an inverted span disables the
+Documentations edit form for that deadline, whose Save is gated on `dlValid` against the stored
+caution start. The popup is the only writer that could produce one.
+
 **Ticking a deadline.** A deadline carries an optional `done` flag, and ticking it makes every `!` it
 puts on its run-up disappear — the month grid, the timeline day headers, the selected-day panel, the
 Home calendar and any Documentations calendar block — while the deadline itself stays on its due day in
@@ -786,7 +804,7 @@ It runs two layers:
 
 | Layer | File | What it covers |
 | --- | --- | --- |
-| Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, caution ranges, deadline validation, run-ups across month/year/DST boundaries, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
+| Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, caution ranges, deadline validation, run-ups across month/year/DST boundaries, an inverted span being inert rather than explosive, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, and refused-save handling for import, legacy notes, and Documentation bootstrap |
 
@@ -987,15 +1005,19 @@ The committed suite is the part of this baseline a reader can reproduce:
 node tests/run.js
 ```
 
-As of 2026-08-08 that is 96 offline cases (51 in `calendar-core.test.js`, 45 in
+As of 2026-08-10 that is 104 offline cases (56 in `calendar-core.test.js`, 48 in
 `schema.test.js`, several hundred assertions) executed under five timezones from
-UTC+14 to UTC-11, plus 27 browser cases in headless Chrome — 11 suites, all
+UTC+14 to UTC-11, plus 73 browser subtests in headless Chrome — 11 suites, all
 passing.
 
-Two sets of regression cases were confirmed to **fail** before their fix, which
-is what makes them evidence rather than decoration:
+Several sets of regression cases were confirmed to **fail** before their fix,
+which is what makes them evidence rather than decoration:
 
 - The two KS02 field-ownership cases, against the pre-fix `sir-ks02.html`.
+- The five movable-due-date cases, against the pre-change `progress.html`: each
+  timed out waiting for a `Due date` row that did not exist, while every existing
+  deadline case — including "the due day itself did not move", which guards the
+  read-view caution picker — kept passing on both sides.
 - Six canonical-schema cases, against the pre-change pages: the four
   `window.TrackSchema` smoke assertions, "every entry point creates a slot with
   the same canonical shape" (`index.html` built 13 of 21 fields), "Home stamps a

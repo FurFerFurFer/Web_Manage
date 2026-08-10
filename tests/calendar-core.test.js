@@ -649,6 +649,32 @@ test('dlDayCount survives month, year and DST boundaries', () => {
   assert.equal(n('2026-04-04', '2026-04-06'), 3, 'across southern-hemisphere transitions');
 });
 
+/* A guard, not a feature. Nothing validates startDate <= date on a STORED
+   record — schema.js checks each date's format independently — so the only
+   thing keeping an inverted span out of the data is that every authoring path
+   refuses to write one. This pins what such a record would actually do if one
+   ever arrived, which is why that refusal has to stay at the writers:
+   the run-up silently vanishes on every surface, and dlDayCount reports a
+   nonsense length that documentations.html renders verbatim. */
+test('an inverted span is inert rather than explosive, which is why writers must refuse it', () => {
+  const inverted = { date: '2026-03-08', startDate: '2026-03-10' };
+  const slot = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-08', { startDate: '2026-03-10' })] });
+
+  assert.equal(TC.dlDayCount(inverted), -1, 'a negative length, not NaN — the dates are well-formed');
+  assert.ok(!Number.isNaN(TC.dlDayCount(inverted)), 'NaN is reserved for a MALFORMED date');
+  for (const ds of ['2026-03-07', '2026-03-08', '2026-03-09', '2026-03-10', '2026-03-11']) {
+    assert.equal(TC.dlInCaution(inverted, ds), false, 'no day can satisfy ds >= start && ds <= date');
+    assert.deepEqual(ids(TC.buildDaySchedule(slot, ds).deadlinesCaution), [],
+      'so the run-up disappears entirely rather than warning on the wrong days');
+  }
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-08').deadlines), ['d'],
+    'the deadline itself is still drawn on its due day, so the damage is silent');
+  assert.deepEqual(TC.daysBetween('2026-03-10', '2026-03-08'), [],
+    'and the range walk bails instead of spinning');
+  assert.equal(TC.dlValid({ title: 'x', time: '09:00', startDate: '2026-03-10' }, '2026-03-08'), false,
+    'dlValid is the one check standing between a draft and this state');
+});
+
 // ── MG focus carry-forward ─────────────────────────────────────────────────
 
 test('mgsForDay carries the last set focus forward for up to 30 days', () => {

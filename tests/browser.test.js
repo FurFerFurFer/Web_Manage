@@ -1183,6 +1183,268 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  // ── 2e. the due day is movable, and the caution start does not follow ───
+
+  /* Moving a deadline used to mean deleting and re-creating it, which threw
+     away createdAt, docPageId, and the id every ?dl= link points at. The
+     popup's Edit form now carries the due day too, under one rule: it may not
+     land before the caution start, and the caution start is never rewritten to
+     make room.
+
+     That rule is load-bearing, not cosmetic. Nothing validates
+     startDate <= date on a STORED record — schema.js checks each date's format
+     independently — and an inverted span soft-locks the documentations.html
+     edit form, whose Save is gated on dlValid against the stored startDate.
+     The popup is the only writer that could reach that state, so refusing at
+     the source is what keeps the invariant true everywhere else. */
+
+  const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+  const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /* Day n of NEXT month, through the Date constructor so December rolls the
+     year over. Used to move a deadline across a month boundary, which is the
+     case where "the Schedule follows" is actually observable. */
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1, 12, 0, 0, 0);
+  const nextMonthDay = n => nextMonth.getFullYear() + '-' +
+    String(nextMonth.getMonth() + 1).padStart(2, '0') + '-' + String(n).padStart(2, '0');
+
+  const moveDb = (dlOver = {}) => {
+    const due = thisMonthDay(18);
+    return {
+      due,
+      start: thisMonthDay(15),
+      db: seedDb({
+        calendarNotes: [],
+        docPages: [F.docPage('p-1')],
+        deadlines: [F.deadline('dl-move', due, Object.assign({
+          startDate: thisMonthDay(15), title: 'Ship the thing',
+          docPageId: 'p-1', createdAt: 1771000000000
+        }, dlOver))]
+      })
+    };
+  };
+  const storedMove = page => page.evaluate(function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return (((db.slots || [])[0] || {}).deadlines || [])[0] || null;
+  });
+  const openMovePopup = async ({ db, due }, dateParam) => {
+    const page = await open('progress.html',
+      { db, hash: '?date=' + (dateParam || due) + '&dl=dl-move#schedule' });
+    await page.waitFor(function () { return !!document.getElementById('dl-caution-from'); },
+      { message: 'the deadline popup in its READ view' });
+    return page;
+  };
+  // the due-date row lives behind Edit, beside the time it has always shown
+  const openMoveEdit = async page => {
+    await page.evaluate(function () {
+      var pop = document.getElementById('dl-caution-from').closest('div.fixed');
+      Array.prototype.find.call(pop.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Edit'; }).click();
+      return true;
+    });
+    await page.waitFor(function () { return !!document.getElementById('dl-due-date'); },
+      { message: 'the Edit form showing a Due date row' });
+  };
+  const setDue = (page, v) => page.evaluate(function (setterSrc, val) {
+    var set = new Function('return ' + setterSrc)();
+    set(document.getElementById('dl-due-date'), val);
+    return true;
+  }, SET_REACT_INPUT, v);
+  const moveSaveState = page => page.evaluate(function () {
+    var pop = document.getElementById('dl-due-date').closest('div.fixed');
+    var save = Array.prototype.find.call(pop.querySelectorAll('button'),
+      function (b) { return b.textContent.trim() === 'Save'; });
+    return { disabled: !!save.disabled, text: pop.textContent };
+  });
+  const clickMoveSave = page => page.evaluate(function () {
+    var pop = document.getElementById('dl-due-date').closest('div.fixed');
+    Array.prototype.find.call(pop.querySelectorAll('button'),
+      function (b) { return b.textContent.trim() === 'Save'; }).click();
+    return true;
+  });
+
+  await t.test('the popup Edit form moves the due day and leaves the caution start where it was', async () => {
+    const { db, due, start } = moveDb({ done: true });
+    const page = await openMovePopup({ db, due });
+    await openMoveEdit(page);
+
+    const seeded = await page.evaluate(function () {
+      return {
+        date: document.getElementById('dl-due-date').value,
+        min: document.getElementById('dl-due-date').getAttribute('min')
+      };
+    });
+    assert.equal(seeded.date, due, 'the row is seeded from the stored due day');
+    assert.equal(seeded.min, start, 'and cannot be dragged before the caution start');
+
+    const moved = thisMonthDay(22);
+    await setDue(page, moved);
+    await clickMoveSave(page);
+
+    const saved = await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.date === v ? d : false;
+    }, { args: [moved], message: 'the new due day reaching track_db' });
+
+    assert.equal(saved.date, moved, 'the due day moved');
+    assert.equal(saved.startDate, start, 'and the caution start did NOT follow it');
+    // the spread is what protects the rest — rebuilding the record from a
+    // field list is the bug that cost day notes and deadlines before
+    assert.equal(saved.id, 'dl-move', 'the id survives, so every ?dl= link still resolves');
+    assert.equal(saved.createdAt, 1771000000000, 'and createdAt');
+    assert.equal(saved.docPageId, 'p-1', 'and the page that authored it');
+    assert.equal(saved.done, true, 'and the tick');
+    assert.equal(saved.time, '17:00', 'and the due time');
+    assert.equal(saved.title, 'Ship the thing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a due day before the caution start is refused, leaving track_db byte-identical', async () => {
+    const { db, due, start } = moveDb();
+    const page = await openMovePopup({ db, due });
+    await openMoveEdit(page);
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    // one day before the caution start: the whole point of the constraint
+    await setDue(page, thisMonthDay(14));
+    const blocked = await page.waitFor(function () {
+      var pop = document.getElementById('dl-due-date').closest('div.fixed');
+      var save = Array.prototype.find.call(pop.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Save'; });
+      return save.disabled ? { disabled: true, text: pop.textContent } : false;
+    }, { message: 'Save going disabled on an inverted span' });
+    assert.equal(blocked.disabled, true, 'Save is disabled');
+    assert.match(blocked.text, /Caution start must be on or before the deadline/,
+      'and the form says why');
+
+    await clickMoveSave(page);
+    await sleep(250);
+    const after = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    assert.equal(after, before, 'a refused move writes nothing at all');
+    const stored = await storedMove(page);
+    assert.equal(stored.date, due, 'the due day did not move');
+    assert.equal(stored.startDate, start, 'and neither did the caution start');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a cleared due day is refused rather than written as an empty string', async () => {
+    const { db, due } = moveDb();
+    const page = await openMovePopup({ db, due });
+    await openMoveEdit(page);
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    await setDue(page, '');
+    const blocked = await page.waitFor(function () {
+      var pop = document.getElementById('dl-due-date').closest('div.fixed');
+      var save = Array.prototype.find.call(pop.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Save'; });
+      return save.disabled ? { disabled: true, text: pop.textContent } : false;
+    }, { message: 'Save going disabled on a cleared due day' });
+    assert.match(blocked.text, /Pick a due date/, 'the form asks for one');
+    // a blank date must not ALSO raise the ordering warning — one fault, one message
+    assert.doesNotMatch(blocked.text, /Caution start must be on or before/,
+      'and does not also claim the caution start is out of order');
+
+    await clickMoveSave(page);
+    await sleep(250);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
+      before, 'nothing is written');
+    assert.equal((await storedMove(page)).date, due, 'and date is never blanked');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the run-up re-homes with the due day, keeping its stored length', async () => {
+    // start 15, due 18 → after moving to 22 the "!" days are 15..21
+    const { db, due } = moveDb();
+    const page = await openMovePopup({ db, due }, thisMonthDay(20));
+
+    // day 20 sits AFTER the old due day, so it starts with no mark at all
+    const countCaution = () => page.evaluate(function () {
+      return Array.prototype.filter.call(document.querySelectorAll('#root button'),
+        function (b) { return (b.getAttribute('title') || '').indexOf('Due ') === 0; }).length;
+    });
+    assert.equal(await countCaution(), 0, 'day 20 is outside the original run-up');
+
+    await openMoveEdit(page);
+    await setDue(page, thisMonthDay(22));
+    await clickMoveSave(page);
+    await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.date === v ? true : false;
+    }, { args: [thisMonthDay(22)], message: 'the move landing' });
+
+    // the timeline followed to day 22, so check the month grid instead, where
+    // every day of the run-up is visible at once
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('#root button'),
+        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      return true;
+    });
+    const marks = await page.waitFor(function () {
+      var caution = Array.prototype.map.call(
+        document.querySelectorAll('#root [title^="Caution period · due"]'),
+        function (e) { return e.closest('[class*="min-h-"]').textContent.trim().slice(0, 2); });
+      var dueCells = Array.prototype.map.call(
+        document.querySelectorAll('#root [title^="Due "]'),
+        function (e) { return e.closest('[class*="min-h-"]').textContent.trim().slice(0, 2); });
+      return caution.length ? { caution: caution, due: dueCells } : false;
+    }, { message: 'the month grid redrawing the run-up' });
+
+    const asNums = list => list.map(s => Number(String(s).replace(/\D/g, ''))).sort((a, b) => a - b);
+    assert.deepEqual(asNums(marks.caution), [15, 16, 17, 18, 19, 20, 21],
+      'the "!" days are startDate..the day before the NEW due day — the old due day is now just a run-up day');
+    assert.deepEqual(asNums(marks.due), [22], 'and the deadline itself is drawn once, on its new day');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the Schedule follows a deadline moved into another month', async () => {
+    const { db, due } = moveDb();
+    const page = await openMovePopup({ db, due });   // ?date= lands in timeline DAY mode
+
+    const dayLabel = () => page.evaluate(function () {
+      return document.querySelector('#root .flex-shrink-0 span.flex-1').textContent.trim();
+    });
+    assert.match(await dayLabel(), new RegExp(MONTHS_LONG[now.getMonth()] + ' 18, ' + now.getFullYear()),
+      'the timeline starts on the old due day');
+
+    const moved = nextMonthDay(9);
+    await openMoveEdit(page);
+    await setDue(page, moved);
+    await clickMoveSave(page);
+    await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.date === v ? true : false;
+    }, { args: [moved], message: 'the cross-month move landing' });
+
+    const wantLabel = new RegExp(MONTHS_LONG[nextMonth.getMonth()] + ' 9, ' + nextMonth.getFullYear());
+    const followed = await page.waitFor(function () {
+      return document.querySelector('#root .flex-shrink-0 span.flex-1').textContent.trim();
+    }, { message: 'the timeline day label' });
+    assert.match(followed, wantLabel, 'the timeline re-anchored on the new due day');
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('#root button'),
+        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      return true;
+    });
+    const month = await page.waitFor(function () {
+      var el = document.querySelector('#root .grid.grid-cols-7');
+      return el ? el.parentElement.querySelector('span.font-bold').textContent.trim() : false;
+    }, { message: 'the month grid header' });
+    assert.equal(month, MONTHS_SHORT[nextMonth.getMonth()] + ' ' + nextMonth.getFullYear(),
+      'and the month grid opens on the month the deadline moved to');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('both pages mint ids in one shape', async () => {
     const SHAPE = /^[0-9a-z]+-[0-9a-z]{1,5}$/;
     for (const [file, fn] of [['progress.html', 'uid'], ['documentations.html', 'genId']]) {
