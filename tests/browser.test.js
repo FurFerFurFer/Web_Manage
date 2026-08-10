@@ -85,10 +85,11 @@ test('browser suites', skipUnlessChrome, async t => {
      deliberately guarded against overwriting, so the stale data wins silently.
      The second tab of a two-tab test must pass fresh:false, or it erases the
      state the first tab is under test with. */
-  const open = async (file, { db = null, hash = '', fresh = true, extra = null } = {}) => {
+  const open = async (file, { db = null, raw = null, hash = '', fresh = true, extra = null } = {}) => {
     const page = await browser.newPage();
     if (fresh) await page.clearStorage(server.origin);
-    if (db || extra) await page.seed(db || {}, extra || {});
+    if (raw !== null) await page.seedRaw(raw, extra || {});
+    else if (db || extra) await page.seed(db || {}, extra || {});
     await page.goto(server.url(file) + hash);
     await page.skipFirebase();
     return page;
@@ -111,6 +112,37 @@ test('browser suites', skipUnlessChrome, async t => {
     const until = Date.now() + 10000;
     while (!page.dialogs.length && Date.now() < until) await sleep(50);
     return page.dialogs;
+  };
+
+  const addUltimateGoal = async (page, title) => {
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'), function (b) {
+        var text = b.textContent.trim();
+        return text === '+ add ultimate goal' || text === '+ goal';
+      });
+    }, { message: 'an add-goal button' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'), function (b) {
+        var text = b.textContent.trim();
+        return text === '+ add ultimate goal' || text === '+ goal';
+      }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!document.querySelector('input[placeholder="Ultimate goal…"], input[placeholder="Goal name…"]');
+    },
+      { message: 'ultimate-goal input' });
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('input[placeholder="Ultimate goal…"], input[placeholder="Goal name…"]'), value);
+      return true;
+    }, SET_REACT_INPUT, title);
+    await page.evaluate(function () {
+      var input = document.querySelector('input[placeholder="Ultimate goal…"], input[placeholder="Goal name…"]');
+      Array.prototype.find.call(input.parentElement.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'add'; }).click();
+      return true;
+    });
   };
 
   // ── 1. smoke ────────────────────────────────────────────────────────────
@@ -254,6 +286,58 @@ test('browser suites', skipUnlessChrome, async t => {
     await ks02.close();
   });
 
+  await t.test('switching the active slot in another tab keeps KS02 workspaces independent', async () => {
+    const db = F.dbWith([
+      F.emptySlot({ id: 'slot-a', name: 'Alpha', mms: [F.mm(1, 'A-only')] }),
+      F.emptySlot({ id: 'slot-b', name: 'Beta',  mms: [F.mm(2, 'B-only')] })
+    ], 'slot-a');
+    const ks02 = await open('sir-ks02.html', { db, hash: '#ks02' });
+    await ks02.waitFor(function () { return document.body.textContent.indexOf('A-only') >= 0; },
+      { message: 'KS02 showing slot A' });
+    const home = await open('index.html', { fresh: false });
+
+    await home.evaluate(function () { window.activateSlot('slot-b'); return true; });
+    await ks02.waitFor(function () { return document.body.textContent.indexOf('B-only') >= 0; },
+      { message: 'KS02 following the active slot to B' });
+    await sleep(500); // let the autosave effects caused by the refresh settle
+
+    const stored = await home.evaluate(function () {
+      return JSON.parse(localStorage.getItem('track_db')).slots.map(function (s) {
+        return { id: s.id, names: (s.mms || []).map(function (m) { return m.name; }) };
+      });
+    });
+    assert.deepEqual(stored, [
+      { id: 'slot-a', names: ['A-only'] },
+      { id: 'slot-b', names: ['B-only'] }
+    ], 'loading B must not copy its KS02-owned fields into A');
+    await ks02.close(); await home.close();
+  });
+
+  await t.test('switching the active slot refreshes Progress before its next edit', async () => {
+    const db = F.dbWith([
+      F.emptySlot({ id: 'slot-a', name: 'Alpha', goals: [F.task('goal-a', { title: 'Goal A' })] }),
+      F.emptySlot({ id: 'slot-b', name: 'Beta',  goals: [F.task('goal-b', { title: 'Goal B' })] })
+    ], 'slot-a');
+    const progress = await open('progress.html', { db });
+    await progress.waitFor(function () { return document.body.textContent.indexOf('Goal A') >= 0; },
+      { message: 'Progress showing slot A' });
+    const home = await open('index.html', { fresh: false });
+
+    await home.evaluate(function () { window.activateSlot('slot-b'); return true; });
+    await progress.waitFor(function () { return document.body.textContent.indexOf('Goal B') >= 0; },
+      { message: 'Progress following the active slot to B' });
+    await addUltimateGoal(progress, 'New on B');
+
+    const slots = await progress.waitFor(function () {
+      var out = JSON.parse(localStorage.getItem('track_db')).slots;
+      return out[1].goals.some(function (g) { return g.title === 'New on B'; }) ? out : false;
+    }, { message: 'the edit landing in slot B' });
+    assert.deepEqual(slots[0].goals.map(g => g.title), ['Goal A'], 'slot A stayed untouched');
+    assert.deepEqual(slots[1].goals.map(g => g.title), ['Goal B', 'New on B'],
+      'the visible slot B state was extended rather than replaced by stale A state');
+    await progress.close(); await home.close();
+  });
+
   await t.test('a Documentations calendar block authors a day note carrying its page id', async () => {
     const db = seedDb({ calendarNotes: [], deadlines: [], docPages: [F.docPage('p-1', { title: 'Test Page' })] });
     const docs = await open('documentations.html', { db });
@@ -318,6 +402,17 @@ test('browser suites', skipUnlessChrome, async t => {
   const now = new Date();
   const thisMonthDay = n => now.getFullYear() + '-' +
     String(now.getMonth() + 1).padStart(2, '0') + '-' + String(n).padStart(2, '0');
+
+  /* Local calendar day, n days from today. Deadline run-ups are relative to
+     today, and toISOString() would hand back a UTC day that is off by one for
+     most of the world — the exact bug AGENTS.md forbids in the pages. */
+  const dayFromToday = n => {
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() + n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  };
 
   const addCalendarBlock = async page => {
     await page.evaluate(function () {
@@ -532,6 +627,562 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  await t.test('the timeline does not mark a deadline as caution on its own due day', async () => {
+    // The month grid and the day panel both drop the due day from the caution
+    // list, and calendar-core's deadlinesCaution bakes the same rule in. The
+    // timeline strip is the fourth implementation of it, and was the odd one
+    // out: it drew the red due line AND a redundant amber "!" for one deadline.
+    const due = dayFromToday(0);
+    const db = seedDb({
+      calendarNotes: [],
+      deadlines: [F.deadline('dl-today', due, { startDate: dayFromToday(-2), title: 'Ship the thing' })]
+    });
+    // ?date= opens the timeline in single-day mode, so the strip shows this day alone
+    const page = await open('progress.html', { db, hash: '?date=' + due + '#schedule' });
+    await page.waitFor(function () {
+      var el = document.querySelector('#root'); return !!el && el.children.length > 0;
+    }, { message: 'progress.html mounting' });
+
+    const seen = await page.waitFor(function () {
+      var dueLine = Array.prototype.some.call(document.querySelectorAll('#root span'),
+        function (e) { return /bg-red-600/.test(e.className || '') && /Ship the thing/.test(e.textContent); });
+      if (!dueLine) return false;       // wait for a positive signal before counting absences
+      return {
+        dueLine: dueLine,
+        caution: Array.prototype.filter.call(document.querySelectorAll('#root button'),
+          function (b) { return (b.getAttribute('title') || '').indexOf('Due ') === 0; }).length
+      };
+    }, { message: 'the red due line being drawn on the timeline' });
+
+    assert.equal(seen.dueLine, true, 'the due day still draws the red deadline line');
+    assert.equal(seen.caution, 0, 'and does not also draw an amber "!" for the same deadline');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the timeline still marks the caution run-up before the due day', async () => {
+    // The guard on the test above: dropping the due day must not drop the run-up.
+    const due = dayFromToday(2);
+    const db = seedDb({
+      calendarNotes: [],
+      deadlines: [F.deadline('dl-soon', due, { startDate: dayFromToday(-1), title: 'Ship the thing' })]
+    });
+    const page = await open('progress.html', { db, hash: '?date=' + dayFromToday(0) + '#schedule' });
+    await page.waitFor(function () {
+      var el = document.querySelector('#root'); return !!el && el.children.length > 0;
+    }, { message: 'progress.html mounting' });
+
+    const caution = await page.waitFor(function () {
+      var hits = Array.prototype.filter.call(document.querySelectorAll('#root button'),
+        function (b) { return (b.getAttribute('title') || '').indexOf('Due ') === 0; });
+      return hits.length ? hits.map(function (b) { return b.textContent; }) : false;
+    }, { message: 'the amber caution chip on a run-up day' });
+
+    assert.equal(caution.length, 1, 'a day inside the run-up carries exactly one caution chip');
+    assert.match(caution[0], /Ship the thing/);
+    assert.match(caution[0], /!/);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  // ── 2c. the caution period is choosable, and its "!" leads back ─────────
+
+  /* A doc-authored deadline with a one-day caution period: the default every
+     creation path produces, and the state in which the feature is invisible. */
+  const cautionDb = () => {
+    const due = dayFromToday(3);
+    return {
+      due,
+      db: seedDb({
+        calendarNotes: [],
+        docPages: [F.docPage('p-1')],
+        deadlines: [F.deadline('dl-pick', due,
+          { startDate: due, title: 'Ship the thing', docPageId: 'p-1', createdAt: 1771000000000 })]
+      })
+    };
+  };
+  const openDlPopup = async ({ db, due }) => {
+    const page = await open('progress.html', { db, hash: '?date=' + due + '&dl=dl-pick#schedule' });
+    await page.waitFor(function () { return !!document.getElementById('dl-caution-from'); },
+      { message: 'the deadline popup, opened by ?dl=, showing the caution picker in its READ view' });
+    return page;
+  };
+  const storedDeadline = page => page.evaluate(function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return (((db.slots || [])[0] || {}).deadlines || [])[0] || null;
+  });
+
+  await t.test('?dl= opens the deadline popup, and the caution start is set from the read view', async () => {
+    const { db, due } = cautionDb();
+    const page = await openDlPopup({ db, due });
+
+    const shown = await page.evaluate(function () {
+      var pop = document.getElementById('dl-caution-from').closest('div.fixed');
+      return {
+        readView: Array.prototype.some.call(pop.querySelectorAll('button'),
+          function (b) { return b.textContent.trim() === 'Edit'; }),
+        title: /Ship the thing/.test(pop.textContent),
+        value: document.getElementById('dl-caution-from').value,
+        max: document.getElementById('dl-caution-from').getAttribute('max')
+      };
+    });
+    assert.equal(shown.readView, true, 'the picker is in the read view, not behind Edit');
+    assert.equal(shown.title, true, '?dl= opened the deadline it names');
+    assert.equal(shown.value, due, 'and starts on the documented default, the due day');
+    assert.equal(shown.max, due, 'the input cannot be dragged past the due day');
+
+    const start = dayFromToday(-1);
+    await page.evaluate(function (setterSrc, v) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.getElementById('dl-caution-from'), v);
+      return true;
+    }, SET_REACT_INPUT, start);
+
+    const saved = await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.startDate === v ? d : false;
+    }, { args: [start], message: 'the new caution start reaching track_db' });
+
+    assert.equal(saved.startDate, start);
+    assert.equal(saved.docPageId, 'p-1', 'the doc page that authored it is untouched');
+    assert.equal(saved.createdAt, 1771000000000, 'and so is createdAt');
+    assert.equal(saved.date, due, 'the due day itself did not move');
+    assert.equal(saved.time, '17:00');
+
+    const readout = await page.waitFor(function () {
+      var pop = document.getElementById('dl-caution-from').closest('div.fixed');
+      return /5 days/.test(pop.textContent) ? pop.textContent : false;
+    }, { message: 'the popup readout updating to the new span' });
+    assert.match(readout, /5 days/, 'the span readout reflects the pick immediately');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the caution picker refuses a cleared or out-of-range value instead of writing it', async () => {
+    const { db, due } = cautionDb();
+    const page = await openDlPopup({ db, due });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    for (const bad of ['', dayFromToday(9), 'nonsense']) {
+      await page.evaluate(function (setterSrc, v) {
+        var set = new Function('return ' + setterSrc)();
+        set(document.getElementById('dl-caution-from'), v);
+        return true;
+      }, SET_REACT_INPUT, bad);
+      await sleep(120);
+      assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+        'a caution start of "' + bad + '" leaves the stored bytes byte-identical');
+    }
+
+    const still = await storedDeadline(page);
+    assert.equal(still.startDate, due, 'startDate is never blanked and never lands after the due day');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a quick-set picks a caution start, and reset undoes it', async () => {
+    const { db, due } = cautionDb();
+    const page = await openDlPopup({ db, due });
+
+    const clicked = await page.evaluate(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return /^Start the caution period on /.test(x.getAttribute('title') || ''); });
+      if (!b) return null;
+      b.click();
+      return b.getAttribute('title').replace('Start the caution period on ', '');
+    });
+    assert.ok(clicked, 'the quick-set buttons are present');
+
+    const set = await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.startDate === v ? d : false;
+    }, { args: [clicked], message: 'the quick-set caution start reaching track_db' });
+    assert.equal(set.startDate, clicked);
+    assert.notEqual(set.startDate, due, 'which is a real run-up, not the due day again');
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === 'reset'; }).click();
+      return true;
+    });
+    const undone = await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.startDate === v ? d : false;
+    }, { args: [due], message: 'reset returning the caution start to the due day' });
+    assert.equal(undone.startDate, due, 'a caution period can always be undone');
+    assert.equal(undone.docPageId, 'p-1');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a ?dl= that names nothing opens nothing, without an error', async () => {
+    const { db, due } = cautionDb();
+    const page = await open('progress.html', { db, hash: '?date=' + due + '&dl=no-such-deadline#schedule' });
+    await page.waitFor(function () {
+      var el = document.querySelector('#root'); return !!el && el.children.length > 0;
+    }, { message: 'progress.html mounting' });
+    await sleep(300);
+    assert.equal(await page.evaluate(function () { return !!document.getElementById('dl-caution-from'); }),
+      false, 'a stale or hand-typed link opens no popup');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the Home calendar links both halves of a deadline to the deadline itself', async () => {
+    const due = thisMonthDay(22);
+    const db = seedDb({
+      calendarNotes: [],
+      deadlines: [F.deadline('dl-home', due, { startDate: thisMonthDay(20), title: 'Ship the thing' })]
+    });
+    const page = await open('index.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('#cal-grid .cal-cell'); },
+      { message: 'the universal calendar grid' });
+
+    /* One click per day, never inside waitFor: a cell click TOGGLES the
+       selection, so a polling re-click would close the panel it is waiting for. */
+    const clickDay = day => page.evaluate(function (n) {
+      Array.prototype.filter.call(document.querySelectorAll('#cal-grid .cal-cell'),
+        function (c) { return !c.classList.contains('empty'); })[n - 1].click();
+      return true;
+    }, day);
+
+    // a caution day first: the chip a user sees three weeks out
+    await clickDay(21);
+    const chips = await page.waitFor(function () {
+      var found = document.querySelectorAll('#cal-detail .cal-sched-dl');
+      return found.length ? Array.prototype.map.call(found, function (a) {
+        return { tag: a.tagName, cls: a.className, href: a.getAttribute('href'), text: a.textContent };
+      }) : false;
+    }, { message: 'a deadline chip in the day detail' });
+
+    assert.equal(chips.length, 1, 'a run-up day shows the caution chip alone');
+    assert.equal(chips[0].tag, 'A', 'the "!" chip is a link, not inert text');
+    assert.match(chips[0].cls, /caution/);
+    assert.match(chips[0].text, /^! Ship the thing/);
+    assert.equal(chips[0].href, 'progress.html?date=' + due + '&dl=dl-home#schedule',
+      'and it points at the DUE day and the deadline id, not at the caution day it sits on');
+
+    await clickDay(22);
+    const dueChips = await page.waitFor(function () {
+      var found = document.querySelectorAll('#cal-detail .cal-sched-dl.due');
+      return found.length ? Array.prototype.map.call(found, function (a) {
+        return { tag: a.tagName, href: a.getAttribute('href') };
+      }) : false;
+    }, { message: 'the due chip in the day detail' });
+    assert.equal(dueChips[0].tag, 'A', 'the due chip is a link too');
+    assert.equal(dueChips[0].href, 'progress.html?date=' + due + '&dl=dl-home#schedule');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a Documentations caution row leads to the deadline\'s due day', async () => {
+    const db = seedDb({
+      calendarNotes: [],
+      docPages: [F.docPage('p-1')],
+      deadlines: [F.deadline('dl-doc-jump', thisMonthDay(22),
+        { startDate: thisMonthDay(20), title: 'Ship the thing', docPageId: 'p-1' })]
+    });
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 21);          // a run-up day: read-only, no edit controls
+
+    const before = await page.evaluate(function () {
+      var row = document.querySelector('.doc-cal .cal-doc-row.caution');
+      return row ? { link: !!row.querySelector('.cal-doc-row-link'),
+        acts: !!row.querySelector('.cal-doc-row-acts') } : null;
+    });
+    assert.ok(before, 'the run-up day lists the deadline as a caution row');
+    assert.equal(before.link, true, 'whose text is a button leading to the due day');
+    assert.equal(before.acts, false, 'and which stays read-only here');
+
+    await page.evaluate(function () {
+      document.querySelector('.doc-cal .cal-doc-row.caution .cal-doc-row-link').click();
+      return true;
+    });
+
+    const after = await page.waitFor(function () {
+      var cells = Array.prototype.filter.call(document.querySelectorAll('.doc-cal .cal-cell'),
+        function (c) { return !c.classList.contains('empty'); });
+      var sel = cells.findIndex(function (c) { return c.classList.contains('selected'); }) + 1;
+      if (sel !== 22) return false;
+      var due = document.querySelector('.doc-cal .cal-doc-row:not(.caution)');
+      return { sel: sel, editable: !!(due && due.querySelector('.cal-doc-row-acts')),
+        caution: !!document.querySelector('.doc-cal .cal-doc-row.caution') };
+    }, { message: 'the calendar moving to the due day' });
+
+    assert.equal(after.sel, 22, 'the block selects the deadline\'s due day');
+    assert.equal(after.editable, true, 'where the page that authored it does get its edit controls');
+    assert.equal(after.caution, false, 'and the due day is not also listed as a caution');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  // ── 2d. ticking a deadline suppresses its caution "!" everywhere ────────
+
+  /* "Should this day show a !" is spelled out in three predicates —
+     deadlinesCautionOn (progress.html), deadlinesCaution (calendar-core.js)
+     and ownedDates.caution (documentations.html) — feeding five surfaces. The
+     last change to this area shipped a bug because one call site of three was
+     forgotten, so every surface is asserted SEPARATELY below: a stray "!" on
+     one of them must not be able to hide behind four passing siblings. */
+
+  // `dlOver` merges into the deadline record, so a case that needs the ticked
+  // state to arrive in the DATA — Home is read-only — asks for tickDb({done:true}).
+  const tickDb = (dlOver = {}) => {
+    const due = thisMonthDay(22);
+    return {
+      due,
+      start: thisMonthDay(20),
+      db: seedDb({
+        calendarNotes: [],
+        docPages: [F.docPage('p-1')],
+        deadlines: [F.deadline('dl-tick', due, Object.assign({
+          startDate: thisMonthDay(20), title: 'Ship the thing',
+          docPageId: 'p-1', createdAt: 1771000000000
+        }, dlOver))]
+      })
+    };
+  };
+  const storedTick = page => page.evaluate(function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return (((db.slots || [])[0] || {}).deadlines || [])[0] || null;
+  });
+  // the popup renders outside both view branches, so ?dl= reaches it either way
+  const openTickPopup = async ({ db, due }, dateParam) => {
+    const page = await open('progress.html',
+      { db, hash: '?date=' + (dateParam || due) + '&dl=dl-tick#schedule' });
+    await page.waitFor(function () { return !!document.getElementById('dl-done-toggle'); },
+      { message: 'the deadline popup showing its tick control in the READ view' });
+    return page;
+  };
+  const clickTick = page => page.evaluate(function () {
+    document.getElementById('dl-done-toggle').click();
+    return true;
+  });
+
+  await t.test('the popup tick persists and keeps every other field', async () => {
+    const { db, due, start } = tickDb();
+    const page = await openTickPopup({ db, due });
+
+    const before = await storedTick(page);
+    assert.ok(!before.done, 'a deadline starts unticked');
+
+    await clickTick(page);
+    const ticked = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.done === true ? d : false;
+    }, { message: 'the tick reaching track_db' });
+
+    // the spread is what protects these — rebuilding the record from a field
+    // list is the bug that cost day notes and deadlines before
+    assert.equal(ticked.docPageId, 'p-1', 'ticking keeps the authoring page');
+    assert.equal(ticked.createdAt, 1771000000000, 'and createdAt');
+    assert.equal(ticked.startDate, start, 'and the caution start, so unticking restores the same run-up');
+    assert.equal(ticked.time, before.time);
+    assert.equal(ticked.title, 'Ship the thing');
+
+    await clickTick(page);
+    const unticked = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && !d.done ? d : false;
+    }, { message: 'the tick being cleared again' });
+    assert.equal(unticked.startDate, start, 'and the round trip leaves the span untouched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('ticking clears the timeline "!" and unticking brings it back', async () => {
+    const { db, due } = tickDb();
+    // ?date= without a view switch lands on the timeline, on a run-up day
+    const page = await openTickPopup({ db, due }, thisMonthDay(21));
+
+    const countStrip = () => page.evaluate(function () {
+      return Array.prototype.filter.call(document.querySelectorAll('#root button'),
+        function (b) { return (b.getAttribute('title') || '').indexOf('Due ') === 0; }).length;
+    });
+    assert.equal(await countStrip(), 1, 'the run-up day starts with one "!" in the timeline strip');
+
+    await clickTick(page);
+    const cleared = await page.waitFor(function () {
+      return Array.prototype.filter.call(document.querySelectorAll('#root button'),
+        function (b) { return (b.getAttribute('title') || '').indexOf('Due ') === 0; }).length === 0
+        ? 'gone' : false;
+    }, { message: 'the timeline "!" disappearing' });
+    assert.equal(cleared, 'gone', 'ticking removes it from the timeline strip');
+
+    await clickTick(page);
+    const restored = await page.waitFor(function () {
+      return Array.prototype.filter.call(document.querySelectorAll('#root button'),
+        function (b) { return (b.getAttribute('title') || '').indexOf('Due ') === 0; }).length === 1
+        ? 'back' : false;
+    }, { message: 'the timeline "!" coming back' });
+    assert.equal(restored, 'back', 'and unticking restores exactly the one that was there');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('ticking clears the "!" in the month grid and the day panel, leaving the deadline', async () => {
+    const { db, due } = tickDb();
+    const page = await openTickPopup({ db, due }, thisMonthDay(21));
+
+    // the month grid and the day panel both live in the CALENDAR view
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('#root button'),
+        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return document.querySelectorAll('#root .grid.grid-cols-7').length > 0;
+    }, { message: 'the month grid' });
+    // select the run-up day so the day panel lists it too
+    await page.evaluate(function () {
+      var cells = document.querySelectorAll('#root .grid.grid-cols-7 > div');
+      Array.prototype.filter.call(cells, function (c) { return c.className.indexOf('min-h-') >= 0; })[20].click();
+      return true;
+    });
+
+    const before = await page.waitFor(function () {
+      var g = document.querySelectorAll('#root [title^="Caution period · due"]').length;
+      var p = document.querySelectorAll('#root [title="Caution period — open the deadline"]').length;
+      return g && p ? { grid: g, panel: p } : false;
+    }, { message: 'the "!" in both the month grid and the day panel' });
+    assert.ok(before.grid >= 1, 'the month grid marks the run-up day');
+    assert.equal(before.panel, 1, 'and the day panel lists it once');
+
+    await clickTick(page);
+    const after = await page.waitFor(function () {
+      var g = document.querySelectorAll('#root [title^="Caution period · due"]').length;
+      var p = document.querySelectorAll('#root [title="Caution period — open the deadline"]').length;
+      return g === 0 && p === 0 ? 'gone' : false;
+    }, { message: 'both calendar-view "!" surfaces clearing' });
+    assert.equal(after, 'gone');
+
+    // and the deadline itself is still on its due day, marked done
+    const left = await page.evaluate(function () {
+      var rows = Array.prototype.filter.call(document.querySelectorAll('#root [title^="Due "]'),
+        function (e) { return /Ship the thing/.test(e.textContent); });
+      return { n: rows.length, tick: rows.length ? /✓/.test(rows[0].textContent) : false };
+    });
+    assert.equal(left.n, 1, 'the ticked deadline is still drawn on its due day');
+    assert.equal(left.tick, true, 'with a ✓');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the Schedule day-panel row ticks the same field as the popup', async () => {
+    const { db, due } = tickDb();
+    const page = await open('progress.html', { db, hash: '?date=' + due + '#schedule' });
+    await page.waitFor(function () {
+      var el = document.querySelector('#root'); return !!el && el.children.length > 0;
+    }, { message: 'progress.html mounting' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('#root button'),
+        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return document.querySelectorAll('#root .grid.grid-cols-7').length > 0;
+    }, { message: 'the month grid' });
+    await page.evaluate(function () {
+      var cells = document.querySelectorAll('#root .grid.grid-cols-7 > div');
+      Array.prototype.filter.call(cells, function (c) { return c.className.indexOf('min-h-') >= 0; })[21].click();
+      return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('#root .dl-done-box'); },
+      { message: 'the tick box on the day panel deadline row' });
+
+    await page.evaluate(function () { document.querySelector('#root .dl-done-box').click(); return true; });
+    const ticked = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.done === true ? d : false;
+    }, { message: 'the day-panel tick reaching track_db' });
+    assert.equal(ticked.startDate, thisMonthDay(20), 'writing done alone, through the same spread');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the Home calendar drops a ticked deadline\'s "!" and marks the due chip done', async () => {
+    // seeded ticked: Home is read-only by design, so the state arrives in the data
+    const { db, due } = tickDb({ done: true });
+    const page = await open('index.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('#cal-grid .cal-cell'); },
+      { message: 'the universal calendar grid' });
+    const clickDay = day => page.evaluate(function (n) {
+      Array.prototype.filter.call(document.querySelectorAll('#cal-grid .cal-cell'),
+        function (c) { return !c.classList.contains('empty'); })[n - 1].click();
+      return true;
+    }, day);
+
+    await clickDay(21);
+    const runUp = await page.waitFor(function () {
+      return document.querySelector('#cal-detail') ? {
+        caution: document.querySelectorAll('#cal-detail .cal-sched-dl.caution').length
+      } : false;
+    }, { message: 'the day detail for a run-up day' });
+    assert.equal(runUp.caution, 0, 'a ticked deadline shows no "!" chip on its run-up');
+
+    await clickDay(22);
+    const dueChip = await page.waitFor(function () {
+      var a = document.querySelector('#cal-detail .cal-sched-dl.due');
+      return a ? { tag: a.tagName, cls: a.className, href: a.getAttribute('href'), text: a.textContent } : false;
+    }, { message: 'the due chip' });
+    assert.match(dueChip.cls, /\bdone\b/, 'the due chip is marked done');
+    assert.match(dueChip.text, /✓/);
+    assert.equal(dueChip.tag, 'A', 'and is still a link');
+    assert.equal(dueChip.href, 'progress.html?date=' + due + '&dl=dl-tick#schedule');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a Documentations block drops the caution row and can untick its own deadline', async () => {
+    const { db } = tickDb({ done: true });
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 21);          // a run-up day
+
+    const runUp = await page.evaluate(function () {
+      return {
+        rows: document.querySelectorAll('.doc-cal .cal-doc-row.caution').length,
+        cellBars: document.querySelectorAll('.doc-cal .cal-cell.cal-doc-caution-day').length
+      };
+    });
+    assert.equal(runUp.rows, 0, 'no caution row for a ticked deadline');
+    assert.equal(runUp.cellBars, 0, 'and no soft amber bar on its run-up cells');
+
+    await selectDay(page, 22);
+    const dueRow = await page.waitFor(function () {
+      var row = document.querySelector('.doc-cal .cal-doc-row:not(.caution)');
+      return row ? { cls: row.className, tick: /✓/.test(row.textContent),
+        untick: !!row.querySelector('.cal-doc-row-acts button[title="Untick"]') } : false;
+    }, { message: 'the due row in the block' });
+    assert.match(dueRow.cls, /\bdone\b/, 'the due row is marked done');
+    assert.equal(dueRow.tick, true);
+    assert.equal(dueRow.untick, true, 'and the owning page can untick it');
+
+    await page.evaluate(function () {
+      document.querySelector('.doc-cal .cal-doc-row-acts button[title="Untick"]').click();
+      return true;
+    });
+    const back = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && !d.done ? d : false;
+    }, { message: 'the untick reaching track_db' });
+    assert.equal(back.docPageId, 'p-1', 'through the same spread, so the record survives');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('both pages mint ids in one shape', async () => {
     const SHAPE = /^[0-9a-z]+-[0-9a-z]{1,5}$/;
     for (const [file, fn] of [['progress.html', 'uid'], ['documentations.html', 'genId']]) {
@@ -556,7 +1207,18 @@ test('browser suites', skipUnlessChrome, async t => {
   // ── 3. export → import ──────────────────────────────────────────────────
 
   await t.test('export → import preserves docPageId and every canonical field', async () => {
-    const page = await open('index.html', { db: seedDb() });
+    // The doc-authored deadline is seeded TICKED so the round trip also proves
+    // `done` survives: neither the exporter nor the importer names the field,
+    // and it has to reach the other side on normalizeSlot's unknown-key path.
+    const page = await open('index.html', {
+      db: seedDb({
+        deadlines: [
+          F.deadline('dl-sched', '2026-03-10', { startDate: '2026-03-08' }),
+          F.deadline('dl-doc', '2026-03-10',
+            { startDate: '2026-03-09', docPageId: 'p-1', time: '10:00', done: true })
+        ]
+      })
+    });
     await page.waitFor(function () { return !!window.exportSlot && !!window.importSlot; },
       { message: 'index.html globals' });
 
@@ -598,6 +1260,7 @@ test('browser suites', skipUnlessChrome, async t => {
     const dl = imported.deadlines.find(d => d.id === 'dl-doc');
     assert.equal(dl.docPageId, 'p-1', 'the doc-authored deadline kept its docPageId');
     assert.equal(dl.startDate, '2026-03-09', 'and its caution period');
+    assert.equal(dl.done, true, 'and its tick, which no allow-list in the importer names');
 
     // every canonical user-owned field survives, value for value
     for (const key of ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
@@ -793,6 +1456,193 @@ test('browser suites', skipUnlessChrome, async t => {
     }
   });
 
+  await t.test('a nonempty legacy KS02 slot is normalized into the canonical shape', async () => {
+    const legacy = {
+      id: 'legacy-ks-slot', name: 'Legacy KS slot', createdAt: '2025-01-01',
+      mms: [F.mm(7, 'Legacy MM')]
+    };
+    for (const file of ['progress.html', 'sir-ks02.html']) {
+      const page = await open(file, { extra: {
+        ks02_slots: JSON.stringify([legacy]),
+        ks02_activeSlotId: legacy.id
+      } });
+      const slot = await page.waitFor(READ_SLOT, { message: file + ' adopting a nonempty legacy KS02 slot' });
+      assert.deepEqual(Object.keys(slot).sort(), CONTRACT.slice().sort(),
+        file + ' normalizes the rescued slot rather than retaining a page-specific subset');
+      assert.equal(slot.mms[0].name, 'Legacy MM', file + ': legacy data survived normalization');
+      await page.close();
+    }
+  });
+
+  /* ── 8. NOTES Proposal 2, first P0 — a malformed track_db must not
+        white-screen a page, and must never be written over ───────────────
+
+     Both halves matter, and they fail differently. `null`, and any value with
+     structurally broken slot content, throws on `db.slots` (or later out of
+     flattenGoals) before React mounts: a white screen. `42` and `[1,2]` parse
+     to something whose `.slots` is merely undefined, so the bootstrap IIFEs
+     fall through and REPLACE the unreadable bytes with an empty workspace —
+     silent, and unrecoverable.
+
+     Every assertion compares the raw string, never a re-parse, because the
+     thing being protected is the bytes. */
+
+  const READ_RAW = function () { return localStorage.getItem('track_db'); };
+  const DB_STATE = function () {
+    return window.TrackStorage && window.TrackStorage.dbStatus
+      ? window.TrackStorage.dbStatus().state : 'no-guard';
+  };
+  // notifications.html is here for notes-widget.js: it is the fifth reader, and
+  // the only page that loads the widget without a workspace page around it. It
+  // has no React root of its own, and the widget mounts COLLAPSED — it does not
+  // read the database until its panel is opened, which is why the banner is
+  // asserted there only after the click below.
+  const DATA_PAGES = PAGES.concat(['notifications.html']);
+  const mountSel = file => file === 'index.html' ? '#slot-list'
+    : file === 'notifications.html' ? '#nw-btn' : '#root';
+
+  const waitMounted = (page, file) => page.waitFor(function (sel) {
+    var el = document.querySelector(sel);
+    return !!el && (sel === '#nw-btn' || el.children.length > 0);
+  }, { args: [mountSel(file)], message: file + ' mounting' });
+
+  // The widget's own read path: opening the panel calls loadNotes → _twDB.
+  const OPEN_NOTES = function () { document.getElementById('nw-btn').click(); return true; };
+
+  for (const [label, raw] of Object.entries(F.MALFORMED_DB_STRINGS)) {
+    await t.test('malformed track_db (' + label + ') never white-screens and is left byte-identical', async () => {
+      for (const file of DATA_PAGES) {
+        const page = await open(file, { raw });
+        await waitMounted(page, file);
+
+        assert.equal(await page.evaluate(DB_STATE), 'blocked',
+          file + ': the guard classified ' + label + ' as unreadable');
+        assert.equal(await page.evaluate(function () {
+          return window.TrackStorage.dbBlocked();
+        }), true, file + ': writes are frozen');
+
+        // the whole point: the bytes survived the mount, including whatever
+        // bootstrap or auto-create the page runs on an apparently empty database
+        assert.equal(await page.evaluate(READ_RAW), raw,
+          file + ': ' + label + ' was not bootstrapped over');
+
+        // the notes widget is the fifth reader — open it, so its read path runs
+        assert.equal(await page.evaluate(function () { return !!document.getElementById('nw-btn'); }),
+          true, file + ': the notes widget still mounted');
+        await page.evaluate(OPEN_NOTES);
+        await sleep(150);
+        assert.equal(await page.evaluate(READ_RAW), raw,
+          file + ': opening the notes widget wrote nothing');
+
+        // by now every reader on the page has run, so the user has been told
+        assert.equal(await page.evaluate(function () {
+          return !!document.getElementById('track-data-banner');
+        }), true, file + ': the user was told, rather than shown a silently empty workspace');
+
+        // and an explicit write attempt is refused rather than swallowed
+        assert.equal(await page.evaluate(function () {
+          return window.TrackStorage.saveDB({ slots: [], activeSlotId: null });
+        }), false, file + ': saveDB refused while the database is unreadable');
+        assert.equal(await page.evaluate(READ_RAW), raw,
+          file + ': the refused write changed nothing');
+
+        assert.deepEqual(realErrors(page), [], file + ': no uncaught error over ' + label);
+        await page.close();
+      }
+    });
+  }
+
+  await t.test('a malformed database survives a reload and the raw bytes are recoverable', async () => {
+    const raw = F.MALFORMED_DB_STRINGS['json number'];
+    const page = await open('progress.html', { raw });
+    await waitMounted(page, 'progress.html');
+    await page.reload();
+    await page.skipFirebase();
+    await waitMounted(page, 'progress.html');
+    assert.equal(await page.evaluate(READ_RAW), raw, 'still untouched after a second load');
+    // the banner offers the bytes back rather than leaving devtools as the only route
+    assert.equal(await page.evaluate(function () {
+      var b = document.getElementById('track-data-banner');
+      return !!b && /download/i.test(b.textContent);
+    }), true, 'the banner offers a copy of the unreadable data');
+    await page.close();
+  });
+
+  /* The other half of the tiered gate. Some validation findings do not make the
+     slot structure ambiguous — a dangling activeSlotId is reachable from an
+     ordinary cross-tab race, and a malformed optional time safely falls back to
+     the untimed strip. These may warn, but their REAL page writers must work. */
+  for (const [label, db, stateAfterMount] of [
+    ['a dangling activeSlotId', F.dbWith([F.populatedSlot()], 'no-such-slot'), 'ok'],
+    ['an invalid day-note time', F.dbWith([F.populatedSlot({
+      calendarNotes: [F.calNote('cn-bad', '2026-03-10', { time: '25:99' })]
+    })]), 'warn']
+  ]) {
+    await t.test('a soft flaw (' + label + ') still loads and stays editable', async () => {
+      const page = await open('progress.html', { db });
+      await waitMounted(page, 'progress.html');
+
+      assert.equal(await page.evaluate(DB_STATE), stateAfterMount,
+        label + ' is either retained as a warning or safely repaired during mount');
+      assert.equal(await page.evaluate(function () { return window.TrackStorage.dbBlocked(); }), false,
+        'writes stay allowed');
+      assert.equal(await page.evaluate(WRITE_SLOT_KEY, 'notes', [F.note('n-soft', F.localTs(2026, 3, 10))]), true,
+        'a fresh resolved-slot write still saves');
+      assert.equal(await page.evaluate(function () {
+        return ((JSON.parse(localStorage.getItem('track_db')).slots || [])[0].notes || []).length;
+      }), 1, 'and the edit landed');
+      assert.deepEqual(realErrors(page), [], 'no uncaught error over ' + label);
+      await page.close();
+    });
+  }
+
+  await t.test('Progress can save the slot it displays when activeSlotId is dangling', async () => {
+    const slot = F.emptySlot({ id: 'slot-visible', goals: [] });
+    const page = await open('progress.html', { db: F.dbWith([slot], 'slot-gone') });
+    await waitMounted(page, 'progress.html');
+    await page.evaluate(function () {
+      _writeP('goals', [{ id: 'goal-fallback', title: 'Saved through fallback', children: [],
+        completed: false, toLearn: [], mmTargets: {}, milestones: [] }]);
+      return true;
+    });
+
+    const db = await page.waitFor(function () {
+      var d = JSON.parse(localStorage.getItem('track_db'));
+      return d.slots[0].goals.some(function (g) { return g.title === 'Saved through fallback'; }) ? d : false;
+    }, { message: 'the visible fallback slot receiving the edit' });
+    assert.equal(db.activeSlotId, 'slot-visible', 'the root pointer was realigned with the displayed slot');
+    assert.equal(db.slots[0].goals.length, 1);
+    await page.close();
+  });
+
+  await t.test('a healthy database is untouched by the load boundary', async () => {
+    for (const file of DATA_PAGES) {
+      const page = await open(file, { db: seedDb() });
+      await waitMounted(page, file);
+      assert.equal(await page.evaluate(DB_STATE), 'ok', file + ': a good database reads as ok');
+      assert.equal(await page.evaluate(function () { return window.TrackStorage.dbBlocked(); }), false,
+        file + ': nothing is frozen');
+      assert.equal(await page.evaluate(function () {
+        return !!document.getElementById('track-data-banner');
+      }), false, file + ': no banner on healthy data');
+      await page.close();
+    }
+  });
+
+  await t.test('a missing track_db is a normal empty install, not a fault', async () => {
+    for (const file of DATA_PAGES) {
+      const page = await open(file);
+      await waitMounted(page, file);
+      assert.equal(await page.evaluate(function () { return window.TrackStorage.dbBlocked(); }), false,
+        file + ': an absent key is not treated as corruption');
+      assert.equal(await page.evaluate(function () {
+        return !!document.getElementById('track-data-banner');
+      }), false, file + ': no banner for a first-run install');
+      assert.deepEqual(realErrors(page), [], file + ': clean first run');
+      await page.close();
+    }
+  });
+
   await t.test('a quota-rejected import adds no slot', async () => {
     const page = await open('index.html', { db: seedDb() });
     await page.waitFor(function () { return !!window.importSlot; }, { message: 'index.html globals' });
@@ -804,6 +1654,52 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(await page.evaluate(function () {
       return (JSON.parse(localStorage.getItem('track_db') || '{}').slots || []).length;
     }), 1, 'a write the quota guard refused does not appear as an imported slot');
+    await page.close();
+  });
+
+  await t.test('a refused legacy-note adoption keeps the only remaining copy', async () => {
+    const page = await browser.newPage();
+    await page.clearStorage(server.origin);
+    const initialDb = F.dbWith([F.emptySlot({ id: 'slot-notes', notes: [] })], 'slot-notes');
+    await page.seed(initialDb, {
+      track_global_notes: JSON.stringify({ notes: [F.note('legacy-safe', F.localTs(2026, 3, 10))] })
+    });
+    await page.addInitScript(
+      'var __trackTestSetItem = Storage.prototype.setItem;' +
+      'Storage.prototype.setItem = function(k,v){' +
+      ' if(k === "track_db" && localStorage.getItem("track_db") !== null)' +
+      '   throw new DOMException("synthetic full storage", "QuotaExceededError");' +
+      ' return __trackTestSetItem.call(this,k,v);' +
+      '};'
+    );
+    await page.goto(server.url('notifications.html'));
+    await page.skipFirebase();
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); },
+      { message: 'notes widget mounting under refused writes' });
+
+    assert.notEqual(await page.evaluate(function () { return localStorage.getItem('track_global_notes'); }), null,
+      'the legacy key remains when its adoption write did not land');
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
+      JSON.stringify(initialDb), 'the stored database stayed byte-identical');
+    await page.close();
+  });
+
+  await t.test('Documentations reports a refused empty-slot bootstrap', async () => {
+    const page = await browser.newPage();
+    await page.clearStorage(server.origin);
+    await page.addInitScript(
+      'var __trackTestSetItem = Storage.prototype.setItem;' +
+      'Storage.prototype.setItem = function(k,v){' +
+      ' if(k === "track_db") throw new DOMException("synthetic full storage", "QuotaExceededError");' +
+      ' return __trackTestSetItem.call(this,k,v);' +
+      '};'
+    );
+    await page.goto(server.url('documentations.html'));
+    await page.skipFirebase();
+    assert.equal(await page.evaluate(function () { return _bootstrapSlotIfSafe(); }), false,
+      'the bootstrap returns the storage guard result instead of claiming success');
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), null,
+      'no phantom workspace was persisted');
     await page.close();
   });
 });

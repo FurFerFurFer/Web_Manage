@@ -6,9 +6,9 @@
   <title>Documentations</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%230d9488%22/%3E%3Cpath d=%22M10 9h12M10 15h12M10 21h8%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
-  <script src="storage-guard.js"></script>
-  <script src="schema.js?v=1"></script>
-  <script src="calendar-core.js?v=1"></script>
+  <script src="storage-guard.js?v=2"></script>
+  <script src="schema.js?v=2"></script>
+  <script src="calendar-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -16,7 +16,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles.css?v=1">
+  <link rel="stylesheet" href="styles.css?v=4">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -32,9 +32,9 @@
 
     // ── unified DB helpers (same contract as progress.html) ──────────────────
 
-    function _getTrackDB() {
-      try { return JSON.parse(localStorage.getItem('track_db') || '{}'); } catch { return {}; }
-    }
+    // One parse-and-validate boundary for every page — storage-guard.js. This used to
+    // be a bare JSON.parse whose catch never fired for 'null', '42' or '[…]'.
+    function _getTrackDB() { return TrackStorage.loadDB(); }
     function _activeSlot() {
       const db=_getTrackDB(), slots=db.slots||[], id=db.activeSlotId;
       return slots.find(s=>s.id===id) || slots[0] || null;
@@ -127,12 +127,17 @@
         .some(k => { try { return !!localStorage.getItem(k); } catch { return false; } });
     }
     function _bootstrapSlotIfSafe() {
+      // An unreadable track_db reads as {} here, which is indistinguishable from a fresh
+      // install — and this page auto-creates on a fresh install, so it is one of the two
+      // that used to overwrite damaged data outright. TrackStorage.saveDB refuses the
+      // write regardless; returning false is what stops the page then claiming a
+      // workspace that was never stored.
+      if (TrackStorage.dbBlocked()) return false;
       const db=_getTrackDB();
       if ((db.slots||[]).length) return true;
       if (_hasLegacyData()) return false;
       const s=TrackSchema.createEmptySlot({name:'Default'});
-      TrackStorage.saveDB({slots:[s],activeSlotId:s.id});
-      return true;
+      return TrackStorage.saveDB({slots:[s],activeSlotId:s.id});
     }
 
     // ── small shared UI pieces ───────────────────────────────────────────────
@@ -540,7 +545,14 @@
         (slot.calendarNotes||[]).forEach(n => { if (mine(n)) due.add(n.date); });
         (slot.deadlines||[]).forEach(d => {
           if (!mine(d)) return;
-          due.add(d.date);
+          due.add(d.date);            // a ticked deadline is still an owned day
+          // ...but its run-up is not marked any more. This is the third and
+          // last place the "should this day show a caution mark" rule is
+          // spelled out — the other two are deadlinesCautionOn in
+          // progress.html and deadlinesCaution in calendar-core.js — so the
+          // tick has to be applied here too or the amber cell bars would
+          // outlive the "!" rows they belong to.
+          if (TC.dlDone(d)) return;
           const start = TC.dlStart(d);
           if (!start || start >= d.date) return;
           for (const ds of TC.daysBetween(start, d.date)) if (ds !== d.date) caution.add(ds);
@@ -569,6 +581,15 @@
           if (m > 11) { m = 0; y++; }
           return {y, m};
         });
+      };
+      // Jump to a specific day, month included. `shiftMonth` clears the
+      // selection on purpose; this one sets it, because a caution "!" row leads
+      // to a due day that may well be in another month.
+      const goToDay = ds => {
+        const y = Number(ds.slice(0, 4)), m = Number(ds.slice(5, 7)) - 1;
+        closeForms();
+        setCur(c => (c.y === y && c.m === m) ? c : {y, m});
+        setSelDs(ds);
       };
       function closeForms() {
         setComposer(null); setEditing(null);
@@ -619,6 +640,12 @@
           time: dlDraft.time, startDate: dlDraft.startDate,
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim()} : d));
         closeForms();
+      };
+      // Writes `done` and nothing else, spreading the stored record so
+      // docPageId, createdAt, startDate and any key a later version added
+      // survive. No confirm: it is reversible by definition, unlike removeItem.
+      const toggleDone = id => {
+        onMutate('deadlines', prev => prev.map(d => d.id === id ? {...d, done: !d.done} : d));
       };
       const removeItem = (key, id, what) => {
         if (!window.confirm(`Delete this ${what}? It will disappear from the schedule too.`)) return;
@@ -854,16 +881,22 @@
                   if (editing && editing.kind === 'deadline' && editing.id === dl.id) {
                     return <React.Fragment key={dl.id}>{dlForm(()=>saveDeadline(dl.id, dl.date), 'Save', dl.date)}</React.Fragment>;
                   }
+                  const done = TC.dlDone(dl);
                   return (
-                    <div key={dl.id} className={"cal-doc-row"+(o.kind==='own'?' cal-doc-own':'')}>
+                    <div key={dl.id} className={"cal-doc-row"+(o.kind==='own'?' cal-doc-own':'')+(done?' done':'')}>
                       <span className="cal-doc-row-main">
-                        ⏰ {dl.time} {dl.title || 'Deadline'}
-                        <span className="cal-item-meta"> · {TC.dlDayCount(dl)}-day run-up</span>
+                        {done ? '✓' : '⏰'} {dl.time} {dl.title || 'Deadline'}
+                        <span className="cal-item-meta"> · {TC.dlDayCount(dl)}-day run-up{done && ', hidden while ticked'}</span>
                         {dl.detail && <span className="cal-item-meta"> · {dl.detail}</span>}
                       </span>
                       <CalOriginChip origin={o} onOpenPage={onOpenPage} />
                       {canEdit(o) && (
                         <span className="cal-doc-row-acts doc-chrome">
+                          {/* Same ownership gate as ✎ and ✕: a tick is an edit,
+                              so only the page that authored the deadline may
+                              make it. Everyone else sees the state, read-only. */}
+                          <button type="button" title={done ? 'Untick' : 'Tick'}
+                            onClick={()=>toggleDone(dl.id)}>{done ? '↺' : '✓'}</button>
                           <button type="button" title="Edit" onClick={()=>{
                             closeForms(); setEditing({kind:'deadline', id:dl.id});
                             setDlDraft({title: dl.title||'', detail: dl.detail||'',
@@ -877,12 +910,20 @@
                   );
                 })}
                 {composer === 'deadline' && dlForm(addDeadline, 'Add deadline', selDs)}
+                {/* Read-only here — the ownership rule still applies — but the
+                    row leads to the deadline's own day, where the page that
+                    authored it does get its edit controls. */}
                 {day.deadlinesCaution.map(dl => (
                   <div key={dl.id} className="cal-doc-row caution">
-                    <span className="cal-doc-row-main">
+                    {/* A real button rather than a clickable row: the origin
+                        chip beside it is already a button, and a click on it
+                        must open that page without also moving the calendar. */}
+                    <button type="button" className="cal-doc-row-main cal-doc-row-link"
+                      title={'Go to the due day, ' + dl.date}
+                      onClick={()=>goToDay(dl.date)}>
                       <span className="cal-doc-bang">!</span> {dl.title || 'Deadline'}
                       <span className="cal-item-meta"> · due {dl.date} at {dl.time}</span>
-                    </span>
+                    </button>
                     <CalOriginChip origin={originOf(dl)} onOpenPage={onOpenPage} />
                   </div>
                 ))}
@@ -1220,17 +1261,32 @@
       const roots = docPages.filter(p => !p.parentId || !docPages.some(x => x.id === p.parentId));
 
       if (!slotReady) {
+        // Two different reasons land here and the advice is opposite. "Open Progress once
+        // to migrate it" is right for un-migrated legacy data and actively wrong for a
+        // damaged database, where the one thing that matters is not writing to it. The
+        // storage-guard banner carries the detail; this panel must not contradict it.
+        const blocked = window.TrackStorage && TrackStorage.dbBlocked();
         return (
           <div className="flex h-screen items-center justify-center bg-gray-950 font-mono text-sm text-gray-400">
             <div className="max-w-md rounded border border-gray-800 bg-gray-900 p-6 text-center">
-              <div className="mb-2 text-gray-200">No workspace loaded yet</div>
-              <p className="text-xs leading-relaxed">
-                Older Track data was found that has not been migrated. Open
-                <a href="progress.html" className="mx-1 text-cyan-300 underline">Progress</a>or
-                <a href="sir-ks02.html" className="mx-1 text-cyan-300 underline">KS02</a>
-                once to migrate it, or create a workspace on the
-                <a href="index.html" className="mx-1 text-cyan-300 underline">Home</a>page.
-              </p>
+              <div className="mb-2 text-gray-200">
+                {blocked ? 'Saved data could not be read' : 'No workspace loaded yet'}
+              </div>
+              {blocked ? (
+                <p className="text-xs leading-relaxed">
+                  Your data has not been changed or deleted, and this page will not write
+                  over it. Use “Download a copy” in the banner to save the stored data
+                  before changing anything.
+                </p>
+              ) : (
+                <p className="text-xs leading-relaxed">
+                  Older Track data was found that has not been migrated. Open
+                  <a href="progress.html" className="mx-1 text-cyan-300 underline">Progress</a>or
+                  <a href="sir-ks02.html" className="mx-1 text-cyan-300 underline">KS02</a>
+                  once to migrate it, or create a workspace on the
+                  <a href="index.html" className="mx-1 text-cyan-300 underline">Home</a>page.
+                </p>
+              )}
             </div>
           </div>
         );
@@ -1413,6 +1469,6 @@
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
-  <script src="notes-widget.js"></script>
+  <script src="notes-widget.js?v=2"></script>
 </body>
 </html>

@@ -120,6 +120,13 @@
 
   const dlStart = d => d.startDate || d.date;
   const dlInCaution = (d, ds) => ds >= dlStart(d) && ds <= d.date;
+  // Ticked: the user has handled it, so the run-up stops warning. ABSENCE is
+  // "not done" and `!!` reads an absent key, false and undefined alike, so
+  // there is no third state and no migration — every existing deadline is
+  // already correct. The tick SUPPRESSES the caution period, it does not alter
+  // it: dlStart, dlInCaution and dlDayCount are deliberately left blind to it,
+  // which is what makes unticking a restore rather than a guess.
+  const dlDone = d => !!d.done;
   const dlByTime = (a, b) => String(a.time).localeCompare(String(b.time));
   const dlByDate = (a, b) => a.date.localeCompare(b.date) || dlByTime(a, b);
   const dlDayCount = d => Math.round(
@@ -344,8 +351,12 @@
       calNotes: dayNotes.filter(n => !noteTimed(n)),
       calNotesAll: dayNotes,
       deadlines: allDl.filter(d => d.date === ds && show(originKey(d, 'deadline'))).sort(dlByTime),
-      // the due day is already covered by `deadlines` — caution lists the run-up only
-      deadlinesCaution: allDl.filter(d => d.date !== ds && dlInCaution(d, ds) && show(originKey(d, 'deadline'))).sort(dlByDate),
+      // the due day is already covered by `deadlines` — caution lists the run-up
+      // only, and a ticked deadline has no run-up left to warn about. Both tests
+      // belong HERE rather than at a call site: this predicate has one twin in
+      // progress.html and one in documentations.html, and the last time a rule
+      // was written per call site instead, the timeline was the one that missed it.
+      deadlinesCaution: allDl.filter(d => !dlDone(d) && d.date !== ds && dlInCaution(d, ds) && show(originKey(d, 'deadline'))).sort(dlByDate),
       mgs: mgIds.map(mmName),
       mgCarried: mgIds.length > 0 && !Object.prototype.hasOwnProperty.call(mgSchedule, ds)
     };
@@ -390,7 +401,7 @@
     CATS, FILTERS, MS_PALETTE, MS_MAX_LANES,
     SCHED_START_HOUR, SCHED_END_HOUR, SCHED_PX_PER_HOUR,
     flattenGoals, goalDuration, goalDone, mgsForDay, noteTimed,
-    dlStart, dlInCaution, dlByTime, dlByDate, dlDayCount, dlValid, daysBetween,
+    dlStart, dlInCaution, dlByTime, dlByDate, dlDayCount, dlValid, dlDone, daysBetween,
     originKey,
     buildBuckets, buildMilestoneLanes, buildDaySchedule, overlapInfo, durLabel
   };

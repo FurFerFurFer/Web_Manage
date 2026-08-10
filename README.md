@@ -65,7 +65,7 @@ The Universal calendar is a month grid with a legend, a today highlight, milesto
 
 **Clicking a day** opens a read-only preview of that day's schedule, mirroring the Progress Schedule day view: a 00:00–24:00 timeline at 28px/hour with blocks positioned by time and duration, overlapping blocks split side by side using the same connected-component algorithm as `SchedulePanel`, plus a strip above it for MG focus (with the same 30-day carry-forward and `↑ carried` hint as Progress), SIR sessions due that day (shown on `finishDate` when done, skipped sessions excluded), calendar notes, and deadlines. The preview has no handlers or inputs and never writes to `track_db`. A `→` button beside the date opens `progress.html?date=YYYY-MM-DD#schedule`, which loads the Schedule tab in day mode focused on that date; the date rides in the query string so the existing `#hash` tab routing is untouched. A `×` button beside it closes the day again.
 
-**Deadlines** appear in that strip as red `⏰ HH:MM Title` chips on their due day, followed by amber `! Title` chips for any caution period still running through the day (the due day itself is not repeated as a caution). Hovering a note or deadline shows where it came from — "Added in the Schedule", or the documentation page that added it. The Home calendar stays read-only, so provenance is a tooltip here; Progress and Documentations render it as a link.
+**Deadlines** appear in that strip as red `⏰ HH:MM Title` chips on their due day, followed by amber `! Title` chips for any caution period still running through the day (the due day itself is not repeated as a caution, and a ticked deadline contributes no `!` at all — its due chip turns green, struck through, with a `✓`). Both kinds are links to `progress.html?date=<due day>&dl=<id>#schedule`, which opens that deadline's popup in the Schedule — always the **due** day, so a `!` three weeks out still leads to the thing it is warning about rather than to the day it sits on. Hovering a note or deadline shows where it came from — "Added in the Schedule", or the documentation page that added it. The Home calendar stays read-only: it links out to where a deadline is edited rather than editing one itself, so provenance is a tooltip here while Progress and Documentations render it as a link.
 
 The aggregation behind this calendar lives in `calendar-core.js`, shared with the calendar blocks in Documentations. Home renders all of it — it passes no filter set.
 
@@ -189,15 +189,20 @@ required time, and carries a required caution-period start date, a title, and an
 description:
 
 ```js
-{ id, date: 'YYYY-MM-DD', time: 'HH:MM', startDate: 'YYYY-MM-DD', title, detail, createdAt }
+{ id, date: 'YYYY-MM-DD', time: 'HH:MM', startDate: 'YYYY-MM-DD', title, detail, createdAt, done }
 ```
 
 The caution period runs `startDate` through `date` **inclusive**; `startDate` defaults to the due day,
-so the minimum period is that single day. Because both are `'YYYY-MM-DD'` strings, membership is a
-plain lexicographic comparison (`inCaution` in `SchedulePanel`) and needs no date arithmetic, so it
-does not drift across DST, a month boundary, or a year boundary. A deadline with no `startDate` — for
-instance one hand-edited out of an export — falls back to a one-day caution period rather than
-failing.
+so the minimum period is that single day and a brand-new deadline marks no run-up until one is chosen.
+Because both are `'YYYY-MM-DD'` strings, membership is a plain lexicographic comparison (`inCaution` in
+`SchedulePanel`) and needs no date arithmetic, so it does not drift across DST, a month boundary, or a
+year boundary. A deadline with no `startDate` — for instance one hand-edited out of an export — falls
+back to a one-day caution period rather than failing.
+
+`deadlinesCautionOn(ds)` in `SchedulePanel` returns the **run-up only**: it excludes the due day, which
+is already drawn as the deadline itself, and it excludes any deadline that has been ticked. It matches
+`deadlinesCaution` in `calendar-core.js`, which applies the same pair. Every surface reads the run-up
+through that one helper rather than filtering at each call site.
 
 Deadlines are created in Schedule → CALENDAR, next to date notes: a `⏰` hover button in each month
 day cell, and a `+` on the DEADLINES header of the selected-day panel. Both open an inline composer
@@ -211,9 +216,34 @@ own date only, with a clickable diamond and a `HH:MM Title` label. The line pain
 state — normal, selected, and picked-up — so a task block can never cover it; its full-width hairline
 is click-through, so only the diamond and the label take pointer events and a block underneath stays
 draggable and resizable. Every other day of the caution period instead shows an amber `!` chip in the
-day header, beside the 📌 note chips. The red line, the `!` chips, the month-cell lines, and the
-caution rows all open the same deadline popup, which shows the title, due time, caution range and day
-count, and description, and can edit or delete in place.
+day header, beside the 📌 note chips; the due day shows the red line alone, never both. The red line,
+the `!` chips, the month-cell lines, and the caution rows all open the same deadline popup.
+
+**Choosing the caution period.** The popup sets it directly, in its read view rather than behind
+`Edit`: a `Caution from` date picker capped at the due day, `−3d` / `−7d` / `−14d` quick-sets, a
+`reset` that returns the start to the due day, and a live `→ due-date · N days` readout. Each pick
+writes `startDate` on its own, spreading the stored record so `docPageId`, `createdAt` and any field a
+later version adds survive. The picker **refuses** rather than writes a cleared value or a start after
+the due day, so `startDate` is never blank and never inverted; `reset` is what undoes a caution
+period. `Edit` still exists for changing the time, title and description together, and carries the
+same field.
+
+**Ticking a deadline.** A deadline carries an optional `done` flag, and ticking it makes every `!` it
+puts on its run-up disappear — the month grid, the timeline day headers, the selected-day panel, the
+Home calendar and any Documentations calendar block — while the deadline itself stays on its due day in
+green with a `✓` and a struck-through title. Nothing is deleted and the caution period is not rewritten:
+`dlDone` only suppresses the run-up's *rendering*, so unticking restores exactly the same `!` days.
+Absence of the key is "not done", so no existing deadline needed a migration.
+
+The tick is in the popup, on the selected-day panel row as a checkbox, and on a Documentations calendar
+block's own rows — the same ownership gate as that block's `✎`/`✕`, because a tick is an edit. The Home
+calendar stays read-only and links out to the Schedule instead. Every one of them writes `done` alone,
+spreading the stored record. While a deadline is ticked, the popup's caution picker stays live and
+editable but dims and reads `· hidden while ticked`, rather than promising marks that are not on screen.
+
+The popup can also be opened straight from a link: `progress.html?date=<due day>&dl=<deadline id>#schedule`
+selects the Schedule, anchors the timeline on the due day, and opens that deadline. The id has to match
+a stored deadline, so a stale link opens nothing instead of erroring.
 
 ### Floating notes
 
@@ -226,6 +256,13 @@ count, and description, and can edit or delete in place.
 - Collapsed, list, and detail views.
 - Resizable panel dimensions.
 - Migration of older global notes into the active slot.
+
+Legacy `track_global_notes` adoption resolves the same slot the widget displays: the stored
+`activeSlotId` when it exists, otherwise the first slot. The legacy key is removed only
+after `TrackStorage.saveDB()` confirms that the merged notes landed. If there is no slot,
+the write is refused (including quota or blocked-data refusal), or saving throws, the key
+stays as the only recoverable copy. A valid legacy payload whose notes list is empty is
+still cleaned up without requiring a slot write.
 
 ### Notifications
 
@@ -292,11 +329,13 @@ A calendar shows the same aggregation as the Universal calendar on Home — mont
 
 **Ownership.** Items added from Documentations carry `docPageId`, the id of the page that added them. A calendar highlights and exclusively edits the items within its scope, which the header button toggles between **this page** and **this page + sub-pages** (the default, resolved through the same descendant walk the sidebar drag uses). Items from any other documentation page stay visible but read-only, with a `📄 <page title>` chip that opens that page. Items added in the Schedule are visible and read-only with no chip.
 
-Days carrying an owned item get an indigo edge bar on the month grid. For a deadline that means its due day; the days of its caution run-up get the same bar in amber at reduced opacity, so a three-week run-up reads as one approaching deadline rather than as twenty-one due dates.
+Days carrying an owned item get an indigo edge bar on the month grid. For a deadline that means its due day; the days of its caution run-up get the same bar in amber at reduced opacity, so a three-week run-up reads as one approaching deadline rather than as twenty-one due dates. A ticked deadline keeps its due-day bar and loses the amber ones, so the cell highlighting and the `!` rows disappear together.
 
 Deleting a documentation page **does not** delete the notes and deadlines it authored — losing scheduled work to a page delete would be data loss. The delete confirmation says how many items will stay behind. Those items keep their `docPageId` and read as "source page removed". They are **read-only in every calendar block**, including this one: an item whose owner is gone belongs to no page, and handing it to whichever calendar happens to display it would invent an ownership the user never expressed. It stays fully editable from the Progress Schedule, which is the surface that owns these arrays.
 
-Deadlines authored here use the same rules as the Schedule: a title, an `HH:MM` due time, and a caution start on or before the due day (defaulting to the due day itself).
+Deadlines authored here use the same rules as the Schedule: a title, an `HH:MM` due time, and a caution start on or before the due day (defaulting to the due day itself). An owned deadline's row also carries a `✓` / `↺` tick button beside its `✎` and `✕`, which is the same `done` flag the Schedule sets; a ticked row turns green and struck through, and its caution rows vanish from the run-up days.
+
+A caution run-up day lists the deadline as a read-only amber `!` row, and that row's text is a button leading to the deadline's **due** day — changing month if it falls in another one. Ownership is unchanged by the jump: the due day is where the page that authored the deadline gets its `✎`/`✕`, and where a stranger's deadline still shows none. The `📄` origin chip beside the row keeps its own job of opening the source page, which is why the row's text is the button rather than the whole row.
 
 Day notes take an **optional** time. Left blank — the default, and what every existing note has — the note is a chip in the day strip, as before. Given an `HH:MM`, it is positioned on the hour grid instead and disappears from the strip, so it is never shown twice. Clearing the field removes the time again. Timed notes are positioned but not yet draggable; they are edited through the same popup as any other note.
 
@@ -347,11 +386,19 @@ Current data behavior includes:
 
 Slot export serializes the whole slot object and is lossless. It is deliberately not filtered through `SLOT_FIELDS` — an allow-list on the way out would discard exactly the unknown keys the importer now preserves.
 
-Slot import goes through `schema.js` in four steps: parse, `TrackSchema.looksLikeDatabase`, `TrackSchema.validateSlot`, then `TrackSchema.normalizeSlot`. Validation runs **before** the database is read, so a refused file cannot write. What gets refused, with the offending field named in the alert:
+Slot import goes through `schema.js` in four steps: parse, `TrackSchema.looksLikeDatabase`, `TrackSchema.validateSlot`, then `TrackSchema.normalizeSlot`. Validation runs **before** the database is read, so a refused file cannot write. Its current coverage is the canonical top-level field envelope, object items inside every canonical list, and the recursive goal tree (`children`, `toLearn`, `mmTargets`, and `milestones` at every depth). What gets refused, with the offending field named in the alert:
 
 - A wrong-typed field. `{"goals": "hello"}` used to import cleanly and then break the calendar on the next load.
 - Junk inside a correctly-typed list. `{"goals": [null]}` also used to import cleanly, then throw out of `flattenGoals` on the next render — a field being a list is not enough, because every list field holds records.
+- An unsafe nested goal shape, such as a string in `children`, a non-list `toLearn` or
+  `milestones`, a non-object milestone entry, or a non-object `mmTargets`. The walk is
+  recursive, so malformed descendants cannot hide below a valid top-level goal.
 - A whole-database file offered instead of a single workspace. It is structurally a valid but empty slot, so it would otherwise import as a blank workspace with the real data stranded under an unknown `slots` key.
+
+This is not universal nested validation yet. Records inside mind maps, source dumps,
+documentation blocks, and other domains are confirmed to be objects at the canonical list
+boundary, but their full internal shapes and cross-references are still future work in
+`NOTES.md` Proposal 2.
 
 A field stored as `null` counts as **missing**, not as wrong: a null list holds no data, so filling in the default discards nothing, and refusing the whole file over an empty field would only cost the import. A file that passes is normalized: fields an older export predates are filled with safe defaults, and **keys this version has never heard of are carried through**, so a field added later is not lost by an export made before it. The slot gets a fresh id and a local-day `createdAt`; nested ids inside the slot are preserved verbatim (remapping is deferred — see `NOTES.md` Proposal 1). Adding a slot field now means adding one row to `SLOT_FIELDS`, not extending an importer allow-list.
 
@@ -371,11 +418,49 @@ Each page writes only the keys it owns, merging them into a fresh read of the st
 
 `sir-ks02.html` reads `mgSchedule` but never writes it; that key belongs to `progress.html`. Adding a key to a page's write set means adding it to this table.
 
+Progress and KS02 also bind each React snapshot to the id of the slot it came from. A
+cross-tab `storage` or `visibilitychange` refresh adopts the selected slot's data and id in
+the same refresh, and autosave targets that loaded id rather than whatever the root pointer
+happens to say later. Switching A → B in another tab therefore cannot send A's stale state
+into B or B's refreshed state back into A; if the snapshot's slot was deleted, the write is
+refused.
+
+#### Reading the stored database
+
+Every page reads `track_db` through one boundary, `TrackStorage.loadDB()` in `storage-guard.js`. The five readers — `getDB` (`index.html`), `_getTrackDB` (`progress.html`, `sir-ks02.html`, `documentations.html`) and `_twDB` (`notes-widget.js`) — are now one-line delegates to it. They each used to carry the same unchecked `JSON.parse(localStorage.getItem('track_db') || '{}')`, whose `catch` never fired for `'null'`, `'42'` or `'[…]'` because those parse successfully.
+
+`loadDB()` parses once, judges the result with `TrackSchema.validateDatabase`, and returns a plain object. The verdict has four states:
+
+| State | When | Result |
+| --- | --- | --- |
+| `empty` | the key is absent or `''` | `{}` — a normal first run |
+| `ok` | valid, or a root with no `slots` key | the parsed object |
+| `warn` | valid enough to render: a dangling `activeSlotId`, a bad `createdAt`, or an invalid calendar-item `date`/`time` | the parsed object, plus an amber banner; **still fully editable** |
+| `blocked` | invalid JSON, or structural/identity damage: the root is not an object, `slots` is not a list, a slot is not an object, a slot id is missing or duplicated, a canonical field/item has the wrong kind, or a recursive goal shape is unsafe | `{}`, a red banner, and **all `track_db` writes refused** |
+
+Validation errors carry an explicit `fatal` severity. The split is deliberate: malformed
+goal recursion and missing/duplicate slot ids make traversal or write ownership unsafe, so
+they block. A dangling `activeSlotId` is reachable from an ordinary cross-tab race and the
+first slot remains an unambiguous display fallback, so it warns without freezing. When
+Progress performs an explicit displayed-slot write through the two-argument `_writeP`
+form, it saves to that fallback and realigns the root pointer to the displayed slot; a
+valid active pointer is never replaced by a stale snapshot id.
+
+While the verdict is `blocked`, `TrackStorage.saveDB()` returns `false` without writing, so no bootstrap, auto-create or edit can replace the damaged value. `TrackStorage.dbBlocked()` exposes that state, and the legacy migration IIFEs in `progress.html` and `sir-ks02.html`, plus `_bootstrapSlotIfSafe` in `documentations.html`, return early on it rather than doing work whose write would be refused anyway. The original bytes are never normalized, repaired or written back: `normalizeSlot` still runs at creation and import only. The red banner offers **Download a copy**, which saves the raw stored bytes verbatim.
+
+Two things still recover a blocked database. Fixing the value from another tab or devtools clears the freeze on the next read, with no reload — the verdict is memoised on the raw string, not latched for the page's lifetime. And a genuine remote-newer payload from `firebase-sync.js` still applies, because that file writes through its captured `_origSet` and deliberately bypasses this guard.
+
+A root object with **no `slots` key** is classified `ok`, not `blocked`, and handed back untouched. That covers both a bare `{}` and the pre-unified legacy shape `{progress, ks02}`, which the migration IIFEs read `db.progress` and `db.ks02` out of; `validateDatabase` legitimately rejects it for lacking a slot list, so it is classified before validation rather than by it.
+
+`notifications.html` loads `schema.js` for this reason alone: it never touches `track_db` itself, but `notes-widget.js` does, and without the tag the widget would be the one reader falling back to a structural-only check.
+
 #### Storage-quota handling
 
 Every page writes the whole workspace to the single `track_db` key, so the browser's per-origin `localStorage` quota (~5-10 MB) is the binding size limit now that cloud sync gzips and chunks the payload. All 23 `track_db` writes, plus the two `trackPriorityMatrix` writes in `progress.html`, go through `window.TrackStorage` in `storage-guard.js`:
 
-- `TrackStorage.saveDB(db)` — stringify and write `track_db`; returns `true` when stored, `false` when the quota rejected it.
+- `TrackStorage.loadDB()` — the one parse-and-validate boundary described above.
+- `TrackStorage.dbBlocked()` / `TrackStorage.dbStatus()` — the current verdict.
+- `TrackStorage.saveDB(db)` — stringify and write `track_db`; returns `true` when stored, `false` when the quota rejected it **or** the stored database is unreadable.
 - `TrackStorage.setItem(key, value)` — the same guard for any other key.
 - `TrackStorage.clearQuotaBanner()` — dismiss the banner.
 
@@ -399,7 +484,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry and deadline rules (`window.TrackCalendar`) |
 | `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
 | `schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
-| `storage-guard.js` | `localStorage` quota guard for every whole-database write, plus the quota banner (`window.TrackStorage`) |
+| `storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
 | `notes-widget.js` | Floating per-slot notes widget |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
@@ -528,9 +613,9 @@ the bootstrap code that runs at page-script load can use it.
 | `SLOT_FIELDS`, `SLOT_KEYS` | The field table: name → kind (`text`, `date`, `list`, `map`). Frozen. **Adding a slot field means adding one row here and nothing else** — every function below derives from it |
 | `createEmptySlot({id, name, createdAt})` | A complete 21-field slot, in table order, with a minted id and a local-day `createdAt` |
 | `normalizeSlot(input, opts)` | Fills missing fields, replaces wrong-typed ones with their default, **keeps unknown keys**, never mutates `input`, never rewrites an id it was given |
-| `validateSlot(input)`, `validateDatabase(db)` | `{ok, errors:[{field, message}]}`. Report only. Checks field kinds, that every item in a list field is an object, calendar-item dates, and an optional day-note `time`. `null` counts as missing |
+| `validateSlot(input)`, `validateDatabase(db)` | `{ok, errors:[{field, message, fatal}]}`. Report only. Checks canonical field kinds, object items in lists, recursive goal shapes, slot identity, calendar-item dates, and an optional day-note `time`. `null` counts as missing |
 | `looksLikeDatabase(input)` | True when a file is a whole database rather than one workspace — a `slots` array and no slot data of its own |
-| `localToday(date)`, `newSlotId()`, `describeErrors(errors)`, `isList`/`isMap`/`isDay`/`isTime` | Supporting helpers |
+| `hasFatalErrors(report)`, `localToday(date)`, `newSlotId()`, `describeErrors(errors)`, `isList`/`isMap`/`isDay`/`isTime` | Severity and supporting helpers |
 
 Two functions give two different answers to bad data, and the split is deliberate:
 `normalizeSlot` **repairs and always succeeds**, because the legacy rescue paths need a
@@ -554,16 +639,18 @@ the same string for two workspaces created in the same millisecond.
 | `documentations.html` `_bootstrapSlotIfSafe()` | `createEmptySlot` |
 
 The two legacy bootstraps use `normalizeSlot` rather than `createEmptySlot` because the
-values they harvest come from `JSON.parse` of a pre-`track_db` localStorage key, so a
-corrupt one is repaired to `[]` instead of crashing the one rescue that install will ever
-get.
+values they harvest come from `JSON.parse` of pre-`track_db` localStorage keys. They
+normalize every nonempty harvested legacy KS02 slot after merging the old Progress fields — not
+only the synthesized default when the legacy slot list is empty — while preserving each
+legacy id and unknown field. A corrupt top-level harvested field is repaired to its safe
+default instead of crashing the one rescue that install will ever get.
 
 Nothing rewrites data already in `track_db`: these run at creation and import only. Readers
 still apply their own `slot.goals || []` fallbacks, and the per-page field-presence
 migration IIFEs are unchanged — centralizing those is `NOTES.md` Proposal 2, along with
 `schemaVersion`.
 
-Two item-level fields inside `calendarNotes` and `deadlines` are optional, and
+Three item-level fields inside `calendarNotes` and `deadlines` are optional, and
 their **absence carries meaning**:
 
 - `docPageId` names the `docPages` entry that authored the item. Absent means the
@@ -574,6 +661,13 @@ their **absence carries meaning**:
   the field existed — so a writer must **omit the key** rather than store `''`,
   and clearing the field in the UI deletes the key. `deadlines` have always had a
   required `time`; this is the note-only addition.
+- `done` (`deadlines` only) marks the deadline as handled and suppresses its
+  caution `!` run-up everywhere. Absent means not done, and every reader goes
+  through `dlDone`'s `!!`, so an absent key, `false` and `undefined` are
+  indistinguishable — unlike `time` there is no third state, so unticking simply
+  writes `false` rather than deleting the key, and no stored deadline needed a
+  migration. It is not validated in `schema.js`: a malformed value cannot break a
+  render the way a malformed date can.
 
 Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`
 (timestamp + random, e.g. `mshajngq-ehhoj`), which `progress.html`'s `uid()`,
@@ -693,8 +787,8 @@ It runs two layers:
 | Layer | File | What it covers |
 | --- | --- | --- |
 | Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, caution ranges, deadline validation, run-ups across month/year/DST boundaries, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
-| Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: the field table matching the documented contract, a local-day `createdAt`, collision-free ids, `normalizeSlot` filling legacy shapes, preserving unknown keys, repairing wrong types, never mutating its input and never rewriting a stored id, `validateSlot`/`validateDatabase` naming every bad field without repairing anything, and every malformed stored database being reported rather than accepted |
-| Browser tests | `tests/browser.test.js` | All four pages mounting with no uncaught error, the two-tab regression that `sir-ks02.html` must not revert another page's fields, day-note authoring from a Documentations calendar block, the print flatten rule's split, orphan read-only behaviour, the caution-run-up highlight, timed notes on the hour grid in both implementations, one id shape across pages, an export → import round trip including refused invalid files, every entry point creating the same canonical slot, and a synthetic legacy install migrating into one |
+| Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, and refused-save handling for import, legacy notes, and Documentation bootstrap |
 
 Both offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
@@ -953,6 +1047,16 @@ localStorage quota guard: 43 assertions passed in headless Chrome against a synt
   banner appears, the stored track_db stays byte-identical and still parses, no false
   track_db_pending is written, no React root is torn down, and the workspace is intact after
   freeing the quota and reloading; the banner is display:none under print media
+hardened track_db readers: committed browser regressions cover malformed values on all five
+  reader surfaces. Invalid JSON, unsafe root/slot kinds, missing or duplicate slot ids,
+  wrong canonical kinds/items, and malformed recursive goal shapes block without changing
+  the stored bytes; a dangling activeSlotId and semantic date/time flaws warn and remain
+  editable. The banner offers the exact raw bytes, a missing key and healthy database stay
+  quiet, and opening the notes widget cannot bootstrap over damaged data
+slot identity and refused-save regressions: committed browser cases switch the active slot
+  from another tab while Progress or KS02 is open and verify data remains with its source
+  slot. Separate cases keep legacy global notes after a refused adoption and make the
+  Documentations empty-slot bootstrap report refusal instead of a phantom workspace
 quota guard composition with firebase-sync: 9 assertions passed — storage-guard.js leaves
   Storage.prototype.setItem owned by firebase-sync, saveDB dispatches through that patch
   rather than a captured native reference, a quota throw runs no trailing patch statement,
@@ -1037,6 +1141,7 @@ The latest commits before this documentation update show current work concentrat
 - Repeated stabilization of touch schedule behavior and Firebase reload behavior.
 - Documentations calendar blocks, and the four judgement calls recorded with them.
 - Removing the last writer that could revert another page's fields (`sir-ks02.html`).
+- Routing all five `track_db` readers through one validated load boundary, so a malformed stored database can no longer white-screen a page or be silently bootstrapped over.
 - The first committed automated tests.
 
 These are implemented areas, not roadmap items. Possible follow-up work belongs in `NOTES.md`.
@@ -1045,9 +1150,16 @@ These are implemented areas, not roadmap items. Possible follow-up work belongs 
 
 The following describe the project today:
 
-- Slot schema definitions are duplicated across pages.
-- Import validates and normalizes through the one `SLOT_FIELDS` table in `schema.js`, and preserves unknown keys, so a new slot field no longer needs an importer change. Nested ids inside an imported slot are preserved verbatim rather than remapped.
-- Two pages can still hold stale in-memory views of the same `track_db` between `storage` events, but no page rebuilds the whole slot from its own snapshot any more, so a stale view can no longer revert a field another page owns. Two tabs of the *same* page remain last-write-wins.
+- Slot construction, canonical field kinds, recursive goal-shape validation, and database
+  reads are centralized. Historical field-presence migrations, page-level fallback reads,
+  and nested validation outside the goal tree are still distributed.
+- Import validates and normalizes through `schema.js`, preserves unknown keys, and covers
+  the canonical envelope plus recursive goal shapes. Nested ids are preserved verbatim
+  rather than remapped, and other domains are not yet universally shape-validated.
+- Tabs can still hold stale values between refresh events, but Progress and KS02 now move
+  snapshot identity with snapshot data when the active slot changes, and no page rebuilds
+  a whole slot from that snapshot. Two tabs editing the *same owned key* remain
+  last-write-wins.
 - Firebase synchronization rewrites the whole serialized database on every save.
 - Some user-visible dates are created through UTC-based helpers.
 - A `localStorage` quota failure is reported but not rolled back: the unsaved edit stays on screen until reload.

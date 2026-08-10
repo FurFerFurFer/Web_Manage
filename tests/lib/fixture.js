@@ -167,7 +167,16 @@ const MALFORMED_DB_STRINGS = {
   'slots is a map': '{"slots":{}}',
   'slots is a string': '{"slots":"none"}',
   'a slot is null': '{"slots":[null],"activeSlotId":null}',
-  'a slot is a string': '{"slots":["nope"],"activeSlotId":null}'
+  'a slot is a string': '{"slots":["nope"],"activeSlotId":null}',
+  // Structurally a fine database; the damage is one field inside one slot.
+  // These reach React and then throw out of flattenGoals / buildBuckets, so
+  // they white-screen LATER than the ones above rather than not at all.
+  'a slot field is wrong-typed': '{"slots":[{"id":"s1","name":"X","goals":"hello"}],"activeSlotId":"s1"}',
+  'a list field holds junk': '{"slots":[{"id":"s1","name":"X","goals":[null]}],"activeSlotId":"s1"}',
+  'a slot has no id': '{"slots":[{"name":"No id"}],"activeSlotId":null}',
+  'two slots share an id': '{"slots":[{"id":"dup","name":"First"},{"id":"dup","name":"Second"}],"activeSlotId":"dup"}',
+  'a slot name is an object': '{"slots":[{"id":"s1","name":{"bad":true}}],"activeSlotId":"s1"}',
+  'a goal has invalid children': '{"slots":[{"id":"s1","name":"X","goals":[{"id":"g1","children":"oops"}]}],"activeSlotId":"s1"}'
 };
 
 // The pre-track_db localStorage keys the bootstrap IIFEs in progress.html and

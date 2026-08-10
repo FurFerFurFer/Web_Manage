@@ -1225,14 +1225,29 @@ html[data-theme] #track-quota-banner {
   box-shadow: var(--shadow-float);
 }
 
-html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) button {
+/* Unreadable-database banner (storage-guard.js), stacked above the quota banner. Two
+   severities: `blocked` means writes are frozen until the stored value is readable again,
+   `warn` means it loaded fine and is only being reported. */
+html[data-theme] #track-data-banner {
+  background: var(--color-surface) !important;
+  border-color: color-mix(in srgb, var(--color-danger) 55%, transparent) !important;
+  color: var(--color-danger) !important;
+  box-shadow: var(--shadow-float);
+}
+
+html[data-theme] #track-data-banner[data-severity="warn"] {
+  border-color: color-mix(in srgb, var(--color-warning) 55%, transparent) !important;
+  color: var(--color-warning) !important;
+}
+
+html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #track-data-banner) button {
   min-height: 1.75rem;
   background: color-mix(in srgb, currentColor 16%, transparent) !important;
   color: currentColor !important;
   border: 1px solid color-mix(in srgb, currentColor 40%, transparent) !important;
 }
 
-html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) button:hover {
+html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #track-data-banner) button:hover {
   background: color-mix(in srgb, currentColor 26%, transparent) !important;
 }
 
@@ -1949,13 +1964,25 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) but
   gap: 0.3rem;
 }
 
+/* Both kinds are links into the Schedule, on the deadline they name. Colour
+   still carries the meaning, so the link affordance is weight and cursor
+   rather than a blue underline that would fight the due/caution palette. */
 .cal-sched-dl {
+  display: inline-block;
   padding: 0.05rem 0.35rem;
   border: 1px solid;
   border-radius: var(--radius-sm);
   font-size: 0.625rem;
   max-width: 100%;
   overflow-wrap: anywhere;
+  text-decoration: none;
+  cursor: pointer;
+  transition: filter 0.12s ease, border-color 0.12s ease;
+}
+
+.cal-sched-dl:hover,
+.cal-sched-dl:focus-visible {
+  filter: brightness(1.25);
 }
 
 .cal-sched-dl.due {
@@ -1964,10 +1991,31 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) but
   color: var(--color-danger);
 }
 
+.cal-sched-dl.due:hover,
+.cal-sched-dl.due:focus-visible {
+  border-color: rgba(248, 113, 113, 0.9);
+}
+
 .cal-sched-dl.caution {
   border-color: rgba(251, 191, 36, 0.45);
   background: rgba(251, 191, 36, 0.12);
   color: var(--color-warning);
+}
+
+.cal-sched-dl.caution:hover,
+.cal-sched-dl.caution:focus-visible {
+  border-color: rgba(251, 191, 36, 0.85);
+}
+
+/* Ticked: handled, so it stops reading as urgent. Its "!" run-up chips are
+   already gone — buildDaySchedule drops a ticked deadline from
+   deadlinesCaution — and only the due-day chip is left. Three classes beat the
+   two of .cal-sched-dl.due, so this needs no !important, only to come after. */
+.cal-sched-dl.due.done {
+  border-color: var(--color-success);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  text-decoration: line-through;
 }
 
 /* ── documentations: embedded calendar block ──────────────── */
@@ -2151,6 +2199,34 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner) but
   color: var(--color-warning);
 }
 
+/* a ticked deadline: still listed on its due day, no longer warning. The strike
+   goes on the row text alone, so the origin chip and the action buttons beside
+   it stay legible. */
+.cal-doc-row.done > .cal-doc-row-main {
+  color: var(--color-success);
+  text-decoration: line-through;
+}
+
+/* The caution row's text is a button leading to the deadline's due day. It has
+   to look like the read-only rows around it, so the button chrome is stripped
+   and only the cursor and a hover tint say it is live. */
+.cal-doc-row-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.cal-doc-row-link:hover,
+.cal-doc-row-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .cal-doc-bang {
   color: var(--color-warning);
   font-weight: 800;
@@ -2325,7 +2401,8 @@ button.cal-doc-origin:hover {
   body.docs-page #fb-sync-banner,
   body.docs-page #fb-sync-error,
   body.docs-page #fb-sync-conflict,
-  body.docs-page #track-quota-banner {
+  body.docs-page #track-quota-banner,
+  body.docs-page #track-data-banner {
     display: none !important;
   }
 

@@ -3,8 +3,11 @@
   var panelW = 320, panelH = 420;
   var saveTimer = null;
 
-  function _twDB() { try { return JSON.parse(localStorage.getItem('track_db') || '{}'); } catch { return {}; } }
-  function _twSlot() { var db = _twDB(), id = db.activeSlotId; return (db.slots || []).find(function(s) { return s.id === id; }) || (db.slots || [])[0] || null; }
+  // One parse-and-validate boundary for every page — TrackStorage.loadDB in
+  // storage-guard.js. This used to be a bare JSON.parse whose catch never fired for
+  // valid JSON with the wrong root shape, such as 'null', '42' or '[…]'.
+  function _twDB() { return TrackStorage.loadDB(); }
+  function _twSlot(db) { db = db || _twDB(); var id = db.activeSlotId; return (db.slots || []).find(function(s) { return s.id === id; }) || (db.slots || [])[0] || null; }
 
   function loadNotes() {
     var s = _twSlot(); return (s && s.notes) ? s.notes : [];
@@ -12,10 +15,10 @@
 
   function saveNotes(notes) {
     var db = _twDB();
-    var slot = _twSlot();
-    if (!slot) return;
+    var slot = _twSlot(db);
+    if (!slot) return false;
     db.slots = (db.slots || []).map(function(s) { return s.id === slot.id ? Object.assign({}, s, { notes: notes }) : s; });
-    TrackStorage.saveDB(db);
+    return TrackStorage.saveDB(db);
   }
 
   (function migrate() {
@@ -24,13 +27,13 @@
     try {
       var oldNotes = JSON.parse(old).notes || [];
       if (!oldNotes.length) { localStorage.removeItem('track_global_notes'); return; }
-      var db = _twDB(), id = db.activeSlotId;
+      var db = _twDB(), slot = _twSlot(db);
+      if (!slot) return;
       db.slots = (db.slots || []).map(function(s) {
-        if (s.id !== id) return s;
+        if (s.id !== slot.id) return s;
         return Object.assign({}, s, { notes: (s.notes || []).concat(oldNotes) });
       });
-      TrackStorage.saveDB(db);
-      localStorage.removeItem('track_global_notes');
+      if (TrackStorage.saveDB(db)) localStorage.removeItem('track_global_notes');
     } catch(e) {}
   })();
 

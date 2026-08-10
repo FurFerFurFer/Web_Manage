@@ -218,6 +218,20 @@
     return 'text';
   }
 
+  function validationError(field, message, fatal) {
+    return { field: field, message: message, fatal: fatal === true };
+  }
+
+  // Accept either a validation report or its errors array. Keeping severity in
+  // the report means storage-guard.js and future migration code do not have to
+  // infer structural damage from field names or message text.
+  function hasFatalErrors(reportOrErrors) {
+    var errors = isList(reportOrErrors)
+      ? reportOrErrors
+      : (reportOrErrors && isList(reportOrErrors.errors) ? reportOrErrors.errors : []);
+    return errors.some(function (error) { return !!error && error.fatal === true; });
+  }
+
   // Every list field holds records. A field being a list is not enough: a stray
   // null or string inside one imports cleanly under a type check that only looks
   // at the field, and then throws out of flattenGoals or buildBuckets on the
@@ -233,13 +247,80 @@
       /* jshint loopfunc:true */
       list.forEach(function (item, n) {
         if (!isMap(item)) {
-          errors.push({
-            field: key,
-            message: '"' + key + '[' + n + ']" must be an object, found ' + describe(item)
-          });
+          errors.push(validationError(
+            key,
+            '"' + key + '[' + n + ']" must be an object, found ' + describe(item),
+            true
+          ));
         }
       });
     }
+    return errors;
+  }
+
+  // Goal readers recurse through children and directly iterate these nested
+  // fields. Validate that structure at every depth, not only the top-level
+  // `goals` array. Absence and null remain legacy-safe just like canonical slot
+  // fields: they hold no data, and migrations may fill their defaults later.
+  function goalTreeErrors(slot) {
+    var errors = [];
+    if (!isList(slot.goals)) return errors; // the canonical kind check reports it
+
+    function nestedKindError(at, key, value, predicate, expected) {
+      if (value === undefined || value === null || predicate(value)) return;
+      errors.push(validationError(
+        'goals',
+        '"' + at + '.' + key + '" must be ' + expected + ', found ' + describe(value),
+        true
+      ));
+    }
+
+    function walk(nodes, path) {
+      nodes.forEach(function (node, n) {
+        var at = path + '[' + n + ']';
+        if (!isMap(node)) {
+          // listItemErrors already reports top-level goals; nested child lists
+          // need the same protection here.
+          if (path !== 'goals') {
+            errors.push(validationError(
+              'goals',
+              '"' + at + '" must be an object, found ' + describe(node),
+              true
+            ));
+          }
+          return;
+        }
+
+        nestedKindError(at, 'toLearn', node.toLearn, isList, 'a list');
+        nestedKindError(at, 'milestones', node.milestones, isList, 'a list');
+        nestedKindError(at, 'mmTargets', node.mmTargets, isMap, 'an object');
+
+        if (isList(node.milestones)) {
+          node.milestones.forEach(function (milestone, milestoneIndex) {
+            if (!isMap(milestone)) {
+              errors.push(validationError(
+                'goals',
+                '"' + at + '.milestones[' + milestoneIndex + ']" must be an object, found ' + describe(milestone),
+                true
+              ));
+            }
+          });
+        }
+
+        if (node.children === undefined || node.children === null) return;
+        if (!isList(node.children)) {
+          errors.push(validationError(
+            'goals',
+            '"' + at + '.children" must be a list, found ' + describe(node.children),
+            true
+          ));
+          return;
+        }
+        walk(node.children, at + '.children');
+      });
+    }
+
+    walk(slot.goals, 'goals');
     return errors;
   }
 
@@ -255,17 +336,17 @@
         var at = '"' + key + '[' + n + ']"';
         if (!isMap(item)) return; // listItemErrors reports this one
         if (!isDay(item.date)) {
-          errors.push({ field: key, message: at + ' needs a YYYY-MM-DD date, found ' + describe(item.date) });
+          errors.push(validationError(key, at + ' needs a YYYY-MM-DD date, found ' + describe(item.date), false));
         }
         if (item.startDate !== undefined && !isDay(item.startDate)) {
-          errors.push({ field: key, message: at + ' has an invalid startDate, found ' + describe(item.startDate) });
+          errors.push(validationError(key, at + ' has an invalid startDate, found ' + describe(item.startDate), false));
         }
         // ABSENCE IS THE DEFAULT AND IT IS MEANINGFUL: a note with no `time` is
         // a chip in the day strip, which is how every day note behaved before
         // the field existed. Only a value that is present is checked, and ''
         // is not a value — see AGENTS.md on the `time` key.
         if (item.time !== undefined && !isTime(item.time)) {
-          errors.push({ field: key, message: at + ' has an invalid time ' + describe(item.time) + ', expected HH:MM' });
+          errors.push(validationError(key, at + ' has an invalid time ' + describe(item.time) + ', expected HH:MM', false));
         }
       });
     });
@@ -277,7 +358,7 @@
   function validateSlot(input, label) {
     var where = label || 'slot';
     if (!isMap(input)) {
-      return { ok: false, errors: [{ field: where, message: where + ' must be an object, found ' + describe(input) }] };
+      return { ok: false, errors: [validationError(where, where + ' must be an object, found ' + describe(input), true)] };
     }
     var errors = [];
     for (var i = 0; i < SLOT_KEYS.length; i++) {
@@ -288,13 +369,18 @@
       // whole file over an empty field would just cost the user the import.
       if (v === undefined || v === null) continue;
       if (!matches(SLOT_FIELDS[key], v)) {
-        errors.push({
-          field: key,
-          message: '"' + key + '" must be ' + kindLabel(SLOT_FIELDS[key]) + ', found ' + describe(v)
-        });
+        // A string that is not a real calendar day is a semantic warning. A
+        // non-string in that field is structural, like every other wrong
+        // canonical kind, because readers cannot safely use it as text.
+        var fatal = SLOT_FIELDS[key] !== 'date' || !isText(v);
+        errors.push(validationError(
+          key,
+          '"' + key + '" must be ' + kindLabel(SLOT_FIELDS[key]) + ', found ' + describe(v),
+          fatal
+        ));
       }
     }
-    errors = errors.concat(listItemErrors(input), datedItemErrors(input));
+    errors = errors.concat(listItemErrors(input), goalTreeErrors(input), datedItemErrors(input));
     return { ok: !errors.length, errors: errors };
   }
 
@@ -322,12 +408,12 @@
   // nested block id uniqueness, and schema-version support.
   function validateDatabase(db) {
     if (!isMap(db)) {
-      return { ok: false, errors: [{ field: 'database', message: 'the database must be an object, found ' + describe(db) }] };
+      return { ok: false, errors: [validationError('database', 'the database must be an object, found ' + describe(db), true)] };
     }
     if (!isList(db.slots)) {
       // Nothing below can run without a slot list, so stop here rather than
       // pile on errors that are all the same error.
-      return { ok: false, errors: [{ field: 'slots', message: '"slots" must be a list, found ' + describe(db.slots) }] };
+      return { ok: false, errors: [validationError('slots', '"slots" must be a list, found ' + describe(db.slots), true)] };
     }
 
     var errors = [];
@@ -338,17 +424,17 @@
       errors = errors.concat(validateSlot(slot, where).errors);
       if (!isMap(slot)) return;
       if (!slot.id) {
-        errors.push({ field: 'slots', message: where + ' has no id' });
+        errors.push(validationError('slots', where + ' has no id', true));
         return;
       }
       var k = String(slot.id);
-      if (seen[k]) errors.push({ field: 'slots', message: 'two slots share the id "' + k + '"' });
+      if (seen[k]) errors.push(validationError('slots', 'two slots share the id "' + k + '"', true));
       seen[k] = true;
     });
 
     var active = db.activeSlotId;
     if (active !== undefined && active !== null && !seen[String(active)]) {
-      errors.push({ field: 'activeSlotId', message: 'activeSlotId "' + active + '" does not match any slot' });
+      errors.push(validationError('activeSlotId', 'activeSlotId "' + active + '" does not match any slot', false));
     }
 
     return { ok: !errors.length, errors: errors };
@@ -371,6 +457,7 @@
     normalizeSlot: normalizeSlot,
     validateSlot: validateSlot,
     validateDatabase: validateDatabase,
+    hasFatalErrors: hasFatalErrors,
     looksLikeDatabase: looksLikeDatabase,
     describeErrors: describeErrors,
     isList: isList,

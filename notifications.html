@@ -6,8 +6,12 @@
   <title>Notifications · Track</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
-  <script src="storage-guard.js"></script>
-  <link rel="stylesheet" href="styles.css?v=1">
+  <script src="storage-guard.js?v=2"></script>
+  <!-- This page never touches track_db itself, but notes-widget.js does, and
+       TrackStorage.loadDB validates through TrackSchema. Without this tag the widget
+       would be the one reader on the one page falling back to a structural check. -->
+  <script src="schema.js?v=2"></script>
+  <link rel="stylesheet" href="styles.css?v=4">
   <style>
     /* ── notifications page ─────────────────────────────────── */
     .ntf-shell {
@@ -777,6 +781,6 @@
     loadFeed();
   })();
   </script>
-  <script src="notes-widget.js"></script>
+  <script src="notes-widget.js?v=2"></script>
 </body>
 </html>

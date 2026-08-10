@@ -6,8 +6,8 @@
   <title>Progress & Schedule</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
-  <script src="storage-guard.js"></script>
-  <script src="schema.js?v=1"></script>
+  <script src="storage-guard.js?v=2"></script>
+  <script src="schema.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -15,7 +15,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles.css?v=1">
+  <link rel="stylesheet" href="styles.css?v=4">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -31,9 +31,9 @@
 
     // ── unified DB helpers ────────────────────────────────────────────────────
 
-    function _getTrackDB() {
-      try { return JSON.parse(localStorage.getItem('track_db') || '{}'); } catch { return {}; }
-    }
+    // One parse-and-validate boundary for every page — storage-guard.js. This used to
+    // be a bare JSON.parse whose catch never fired for 'null', '42' or '[…]'.
+    function _getTrackDB() { return TrackStorage.loadDB(); }
     function _activeSlot() {
       const db=_getTrackDB(), slots=db.slots||[], id=db.activeSlotId;
       return slots.find(s=>s.id===id) || slots[0] || null;
@@ -41,13 +41,32 @@
     function _readP(key, fallback) {
       const s=_activeSlot(); return (s && s[key]!==undefined) ? s[key] : fallback;
     }
-    function _writeP(key, val) {
-      const db=_getTrackDB(), id=db.activeSlotId;
-      db.slots=(db.slots||[]).map(s=>s.id===id?{...s,[key]:val}:s);
-      TrackStorage.saveDB(db);
+    function _writeP(key, val, snapshotSlotId) {
+      const db=_getTrackDB(), slots=db.slots||[];
+      if (!slots.length) return false;
+
+      const storedActive=slots.find(s=>s.id===db.activeSlotId) || null;
+      const displayed=storedActive || slots[0];
+      const hasSnapshotId=arguments.length >= 3;
+      const id=hasSnapshotId ? snapshotSlotId : displayed.id;
+
+      // An autosave may belong to a React snapshot of a slot that was deleted
+      // in another tab. Never fold that stale snapshot into whichever slot is
+      // active now. The two-argument form remains the ordinary "displayed
+      // slot" writer used by browser checks and repairs only a dangling root
+      // pointer; a valid pointer is never replaced by a stale snapshot id.
+      if (!slots.some(s=>s.id===id)) return false;
+      if (!storedActive) db.activeSlotId=displayed.id;
+      db.slots=slots.map(s=>s.id===id?{...s,[key]:val}:s);
+      return TrackStorage.saveDB(db);
     }
     // migrate all prior states → unified {slots, activeSlotId} at top level
     (function() {
+      // An unreadable track_db reads as {} here, which looks exactly like a fresh
+      // install — so without this the rescue below would build a workspace and try to
+      // save it over the user's damaged data. TrackStorage.saveDB refuses that write
+      // anyway; this just stops the pointless work and the misleading in-memory state.
+      if (TrackStorage.dbBlocked()) return;
       const db=_getTrackDB();
       if (db.slots) return;
 
@@ -79,6 +98,11 @@
       } else {
         const idx=activeId?Math.max(0,slots.findIndex(s=>s.id===activeId)):0;
         if(pGoals.length||pSA.length||pSE.length) slots[idx]={...slots[idx],goals:pGoals,saActions:pSA,saEntries:pSE};
+        // These are newly constructed candidates harvested from pre-track_db
+        // keys, not slots already stored in the unified database. Complete
+        // every one through the canonical defaults after Progress data is
+        // merged; normalizeSlot preserves each legacy id and unknown field.
+        slots=slots.map(s=>TrackSchema.normalizeSlot(s));
       }
 
       if (!activeId||!slots.find(s=>s.id===activeId)) activeId=slots[0].id;
@@ -4539,7 +4563,7 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, initialDate }) {
+    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, initialDate, initialDeadlineId }) {
       const START_HOUR  = 0;
       const END_HOUR    = 24;
       const TIME_COL_W  = 56;
@@ -4607,7 +4631,13 @@
       const [dlOpenDay,   setDlOpenDay]   = useState(null);   // day number for the inline composer
       const [dlDraft,     setDlDraft]     = useState({ title: '', detail: '', time: '', startDate: '' });
       const [dlEditing,   setDlEditing]   = useState(null);   // deadline id being edited inline
-      const [dlPopup,     setDlPopup]     = useState(null);   // deadline id — red-line / ! popup
+      // deadline id — red-line / ! popup. Seeded from ?dl= so a deadline chip on
+      // the Home calendar lands on the deadline itself. A lazy initializer, not
+      // an effect, so an arriving link never flashes the popup open then shut;
+      // the id must match a stored deadline or nothing opens.
+      const [dlPopup,     setDlPopup]     = useState(() =>
+        initialDeadlineId && (deadlines || []).some(d => d.id === initialDeadlineId)
+          ? initialDeadlineId : null);
       const [dlPopupEdit, setDlPopupEdit] = useState(false);  // popup view ⇄ edit toggle
       const [dlPopupDraft,setDlPopupDraft]= useState({ title: '', detail: '', time: '', startDate: '' });
       const [sirSessionPopup, setSirSessionPopup] = useState(null);
@@ -5429,6 +5459,14 @@
       // cannot drift across DST, a month boundary, or a year boundary.
       const dlStart   = d => d.startDate || d.date;
       const inCaution = (d, ds) => ds >= dlStart(d) && ds <= d.date;
+      // Ticked: the user has handled it, so the run-up stops warning. Absence
+      // is "not done", and `!!` reads an absent key, false and undefined alike,
+      // so no existing deadline needs migrating. Identical to dlDone in
+      // calendar-core.js — this page has its own copy because it does not load
+      // that file, the same reason dlStart, dlValid and dlDayCount are twinned.
+      // The tick suppresses the caution period without altering it, which is
+      // what makes unticking a restore rather than a guess.
+      const dlDone    = d => !!d.done;
       const dlValid   = (draft, dueDate) =>
         !!draft.title.trim()
         && /^\d{2}:\d{2}$/.test(draft.time)
@@ -5439,10 +5477,27 @@
       const dlDayCount = d => Math.round(
         (new Date(d.date + 'T12:00:00') - new Date(dlStart(d) + 'T12:00:00')) / 86400000
       ) + 1;
+      // `days` before or after a 'YYYY-MM-DD', on the LOCAL calendar. Same
+      // T12:00:00 anchor, so a DST change inside the span cannot shift the
+      // result onto the neighbouring day the way a UTC-midnight parse would.
+      const dlShift = (ds, days) => {
+        const t = new Date(ds + 'T12:00:00');
+        t.setDate(t.getDate() + days);
+        return toDateStr(t);
+      };
       const byTime = (a, b) => String(a.time).localeCompare(String(b.time));
       const byDate = (a, b) => a.date.localeCompare(b.date) || byTime(a, b);
       const deadlinesDueOn    = ds => (deadlines || []).filter(d => d.date === ds).sort(byTime);
-      const deadlinesCautionOn = ds => (deadlines || []).filter(d => inCaution(d, ds)).sort(byDate);
+      // The run-up only, and only while the deadline is still outstanding: the
+      // due day is already drawn as the red deadline, so repeating it as an
+      // amber "!" marks one deadline twice, and a ticked deadline has nothing
+      // left to warn about. BOTH tests belong here rather than at each call
+      // site — `d.date !== ds` used to be spelled out at two of the three, and
+      // the timeline was the one that forgot. This helper's three consumers
+      // (timeline strip, month cell, day panel) inherit both for free, and
+      // calendar-core's `deadlinesCaution` applies the same pair.
+      const deadlinesCautionOn = ds =>
+        (deadlines || []).filter(d => !dlDone(d) && d.date !== ds && inCaution(d, ds)).sort(byDate);
 
       function openDlComposer(day, ds) {
         setDlOpenDay(day);
@@ -5457,6 +5512,25 @@
         setDlDraft({ title: '', detail: '', time: '', startDate: '' });
       }
       function openDlPopup(id) { setDlPopup(id); setDlPopupEdit(false); }
+      // The one write behind the popup's inline caution picker. It REFUSES a
+      // cleared or out-of-range value instead of writing it, so `startDate`
+      // never becomes '' and never lands after the due day; "reset" passes the
+      // due day explicitly, which is the documented default, so a caution
+      // period can always be undone. Spreading the stored record is what keeps
+      // docPageId, createdAt and any key a later version added.
+      function setDlCautionStart(dl, v) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || v > dl.date) return;
+        setDeadlines(prev => prev.map(x => x.id === dl.id ? { ...x, startDate: v } : x));
+      }
+      // The one write behind every tick control on this page. It writes `done`
+      // and nothing else, spreading the stored record so docPageId, createdAt,
+      // startDate and any key a later version added all survive — rebuilding a
+      // record from a field list is exactly the bug that cost day notes and
+      // deadlines before. The caution period is left alone, so unticking puts
+      // the same "!" days back rather than recomputing a guess at them.
+      function toggleDlDone(id) {
+        setDeadlines(prev => prev.map(x => x.id === id ? { ...x, done: !x.done } : x));
+      }
       function addDeadline(date) {
         if (!dlValid(dlDraft, date)) return;
         setDeadlines(prev => [...prev, {
@@ -5787,15 +5861,17 @@
                       const top = (dh + (dm || 0) / 60 - START_HOUR) * pxPerHour;
                       if (top < 0 || top > TOTAL_H) return null;
                       const open = e => { e.stopPropagation(); openDlPopup(d.id); };
+                      const done = dlDone(d);
+                      const tip = `${d.time} · ${d.title}${done ? ' · ticked' : ''}`;
                       return (
                         <div key={d.id} style={{ top: top + 'px', zIndex: 200 }}
                           className="absolute left-0 right-0 h-[9px] -translate-y-1/2 flex items-center pointer-events-none group/dl">
-                          <div onClick={open} title={`${d.time} · ${d.title}`}
-                            className="w-2 h-2 rotate-45 bg-red-600 flex-shrink-0 -ml-1 pointer-events-auto cursor-pointer" />
-                          <div className="flex-1 h-px bg-red-600 group-hover/dl:h-0.5 transition-all" />
-                          <span onClick={open} title={`${d.time} · ${d.title}`}
-                            className="ml-1 px-1 rounded bg-red-600 text-white text-[9px] leading-tight truncate max-w-[55%] pointer-events-auto cursor-pointer">
-                            {d.time} {d.title}
+                          <div onClick={open} title={tip}
+                            className={`w-2 h-2 rotate-45 flex-shrink-0 -ml-1 pointer-events-auto cursor-pointer ${done?'bg-emerald-600':'bg-red-600'}`} />
+                          <div className={`flex-1 h-px group-hover/dl:h-0.5 transition-all ${done?'bg-emerald-600':'bg-red-600'}`} />
+                          <span onClick={open} title={tip}
+                            className={`ml-1 px-1 rounded text-white text-[9px] leading-tight truncate max-w-[55%] pointer-events-auto cursor-pointer ${done?'bg-emerald-600 line-through':'bg-red-600'}`}>
+                            {done ? '✓ ' : ''}{d.time} {d.title}
                           </span>
                         </div>
                       );
@@ -7189,12 +7265,65 @@
                     <>
                       <div className="p-3 flex flex-col gap-2 flex-1 overflow-y-auto">
                         <div className="flex items-center gap-2">
-                          <span className="px-1.5 py-0.5 rounded bg-red-700 text-white text-[11px] font-mono">{d.time}</span>
-                          <span className="text-sm font-semibold text-red-100 break-words">{d.title}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-white text-[11px] font-mono ${dlDone(d)?'bg-emerald-700':'bg-red-700'}`}>{d.time}</span>
+                          <span className={`text-sm font-semibold break-words ${dlDone(d)?'text-emerald-200 line-through':'text-red-100'}`}>{d.title}</span>
                         </div>
-                        <p className="text-[10px] text-amber-400/80">
-                          <span className="font-bold">!</span> Caution period · {dlStart(d)} → {d.date} · {dlDayCount(d)} {dlDayCount(d) === 1 ? 'day' : 'days'}
-                        </p>
+                        {/* The tick. Ticking hides every "!" this deadline puts
+                            on its run-up days, on all five surfaces, and leaves
+                            the deadline itself on its due day — nothing is
+                            deleted and nothing about the period is rewritten,
+                            so unticking restores exactly what was there. */}
+                        <button id="dl-done-toggle" onClick={() => toggleDlDone(d.id)}
+                          title={dlDone(d)
+                            ? 'Untick — bring this deadline\'s "!" run-up days back'
+                            : 'Tick — hide this deadline\'s "!" run-up days'}
+                          className={`flex items-center gap-2 rounded border px-2 py-1.5 text-left transition-colors ${dlDone(d)
+                            ? 'border-emerald-700/50 bg-emerald-950/30 hover:bg-emerald-900/30'
+                            : 'border-gray-700 bg-gray-800/40 hover:bg-gray-800'}`}>
+                          <span className={`w-4 h-4 flex-shrink-0 rounded border flex items-center justify-center text-[10px] leading-none ${dlDone(d)
+                            ? 'border-emerald-500 bg-emerald-600 text-white'
+                            : 'border-gray-600 text-transparent'}`}>✓</span>
+                          <span className={`text-[11px] ${dlDone(d)?'text-emerald-300':'text-gray-400'}`}>
+                            {dlDone(d) ? 'Ticked — the "!" run-up is hidden' : 'Tick when this is handled'}
+                          </span>
+                        </button>
+                        {/* The caution start is set here, in the read view, not
+                            behind Edit. It is the whole point of the "!" chips
+                            on the run-up days, and as static text it read as a
+                            computed field nobody could change. It stays live
+                            while ticked — the period is still stored and still
+                            editable — but says so, rather than promising marks
+                            that are not on screen. */}
+                        {(() => {
+                          const span = dlDayCount(d);
+                          return (
+                            <div className={`flex flex-col gap-1 rounded border border-amber-800/40 bg-amber-950/20 px-2 py-1.5 ${dlDone(d)?'opacity-50':''}`}>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-amber-400 text-[11px] leading-none">!</span>
+                                <label className="text-[10px] text-amber-300/80" htmlFor="dl-caution-from">Caution from</label>
+                                <input id="dl-caution-from" type="date" value={dlStart(d)} max={d.date}
+                                  onChange={e => setDlCautionStart(d, e.target.value)}
+                                  className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-[11px] text-gray-200 outline-none focus:border-amber-600" />
+                                <span className="text-[10px] text-amber-400/70">
+                                  → {d.date} · {span} {span === 1 ? 'day' : 'days'}
+                                  {dlDone(d) && ' · hidden while ticked'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <span className="text-[9px] text-gray-600 tracking-widest mr-0.5">QUICK</span>
+                                {[3, 7, 14].map(n => (
+                                  <button key={n} onClick={() => setDlCautionStart(d, dlShift(d.date, -n))}
+                                    title={`Start the caution period on ${dlShift(d.date, -n)}`}
+                                    className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-amber-900/50 text-[10px] text-amber-300/80 transition-colors">−{n}d</button>
+                                ))}
+                                <button onClick={() => setDlCautionStart(d, d.date)}
+                                  disabled={dlStart(d) === d.date}
+                                  title="No caution period — the due day only"
+                                  className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default text-[10px] text-gray-400 transition-colors">reset</button>
+                              </div>
+                            </div>
+                          );
+                        })()}
                         {d.detail
                           ? <p className="text-xs text-gray-400 whitespace-pre-wrap">{d.detail}</p>
                           : <p className="text-xs text-gray-700 italic">No description.</p>}
@@ -7233,7 +7362,7 @@
                   const isToday=ds===toDateStr(new Date()), isSel=selDay===day;
                   const dayCalNotes=(calendarNotes||[]).filter(n=>n.date===ds);
                   const dayDue=deadlinesDueOn(ds);
-                  const dayCaution=deadlinesCautionOn(ds).filter(d=>d.date!==ds);
+                  const dayCaution=deadlinesCautionOn(ds);
                   return (
                     <div key={day}
                       className={`group rounded p-1 cursor-pointer min-h-[48px] border transition ${isSel?"border-white":"border-gray-800 hover:border-gray-600"} ${isToday?"bg-gray-800":"bg-gray-900"}`}
@@ -7274,9 +7403,9 @@
                       ))}
                       {dayDue.map(d=>(
                         <div key={d.id} onClick={e=>{e.stopPropagation();openDlPopup(d.id);}}
-                          title={`Due ${d.time} · ${d.title}`}
-                          className="text-[9px] text-red-300 truncate leading-tight mt-0.5 flex items-center gap-0.5">
-                          <span className="flex-shrink-0">⏰</span>
+                          title={`Due ${d.time} · ${d.title}${dlDone(d)?' · ticked':''}`}
+                          className={`text-[9px] truncate leading-tight mt-0.5 flex items-center gap-0.5 ${dlDone(d)?'text-emerald-300/80 line-through':'text-red-300'}`}>
+                          <span className="flex-shrink-0">{dlDone(d)?'✓':'⏰'}</span>
                           <span className="truncate">{d.time} {d.title}</span>
                         </div>
                       ))}
@@ -7297,7 +7426,7 @@
                 const selSessions=sessionsByDate[ds]||[];
                 const dayNotes=(calendarNotes||[]).filter(n=>n.date===ds);
                 const selDue=deadlinesDueOn(ds);
-                const selCaution=deadlinesCautionOn(ds).filter(d=>d.date!==ds);
+                const selCaution=deadlinesCautionOn(ds);
                 return (
                   <div className="mt-4 bg-gray-900 rounded border border-gray-700 p-3">
                     <div className="font-bold mb-2 text-xs tracking-widest text-gray-300">{MONTH_NAMES[calDate.month]} {selDay}</div>
@@ -7393,15 +7522,24 @@
                             <div key={d.id}
                               className={`flex items-start gap-2 rounded px-2 py-1.5 border cursor-pointer group/dl transition-colors ${dlEditing===d.id?'border-red-500/70 bg-red-900/20':'border-gray-700/60 hover:border-gray-600 bg-gray-900/50'}`}
                               onDoubleClick={()=>{setCalNoteOpenDay(null);setCalNoteEditing(null);setDlOpenDay(selDay);setDlEditing(d.id);setDlDraft({title:d.title,detail:d.detail||'',time:d.time,startDate:dlStart(d)});}}>
-                              <span className="flex-shrink-0 text-red-400 mt-0.5 text-[11px]">⏰</span>
+                              {/* stopPropagation on both: the row's dblclick opens the
+                                  inline editor, and a double tap on the box would
+                                  otherwise tick twice and open it as well */}
+                              <input type="checkbox" className="dl-done-box flex-shrink-0 mt-0.5 accent-emerald-600 cursor-pointer"
+                                checked={dlDone(d)} onChange={()=>toggleDlDone(d.id)}
+                                onClick={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}
+                                title={dlDone(d)?'Untick — bring the "!" run-up back':'Tick — hide the "!" run-up'} />
+                              <span className={`flex-shrink-0 mt-0.5 text-[11px] ${dlDone(d)?'text-emerald-400':'text-red-400'}`}>{dlDone(d)?'✓':'⏰'}</span>
                               <div className="flex-1 min-w-0">
-                                <p className="text-[11px] font-semibold text-red-200 truncate">
-                                  <span className="px-1 mr-1 rounded bg-red-700 text-white text-[10px]">{d.time}</span>
+                                <p className={`text-[11px] font-semibold truncate ${dlDone(d)?'text-emerald-200 line-through':'text-red-200'}`}>
+                                  <span className={`px-1 mr-1 rounded text-white text-[10px] ${dlDone(d)?'bg-emerald-700':'bg-red-700'}`}>{d.time}</span>
                                   {d.title}
                                 </p>
                                 {d.detail&&<p className="text-[10px] text-gray-500 mt-0.5 whitespace-pre-wrap line-clamp-3">{d.detail}</p>}
                                 {dlStart(d)!==d.date&&(
-                                  <p className="text-[9px] text-amber-400/70 mt-0.5">! caution from {dlStart(d)} · {dlDayCount(d)} days</p>
+                                  <p className="text-[9px] text-amber-400/70 mt-0.5">
+                                    ! caution from {dlStart(d)} · {dlDayCount(d)} days{dlDone(d)&&' · hidden while ticked'}
+                                  </p>
                                 )}
                               </div>
                               <button onClick={e=>{e.stopPropagation();if(window.confirm('Delete this deadline?')){deleteDeadline(d.id);}}}
@@ -7565,23 +7703,31 @@
     // ── App ───────────────────────────────────────────────────────────────────
 
     function App() {
-      const [goals,      setGoals]      = useState(() => expandAnchorToLearn(_readP('goals', []), _readMMs()));
-      const [saActions,  setSaActions]  = useState(() => _readP('saActions',  []));
-      const [saEntries,  setSaEntries]  = useState(() => _readP('saEntries',  []));
-      const [mmEntries,  setMmEntries]  = useState(() => _readP('mmEntries',  []));
-      const [mms, setMms]               = useState(() => _readMMs());
-      const [kolbs]                     = useState(() => _readP('kolbs', []));
-      const [sessions, setSessions]      = useState(() => _readSessions());
-      const [mgChanges]                 = useState(() => _readMGChanges());
-      const [sourceDumps]               = useState(() => _readP('sourceDumps', []));
-      const [mgSchedule, setMgSchedule] = useState(() => _readP('mgSchedule', {}));
-      const [linChanges] = useState(() => _readP('linChanges', []));
-      const [calendarNotes, setCalendarNotes] = useState(() => _readP('calendarNotes', []));
-      const [deadlines, setDeadlines] = useState(() => _readP('deadlines', []));
+      // Capture one slot once for the initial render. Every autosave below is
+      // tied to this identity (and later to the identity loaded by refresh), so
+      // changing the root activeSlotId cannot redirect stale React state into a
+      // different workspace.
+      const initialSlotRef = useRef(undefined);
+      if (initialSlotRef.current === undefined) initialSlotRef.current = _activeSlot() || null;
+      const initialSlot = initialSlotRef.current || {};
+      const [loadedSlotId, setLoadedSlotId] = useState(() => initialSlot.id || null);
+      const [goals,      setGoals]      = useState(() => expandAnchorToLearn(initialSlot.goals || [], initialSlot.mms || []));
+      const [saActions,  setSaActions]  = useState(() => initialSlot.saActions || []);
+      const [saEntries,  setSaEntries]  = useState(() => initialSlot.saEntries || []);
+      const [mmEntries,  setMmEntries]  = useState(() => initialSlot.mmEntries || []);
+      const [mms, setMms]               = useState(() => initialSlot.mms || []);
+      const [kolbs, setKolbs]           = useState(() => initialSlot.kolbs || []);
+      const [sessions, setSessions]     = useState(() => initialSlot.sessions || []);
+      const [mgChanges, setMgChanges]   = useState(() => initialSlot.mgChanges || []);
+      const [sourceDumps, setSourceDumps] = useState(() => initialSlot.sourceDumps || []);
+      const [mgSchedule, setMgSchedule] = useState(() => initialSlot.mgSchedule || {});
+      const [linChanges, setLinChanges] = useState(() => initialSlot.linChanges || []);
+      const [calendarNotes, setCalendarNotes] = useState(() => initialSlot.calendarNotes || []);
+      const [deadlines, setDeadlines] = useState(() => initialSlot.deadlines || []);
       // owned by documentations.html, read-only here: a day note or deadline
       // added from a documentation page carries that page's id, and the note /
       // deadline popups link back to it
-      const [docPages, setDocPages] = useState(() => _readP('docPages', []));
+      const [docPages, setDocPages] = useState(() => initialSlot.docPages || []);
       const [tab, setTab] = useState(() => window.location.hash.slice(1) || 'progress');
       const [selectedMilestone, setSelectedMilestone] = useState(null);
 
@@ -7592,30 +7738,56 @@
         return /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null;
       }, []);
 
-      useEffect(() => { _writeP('goals',         goals);         }, [goals]);
-      useEffect(() => { _writeP('saActions',     saActions);     }, [saActions]);
-      useEffect(() => { _writeP('saEntries',     saEntries);     }, [saEntries]);
-      useEffect(() => { _writeP('mmEntries',     mmEntries);     }, [mmEntries]);
-      useEffect(() => { _writeP('mgSchedule',    mgSchedule);    }, [mgSchedule]);
-      useEffect(() => { _writeP('calendarNotes', calendarNotes); }, [calendarNotes]);
-      useEffect(() => { _writeP('deadlines',     deadlines);     }, [deadlines]);
+      // &dl=<id> rides alongside it. The universal calendar's deadline chips
+      // link to the deadline they name, not merely to its day, so the caution
+      // "!" a user clicks on Home opens the same popup it opens here. The id is
+      // only ever compared for equality against a stored one below — a stale or
+      // hand-typed link matches nothing and opens nothing.
+      const initialDeadlineId = useMemo(
+        () => new URLSearchParams(window.location.search).get('dl') || null, []);
+
+      useEffect(() => { if (loadedSlotId) _writeP('goals',         goals,         loadedSlotId); }, [goals, loadedSlotId]);
+      useEffect(() => { if (loadedSlotId) _writeP('saActions',     saActions,     loadedSlotId); }, [saActions, loadedSlotId]);
+      useEffect(() => { if (loadedSlotId) _writeP('saEntries',     saEntries,     loadedSlotId); }, [saEntries, loadedSlotId]);
+      useEffect(() => { if (loadedSlotId) _writeP('mmEntries',     mmEntries,     loadedSlotId); }, [mmEntries, loadedSlotId]);
+      useEffect(() => { if (loadedSlotId) _writeP('mgSchedule',    mgSchedule,    loadedSlotId); }, [mgSchedule, loadedSlotId]);
+      useEffect(() => { if (loadedSlotId) _writeP('calendarNotes', calendarNotes, loadedSlotId); }, [calendarNotes, loadedSlotId]);
+      useEffect(() => { if (loadedSlotId) _writeP('deadlines',     deadlines,     loadedSlotId); }, [deadlines, loadedSlotId]);
 
       useEffect(() => {
-        function refreshSirState() {
-          const freshMms = _readMMs();
-          setMms(freshMms);
-          setSessions(_readSessions());
-          setDocPages(_readP('docPages', []));
-          return freshMms;
+        // Adopt one complete stored snapshot, including its slot identity, in
+        // one refresh. React batches these setters; the save effects therefore
+        // see B's state with B's id, never B's state with the previously loaded
+        // A id (or A's stale state with a newly changed root id).
+        function refreshStoredSlot() {
+          const db=_getTrackDB(), slots=db.slots||[];
+          const slot=slots.find(s=>s.id===db.activeSlotId) || slots[0] || null;
+          if (!slot) { setLoadedSlotId(null); return; }
+
+          const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+          const fresh=(set,val)=>set(prev=>same(prev,val)?prev:val);
+          const freshMms=slot.mms||[];
+          setLoadedSlotId(prev=>prev===slot.id?prev:slot.id);
+          fresh(setGoals,expandAnchorToLearn(slot.goals||[],freshMms));
+          fresh(setSaActions,slot.saActions||[]);
+          fresh(setSaEntries,slot.saEntries||[]);
+          fresh(setMmEntries,slot.mmEntries||[]);
+          fresh(setMms,freshMms);
+          fresh(setKolbs,slot.kolbs||[]);
+          fresh(setSessions,slot.sessions||[]);
+          fresh(setMgChanges,slot.mgChanges||[]);
+          fresh(setSourceDumps,slot.sourceDumps||[]);
+          fresh(setMgSchedule,slot.mgSchedule||{});
+          fresh(setLinChanges,slot.linChanges||[]);
+          fresh(setCalendarNotes,slot.calendarNotes||[]);
+          fresh(setDeadlines,slot.deadlines||[]);
+          fresh(setDocPages,slot.docPages||[]);
         }
         function onVisible() {
-          if (document.visibilityState === 'visible') {
-            const freshMms = refreshSirState();
-            setGoals(prev => expandAnchorToLearn(prev, freshMms));
-          }
+          if (document.visibilityState === 'visible') refreshStoredSlot();
         }
         function onStorage(event) {
-          if (event.key === 'track_db') refreshSirState();
+          if (!event.key || event.key === 'track_db') refreshStoredSlot();
         }
         document.addEventListener('visibilitychange', onVisible);
         window.addEventListener('storage', onStorage);
@@ -7785,6 +7957,7 @@
                 deadlines={deadlines} setDeadlines={setDeadlines}
                 docPages={docPages}
                 initialDate={initialScheduleDate}
+                initialDeadlineId={initialDeadlineId}
               />
             </div>
           )}
@@ -7827,6 +8000,6 @@
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
-  <script src="notes-widget.js"></script>
+  <script src="notes-widget.js?v=2"></script>
 </body>
 </html>

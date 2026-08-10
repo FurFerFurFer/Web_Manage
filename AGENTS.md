@@ -64,7 +64,7 @@ Active files:
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
 | `schema.js` | The canonical slot definition (`window.TrackSchema`): the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
-| `storage-guard.js` | `localStorage` quota guard for every whole-database write, quota banner (`window.TrackStorage`) |
+| `storage-guard.js` | The one `track_db` load boundary (`loadDB` — parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, both banners (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
@@ -83,7 +83,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=1`, `schema.js?v=1`, `calendar-core.js?v=1`, `firebase-sync.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js`, `storage-guard.js`, and `notes-widget.js` are not yet versioned.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=4`, `schema.js?v=2`, `calendar-core.js?v=2`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
 
 ## Current Data Contract
 
@@ -164,22 +164,49 @@ cleanly under a field-only check and then throws out of `flattenGoals` or
 `buildBuckets` on the next render. `null` as a whole field counts as missing
 rather than wrong — it holds no data, so the default loses nothing.
 
-Readers and migrations are **not** yet centralized: the five `_getTrackDB()`
-parsers and the field-presence migration IIFEs in `progress.html` and
-`sir-ks02.html` are still per-page. There is no `schemaVersion` on `track_db`;
-adding one is gated on the migration registry in NOTES Proposal 2. Nothing calls
-`normalizeSlot` over already-stored slots — that would be a migration.
+Goal validation is also recursive: every goal descendant must be an object;
+`children`, `toLearn` and `milestones` must be lists when present; every milestone
+must be an object; and `mmTargets` must be a map. This is deliberately goal-tree
+coverage, not a claim that every nested shape in `mms`, `sourceDumps`, `docPages`
+or the other domains is already validated. Validation errors carry severity:
+structural goal damage and missing or duplicate slot ids are fatal because
+traversal or write identity is ambiguous, while a dangling `activeSlotId` is a
+warning because the first slot is still an unambiguous fallback.
+
+Readers are centralized through `TrackStorage.loadDB`; migrations are **not**.
+The field-presence migration IIFEs in `progress.html` and `sir-ks02.html` are
+still per-page. There is no `schemaVersion` on `track_db`; adding one is gated on
+the migration registry in NOTES Proposal 2. Nothing calls `normalizeSlot` over
+already-stored unified slots — that would be a migration. The legacy bootstrap
+may normalize candidates newly harvested from pre-`track_db` keys, including
+nonempty legacy slot lists, before their first unified save.
 
 Items inside `calendarNotes` and `deadlines` may carry an optional `docPageId` naming the `docPages` entry that authored them; its absence means the item was authored in the Schedule. Preserve it: edit these items by spreading (`{...item, …}`), never by rebuilding them from a field list, and never delete such an item as a side effect of deleting its documentation page.
 
 A `calendarNotes` item may also carry an optional `time` (`HH:MM`). **Absence is meaningful and is the default**: without it the note renders as a chip in the day strip, which is how every day note behaved before the field existed; with it the note is positioned on the hour grid and must not also appear in the strip. Two rules follow: write the key only when there is a value — never `''` — and make clearing the field delete the key, or a note can never go back to being untimed. `TrackCalendar.noteTimed` is the single test for this; `progress.html` has its own copy because it does not load `calendar-core.js`, and the two must agree.
 
+A `deadlines` item may also carry an optional `done` (boolean). Ticked means the user has handled it, and the deadline's caution `!` run-up stops rendering everywhere while the deadline itself stays on its due day. Absence is "not done", and every reader goes through `dlDone`'s `!!`, so an absent key, `false` and `undefined` are one state — unlike `time` there is no third state to protect, so untick writes `false` rather than deleting the key, and no stored deadline needs a migration. Three rules follow:
+
+- The tick **suppresses** the caution period; it must never alter it. `dlStart`, `dlInCaution` and `dlDayCount` stay blind to `done`, which is what makes unticking a restore rather than a recomputed guess. A writer that "tidies" `startDate` on tick has destroyed the thing untick puts back.
+- The doneness test belongs **inside** the three caution predicates, never at a call site. They are `deadlinesCautionOn` (`progress.html`), `deadlinesCaution` (`calendar-core.js`) and `ownedDates.caution` (`documentations.html`), and between them they feed five surfaces — the Progress month grid, timeline strip and day panel, the Home calendar, and a Documentations calendar block. `progress.html` holds its own copy of `dlDone` because it does not load `calendar-core.js`, exactly as it does for `noteTimed`. This rule is written from a shipped bug: `d.date !== ds` was spelled out at two of three call sites and forgotten at the third, and the timeline double-marked every due day until it was found.
+- `done` is deliberately **not** validated in `schema.js`. A malformed date breaks a render — `daysBetween` bails and `dlDayCount` goes `NaN` — but `!!'yes'` is just `true`, so a check there would only invent a way to block a database over a field that is safe by construction.
+
 Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`. `progress.html`'s `uid()`, `documentations.html`'s `genId()` and `notes-widget.js`'s `generateId()` are delegates with a local fallback; do not reintroduce a page-local id shape. `sir-ks02.html` keeps its numeric `nid()` counter for its own records. Never rewrite a stored id.
 
-Every write of `track_db` must go through `TrackStorage.saveDB(db)` from `storage-guard.js`, never a bare `localStorage.setItem('track_db', …)`. It returns `false` when the browser quota rejected the write, so a full quota is a visible banner instead of an uncaught throw out of a React effect. Two rules follow:
+Every **read** of `track_db` must go through `TrackStorage.loadDB()` from `storage-guard.js`, never a bare `JSON.parse(localStorage.getItem('track_db') …)`. All five readers — `getDB` (`index.html`), `_getTrackDB` (`progress.html`, `sir-ks02.html`, `documentations.html`) and `_twDB` (`notes-widget.js`) — are one-line delegates. `JSON.parse` does not throw on `'null'`, `'42'` or `'[…]'`, so a hand-rolled `try/catch` around it is not a check. Three rules follow:
+
+- `loadDB` validates; it never repairs. Nothing may run `normalizeSlot` over already-stored slots — that is a migration, and it belongs behind the `schemaVersion` that does not exist yet.
+- Never write while `TrackStorage.dbBlocked()` is true, and never work around it. A malformed database must stay byte-identical and recoverable; `saveDB` enforces this, and any new bootstrap or auto-create path must return early on it rather than rely on the write being silently refused.
+- A root object with no `slots` key is **not** damage — it is a bare `{}` or the pre-unified legacy `{progress, ks02}` shape, and it must reach the migration IIFEs intact. Classify it before validation, never by it.
+
+Every write of `track_db` must go through `TrackStorage.saveDB(db)`, never a bare `localStorage.setItem('track_db', …)`. It returns `false` when the browser quota rejected the write or the stored database is unreadable, so both are a visible banner instead of an uncaught throw out of a React effect. Three more rules follow:
 
 - Do not make `storage-guard.js` patch `Storage.prototype.setItem`. `firebase-sync.js` owns that patch and calls the captured native `_origSet` before it marks `track_db_pending` and arms the upload debounce. The guard must stay a plain function that dispatches through the patch, so a quota throw aborts before any upload is armed for a write that never landed.
 - Do not route `firebase-sync.js`'s own `_origSet` calls through the guard. Those deliberately bypass its patch, and a swallowed failure there would let `_flush()` treat an unwritten value as confirmed.
+- A caller whose next action is destructive or claims initialization succeeded must check
+  the return value. Remove a legacy source key or mark a bootstrap ready only after
+  `saveDB` returns `true`; a refusal or thrown error leaves the source and the unready UI
+  intact.
 
 Other current browser keys include:
 
@@ -264,6 +291,11 @@ Every page now writes **only the keys it owns**, merged into a fresh read of the
 
 - A new write must go through that page's single-key helper — `_writeP` (`progress.html`), `_writeSlotKeys` / `_writeSlotKey` / `_mutateSlotKey` (`sir-ks02.html`, `documentations.html`). Assigning `db.slots = …` from component state reintroduces exactly the bug that cost day notes, deadlines and documentation pages.
 - Writing a key the page does not own is a defect even when the value looks right, because the value came from a snapshot. If a page needs to change a foreign key, it does a fresh read-modify-write of that key alone.
+- A refresh must move slot identity with the data snapshot. Progress and KS02 autosaves
+  target the id whose fields are in React state, not a newly changed root `activeSlotId`;
+  adopting another tab's slot means updating that loaded id in the same refresh, and a
+  snapshot whose slot was deleted writes nothing. Otherwise a switch can save A's stale
+  fields into B or B's refreshed fields back into A.
 
 `tests/browser.test.js` asserts both directions for `sir-ks02.html`, including a field no page has heard of.
 
@@ -648,14 +680,55 @@ Everything in this section that is not `node tests/run.js` was run once and cann
 node tests/run.js
 ```
 
-96 offline cases under five timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) plus 27 headless-Chrome cases — 11 suites, all passing on 2026-08-08. The two `sir-ks02.html` regression cases were confirmed to **fail** against the pre-fix page served through `TRACK_TEST_ROOT`.
+103 offline cases per timezone (55 calendar and 48 schema) under five timezones (UTC,
+UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu), plus 68 headless-Chrome
+subtests — 11 suites, all passing on 2026-08-10. The original two
+`sir-ks02.html` regression cases were confirmed to **fail** against the pre-fix page
+served through `TRACK_TEST_ROOT`. The cross-tab active-slot, ambiguous-slot-identity,
+malformed recursive-goal, and dangling-writer cases added on 2026-08-10 were also
+recorded failing first.
 
-### Canonical slot schema (2026-08-08)
+### Hardened `track_db` readers (2026-08-08, extended 2026-08-10)
 
-- `schema.js` passes `node --check`; `tests/schema.test.js` contributes 39 offline cases, identical under all five swept timezones.
+- Repeatable browser cases cover every reader surface. Invalid JSON, unsafe root/slot
+  kinds, missing or duplicate slot ids, wrong canonical kinds/items, and malformed
+  recursive goal shapes block while the original bytes remain untouched. A dangling
+  `activeSlotId` and semantic date/time flaws warn and stay editable.
+- The banner offers the exact raw bytes, a missing key and healthy database remain quiet,
+  and the notes widget cannot bootstrap over damaged data.
+- Repeatable cases also cover nonempty legacy-slot normalization, cross-tab active-slot
+  switches in Progress and KS02, Progress realigning a dangling pointer to the slot it
+  displays, legacy global notes surviving a refused adoption, and Documentations reporting
+  a refused empty-slot bootstrap rather than claiming a phantom workspace.
+- Not covered: a **real** legacy `{progress, ks02}` install. That shape is classified `ok`
+  and passed through untouched so its migration IIFE still sees it; legacy paths use
+  synthetic keys.
+
+### Canonical slot schema (2026-08-08, extended 2026-08-10)
+
+- `schema.js` passes `node --check`; `tests/schema.test.js` contributes 48 offline cases, identical under all five swept timezones.
 - Six browser cases were seen failing against the pre-change pages before the fix: the four `window.TrackSchema` smoke assertions, canonical shape from every entry point (`index.html` built 13 of 21 fields), local-day `createdAt` and a collision-free id (with `Date.now` frozen, both workspaces got the identical id `slot-1786180119615`), unknown-key survival through import, refusal of a wrong-typed field (`{"goals":"hello"}` imported silently and would break the calendar on the next load), and a synthetic legacy install migrating into a complete slot (10 of 21 fields).
 - The `index.html` cases were re-confirmed through a `TRACK_TEST_ROOT` scratch directory of symlinks plus the single pre-change `index.html`, with the other 20 browser cases still passing.
 - Not covered: real touch hardware, the live Firebase project, and a **real** legacy install. The legacy rescue path is exercised only against synthetic pre-`track_db` localStorage keys — it runs once per user and can never run again, so that residual risk is real and is not claimed as covered.
+
+### Choosable deadline caution period (2026-08-10)
+
+- Eight new browser cases. The regression case — **the timeline must not mark a deadline as caution on its own due day** — was seen **failing first** against the untouched working tree: `1 !== 0` on the amber `!` count for a deadline due today with a two-day run-up, while the red due line rendered as expected. Its guard case (a run-up day still carries exactly one `!`) passed both before and after, so the fix narrows the set rather than emptying it.
+- The cause was triplication: `d.date !== ds` was spelled out at two of the three call sites and forgotten at the third. It now lives once, inside `deadlinesCautionOn`, matching `deadlinesCaution` in `calendar-core.js`. `inCaution` has exactly one caller.
+- The popup's inline caution picker: present in the **read** view rather than behind `Edit`, seeded to the due day, `max` capped at the due day. A pick writes `startDate` and leaves `docPageId`, `createdAt`, `date` and `time` untouched; the span readout updates in the same render. `''`, a date after the due day, and `'nonsense'` are each **refused** with `track_db` staying byte-identical, so `startDate` is never blank and never inverted. A quick-set writes the date named in its own tooltip, and `reset` returns the start to the due day.
+- `progress.html?date=…&dl=<id>#schedule` opens that deadline's popup; `&dl=` naming no stored deadline opens nothing and raises no error.
+- Home's `⏰` and `!` chips are `<a>` elements pointing at `progress.html?date=<due day>&dl=<id>#schedule` — the **due** day from a caution day, not the day the chip sits on.
+- A Documentations caution row's text is a button that moves the block to the due day, where a page-owned deadline shows its `✎`/`✕` and the due day is not also listed as a caution.
+- All eight pass both against a fresh browser and in the complete 2026-08-10 suite.
+- Not covered: real touch hardware, the live Firebase project, and print output of the picker.
+
+### Tickable deadlines (2026-08-10)
+
+- Four new offline cases and six new browser cases. All six browser cases were seen **failing first** against the untouched working tree, and three of the four offline ones failed there too; the other offline case is a guard — it asserts `dlStart`, `dlDayCount` and `dlInCaution` are *unchanged* by a tick, so it must pass on both sides.
+- The load-bearing check was run separately and is worth repeating for any future change here. A scratch `TRACK_TEST_ROOT` was built from symlinks to the repository plus **one** doctored `progress.html` with `!dlDone(d)` removed from `deadlinesCautionOn` and nothing else altered. Against it, the timeline case and the month-grid/day-panel case **failed** while the Home and Documentations cases **passed** — which is the proof that `progress.html` genuinely needs its own copy of the predicate (it does not load `calendar-core.js`) and that the per-surface assertions catch a forgotten one instead of letting it hide behind a passing sibling. Never place such a baseline copy in the repository.
+- What the browser cases assert: the popup tick reaches `track_db` as `done: true` while `docPageId`, `createdAt`, `startDate`, `time` and `title` all survive, and untick leaves the span untouched; ticking clears the timeline `!` and unticking restores exactly one; ticking clears the month-grid and day-panel `!` **asserted separately**, leaving the deadline drawn on its due day with a `✓`; the day-panel checkbox writes the same field as the popup; Home shows no `.cal-sched-dl.caution` on a run-up and a `.cal-sched-dl.due.done` `<a>` with an unchanged `href` on the due day; a Documentations block shows no caution row and no `cal-doc-caution-day` cell bar, and its owning page's `Untick` button clears the flag with the record intact.
+- `done` round-trips through export → import without either side naming it: the existing export case now seeds a ticked deadline, and it reached the other side on `normalizeSlot`'s unknown-key path.
+- Not covered: real touch hardware, the live Firebase project, and print output.
 
 Not covered by the suite, and still requiring manual checks: touch and drag interaction, the signed-in Firebase path, real multi-device behaviour, print output, and most of the UI.
 

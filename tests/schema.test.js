@@ -55,7 +55,7 @@ const MAPS = CONTRACT.filter(k => S.SLOT_FIELDS[k] === 'map');
 test('module surface', () => {
   assert.ok(S, 'schema.js published window.TrackSchema under TZ=' + TZ);
   for (const name of ['localToday', 'newSlotId', 'createEmptySlot', 'normalizeSlot',
-    'validateSlot', 'validateDatabase', 'describeErrors', 'isList', 'isMap', 'isDay', 'isTime']) {
+    'validateSlot', 'validateDatabase', 'hasFatalErrors', 'describeErrors', 'isList', 'isMap', 'isDay', 'isTime']) {
     assert.equal(typeof S[name], 'function', name + ' is exported');
   }
   assert.equal(typeof S.SLOT_FIELDS, 'object');
@@ -364,6 +364,49 @@ test('validateSlot names the position of the bad item', () => {
   assert.match(r.errors[0].message, /"mms\[2\]"/, 'the index points at the offending item');
 });
 
+test('validateSlot checks goal structure recursively and never repairs it', () => {
+  const slot = F.emptySlot({
+    goals: [{
+      id: 'g-root',
+      children: [{
+        id: 'g-child',
+        toLearn: 'not-a-list',
+        mmTargets: [],
+        milestones: [{ id: 'ms-ok' }, null],
+        children: [{ id: 'g-grandchild', children: 'not-a-list' }]
+      }, 'not-a-goal']
+    }]
+  });
+  const before = JSON.stringify(slot);
+  const r = S.validateSlot(slot);
+
+  assert.equal(r.ok, false);
+  const messages = r.errors.map(e => e.message).join('\n');
+  assert.match(messages, /goals\[0\]\.children\[0\]\.toLearn/);
+  assert.match(messages, /goals\[0\]\.children\[0\]\.mmTargets/);
+  assert.match(messages, /goals\[0\]\.children\[0\]\.milestones\[1\]/);
+  assert.match(messages, /goals\[0\]\.children\[0\]\.children\[0\]\.children/);
+  assert.match(messages, /goals\[0\]\.children\[1\]/);
+  assert.ok(r.errors.every(e => e.fatal === true), 'every nested shape error is fatal');
+  assert.equal(JSON.stringify(slot), before, 'recursive validation reports without repairing');
+});
+
+test('missing or null legacy goal fields remain valid at every depth', () => {
+  const r = S.validateSlot(F.emptySlot({
+    goals: [{
+      id: 'g-root',
+      children: [{
+        id: 'g-child',
+        children: null,
+        toLearn: null,
+        milestones: null,
+        mmTargets: null
+      }]
+    }]
+  }));
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+});
+
 test('a real populated slot passes the item check', () => {
   assert.equal(S.validateSlot(F.populatedSlot()).ok, true, 'ordinary records are objects');
 });
@@ -440,6 +483,36 @@ test('validateDatabase reports an activeSlotId that points at nothing', () => {
   const r = S.validateDatabase(F.dbWith([F.emptySlot({ id: 'slot-a' })], 'slot-gone'));
   assert.equal(r.ok, false);
   assert.match(r.errors.map(e => e.message).join('\n'), /activeSlotId "slot-gone" does not match any slot/);
+});
+
+test('fatal classification separates structural damage from semantic warnings', () => {
+  const structuralReports = [
+    S.validateSlot(null),
+    S.validateSlot(F.emptySlot({ goals: 'not-a-list' })),
+    S.validateSlot(F.emptySlot({ goals: [{ id: 'g-1', children: [null] }] })),
+    S.validateDatabase({ slots: 'not-a-list' }),
+    S.validateDatabase({ slots: [Object.assign(F.emptySlot(), { id: '' })] }),
+    S.validateDatabase(F.dbWith([F.emptySlot({ id: 'dup' }), F.emptySlot({ id: 'dup' })], 'dup'))
+  ];
+  for (const report of structuralReports) {
+    assert.equal(S.hasFatalErrors(report), true, JSON.stringify(report.errors));
+    assert.ok(report.errors.some(e => e.fatal === true));
+  }
+
+  const semanticReports = [
+    S.validateSlot(F.emptySlot({ createdAt: '2026-02-30' })),
+    S.validateSlot(F.emptySlot({ calendarNotes: [F.calNote('cn-bad', 'tomorrow', { time: '25:00' })] })),
+    S.validateDatabase(F.dbWith([F.emptySlot({ id: 'slot-a' })], 'slot-gone'))
+  ];
+  for (const report of semanticReports) {
+    assert.equal(report.ok, false);
+    assert.equal(S.hasFatalErrors(report), false, JSON.stringify(report.errors));
+    assert.ok(report.errors.every(e => e.fatal !== true));
+  }
+
+  const errors = [{ message: 'warning' }, { fatal: true, message: 'damage' }];
+  assert.equal(S.hasFatalErrors(errors), true, 'the helper also accepts an errors array');
+  assert.equal(S.hasFatalErrors([]), false);
 });
 
 test('validateDatabase names the slot a bad field is in', () => {

@@ -1,6 +1,6 @@
 # Track Ideas and Unfinished Work
 
-Audit date: 2026-08-08
+Audit date: 2026-08-10
 
 ## Purpose
 
@@ -20,9 +20,7 @@ acceptance criteria before starting a proposal.
 ## Recommended Order
 
 ```text
-Canonical schema and validation   ← done, see README
-        ↓
-Versioned migrations and hardened readers
+Versioned migrations and recovery
         ↓
 Local-date corrections
         ↓
@@ -38,9 +36,11 @@ moving the code that reads and writes it.
 
 ## Proposal 1: Remaining Import Work
 
-The whole-slot importer is done — it validates through `schema.js`, refuses malformed
-input without writing, fills legacy gaps, and preserves unknown keys. See README,
-"Per-slot export and import". Two pieces are still open.
+The whole-slot importer now validates the canonical top-level envelope and recursive goal
+tree shapes through `schema.js`, refuses those malformed inputs without writing, fills
+legacy gaps, and preserves unknown keys. Other nested domains are not yet universally
+shape-validated. See README, "Per-slot export and import". Two import-policy pieces are
+still open.
 
 ### Nested ID remapping
 
@@ -52,6 +52,13 @@ share IDs.
 Decide whether import should offer a "copy" mode that remaps every nested ID and rewrites
 every internal reference to match. This is the same problem as the source-dump policy
 below and should be settled once for both.
+
+Audit references outside the exported slot before choosing that mode. In particular,
+`trackPriorityMatrix` is a separate localStorage map indexed by goal/task, supporting-action
+entry, and MM-entry IDs. It is neither part of a slot export nor currently scoped by slot,
+so remapping only the imported object could leave priority records pointing at the original
+copy or make two copies appear to share one record. Define whether copy-mode import remaps,
+duplicates, discards, or deliberately leaves those external entries alone.
 
 ### Source-dump duplicate policy
 
@@ -70,29 +77,23 @@ Choose and document one behavior:
   that imports the same file twice.
 - Whichever mode remaps IDs rewrites every internal reference, including `mmLinks` and
   nested block IDs, so nothing points at a stale ID.
+- The ID audit includes external stores such as `trackPriorityMatrix`; the chosen behavior
+  is explicit and tested rather than treating the exported slot as the whole reference
+  graph.
 
 ## Proposal 2: Versioned Schema and Guarded Migrations
 
-The canonical slot model is done: `schema.js` holds the one `SLOT_FIELDS` table, and
-`createEmptySlot`, `normalizeSlot`, `validateSlot` and `validateDatabase` all derive from
-it. Every new-slot creation site and the whole-slot importer go through it. See README,
-"Canonical slot schema". What remains is versioning and migrations.
+Use the existing `schema.js` contract and shared `TrackStorage.loadDB()` boundary described
+in README, "Canonical slot schema" and "Reading the stored database". The remaining work is
+root versioning and one guarded migration path shared by every entry surface.
 
 ### Open problem
 
-Readers and migrations are still per-page. Each of `index.html`, `progress.html`,
-`sir-ks02.html`, `documentations.html` and `notes-widget.js` carries its own
-`JSON.parse(localStorage.getItem('track_db') || '{}')`, none of which checks that the
-parsed value is an object — a stored `'null'` still white-screens every React page, and a
-stored `'42'` or `'[…]'` is silently replaced by the next bootstrap write.
-
-The field-presence migration IIFEs (`progress.html`, `sir-ks02.html`) run at page-script
-load and only exist on the pages that declare them, so `index.html` and
-`documentations.html` run none of them. They are keyed on a field being absent rather than
-on a version, so there is no way to express a migration that *changes* an existing value.
-
-`validateDatabase` exists but is not wired into any load path — it is used by import and
-the tests only. Hardening the five parsers with it is the smallest high-value next step.
+Migrations are still per-page. The field-presence migration IIFEs (`progress.html`,
+`sir-ks02.html`) run at page-script load and only exist on the pages that declare them, so
+`index.html` and `documentations.html` run none of them. They are keyed on a field being
+absent rather than on a version, so there is no way to express a migration that *changes*
+an existing value.
 
 ### Root metadata
 
@@ -101,7 +102,6 @@ The database root should gain explicit metadata such as:
 ```js
 {
   schemaVersion: 1,
-  revision: 0,
   activeSlotId,
   slots
 }
@@ -119,24 +119,267 @@ downloaded backup.
 
 ### Remaining validation invariants
 
-`validateDatabase` already checks: the root is an object, `slots` is an array,
-`activeSlotId` resolves, slot IDs are unique, list fields are arrays, map fields are plain
-objects, `createdAt` and calendar-item dates are real `YYYY-MM-DD` days, and an optional
-day-note `time` is absent or a valid `HH:MM`.
+`validateDatabase` already checks: the root is an object, `slots` is an array, every slot
+has an unambiguous id, list fields are arrays of objects, map fields are plain objects,
+goal `children`, `toLearn`, `mmTargets` and `milestones` have safe shapes recursively,
+`createdAt` and calendar-item dates are real `YYYY-MM-DD` days, and an optional day-note
+`time` is absent or a valid `HH:MM`. Missing or duplicate slot ids and structurally unsafe
+goal trees are fatal; a dangling `activeSlotId` and semantic date/time flaws are warnings.
 
 Still to add:
 
 - Goal and task IDs are unique within their intended scope.
 - Linked task and mind-map references resolve or are intentionally marked missing.
 - Source-dump IDs and nested block IDs are unique.
+- Nested shapes outside the goal tree — including mind maps, source dumps and
+  documentation blocks — meet the contracts their readers assume.
 - The schema version is supported.
 
-The first three need a goal-tree walker; `flattenGoals` lives in `calendar-core.js`, which
-`progress.html` and `sir-ks02.html` do not load, so that has to be resolved first. The
-policy for "intentionally marked missing" is also undefined today.
+Goal and task identity/reference checks need a shared goal-tree walker;
+`flattenGoals` lives in `calendar-core.js`, which `progress.html` and `sir-ks02.html` do
+not load, so that has to be resolved first. Source-dump and other nested domains need their
+own bounded walkers. The policy for "intentionally marked missing" is also undefined today.
 
-Validation currently runs during import and in the tests. It should also run after
-migrations, in the five parsers, and optionally after writes in development mode.
+Validation currently runs during import, at every load through `TrackStorage.loadDB()`
+(memoised on the raw string, and invalidated by each successful write), and in the tests. It
+should also run after migrations. It still does not run *before* a write, so a page that
+serialises something structurally broken is only caught when the next read validates it —
+refusing at the write itself would name the page that caused it instead.
+
+### Detailed migration plan using the shared load boundary
+
+Extend `TrackStorage.loadDB()`'s existing shared verdict with the version states below; do
+not create a second parser or a competing error surface for migrations.
+
+The next deliverable is deliberately narrower than revision/conflict handling: introduce
+root schema versioning, replace the historical page-load migration IIFEs with one ordered
+registry, and make migration failure recoverable. Do not add `revision` yet. A revision
+number that no writer checks would imply conflict protection that does not exist; add it
+with Proposal 4 instead.
+
+#### Proposed contract decisions
+
+Confirm these defaults during implementation and change them if the evidence from legacy
+fixtures requires it:
+
+| Decision | Proposed default |
+| --- | --- |
+| Current root version | `schemaVersion: 1` |
+| Missing `schemaVersion` on an otherwise valid unified database | Treat as version `0` |
+| Invalid, negative, fractional, or non-numeric version | Refuse without writing |
+| Version newer than this application supports | Open the same read-only recovery state as an invalid database; block page writes, Firebase remote apply, and Firebase upload so this client can neither downgrade nor replace it |
+| Historical field-presence transforms | One deterministic, idempotent `0 → 1` migration |
+| Future changes | One ordered migration per version step; no skipped versions |
+| Migration persistence | Transform an in-memory candidate, validate it, then perform one `TrackStorage.saveDB` call |
+| Root and slot keys unknown to this version | Preserve them |
+| Recovery copy | Preserve the exact pre-migration `track_db` string before the first write; for a pre-`track_db` install preserve the exact source key/value set and which keys were absent. If that cannot be done, stop and leave every source untouched |
+| Recovery-copy cleanup | Never delete automatically in the same migration run; define an explicit, tested retention or user-clear policy before implementation |
+
+#### Step 1 — Inventory and freeze the historical behavior
+
+- List every current migration, the data it reads, the keys it writes, and whether it is
+  safe to run twice. The inventory must include:
+  - The duplicated pre-`track_db` bootstrap in `progress.html` and `sir-ks02.html`.
+  - Progress goal transforms for `toLearn`, `mmTargets`, sub-goal defaults,
+    `milestones`, `children`, duplicate `toLearn` values, and the old singular
+    `mmTargets[*].milestone` shape.
+  - KS02 transforms for MM `rating`, `scBlocksOrder`, `scAggBlocksOrder`,
+    `sourceDumpActivated`, the slot `sourceDumps` field, and the transferred-parent
+    source-dump repair.
+  - The `track_global_notes` adoption in `notes-widget.js`, including when its legacy key
+    is removed.
+- Separate simple default-filling from semantic transformations. `normalizeSlot` may fill
+  absent canonical slot fields, but it must not replace a semantic migration or repair a
+  database that failed validation.
+- Capture each old shape with synthetic fixtures before moving code. Do not use a real
+  export.
+- Record which transformations are historical one-time repairs. In particular, verify the
+  transferred-parent source-dump repair has a deterministic predicate and does not move
+  already-repaired data on a second run.
+
+#### Step 2 — Add fail-first migration tests
+
+- Extend the offline schema/data tests with synthetic fixtures for:
+  - A valid unversioned unified database.
+  - Each historical Progress and KS02 record shape.
+  - Pre-`track_db` legacy keys with no unified database.
+  - A current-version database.
+  - An unsupported future version.
+  - A future-version local or decoded remote database attempting both Firebase apply and
+    upload.
+  - A migration whose output fails validation.
+  - A migration that throws.
+  - A recovery-copy write failure and a final `track_db` write failure.
+- Add browser cases proving that opening Home, Progress, KS02, Documentations, or
+  Notifications first produces the same migrated result. Notifications matters because
+  its notes widget is a database reader and currently owns the `track_global_notes`
+  adoption path. Migration must not depend on which surface happened to load.
+- Confirm the new regression fails against a scratch pre-change tree via
+  `TRACK_TEST_ROOT`; never commit the baseline copy.
+- Keep explicit byte-level assertions:
+  - A current database is not rewritten merely by loading a page.
+  - A refused or failed migration leaves the original `track_db` byte-identical.
+  - A successful migration writes once, reaches the current version, and gives the same
+    result when run again.
+
+#### Step 3 — Introduce the version and registry surface
+
+- Add one `CURRENT_SCHEMA_VERSION` constant and make `validateDatabase` check that a
+  present version is a supported non-negative integer. Missing remains acceptable only as
+  the explicitly defined version-0 legacy case.
+- Extend the shared database boundary created by reader hardening, or add a small classic
+  shared script if that keeps responsibilities clearer. Do not put independent registries
+  in the HTML pages.
+- Define migrations as pure transforms keyed by their source version. A runner should:
+  1. Determine the source version.
+  2. Refuse unsupported future or malformed versions.
+  3. Apply every required step in order to an in-memory candidate.
+  4. Set that step's target `schemaVersion` on the in-memory candidate.
+  5. Validate the whole candidate against the **target version's** contract before that
+     transition can count as complete; validating only against the source version proves
+     the wrong thing.
+  6. Return a structured result such as unchanged, migrated, refused, or failed.
+- Migration functions must not call `localStorage`, `TrackStorage.saveDB`, Firebase, DOM
+  APIs, alerts, or reload. Keeping transforms pure makes failure and repeat execution
+  testable.
+- Preserve unknown root keys as well as the unknown slot keys already protected by
+  `normalizeSlot`. Never rebuild the database root or a slot from a partial allow-list.
+
+#### Step 4 — Build the version-0 adoption path
+
+- When `track_db` is absent, distinguish a genuinely empty installation from the old
+  standalone Progress/KS02 keys.
+- Treat the absence of `track_db` as source state, not as the string `'null'`. Recovery for
+  this path must capture the exact legacy key/value set (including absence) so it can be
+  restored without manufacturing a database that never existed.
+- Move the duplicated legacy-key harvesting into one shared function so every DB-aware
+  entry page can produce the same version-0 candidate.
+- Normalize only the newly constructed legacy slot, then validate the complete candidate
+  before it is eligible to save.
+- Preserve the existing precedence rules when both Progress and KS02 legacy values exist;
+  do not invent a new merge rule without a fixture and an explicit decision.
+- Do not delete any legacy key until the current-version database has been written and
+  read back successfully. Specify which keys remain as recovery material and which may be
+  removed later.
+- Fold `track_global_notes` into this flow only if its active-slot semantics can be made
+  deterministic. Otherwise keep it as a separately versioned, post-database migration
+  with the same backup-before-delete rule.
+
+#### Step 5 — Port historical transforms into `0 → 1`
+
+- Move the Progress and KS02 transformations from page-load IIFEs into the registry while
+  preserving their established order.
+- Use a shared pure goal-tree walker for the recursive Progress transforms. The walker
+  must tolerate the legacy shapes accepted by the version-0 validator without mutating
+  the input tree.
+- Keep unrelated slot fields, unknown fields, and their nested values deeply equal wherever
+  the migration does not own them. Parsed data cannot promise byte-for-byte equality after
+  JSON serialization; only the separately preserved original source bytes can make that
+  promise.
+- For default-only canonical slot fields, use the `SLOT_FIELDS` contract instead of
+  repeating field names. Semantic nested defaults still belong in named migration steps.
+- Give every semantic transformation a focused unit case and a repeat-run case.
+- Treat the transferred-parent source-dump repair as its own named step even if it shares
+  version `0 → 1`; it is materially riskier than adding an absent empty list.
+
+#### Step 6 — Make persistence failure-safe
+
+- Before saving a migrated candidate, preserve the exact original serialized string under
+  a narrowly named recovery key with enough metadata to identify source and target
+  versions. Do not pass that recovery key through Firebase sync.
+- Account for quota pressure: a full-size second copy may fail. A failed recovery copy
+  must cancel migration, keep `track_db` untouched, and provide a user action to export or
+  free space. Do not silently continue without recovery material.
+- Save the fully validated candidate once through `TrackStorage.saveDB`. Never write an
+  intermediate version.
+- If the final save fails, leave the old database and recovery copy intact and stay in the
+  visible blocked state.
+- Read back and validate the saved bytes before reporting success. Do not advance or clear
+  recovery state based only on the in-memory candidate.
+- Ensure a successful migration follows the existing Firebase dirty/confirmation rules:
+  it may schedule a normal whole-database upload, but it must not write `track_db_ts`
+  before cloud confirmation or bypass `track_db_pending`.
+- While migration is pending, refused, failed, or blocked on an unsupported future
+  version, gate **both** sync directions. Do not upload the local candidate, and do not let
+  Firebase's `_origSet` remote-apply path bypass migration/recovery state. Decode and judge
+  a remote payload before it can replace local bytes; resume apply/upload only after the
+  migration state is explicitly resolved.
+
+#### Step 7 — Wire every entry point and remove the old IIFEs
+
+- Run migration orchestration from the shared load boundary before application state is
+  initialized. Opening any page first must behave identically.
+- Update Home, Progress, KS02, Documentations, Notifications through its notes widget, and
+  the widget on every other page to consume the shared result rather than starting
+  migrations themselves.
+- Remove the replaced Progress and KS02 field-presence IIFEs only after their fixture cases
+  pass against the registry.
+- Update Documentations' legacy-data warning/bootstrap logic to use the shared adoption
+  status rather than inferring safety independently.
+- Ensure the notes widget cannot write while migration is pending, refused, or failed.
+- New empty databases and every new-slot path must carry the current root version, but only
+  after orchestration has migrated or adopted the root. Never stamp an existing unversioned
+  database as current merely because a slot is created or imported. Per-slot export remains
+  a slot contract and must not masquerade as a whole database.
+- If a shared script changes, bump its cache-busting integer consistently on every page
+  that loads it.
+
+#### Step 8 — Close the remaining validation gap for versioning
+
+- Add schema-version support to `validateDatabase` error reporting with messages that
+  distinguish malformed, old-migratable, and future-unsupported data.
+- Keep the remaining reference-integrity work separate unless the new shared goal-tree
+  walker makes it genuinely small:
+  - Unique goal/task IDs within their intended scopes.
+  - Resolved or explicitly missing task and mind-map references.
+  - Unique source-dump and nested block IDs.
+- Do not guess the policy for intentionally missing references. Define it and add fixtures
+  before turning it into a load-blocking invariant.
+
+#### Step 9 — Verify and document the completed contract
+
+- Run the required shared-script syntax checks, the full `node tests/run.js` suite, browser
+  smoke checks for all application pages, `git diff --check`, and final status/diff review.
+- Exercise at least these end-to-end cases:
+  - Empty installation.
+  - Healthy unversioned unified database.
+  - Synthetic pre-`track_db` installation.
+  - Already-current database.
+  - Unsupported future database.
+  - Failed recovery copy.
+  - Failed final save.
+  - Reload and a second page opening after success.
+  - Export/import after migration.
+  - A decoded future-version remote payload being refused before local replacement.
+  - Firebase apply and upload both staying frozen during unresolved migration state.
+  - Signed-out Firebase behavior; exercise the two sync gates with an in-memory Firestore
+    double, and report the live signed-in path as unverified unless explicitly authorized.
+- Update README with the resulting current root shape, reader/migration behavior, recovery
+  key, commands, and verified cases.
+- Remove the completed migration material from this proposal, leaving unresolved
+  validation and recovery-policy work only. Update AGENTS only for durable data-contract
+  or verification rules.
+
+#### Completion gate
+
+The migration work is complete only when all of the following are true:
+
+- Every DB-aware entry page, including Notifications through the notes widget, produces the
+  same migration result.
+- Each migration is ordered, deterministic, idempotent, and covered by a synthetic old
+  shape.
+- No invalid, failed, or future-version database is overwritten locally, remote-applied,
+  or uploaded by this client.
+- The exact pre-migration serialization remains recoverable.
+- Version advancement and database persistence occur in one validated final write.
+- Page-specific historical migration IIFEs are gone.
+- Current-version loads perform no migration write.
+- Existing unknown keys, IDs, references, and unrelated fields survive with deep/value
+  equality; exact pre-migration source bytes or key/value state remain separately
+  recoverable.
+
+After this gate, the next related data-safety task is Proposal 3 (shared local calendar
+dates), followed by Proposal 4 (repository revisions and same-key conflict handling).
 
 ## Proposal 3: Use Local Calendar Dates Consistently
 
@@ -148,8 +391,9 @@ Several active paths still use UTC-derived calendar keys such as:
 new Date().toISOString().split('T')[0]
 ```
 
-This can select the previous or next local day near midnight. Remaining uses affect slot
-creation, export filenames, KS02 dates and SIR calculations, and Progress date logic.
+This can select the previous or next local day near midnight. Slot creation is already
+local-day safe through `schema.js`; remaining uses affect export filenames, KS02 dates and
+SIR calculations, and Progress date logic.
 
 Parsing `new Date('YYYY-MM-DD')` is also unsafe for local calendar arithmetic because that
 form is interpreted as UTC.
@@ -200,16 +444,28 @@ clock can win incorrectly.
 
 ### Proposed local repository layer
 
-Centralize reads and mutations in a repository module that:
+Centralize reads and mutations in a repository module. A revision check before a write is
+necessary but not sufficient: two tabs can both read revision `N`, both accept it, and both
+write `N + 1`, after which the last write silently wins. `localStorage` has no compare-and-
+swap operation. The design therefore needs a tested cross-tab critical section (for
+example, a per-database Web Lock where available), a defined fallback where that primitive
+is unavailable, and post-write verification that the stored revision/value is still the
+one this mutation produced.
 
-- Reads the latest persisted revision before every mutation.
-- Applies operations to the latest state rather than a captured page snapshot.
-- Increments a database or per-domain revision.
-- Notifies same-page subscribers.
-- Listens for browser `storage` events.
-- Optionally uses `BroadcastChannel` for faster same-browser propagation.
-- Detects and surfaces an edit based on an outdated revision.
-- Replaces the global `Storage.prototype.setItem` patch with explicit repository-to-sync
+The repository should:
+
+- Acquire the cross-tab mutation lock, then re-read the latest persisted value and revision
+  **inside** that critical section.
+- Apply operations to the latest state rather than a captured page snapshot.
+- Reject or merge an operation whose expected base revision is stale.
+- Increment a database or per-domain revision, write once, then read back and verify the
+  result before reporting success.
+- Detect lock loss, unavailable locking, or post-write displacement and surface a conflict
+  instead of claiming the edit is safe.
+- Notify same-page subscribers and listen for browser `storage` events.
+- Optionally use `BroadcastChannel` for faster propagation, but not as a substitute for
+  mutual exclusion.
+- Replace the global `Storage.prototype.setItem` patch with explicit repository-to-sync
   notification if practical.
 
 Pages should submit mutations, not serialize snapshots. For example:
@@ -231,6 +487,11 @@ visible choice with an export-both escape hatch.
 
 - Two tabs editing different keys preserve both changes.
 - Two tabs editing the same key cannot overwrite silently.
+- A barrier test forces two tabs to begin from the same revision and proves the lock plus
+  post-write check serializes them or reports a conflict; revision-before-write alone must
+  fail that test.
+- The no-Web-Locks fallback has an explicit, tested behavior and is not described as
+  conflict-safe unless it can provide the same guarantee.
 - A remote update followed by an edit before reload cannot silently erase the remote
   change to that domain.
 - Pending local edits continue to block automatic remote replacement.
@@ -322,8 +583,9 @@ beyond calendar aggregation and the currently covered browser regressions.
 
 ### Pure data tests still needed
 
-- Slot construction and normalization.
-- Schema validation and migrations.
+- Versioned migration transforms and registry orchestration.
+- Nested-shape validation outside the now-covered goal tree, including mind maps, source
+  dumps, and documentation blocks.
 - Import/export normalization.
 - Goal-tree operations.
 - Mind-map reference resolution.
@@ -333,11 +595,8 @@ beyond calendar aggregation and the currently covered browser regressions.
 
 ### Browser coverage still needed
 
-- Add `notifications.html` to the smoke suite and verify its synthetic feed contract over
-  HTTP.
-- Cover all five application surfaces when shared runtime files change.
-- Empty database creation produces one valid canonical slot from every entry page.
-- Slot creation and switching preserve independent workspaces.
+- Verify the Notifications synthetic feed contract over HTTP; the page and its notes
+  widget already participate in shared-runtime smoke and malformed-database coverage.
 - Floating notes, goals, mind maps, source dumps, and schedules survive reload.
 - Duplicate source-dump import follows the selected policy.
 - Same-key two-tab conflicts are visible.
@@ -580,10 +839,9 @@ These are separate capabilities.
 
 | Priority | Change | Why | Relative effort |
 | --- | --- | --- | --- |
-| P0 | Harden the five `track_db` parsers with `validateDatabase` | A stored `'null'` still white-screens every React page | Small |
-| P0 | `schemaVersion` and a guarded migration registry | Replaces per-page field-presence IIFEs; makes value changes expressible | Medium |
+| P0 | `schemaVersion`, guarded migrations, recovery, and sync gates | Replaces per-page field-presence IIFEs without letting failed/future data be applied or uploaded | Medium |
 | P0 | Replace UTC calendar helpers | Fixes concrete day-boundary errors | Small–medium |
-| P0 | Add revision and same-key conflict handling | Prevents silent tab/device overwrites | Medium–large |
+| P0 | Add serialized repository mutations and conflict handling | A revision alone still races; locking plus post-write detection prevents silent tab/device overwrites | Medium–large |
 | P1 | Define source-dump duplicate behavior | Prevents ambiguous IDs on repeated import | Small–medium |
 | P1 | Extend browser and interaction coverage | Protects uncovered pages and high-risk gestures | Medium |
 | P1 | Add Firebase deployment config and rule tests | Makes cloud changes reproducible and reviewable | Medium |
@@ -597,8 +855,8 @@ These are separate capabilities.
 
 ### Phase 1: Repair the data contract
 
-- Add `schemaVersion` and guarded migrations.
-- Harden the five `track_db` parsers with `validateDatabase`.
+- Add `schemaVersion`, guarded migrations, recoverable source capture, and Firebase
+  apply/upload gates.
 - Define source-dump duplicate behavior and the nested-ID remapping policy.
 - Centralize local-date utilities and replace active UTC-day helpers.
 
@@ -607,8 +865,9 @@ Outcome: local data and backups have one documented, tested contract.
 ### Phase 2: Centralize persistence
 
 - Add a repository layer for `track_db` mutations.
-- Add revisions and same-key conflict detection.
-- Subscribe through storage events and optionally `BroadcastChannel`.
+- Serialize cross-tab mutations with a lock/re-read/write/verify contract, then add
+  revisions and same-key conflict detection.
+- Subscribe through storage events and optionally `BroadcastChannel`; neither is the lock.
 - Remove page-specific persistence plumbing where the repository replaces it.
 - Test same-page, cross-page, and remote conflicts.
 

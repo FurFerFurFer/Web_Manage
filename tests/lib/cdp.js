@@ -162,11 +162,19 @@ class Page {
   /* Seed track_db, guarded so a reload does not restore the fixture over
      whatever the application has since written (trap 3). */
   async seed(db, extraKeys = {}) {
-    const payload = JSON.stringify(JSON.stringify(db));
+    return this.seedRaw(JSON.stringify(db), extraKeys);
+  }
+
+  /* Seed the RAW track_db string. seed() stringifies its argument, so it can
+     never produce the case that matters most here: bytes that are not valid
+     JSON at all. Everything else is identical, including the reload guard —
+     the fixture must not be restored over what the page has since written. */
+  async seedRaw(raw, extraKeys = {}) {
+    const payload = JSON.stringify(raw);
     const extras = JSON.stringify(extraKeys);
     await this.addInitScript(
       'try {' +
-      '  if (!localStorage.getItem("track_db")) localStorage.setItem("track_db", ' + payload + ');' +
+      '  if (localStorage.getItem("track_db") === null) localStorage.setItem("track_db", ' + payload + ');' +
       '  var extra = ' + extras + ';' +
       '  for (var k in extra) if (!localStorage.getItem(k)) localStorage.setItem(k, extra[k]);' +
       '} catch (e) {}'

@@ -6,10 +6,10 @@
   <title>Track</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
-  <script src="storage-guard.js"></script>
-  <script src="schema.js?v=1"></script>
-  <script src="calendar-core.js?v=1"></script>
-  <link rel="stylesheet" href="styles.css?v=1">
+  <script src="storage-guard.js?v=2"></script>
+  <script src="schema.js?v=2"></script>
+  <script src="calendar-core.js?v=2"></script>
+  <link rel="stylesheet" href="styles.css?v=4">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -100,7 +100,9 @@
   </main>
 
   <script>
-    function getDB() { try { return JSON.parse(localStorage.getItem('track_db')||'{}'); } catch { return {}; } }
+    // One parse-and-validate boundary for every page — storage-guard.js. This used to
+    // be a bare JSON.parse whose catch never fired for 'null', '42' or '[…]'.
+    function getDB() { return TrackStorage.loadDB(); }
     function saveDB(db) { return TrackStorage.saveDB(db); }
 
     function renderSlots() {
@@ -396,6 +398,7 @@
     const calBuildDaySchedule = TrackCalendar.buildDaySchedule;
     const calOverlapInfo = TrackCalendar.overlapInfo;
     const calDurLabel = TrackCalendar.durLabel;
+    const calDlDone = TrackCalendar.dlDone;
 
     // A day note or deadline authored from a Documentations page carries that
     // page's id; absence means it was authored in the Schedule. This calendar
@@ -470,20 +473,35 @@
         if (day.deadlines.length || day.deadlinesCaution.length) {
           const row = document.createElement('div');
           row.className = 'cal-sched-dls';
+          // Both halves of a deadline link to the deadline itself — always its
+          // DUE day, never the caution day the chip sits on, so a "!" three
+          // weeks out still opens the thing it is warning about. Home stays
+          // read-only; the Schedule is where a deadline is edited.
+          const dlHref = d => 'progress.html?date=' + d.date +
+            '&dl=' + encodeURIComponent(d.id) + '#schedule';
           day.deadlines.forEach(d => {
-            const chip = document.createElement('span');
-            chip.className = 'cal-sched-dl due';
-            chip.textContent = '⏰ ' + d.time + ' ' + (d.title || 'Deadline');
-            chip.title = 'Due today at ' + d.time
-              + (d.detail ? '\n' + d.detail : '') + '\n' + calOriginLabel(slot, d);
+            // A ticked deadline keeps its due-day chip — that is the point of
+            // ticking rather than deleting — and loses its "!" run-up, which
+            // buildDaySchedule has already dropped from deadlinesCaution. The
+            // tick itself lives in the Schedule; this calendar stays read-only.
+            const done = calDlDone(d);
+            const chip = document.createElement('a');
+            chip.className = 'cal-sched-dl due' + (done ? ' done' : '');
+            chip.href = dlHref(d);
+            chip.textContent = (done ? '✓ ' : '⏰ ') + d.time + ' ' + (d.title || 'Deadline');
+            chip.title = (done ? 'Ticked · was due today at ' : 'Due today at ') + d.time
+              + (d.detail ? '\n' + d.detail : '') + '\n' + calOriginLabel(slot, d)
+              + '\nOpen in the Schedule';
             row.appendChild(chip);
           });
           day.deadlinesCaution.forEach(d => {
-            const chip = document.createElement('span');
+            const chip = document.createElement('a');
             chip.className = 'cal-sched-dl caution';
+            chip.href = dlHref(d);
             chip.textContent = '! ' + (d.title || 'Deadline');
             chip.title = 'Caution period · due ' + d.date + ' at ' + d.time
-              + (d.detail ? '\n' + d.detail : '') + '\n' + calOriginLabel(slot, d);
+              + (d.detail ? '\n' + d.detail : '') + '\n' + calOriginLabel(slot, d)
+              + '\nOpen in the Schedule';
             row.appendChild(chip);
           });
           strip.appendChild(row);
@@ -770,6 +788,6 @@
 
     renderSlots();
   </script>
-  <script src="notes-widget.js"></script>
+  <script src="notes-widget.js?v=2"></script>
 </body>
 </html>

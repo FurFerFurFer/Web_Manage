@@ -40,7 +40,7 @@ const ids = list => list.map(x => x.id);
 test('module surface', () => {
   assert.ok(TC, 'calendar-core.js published window.TrackCalendar under TZ=' + TZ);
   for (const name of ['toDateStr', 'dim', 'firstDay', 'dStr', 'flattenGoals', 'goalDuration',
-    'goalDone', 'mgsForDay', 'dlStart', 'dlInCaution', 'dlDayCount', 'dlValid', 'originKey',
+    'goalDone', 'mgsForDay', 'dlStart', 'dlInCaution', 'dlDayCount', 'dlValid', 'dlDone', 'originKey',
     'buildBuckets', 'buildMilestoneLanes', 'buildDaySchedule', 'overlapInfo', 'durLabel',
     'noteTimed', 'daysBetween']) {
     assert.equal(typeof TC[name], 'function', name + ' is exported');
@@ -554,6 +554,50 @@ test('dlStart and dlInCaution', () => {
   assert.equal(TC.dlInCaution(withStart, '2026-03-07'), false);
   assert.equal(TC.dlInCaution(withStart, '2026-03-11'), false);
   assert.equal(TC.dlInCaution(noStart, '2026-03-09'), false);
+});
+
+test('dlDone reads an absent, false, and true tick alike', () => {
+  assert.equal(TC.dlDone({ date: '2026-03-10' }), false, 'an untouched deadline is not done');
+  assert.equal(TC.dlDone({ date: '2026-03-10', done: false }), false);
+  assert.equal(TC.dlDone({ date: '2026-03-10', done: true }), true);
+});
+
+test('a ticked deadline drops out of the caution run-up but stays on its due day', () => {
+  const slot = F.emptySlot({
+    deadlines: [F.deadline('d', '2026-03-10', { startDate: '2026-03-08', done: true })]
+  });
+  const on = ds => TC.buildDaySchedule(slot, ds);
+
+  // EVERY run-up day, not just the first: a stray "!" left on one day is the
+  // whole failure mode this feature exists to prevent.
+  assert.deepEqual(ids(on('2026-03-08').deadlinesCaution), [], 'no "!" on the start day');
+  assert.deepEqual(ids(on('2026-03-09').deadlinesCaution), [], 'no "!" on the day before');
+  assert.deepEqual(ids(on('2026-03-10').deadlines), ['d'], 'the deadline itself is left');
+});
+
+test('ticking suppresses the caution period without altering it', () => {
+  // This is what makes unticking a pure restore rather than a guess: `done`
+  // changes what is RENDERED, never what is stored about the span.
+  const dl = F.deadline('d', '2026-03-10', { startDate: '2026-03-08', done: true });
+  assert.equal(TC.dlStart(dl), '2026-03-08', 'the start day survives the tick');
+  assert.equal(TC.dlDayCount(dl), 3, 'and so does the span');
+  assert.equal(TC.dlInCaution(dl, '2026-03-09'), true,
+    'the day is still inside the period — only deadlinesCaution declines to show it');
+
+  const unticked = Object.assign({}, dl, { done: false });
+  const slot = F.emptySlot({ deadlines: [unticked] });
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-09').deadlinesCaution), ['d'],
+    'unticking brings the same run-up back');
+});
+
+test('a ticked deadline is still filtered by origin like any other', () => {
+  const slot = F.emptySlot({
+    deadlines: [F.deadline('dl-doc', '2026-03-10',
+      { startDate: '2026-03-08', docPageId: 'p-1', done: true })]
+  });
+  const hidden = TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['doc'] });
+  assert.deepEqual(ids(hidden.deadlines), [], 'hiding doc still hides a ticked doc-authored one');
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10').deadlines), ['dl-doc']);
 });
 
 test('deadlines sort by time on the day, and by date then time in the run-up', () => {

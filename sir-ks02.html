@@ -6,8 +6,8 @@
   <title>SIR × KS02 × MG</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
-  <script src="storage-guard.js"></script>
-  <script src="schema.js?v=1"></script>
+  <script src="storage-guard.js?v=2"></script>
+  <script src="schema.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -15,7 +15,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles.css?v=1">
+  <link rel="stylesheet" href="styles.css?v=4">
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="app-page ks02-page">
@@ -60,14 +60,14 @@
     const EMPTY_KOLB = {isReflectingOnPrev:false,experience:"",level:"",mgLookLike:"",sequence:"",feelings:"",difficultWell:"",challenges:"",triggers:"",whyActed:"",habits:"",otherParts:"",experiments:"",mgAdd:""};
 
     // ── unified DB helpers ────────────────────────────────────────────────────
-    function _getTrackDB() {
-      try { return JSON.parse(localStorage.getItem('track_db') || '{}'); } catch { return {}; }
-    }
+    // One parse-and-validate boundary for every page — storage-guard.js. This used to
+    // be a bare JSON.parse whose catch never fired for 'null', '42' or '[…]'.
+    function _getTrackDB() { return TrackStorage.loadDB(); }
     function _getSlots()        { return _getTrackDB().slots || []; }
     function _getActiveSlotId() { return _getTrackDB().activeSlotId || null; }
     function _setSlots(slots) {
       const db = _getTrackDB(); db.slots = slots;
-      TrackStorage.saveDB(db);
+      return TrackStorage.saveDB(db);
     }
     // Merge ONLY the keys this page owns into a fresh read of the stored slot,
     // the same contract as _writeP in progress.html and _writeSlotKey in
@@ -89,6 +89,11 @@
     }
     // migrate all prior states → unified {slots, activeSlotId} at top level
     (function() {
+      // An unreadable track_db reads as {} here, which looks exactly like a fresh
+      // install — so without this the rescue below would build a workspace and try to
+      // save it over the user's damaged data. TrackStorage.saveDB refuses that write
+      // anyway; this just stops the pointless work and the misleading in-memory state.
+      if (TrackStorage.dbBlocked()) return;
       const db = _getTrackDB();
       if (db.slots) return;
 
@@ -122,6 +127,11 @@
       } else {
         const idx=activeId?Math.max(0,slots.findIndex(s=>s.id===activeId)):0;
         if(pGoals.length||pSA.length||pSE.length) slots[idx]={...slots[idx],goals:pGoals,saActions:pSA,saEntries:pSE};
+        // These are newly constructed candidates harvested from pre-track_db
+        // keys, not slots already stored in the unified database. Complete
+        // every one through the canonical defaults after Progress data is
+        // merged; normalizeSlot preserves each legacy id and unknown field.
+        slots=slots.map(s=>TrackSchema.normalizeSlot(s));
       }
 
       if (!activeId||!slots.find(s=>s.id===activeId)) activeId=slots[0].id;
@@ -2816,8 +2826,10 @@
         const activeId=_getActiveSlotId();
         if (!saved.length){
           const def=TrackSchema.createEmptySlot({name:"Default"});
+          // Do not claim an in-memory workspace exists when quota pressure or
+          // an unreadable database refused the only write that would persist it.
+          if (!_setSlots([def])) return;
           saved=[def];
-          _setSlots(saved);
         }
         const active=saved.find(s=>s.id===activeId)||saved[0];
         setActiveSlotId(active.id);
@@ -2846,6 +2858,10 @@
           _bumpUid(slot);
           const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
           const fresh=(set,val)=>set(prev=>same(prev,val)?prev:val);
+          // The state arrays below are one snapshot. Move their identity with
+          // them so the autosave effect writes B's data to B, not to the slot A
+          // that happened to be active when this tab mounted.
+          setActiveSlotId(prev=>prev===slot.id?prev:slot.id);
           fresh(setSessions,slot.sessions||[]);
           fresh(setMms,slot.mms||[]);
           fresh(setKolbs,slot.kolbs||[]);
@@ -3641,6 +3657,6 @@
     const root = ReactDOM.createRoot(document.getElementById("root"));
     root.render(<App/>);
   </script>
-  <script src="notes-widget.js"></script>
+  <script src="notes-widget.js?v=2"></script>
 </body>
 </html>
