@@ -60,7 +60,6 @@ Active files:
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
-| `notifications.html` | Unified inbox view over `notifications.json`, filtering, per-item tick state |
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
 | `schema.js` | The canonical slot definition (`window.TrackSchema`): the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
@@ -241,7 +240,6 @@ index.html
 progress.html
 sir-ks02.html
 documentations.html
-notifications.html
 calendar-core.js
 storage-guard.js
 firebase-sync.js

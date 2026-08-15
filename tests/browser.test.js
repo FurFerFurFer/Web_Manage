@@ -1754,18 +1754,11 @@ test('browser suites', skipUnlessChrome, async t => {
     return window.TrackStorage && window.TrackStorage.dbStatus
       ? window.TrackStorage.dbStatus().state : 'no-guard';
   };
-  // notifications.html is here for notes-widget.js: it is the fifth reader, and
-  // the only page that loads the widget without a workspace page around it. It
-  // has no React root of its own, and the widget mounts COLLAPSED — it does not
-  // read the database until its panel is opened, which is why the banner is
-  // asserted there only after the click below.
-  const DATA_PAGES = PAGES.concat(['notifications.html']);
-  const mountSel = file => file === 'index.html' ? '#slot-list'
-    : file === 'notifications.html' ? '#nw-btn' : '#root';
+  const mountSel = file => file === 'index.html' ? '#slot-list' : '#root';
 
   const waitMounted = (page, file) => page.waitFor(function (sel) {
     var el = document.querySelector(sel);
-    return !!el && (sel === '#nw-btn' || el.children.length > 0);
+    return !!el && el.children.length > 0;
   }, { args: [mountSel(file)], message: file + ' mounting' });
 
   // The widget's own read path: opening the panel calls loadNotes → _twDB.
@@ -1773,7 +1766,7 @@ test('browser suites', skipUnlessChrome, async t => {
 
   for (const [label, raw] of Object.entries(F.MALFORMED_DB_STRINGS)) {
     await t.test('malformed track_db (' + label + ') never white-screens and is left byte-identical', async () => {
-      for (const file of DATA_PAGES) {
+      for (const file of PAGES) {
         const page = await open(file, { raw });
         await waitMounted(page, file);
 
@@ -1878,7 +1871,7 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('a healthy database is untouched by the load boundary', async () => {
-    for (const file of DATA_PAGES) {
+    for (const file of PAGES) {
       const page = await open(file, { db: seedDb() });
       await waitMounted(page, file);
       assert.equal(await page.evaluate(DB_STATE), 'ok', file + ': a good database reads as ok');
@@ -1892,7 +1885,7 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('a missing track_db is a normal empty install, not a fault', async () => {
-    for (const file of DATA_PAGES) {
+    for (const file of PAGES) {
       const page = await open(file);
       await waitMounted(page, file);
       assert.equal(await page.evaluate(function () { return window.TrackStorage.dbBlocked(); }), false,
@@ -1934,7 +1927,10 @@ test('browser suites', skipUnlessChrome, async t => {
       ' return __trackTestSetItem.call(this,k,v);' +
       '};'
     );
-    await page.goto(server.url('notifications.html'));
+    // Home hosts this case because it has no writer of its own to run over the
+    // seeded database: its activeSlotId already resolves, so nothing but the
+    // widget's adoption path can attempt the write being refused here.
+    await page.goto(server.url('index.html'));
     await page.skipFirebase();
     await page.waitFor(function () { return !!document.getElementById('nw-btn'); },
       { message: 'notes widget mounting under refused writes' });

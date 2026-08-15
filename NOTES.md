@@ -210,10 +210,10 @@ fixtures requires it:
   - A migration whose output fails validation.
   - A migration that throws.
   - A recovery-copy write failure and a final `track_db` write failure.
-- Add browser cases proving that opening Home, Progress, KS02, Documentations, or
-  Notifications first produces the same migrated result. Notifications matters because
-  its notes widget is a database reader and currently owns the `track_global_notes`
-  adoption path. Migration must not depend on which surface happened to load.
+- Add browser cases proving that opening Home, Progress, KS02, or Documentations first
+  produces the same migrated result. Home matters because its notes widget is a database
+  reader and currently owns the `track_global_notes` adoption path. Migration must not
+  depend on which surface happened to load.
 - Confirm the new regression fails against a scratch pre-change tree via
   `TRACK_TEST_ROOT`; never commit the baseline copy.
 - Keep explicit byte-level assertions:
@@ -309,9 +309,8 @@ fixtures requires it:
 
 - Run migration orchestration from the shared load boundary before application state is
   initialized. Opening any page first must behave identically.
-- Update Home, Progress, KS02, Documentations, Notifications through its notes widget, and
-  the widget on every other page to consume the shared result rather than starting
-  migrations themselves.
+- Update Home, Progress, KS02, Documentations, and the notes widget on every page to
+  consume the shared result rather than starting migrations themselves.
 - Remove the replaced Progress and KS02 field-presence IIFEs only after their fixture cases
   pass against the registry.
 - Update Documentations' legacy-data warning/bootstrap logic to use the shared adoption
@@ -364,8 +363,8 @@ fixtures requires it:
 
 The migration work is complete only when all of the following are true:
 
-- Every DB-aware entry page, including Notifications through the notes widget, produces the
-  same migration result.
+- Every DB-aware entry page, including the notes widget on each of them, produces the same
+  migration result.
 - Each migration is ordered, deterministic, idempotent, and covered by a synthetic old
   shape.
 - No invalid, failed, or future-version database is overwritten locally, remote-applied,
@@ -595,8 +594,6 @@ beyond calendar aggregation and the currently covered browser regressions.
 
 ### Browser coverage still needed
 
-- Verify the Notifications synthetic feed contract over HTTP; the page and its notes
-  widget already participate in shared-runtime smoke and malformed-database coverage.
 - Floating notes, goals, mind maps, source dumps, and schedules survive reload.
 - Duplicate source-dump import follows the selected policy.
 - Same-key two-tab conflicts are visible.
@@ -650,8 +647,7 @@ Track-website/
 │   │   ├── HomePage.jsx
 │   │   ├── ProgressPage.jsx
 │   │   ├── KS02Page.jsx
-│   │   ├── DocumentationsPage.jsx
-│   │   └── NotificationsPage.jsx
+│   │   └── DocumentationsPage.jsx
 │   ├── features/
 │   │   ├── goals/
 │   │   ├── schedule/
@@ -661,8 +657,7 @@ Track-website/
 │   │   ├── sir/
 │   │   ├── source-dumps/
 │   │   ├── notes/
-│   │   ├── documentations/
-│   │   └── notifications/
+│   │   └── documentations/
 │   ├── data/
 │   │   ├── schema.js
 │   │   ├── migrations.js
@@ -682,8 +677,7 @@ Track-website/
 │   └── fixtures/
 ├── scripts/
 │   ├── check.mjs
-│   ├── smoke.mjs
-│   └── notifications-build.mjs
+│   └── smoke.mjs
 ├── docs/
 │   ├── data-contract.md
 │   ├── migration-guide.md

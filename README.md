@@ -15,7 +15,7 @@ This README is the source of truth for what the project currently contains and h
 Status reviewed: 2026-08-06
 
 - The application renders successfully in a local Chrome smoke test.
-- `index.html`, `progress.html`, `sir-ks02.html`, `documentations.html` and `notifications.html` are the active pages.
+- `index.html`, `progress.html`, `sir-ks02.html` and `documentations.html` are the active pages.
 - Development currently happens on `master`; the inspected history contains no merge commits.
 - There is still no build step and no package manifest, but there **is** now a committed test suite: `node tests/run.js`. It uses Node's built-in `node:test` and a hand-rolled DevTools-protocol driver, so it adds no dependencies. See "Running the tests".
 - The standalone scripts `theme.js`, `schema.js`, `storage-guard.js`, `calendar-core.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
@@ -45,7 +45,7 @@ When a proposed change is implemented:
 
 `index.html` is the project hub. It currently provides:
 
-- Navigation to KS02, Progress, Notifications, and Documentations.
+- Navigation to KS02, Progress, and Documentations.
 - Creation of named workspace slots.
 - Active-slot selection.
 - Slot renaming and deletion.
@@ -282,43 +282,6 @@ the write is refused (including quota or blocked-data refusal), or saving throws
 stays as the only recoverable copy. A valid legacy payload whose notes list is empty is
 still cleaned up without requiring a slot write.
 
-### Notifications
-
-`notifications.html` is a unified inbox for Gmail, Outlook, and Microsoft Teams. It currently supports:
-
-- Filtering by source, by item type (email, chat, mention, calendar), by unread state, and by free-text search.
-- Sorting by newest, oldest, source, or sender, with day grouping under the date sorts.
-- Per-item checkboxes that persist across reloads.
-- A `NEW` badge for items not yet acknowledged, cleared by "Mark all seen".
-- Bulk tick, clear ticks, and manual JSON loading.
-
-The page does not contact Gmail, Outlook, or Teams itself. Track is a static local-first site with no server and no credentials, so it cannot authenticate against those services. Instead it reads a pre-generated feed file:
-
-```text
-notifications.json
-```
-
-That file is produced outside the page and dropped into the repository root. `notifications.sample.json` is a synthetic fixture documenting the expected shape:
-
-```js
-{
-  generatedAt,          // ISO timestamp of the run that produced the feed
-  items: [{
-    id,                 // stable, source-prefixed, used as the de-duplication key
-    source,             // "gmail" | "outlook" | "teams"
-    kind,               // "email" | "chat" | "mention" | "calendar"
-    from, subject, preview,
-    date,               // ISO timestamp
-    unread,             // boolean
-    url                 // http(s) deep link, or null
-  }]
-}
-```
-
-Unknown `source` and `kind` values fall back to safe defaults, duplicate `id` values are dropped, and non-http `url` values are rejected rather than rendered as links. An invalid manual import is refused without discarding the currently loaded feed.
-
-Because browsers block `fetch` against `file://`, the feed only loads automatically when the folder is served over HTTP. Opening the page directly from disk shows an explanatory notice and the manual **Load JSON** fallback; ticks and filters still persist in that mode.
-
 ### Documentations
 
 `documentations.html` is a Notion-style documentation workspace for recording external events and information. It currently supports:
@@ -470,8 +433,6 @@ Two things still recover a blocked database. Fixing the value from another tab o
 
 A root object with **no `slots` key** is classified `ok`, not `blocked`, and handed back untouched. That covers both a bare `{}` and the pre-unified legacy shape `{progress, ks02}`, which the migration IIFEs read `db.progress` and `db.ks02` out of; `validateDatabase` legitimately rejects it for lacking a slot list, so it is classified before validation rather than by it.
 
-`notifications.html` loads `schema.js` for this reason alone: it never touches `track_db` itself, but `notes-widget.js` does, and without the tag the widget would be the one reader falling back to a structural-only check.
-
 #### Storage-quota handling
 
 Every page writes the whole workspace to the single `track_db` key, so the browser's per-origin `localStorage` quota (~5-10 MB) is the binding size limit now that cloud sync gzips and chunks the payload. All 23 `track_db` writes, plus the two `trackPriorityMatrix` writes in `progress.html`, go through `window.TrackStorage` in `storage-guard.js`:
@@ -496,9 +457,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule, calendar notes |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
-| `notifications.html` | Unified Gmail/Outlook/Teams inbox, filtering, per-item tick state |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, PDF export |
-| `notifications.sample.json` | Synthetic fixture documenting the `notifications.json` feed contract |
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry and deadline rules (`window.TrackCalendar`) |
 | `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
 | `schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
@@ -524,9 +483,7 @@ Track-website/
 ├── index.html
 ├── progress.html
 ├── sir-ks02.html
-├── notifications.html
 ├── documentations.html
-├── notifications.sample.json
 ├── calendar-core.js
 ├── theme.js
 ├── schema.js
@@ -702,11 +659,8 @@ The project also currently uses:
 - `track_db_ts` for the local Firebase comparison timestamp. It records when this device's data was last **confirmed** in the cloud, not when the device last edited, so it is written only after the server accepts a write.
 - `track_db_pending` while this device holds edits the cloud has not accepted yet. Set synchronously on every `track_db` write and removed on confirmation, so a tab closed mid-upload still records that edits are unsent.
 - `trackPriorityMatrix` for schedule priority-matrix state.
-- `track_notifications` for notification tick state, seen-item IDs, and filter preferences.
 - `fb_reloaded` and `fb_reloaded_gen` in `sessionStorage` to break Firebase reload loops and record which cloud generation was reloaded into.
 - Older legacy keys during migration, including former Progress and KS02 storage keys.
-
-`track_notifications` is deliberately stored outside `track_db`. It therefore requires no slot default, no migration, and no import/export change, and it is not uploaded to Firestore. The trade-off is that tick state is per-device and does not follow a workspace export.
 
 ### Current cloud shape
 
@@ -785,10 +739,8 @@ Active page URLs are:
 http://127.0.0.1:8765/index.html
 http://127.0.0.1:8765/progress.html
 http://127.0.0.1:8765/sir-ks02.html
-http://127.0.0.1:8765/notifications.html
+http://127.0.0.1:8765/documentations.html
 ```
-
-`notifications.html` in particular must be checked over the local server rather than from disk, since the feed fetch is blocked under `file://`.
 
 Stop the server with `Ctrl+C`.
 
