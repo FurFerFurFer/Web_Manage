@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>True Storage</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%23b45309%22/%3E%3Cpath d=%22M6 11h20M6 11v13h20V11M6 11l3-4h14l3 4M16 15v5%22 stroke=%22white%22 stroke-width=%222.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 fill=%22none%22/%3E%3C/svg%3E">
+  <script src="theme.js"></script>
+  <script src="storage-guard.js?v=2"></script>
+  <script src="schema.js?v=3"></script>
+  <script src="graph-layout.js?v=1"></script>
+  <script src="true-storage-core.js?v=2"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="firebase-sync.js?v=2"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+  <link rel="stylesheet" href="styles.css?v=4">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { gray: { 950: '#080d18' } } } }
+    };
+  </script>
+</head>
+<body class="app-page ks02-page">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useRef, useEffect, useCallback } = React;
+
+    const TS = window.TrackTrueStorage;
+
+    // Same palettes as KS03, so a storage node and an MM node read as the same
+    // kind of object on screen.
+    const PALETTE = ["#6366f1","#ec4899","#f59e0b","#10b981","#3b82f6","#8b5cf6","#14b8a6","#f97316","#06b6d4","#a3e635"];
+    const FILL_COLORS = [
+      "#ef4444","#f97316","#f59e0b","#eab308","#84cc16",
+      "#22c55e","#10b981","#14b8a6","#06b6d4","#3b82f6",
+      "#6366f1","#8b5cf6","#a855f7","#ec4899","#f43f5e",
+      "#ffffff","#94a3b8","#64748b","#334155","#0f172a"
+    ];
+
+    // ── unified DB helpers ───────────────────────────────────────────────────
+    // One parse-and-validate boundary for every page — storage-guard.js. Never a
+    // bare JSON.parse: it does not throw on 'null', '42' or '[…]', so a
+    // hand-rolled try/catch around it is not a check.
+
+    function _getTrackDB() { return TrackStorage.loadDB(); }
+    function _activeSlot() {
+      const db=_getTrackDB(), slots=db.slots||[], id=db.activeSlotId;
+      return slots.find(s=>s.id===id) || slots[0] || null;
+    }
+    function _readP(key, fallback) {
+      const s=_activeSlot(); return (s && s[key]!==undefined) ? s[key] : fallback;
+    }
+    // Merge ONLY the keys this page owns into a fresh read of the stored slot —
+    // the same contract as _writeP in progress.html, _writeSlotKeys in
+    // sir-ks02.html and _writeSlotKey in documentations.html. A slot id that is
+    // no longer present was deleted elsewhere: write nothing rather than fold
+    // this workspace's data into another slot.
+    function _writeSlotKeys(slotId, patch) {
+      const db=_getTrackDB(), slots=db.slots||[];
+      if (!slots.some(s=>s.id===slotId)) return false;
+      db.slots=slots.map(s=>s.id===slotId?{...s,...patch}:s);
+      return TrackStorage.saveDB(db);
+    }
+
+    // ── local calendar dates (never toISOString — that is a UTC day) ─────────
+
+    function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+    const localToday = () => toDateStr(new Date());
+
+    // One id shape across the project — TrackStorage.newId in storage-guard.js.
+    // String ids can never collide with the numeric nid() counter that mints
+    // sir-ks02.html's mms and sourceDumps, which matters because a tag holds one
+    // id of each kind.
+    const genId = () => window.TrackStorage && window.TrackStorage.newId
+      ? window.TrackStorage.newId()
+      : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+
+    // ── slot bootstrap ───────────────────────────────────────────────────────
+    // Only auto-create on a genuinely empty install. If unmigrated legacy
+    // Progress/KS02 data exists, creating db.slots here would make their
+    // migration IIFEs (guarded by `if (db.slots) return`) skip it and orphan it.
+
+    function _hasLegacyData() {
+      const db=_getTrackDB();
+      if (db.ks02 || db.progress) return true;
+      return ['ks02_slots','progress_goals','progress_sa_actions','progress_sa_entries']
+        .some(k => { try { return !!localStorage.getItem(k); } catch { return false; } });
+    }
+    function _bootstrapSlotIfSafe() {
+      // An unreadable track_db reads as {} here, indistinguishable from a fresh
+      // install. TrackStorage.saveDB refuses the write regardless; returning
+      // false is what stops this page then claiming a workspace never stored.
+      if (TrackStorage.dbBlocked()) return false;
+      const db=_getTrackDB();
+      if ((db.slots||[]).length) return true;
+      if (_hasLegacyData()) return false;
+      const s=TrackSchema.createEmptySlot({name:'Default'});
+      return TrackStorage.saveDB({slots:[s],activeSlotId:s.id});
+    }
+
+    // ── source-dump reading (read-only: sir-ks02.html owns these) ────────────
+
+    const dumpIsLeaf = (dumps, d) => !dumps.some(o => o.parentId === d.id);
+    const dumpById   = (dumps, id) => dumps.find(d => d.id === id) || null;
+    const mmById     = (mms, id) => mms.find(m => m.id === id) || null;
+    const linkFor    = (dump, mmId) => (dump && Array.isArray(dump.mmLinks))
+      ? (dump.mmLinks.find(l => l.mmId === mmId) || null) : null;
+
+    // Same fallback as getSCTextBlocks in sir-ks02.html: an mmLink written
+    // before textBlocks existed carries its prose in `text`.
+    function scTextBlocks(link) {
+      const blocks = Array.isArray(link?.textBlocks) ? link.textBlocks : [];
+      if (blocks.length) return blocks;
+      const legacy = (link?.text || "").trim();
+      return legacy ? [{ id: link.id + "_m", title: "", explanation: legacy }] : [];
+    }
+
+    // The link back into KS02. sir-ks02.html honours ?dump= and &mm= and opens
+    // KS03 → SOURCE DUMP on that leaf.
+    const dumpHref = (dumpId, mmId) =>
+      `sir-ks02.html?dump=${encodeURIComponent(dumpId)}&mm=${encodeURIComponent(mmId)}#ks03`;
+
+    // ── shared UI ────────────────────────────────────────────────────────────
+
+    function ConfirmDialog({open,title,message,confirmLabel="CONFIRM",cancelLabel="CANCEL",onConfirm,onCancel}) {
+      React.useEffect(()=>{
+        if(!open)return;
+        const onKey=e=>{if(e.key==="Escape")onCancel&&onCancel();};
+        document.addEventListener("keydown",onKey);
+        return()=>document.removeEventListener("keydown",onKey);
+      },[open,onCancel]);
+      if(!open)return null;
+      return (
+        <div className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4" onClick={onCancel}>
+          <div className="w-full max-w-sm bg-gray-950 border border-red-800 rounded shadow-2xl p-4" onClick={e=>e.stopPropagation()}>
+            <div className="text-sm font-bold text-white mb-1">{title}</div>
+            {message&&<div className="text-xs text-gray-400 mb-4">{message}</div>}
+            <div className="flex gap-2">
+              <button onClick={onConfirm} className="flex-1 bg-red-700 hover:bg-red-600 text-white py-2 rounded text-xs font-bold">{confirmLabel}</button>
+              <button onClick={onCancel} className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 py-2 rounded text-xs">{cancelLabel}</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // The radial canvas layout lives once, in graph-layout.js — the same module
+    // KS03's multiverse uses. Storages and MMs carry the same two fields it reads
+    // (`id`, `parentIds`), so the geometry, and the cycle guard, are shared.
+    function computeLayerLayout(nodes, layerRadii) {
+      return TrackGraphLayout.computeLayerLayout(nodes, layerRadii);
+    }
+
+    function applyRepulsion(pos, minDist, iterations) {
+      return TrackGraphLayout.applyRepulsion(pos, minDist, iterations);
+    }
+
+    // ── MULTIVERSE ───────────────────────────────────────────────────────────
+    // Ported from MultiverseCanvas in sir-ks02.html. Everything type-driven is
+    // gone — storages have no Anchor/T1/T2, so every node is one radius and one
+    // ring. Drag, pan, wheel zoom, pinch zoom, fill colour, duplicate and
+    // rearrange all behave exactly as KS03's canvas does.
+    //
+    // Node ids are read back off `data-sid` in the touch path, and dataset
+    // values are strings — which is safe here only because a storage id IS a
+    // string (TrackStorage.newId). Never do this with an mm id.
+
+    function StorageCanvas({storages,manualPos,setManualPos,onOpen,colorOf,onFill,onDuplicate,focusId}) {
+      const svgRef=useRef(null);
+      const dragNode=useRef(null);
+      const dragOffset=useRef({x:0,y:0});
+      const didDrag=useRef(false);
+      const vtRef=useRef({x:0,y:0,scale:1});
+      const panRef=useRef({active:false,startX:0,startY:0,startVtX:0,startVtY:0});
+      const pinchRef=useRef({active:false,startDist:0,startScale:1,startVtX:0,startVtY:0,cx:0,cy:0});
+      const nodePosRef=useRef({});
+      const onOpenRef=useRef(onOpen);
+      onOpenRef.current=onOpen;
+      const [vt,setVt_]=useState({x:0,y:0,scale:1});
+      const [fillState,setFillState]=useState("off"); // "off" | "picking" | "on"
+      const [fillColor,setFillColor]=useState(null);
+      const fillStateRef=useRef("off");
+      const clickTimerRef=useRef(null);
+      const clickCountRef=useRef(0);
+      const [ctxMenu,setCtxMenu]=useState(null);
+      function setVt(next){const val=typeof next==="function"?next(vtRef.current):next;vtRef.current=val;setVt_(val);}
+      useEffect(()=>{fillStateRef.current=fillState;},[fillState]);
+      useEffect(()=>{if(!ctxMenu)return;function dismiss(){setCtxMenu(null);}document.addEventListener("click",dismiss);return()=>document.removeEventListener("click",dismiss);},[!!ctxMenu]);
+      useEffect(()=>{
+        if(svgRef.current)svgRef.current.style.cursor=fillState==="on"?"crosshair":"grab";
+      },[fillState]);
+      const autoPos=useMemo(()=>computeLayerLayout(storages),[storages]);
+      const nodePos=useMemo(()=>({...autoPos,...manualPos}),[autoPos,manualPos]);
+      nodePosRef.current=nodePos;
+      useEffect(()=>{
+        if(!focusId)return;
+        const pos=({...autoPos,...manualPos})[focusId];if(!pos)return;
+        const svg=svgRef.current;if(!svg)return;
+        requestAnimationFrame(()=>{
+          const rect=svg.getBoundingClientRect();if(!rect.width)return;
+          setVt({x:rect.width/2-pos.x,y:rect.height/2-pos.y,scale:1});
+        });
+      },[focusId]);
+      const edges=useMemo(()=>{
+        const seen=new Set(),res=[];
+        storages.forEach(s=>TS.parentIdsOf(s).forEach(pid=>{const k=[pid,s.id].join("→");if(!seen.has(k)){seen.add(k);res.push([pid,s.id]);}}));
+        return res;
+      },[storages]);
+      useEffect(()=>{
+        const svg=svgRef.current;if (!svg) return;
+        function onWheel(e){
+          e.preventDefault();
+          const rect=svg.getBoundingClientRect();
+          const mx=e.clientX-rect.left,my=e.clientY-rect.top;
+          const v=vtRef.current,factor=e.deltaY<0?1.12:0.89;
+          const ns=Math.min(Math.max(v.scale*factor,0.12),4);
+          setVt({scale:ns,x:mx-(mx-v.x)*(ns/v.scale),y:my-(my-v.y)*(ns/v.scale)});
+        }
+        svg.addEventListener("wheel",onWheel,{passive:false});
+        return()=>svg.removeEventListener("wheel",onWheel);
+      },[]);
+      useEffect(()=>{
+        function onMove(e){
+          const rect=svgRef.current?.getBoundingClientRect();if (!rect) return;
+          if (dragNode.current){
+            didDrag.current=true;
+            const v=vtRef.current,cx=(e.clientX-rect.left-v.x)/v.scale,cy=(e.clientY-rect.top-v.y)/v.scale;
+            setManualPos(p=>({...p,[dragNode.current]:{x:cx-dragOffset.current.x,y:cy-dragOffset.current.y}}));
+          } else if (panRef.current.active){
+            setVt({...vtRef.current,x:panRef.current.startVtX+(e.clientX-panRef.current.startX),y:panRef.current.startVtY+(e.clientY-panRef.current.startY)});
+          }
+        }
+        function onUp(){
+          dragNode.current=null;
+          if (panRef.current.active){panRef.current.active=false;if(svgRef.current)svgRef.current.style.cursor=fillStateRef.current==="on"?"crosshair":"grab";}
+        }
+        function onTouchStart(e){
+          const svg=svgRef.current;if(!svg||!svg.contains(e.target))return;
+          if(e.touches.length===2){
+            const t=e.touches,rect=svg.getBoundingClientRect();
+            dragNode.current=null;panRef.current.active=false;
+            const cx=(t[0].clientX+t[1].clientX)/2-rect.left,cy=(t[0].clientY+t[1].clientY)/2-rect.top;
+            const dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;
+            const v=vtRef.current;
+            pinchRef.current={active:true,startDist:Math.sqrt(dx*dx+dy*dy),startScale:v.scale,startVtX:v.x,startVtY:v.y,cx,cy};
+            e.preventDefault();return;
+          }
+          if(e.touches.length===1){
+            const t=e.touches[0],rect=svg.getBoundingClientRect();
+            const nodeG=t.target&&t.target.closest?t.target.closest('[data-sid]'):null;
+            if(nodeG){
+              const id=nodeG.dataset.sid,cur=nodePosRef.current[id]||{x:200,y:200},v=vtRef.current;
+              dragOffset.current={x:(t.clientX-rect.left-v.x)/v.scale-cur.x,y:(t.clientY-rect.top-v.y)/v.scale-cur.y};
+              dragNode.current=id;didDrag.current=false;
+            }else{
+              panRef.current={active:true,startX:t.clientX,startY:t.clientY,startVtX:vtRef.current.x,startVtY:vtRef.current.y};
+            }
+            e.preventDefault();
+          }
+        }
+        function onTouchMove(e){
+          if(!dragNode.current&&!panRef.current.active&&!pinchRef.current.active)return;
+          const rect=svgRef.current?.getBoundingClientRect();if(!rect)return;
+          if(e.touches.length===2&&pinchRef.current.active){
+            const t=e.touches,dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;
+            const dist=Math.sqrt(dx*dx+dy*dy),{startDist,startScale,startVtX,startVtY,cx,cy}=pinchRef.current;
+            const ns=Math.min(Math.max(startScale*(dist/startDist),0.12),4),ratio=ns/startScale;
+            setVt({scale:ns,x:cx-(cx-startVtX)*ratio,y:cy-(cy-startVtY)*ratio});
+            e.preventDefault();return;
+          }
+          if(e.touches.length>=1){
+            const t=e.touches[0];
+            if(dragNode.current){
+              didDrag.current=true;
+              const v=vtRef.current,cx=(t.clientX-rect.left-v.x)/v.scale,cy=(t.clientY-rect.top-v.y)/v.scale;
+              setManualPos(p=>({...p,[dragNode.current]:{x:cx-dragOffset.current.x,y:cy-dragOffset.current.y}}));
+            }else if(panRef.current.active){
+              setVt({...vtRef.current,x:panRef.current.startVtX+(t.clientX-panRef.current.startX),y:panRef.current.startVtY+(t.clientY-panRef.current.startY)});
+            }
+            e.preventDefault();
+          }
+        }
+        function onTouchEnd(){
+          if(!didDrag.current&&dragNode.current){onOpenRef.current(dragNode.current);}
+          pinchRef.current.active=false;
+          dragNode.current=null;
+          if(panRef.current.active){panRef.current.active=false;if(svgRef.current)svgRef.current.style.cursor=fillStateRef.current==="on"?"crosshair":"grab";}
+          didDrag.current=false;
+        }
+        window.addEventListener("mousemove",onMove);window.addEventListener("mouseup",onUp);
+        window.addEventListener("touchstart",onTouchStart,{passive:false});
+        window.addEventListener("touchmove",onTouchMove,{passive:false});
+        window.addEventListener("touchend",onTouchEnd);
+        return()=>{
+          window.removeEventListener("mousemove",onMove);window.removeEventListener("mouseup",onUp);
+          window.removeEventListener("touchstart",onTouchStart);
+          window.removeEventListener("touchmove",onTouchMove);
+          window.removeEventListener("touchend",onTouchEnd);
+        };
+      },[setManualPos]);
+      function onMouseDown(e,id){
+        e.preventDefault();e.stopPropagation();
+        const rect=svgRef.current.getBoundingClientRect(),cur=nodePos[id]||{x:200,y:200},v=vtRef.current;
+        dragOffset.current={x:(e.clientX-rect.left-v.x)/v.scale-cur.x,y:(e.clientY-rect.top-v.y)/v.scale-cur.y};
+        dragNode.current=id;didDrag.current=false;
+      }
+      function onMouseUp(e,id){
+        e.stopPropagation();
+        if (!didDrag.current){
+          if (fillState==="on"&&fillColor){onFill(id,fillColor);}
+          else if (fillState!=="on"){onOpen(id);}
+        }
+        didDrag.current=false;dragNode.current=null;
+      }
+      function onSvgMouseDown(e){
+        setCtxMenu(null);
+        if (fillState==="picking"){setFillState("off");return;}
+        if (dragNode.current) return;
+        panRef.current={active:true,startX:e.clientX,startY:e.clientY,startVtX:vtRef.current.x,startVtY:vtRef.current.y};
+        if(svgRef.current)svgRef.current.style.cursor="grabbing";
+      }
+      function handleRearrange(){
+        setManualPos(applyRepulsion(computeLayerLayout(storages,[0,240,460,680,900])));
+      }
+      function onFillIconClick(){
+        clickCountRef.current++;
+        if (clickCountRef.current===1){
+          clickTimerRef.current=setTimeout(()=>{
+            clickCountRef.current=0;
+            setFillState(s=>s==="off"?"picking":"off");
+          },280);
+        } else {
+          clearTimeout(clickTimerRef.current);
+          clickCountRef.current=0;
+          setFillState(s=>{
+            if(s==="off"){return "on";}
+            setFillColor(null);return "off";
+          });
+        }
+      }
+      const fillActive=fillState!=="off";
+      const R=20;
+      return (
+        <div className="flex-1 relative overflow-hidden">
+          {storages.length===0&&<div className="text-gray-600 text-center py-20 text-xs">No storages yet.</div>}
+          <svg ref={svgRef} className="absolute inset-0 w-full h-full cursor-grab" style={{touchAction:"none"}} onMouseDown={onSvgMouseDown}>
+            <defs><filter id="ts-arr-glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter><marker id="ts-arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="white" filter="url(#ts-arr-glow)"/></marker></defs>
+            <g transform={`translate(${vt.x},${vt.y}) scale(${vt.scale})`}>
+              {edges.map(([pid,cid])=>{
+                const a=nodePos[pid],b=nodePos[cid];if (!a||!b) return null;
+                const dx=b.x-a.x,dy=b.y-a.y,len=Math.sqrt(dx*dx+dy*dy)||1;
+                return <line key={`${pid}-${cid}`} x1={a.x} y1={a.y} x2={b.x-dx/len*R} y2={b.y-dy/len*R} stroke="#374151" strokeWidth="1.5" markerEnd="url(#ts-arr)"/>;
+              })}
+              {storages.map(s=>{
+                const p=nodePos[s.id]||{x:200,y:200},col=s.customColor||colorOf(s.id);
+                const tagged=TS.tagsOf(s).length>0;
+                return (
+                  <g key={s.id} data-sid={s.id} transform={`translate(${p.x},${p.y})`} onMouseDown={e=>onMouseDown(e,s.id)} onMouseUp={e=>onMouseUp(e,s.id)} onContextMenu={e=>{e.preventDefault();e.stopPropagation();const rect=svgRef.current.getBoundingClientRect();setCtxMenu({id:s.id,x:e.clientX-rect.left,y:e.clientY-rect.top});}} style={{cursor:fillState==="on"?"crosshair":"pointer"}}>
+                    {tagged&&<circle r={R+5} fill="none" stroke={col} strokeWidth="1" strokeOpacity="0.3"/>}
+                    <circle r={R} fill="#0f172a" stroke={col} strokeWidth={s.customColor?3:2}/>
+                    <text textAnchor="middle" dominantBaseline="middle" fontSize="9" fill={col} className="pointer-events-none select-none">{s.name.length>11?s.name.slice(0,10)+"…":s.name}</text>
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
+          {ctxMenu&&(
+            <div style={{position:"absolute",left:ctxMenu.x,top:ctxMenu.y,zIndex:100}} className="bg-gray-900 border border-gray-700 rounded shadow-lg py-1 text-xs" onMouseDown={e=>e.stopPropagation()}>
+              <button className="block w-full text-left px-4 py-1.5 text-gray-200 hover:bg-gray-700" onClick={()=>{onDuplicate(ctxMenu.id);setCtxMenu(null);}}>Duplicate</button>
+            </div>
+          )}
+          <div className="absolute bottom-3 left-3 flex gap-3 items-center text-xs text-gray-600">
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border border-indigo-400 inline-block"/>Storage</span>
+            <span className="flex items-center gap-1"><span className="w-3.5 h-3.5 rounded-full border border-indigo-400 opacity-40 inline-block"/>tagged</span>
+            <span>drag · scroll/pinch to zoom · click to open</span>
+          </div>
+          <div className="absolute bottom-16 right-3 flex items-center gap-1 text-xs">
+            <div className="relative">
+              <button onClick={onFillIconClick} title="Fill color (dbl-click to toggle)"
+                className={`w-6 h-6 rounded flex items-center justify-center border transition-colors ${fillActive?"bg-indigo-600 border-indigo-400 text-white":"bg-gray-800 border-gray-700 text-gray-400 hover:text-white"}`}
+                style={fillColor&&fillActive?{boxShadow:`0 0 0 2px ${fillColor}`}:{}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20 14c-.092-.092-1.989-2.019-1.989-3.898C18.011 8.582 19.908 6.655 20 6.564L21.435 8 23 6.435 17.565 1 16 2.565l1.438 1.438C17.15 4.29 15 6.523 15 10.102c0 1.979 1.023 3.718 1.989 5.11L12 20.2 3.8 12 12 3.8l4.001 4.001L17.438 6.364 12 .926 1.362 11.564c-.482.481-.482 1.261 0 1.743L11.294 23.23c.241.24.556.361.87.361s.629-.12.87-.361L20 16.8c.482-.481.482-1.261 0-1.743l-.651-.651L20 14z"/>
+                </svg>
+              </button>
+              {fillState==="picking"&&(
+                <div className="absolute bottom-8 right-0 bg-gray-900 border border-gray-700 rounded p-2 z-50" style={{width:"140px"}} onMouseDown={e=>e.stopPropagation()}>
+                  <div className="text-xs text-gray-500 mb-1.5 tracking-widest">FILL COLOR</div>
+                  <div className="grid grid-cols-5 gap-1">
+                    {FILL_COLORS.map(c=>(
+                      <button key={c} onClick={()=>{setFillColor(c);setFillState("on");}}
+                        className="w-5 h-5 rounded-full transition-transform hover:scale-125"
+                        style={{backgroundColor:c,border:fillColor===c?"2px solid white":"2px solid transparent",outline:c==="#0f172a"?"1px solid #475569":"none"}}/>
+                    ))}
+                  </div>
+                  {fillColor&&<button onClick={()=>{setFillColor(null);setFillState("off");}} className="mt-1.5 w-full text-center text-xs text-gray-500 hover:text-gray-300">clear</button>}
+                </div>
+              )}
+            </div>
+            <button onClick={()=>setVt(v=>({...v,scale:Math.min(v.scale*1.25,4)}))} className="w-6 h-6 rounded bg-gray-800 border border-gray-700 text-gray-400 hover:text-white flex items-center justify-center">+</button>
+            <button onClick={()=>setVt({x:0,y:0,scale:1})} className="px-2 h-6 rounded bg-gray-800 border border-gray-700 text-gray-500 hover:text-white">↺</button>
+            <button onClick={handleRearrange} className="px-2 h-6 rounded bg-gray-800 border border-gray-700 text-gray-500 hover:text-white" title="Rearrange nodes">⊞</button>
+            <button onClick={()=>setVt(v=>({...v,scale:Math.max(v.scale*0.8,0.12)}))} className="w-6 h-6 rounded bg-gray-800 border border-gray-700 text-gray-400 hover:text-white flex items-center justify-center">−</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── SRCH-format tree ─────────────────────────────────────────────────────
+    // Ported from SrchMMNode / SrchView in sir-ks02.html: the same indent guide,
+    // collapse toggle, ⇅ drag-to-arrange-among-siblings and focus scroll.
+
+    function StorageNode({node, depth, colorOf, onOpen, onArrange, focusId, onClearFocus}) {
+      const {storage, children} = node;
+      const [open, setOpen] = React.useState(true);
+      const [hov, setHov] = React.useState(false);
+      const [arrangeDragOver, setArrangeDragOver] = React.useState(null);
+      const nodeRef = React.useRef(null);
+      const isFocused = storage.id === focusId;
+      React.useEffect(()=>{
+        if(isFocused&&nodeRef.current){
+          nodeRef.current.scrollIntoView({behavior:'smooth',block:'center'});
+          const t=setTimeout(()=>{if(onClearFocus)onClearFocus();},1500);
+          return()=>clearTimeout(t);
+        }
+      },[isFocused]);
+      const tagCount = TS.tagsOf(storage).length;
+      return (
+        <div className="relative">
+          <div ref={isFocused?nodeRef:null} style={{paddingLeft: depth * 16}}
+            className={`flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-800 cursor-pointer${isFocused?" bg-indigo-900/40 outline outline-1 outline-indigo-700/50":""} ${arrangeDragOver==='before'?'border-t-2 border-green-500':arrangeDragOver==='after'?'border-b-2 border-green-500':''}`}
+            data-storage-row={storage.id}
+            onClick={() => onOpen(storage.id)}
+            onMouseEnter={() => setHov(true)}
+            onMouseLeave={() => setHov(false)}
+            onDragOver={e => {
+              if (e.dataTransfer.types.includes('application/truestorage-arrange-id')) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setArrangeDragOver(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after');
+              }
+            }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setArrangeDragOver(null); }}
+            onDrop={e => {
+              const draggedId = e.dataTransfer.getData('application/truestorage-arrange-id');
+              if (draggedId && draggedId !== storage.id) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                onArrange(draggedId, storage.id, e.clientY < rect.top + rect.height / 2);
+              }
+              setArrangeDragOver(null);
+            }}>
+            <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor: colorOf(storage.id)}}/>
+            <span className="text-sm">{storage.name}</span>
+            {tagCount>0&&<span className="text-xs text-gray-600" title={`${tagCount} source dump tag${tagCount!==1?"s":""}`}>⛁{tagCount}</span>}
+            {storage.link&&storage.link.url&&<span className="text-xs text-gray-600" title={storage.link.url}>🔗</span>}
+            {children.length > 0 && (
+              <span
+                className="text-xs text-gray-500 ml-1 cursor-pointer hover:text-white"
+                onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>
+                {open ? "▼" : "▶"} {children.length}
+              </span>
+            )}
+            {hov && (
+              <span
+                draggable
+                onDragStart={e => {
+                  e.dataTransfer.setData('application/truestorage-arrange-id', String(storage.id));
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.stopPropagation();
+                }}
+                onClick={e => e.stopPropagation()}
+                title="Drag to arrange among siblings"
+                className="text-gray-600 hover:text-green-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 cursor-grab select-none ml-auto">⇅</span>
+            )}
+          </div>
+          {open && children.length > 0 && (
+            <>
+              <div style={{
+                position: "absolute",
+                left: depth * 16 + 12,
+                top: 13,
+                bottom: 4,
+                width: 1,
+                backgroundColor: "#374151",
+                pointerEvents: "none"
+              }}/>
+              {children.map((child, i) => (
+                <StorageNode key={`${child.storage.id}-${depth}-${i}`} node={child} depth={depth+1} colorOf={colorOf} onOpen={onOpen} onArrange={onArrange} focusId={focusId} onClearFocus={onClearFocus}/>
+              ))}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    function StorageTreeView({storages, colorOf, onOpen, onArrange, focusId, onClearFocus}) {
+      const [q, setQ] = useState("");
+      React.useEffect(()=>{ if(focusId) setQ(""); },[focusId]);
+
+      function filterTree(nodes, lq) {
+        return nodes.reduce((acc, n) => {
+          const fc = filterTree(n.children, lq);
+          if (!lq || (n.storage.name||"").toLowerCase().includes(lq) || fc.length > 0)
+            acc.push({...n, children: fc});
+          return acc;
+        }, []);
+      }
+
+      const tree = filterTree(TS.buildTree(storages), q.toLowerCase());
+
+      return (
+        <div className="p-4 max-w-2xl mx-auto">
+          <div className="text-xs text-gray-500 mb-3 tracking-widest">TRUE STORAGE — NESTED BY PARENT / CHILD</div>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter storages..."
+            className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 mb-3 text-white placeholder-gray-600 text-xs focus:outline-none focus:border-indigo-500"/>
+          {!storages.length ? (
+            <div className="text-gray-600 text-xs text-center py-8">No storages yet.</div>
+          ) : tree.length === 0 ? (
+            <div className="text-gray-600 text-xs text-center py-4">No matches.</div>
+          ) : (
+            <div className="rounded border border-gray-800 bg-gray-900/30 px-2 py-1">
+              {tree.map((n, i) => (
+                <StorageNode key={`${n.storage.id}-${i}`} node={n} depth={0} colorOf={colorOf} onOpen={onOpen} onArrange={onArrange} focusId={focusId} onClearFocus={onClearFocus}/>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── connections (ported from ConnectionsPicker in sir-ks02.html) ─────────
+
+    function ConnectionsPicker({storages, storage, onSaveParents, onDetachChild, colorOf}) {
+      const [editMode,setEditMode]=useState(false);
+      const [editParentIds,setEditParentIds]=useState([...TS.parentIdsOf(storage)]);
+      const [editChildIds,setEditChildIds]=useState([]);
+      const [q,setQ]=useState("");
+      const own=TS.parentIdsOf(storage);
+      const parents=storages.filter(s=>own.includes(s.id));
+      const children=storages.filter(s=>TS.parentIdsOf(s).includes(storage.id));
+      const potentialChildren=storages.filter(s=>s.id!==storage.id&&!own.includes(s.id));
+      const filteredOptions=potentialChildren.filter(s=>(s.name||"").toLowerCase().includes(q.toLowerCase()));
+
+      function saveAll(){
+        onSaveParents(storage.id,editParentIds);
+        editChildIds.forEach(cid=>{
+          const child=storages.find(s=>s.id===cid);
+          if (child&&!TS.parentIdsOf(child).includes(storage.id)) onSaveParents(cid,[...TS.parentIdsOf(child),storage.id]);
+        });
+        setEditMode(false);setEditChildIds([]);setQ("");
+      }
+
+      if (!editMode) return (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs text-gray-500">Connections</span>
+            <button onClick={()=>{setEditMode(true);setEditParentIds([...own]);setEditChildIds([]);}} className="text-xs text-indigo-400 hover:text-indigo-200">edit</button>
+          </div>
+          <div className="space-y-1">
+            {parents.length>0&&(
+              <div><div className="text-xs text-gray-600 mb-1">Parents ↑</div>
+                <div className="flex flex-wrap gap-1">{parents.map(p=>(
+                  <div key={p.id} className="flex items-center gap-1 bg-gray-900 border border-gray-700 rounded pl-2 pr-1 py-1 text-xs">
+                    <div className="w-1.5 h-1.5 rounded-full" style={{backgroundColor:colorOf(p.id)}}/>
+                    <span>{p.name}</span>
+                    <button onClick={()=>onSaveParents(storage.id,own.filter(x=>x!==p.id))} className="ml-1 text-gray-600 hover:text-red-400">⊗</button>
+                  </div>
+                ))}</div>
+              </div>
+            )}
+            {children.length>0&&(
+              <div><div className="text-xs text-gray-600 mb-1 mt-2">Children ↓</div>
+                <div className="flex flex-wrap gap-1">{children.map(c=>(
+                  <div key={c.id} className="flex items-center gap-1 bg-gray-900 border border-gray-700 rounded pl-2 pr-1 py-1 text-xs">
+                    <div className="w-1.5 h-1.5 rounded-full" style={{backgroundColor:colorOf(c.id)}}/>
+                    <span>{c.name}</span>
+                    <button onClick={()=>onDetachChild(c.id,storage.id)} className="ml-1 text-gray-600 hover:text-red-400">⊗</button>
+                  </div>
+                ))}</div>
+              </div>
+            )}
+            {!parents.length&&!children.length&&<span className="text-xs text-gray-600">No connections</span>}
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="bg-gray-900 border border-gray-700 rounded p-3 mb-2">
+          <div className="text-xs font-bold text-gray-300 mb-3">EDIT CONNECTIONS</div>
+          <div className="mb-3">
+            <div className="text-xs text-gray-400 mb-1">Parents ↑</div>
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search storages..."
+              className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 mb-1 text-white placeholder-gray-600 text-xs"/>
+            <div className="max-h-24 overflow-y-auto space-y-0.5 mb-1">
+              <button onClick={()=>setEditParentIds([])} className={`w-full text-left text-xs px-2 py-1 rounded ${editParentIds.length===0?"bg-gray-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>No parents (root)</button>
+              {storages.filter(s=>s.id!==storage.id&&(s.name||"").toLowerCase().includes(q.toLowerCase())).map(s=>(
+                <button key={s.id} onClick={()=>setEditParentIds(p=>p.includes(s.id)?p.filter(x=>x!==s.id):[...p,s.id])}
+                  className={`w-full text-left text-xs px-2 py-1 rounded flex items-center gap-2 ${editParentIds.includes(s.id)?"bg-indigo-800 text-white":"bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:colorOf(s.id)}}/>
+                  <span className="truncate">{s.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mb-3">
+            <div className="text-xs text-gray-400 mb-1">Add Children ↓ (new only)</div>
+            <div className="max-h-24 overflow-y-auto space-y-0.5">
+              {filteredOptions.filter(s=>!children.find(c=>c.id===s.id)).map(s=>(
+                <button key={s.id} onClick={()=>setEditChildIds(p=>p.includes(s.id)?p.filter(x=>x!==s.id):[...p,s.id])}
+                  className={`w-full text-left text-xs px-2 py-1 rounded flex items-center gap-2 ${editChildIds.includes(s.id)?"bg-teal-800 text-white":"bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:colorOf(s.id)}}/>
+                  <span className="truncate">{s.name}</span>
+                </button>
+              ))}
+              {filteredOptions.filter(s=>!children.find(c=>c.id===s.id)).length===0&&<div className="text-xs text-gray-600 px-2">No options.</div>}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={saveAll} className="flex-1 bg-indigo-700 hover:bg-indigo-600 text-white py-1.5 rounded text-xs font-bold">SAVE</button>
+            <button onClick={()=>{setEditMode(false);setQ("");}} className="flex-1 bg-gray-800 text-gray-300 py-1.5 rounded text-xs">CANCEL</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── the one link ─────────────────────────────────────────────────────────
+    // Exactly one. Clearing DELETES the key rather than storing '', so a storage
+    // with no link and one that never had one are the same state.
+
+    function LinkEditor({link, onSave, onClear}) {
+      const [editing,setEditing]=useState(false);
+      const [draft,setDraft]=useState({label:link?.label||"",url:link?.url||""});
+      React.useEffect(()=>{setDraft({label:link?.label||"",url:link?.url||""});},[link?.label,link?.url]);
+      const has=!!(link&&link.url);
+      return (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs text-gray-500 tracking-widest">LINK</div>
+            {!editing&&(
+              <button onClick={()=>{setDraft({label:link?.label||"",url:link?.url||""});setEditing(true);}}
+                className="text-xs text-indigo-400 hover:text-indigo-200">{has?"edit":"+ add link"}</button>
+            )}
+          </div>
+          {editing?(
+            <div className="bg-gray-900 border border-indigo-800 rounded p-2">
+              <div className="flex gap-1 mb-1">
+                <input autoFocus value={draft.label} onChange={e=>setDraft(p=>({...p,label:e.target.value}))} placeholder="label (optional)"
+                  className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none"/>
+                <input value={draft.url} onChange={e=>setDraft(p=>({...p,url:e.target.value}))} placeholder="url"
+                  onKeyDown={e=>{if(e.key==="Enter"&&draft.url.trim()){onSave(draft);setEditing(false);}}}
+                  className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none"/>
+              </div>
+              <div className="flex gap-1">
+                <button onClick={()=>{if(draft.url.trim()){onSave(draft);setEditing(false);}}}
+                  className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs font-bold">save</button>
+                <button onClick={()=>setEditing(false)} className="bg-gray-700 text-gray-300 px-2 py-1 rounded text-xs">cancel</button>
+                {has&&<button onClick={()=>{onClear();setEditing(false);}} className="ml-auto text-red-700 hover:text-red-400 text-xs px-2 py-1">clear</button>}
+              </div>
+            </div>
+          ):has?(
+            <div className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded px-2 py-1.5">
+              <span className="text-xs">🔗</span>
+              <a href={link.url} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-indigo-300 hover:text-indigo-100 truncate flex-1 min-w-0">{link.label||link.url}</a>
+            </div>
+          ):(
+            <div className="text-xs text-gray-600 italic">No link attached.</div>
+          )}
+        </div>
+      );
+    }
+
+    // ── explanation (draft + SAVE, as AnchorExplanationEditor does) ──────────
+
+    function ExplanationEditor({explanation,onSave}) {
+      const [draft,setDraft]=React.useState(explanation||"");
+      const [saved,setSaved]=React.useState(false);
+      // Follow the stored value if another tab changes it, but leave `saved`
+      // alone — this effect fires on our own save too, and clearing the flag
+      // there would flip the button back from SAVED the instant it was set.
+      // Switching storages cannot leave a stale SAVED because StorageDetail is
+      // keyed by storage id and remounts this whole editor.
+      React.useEffect(()=>{setDraft(explanation||"");},[explanation]);
+      const dirty=draft!==(explanation||"");
+      return (
+        <div className="mb-6">
+          <div className="text-xs text-gray-500 mb-2 tracking-widest">EXPLANATION</div>
+          <textarea value={draft} onChange={e=>{setDraft(e.target.value);setSaved(false);}} rows={5}
+            placeholder="What is this storage, and why does it matter?"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-600 text-sm outline-none focus:border-gray-500"
+            style={{resize:"vertical",minHeight:"7.5rem"}}/>
+          <div className="flex items-center gap-2 mt-2">
+            <button onClick={()=>{onSave(draft);setSaved(true);}}
+              className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-1 rounded text-xs font-bold">
+              {saved&&!dirty?"SAVED":"SAVE"}
+            </button>
+            {dirty&&<span className="text-xs text-amber-400">unsaved</span>}
+          </div>
+        </div>
+      );
+    }
+
+    // ── tag picker ───────────────────────────────────────────────────────────
+    // Adapted from SourceDumpModal in documentations.html: the dump tree fully
+    // expanded, leaves listing their MM sections. Picking one returns the pair.
+
+    function TagPicker({dumps, mms, taken, onPick, onClose}) {
+      useEffect(() => {
+        const onKey = e => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, []);
+      const childrenOf = id => dumps.filter(d => (d.parentId||null) === id);
+      const roots = childrenOf(null);
+      const anyLinks = dumps.some(d => dumpIsLeaf(dumps,d) && (d.mmLinks||[]).length);
+      const isTaken = (dumpId,mmId) => taken.some(t => t.dumpId===dumpId && t.mmId===mmId);
+
+      // `seen` is per-path, as buildTree does it. A parentId cycle is not
+      // reachable from a root today — parentId is singular, so a dump inside one
+      // is nobody's descendant — but this walks the same shape every other
+      // traversal here guards, and a future re-parenting feature would make it
+      // reachable. Guarding costs a Set copy; not guarding costs the page.
+      const renderEntry = (d, depth, seen) => {
+        if (seen.has(d.id)) return null;
+        seen = new Set(seen).add(d.id);
+        const leaf = dumpIsLeaf(dumps,d);
+        return (
+          <div key={d.id} style={{marginLeft: depth ? 14 : 0}} className="border-l border-gray-800 pl-2 mt-1">
+            <div className="flex items-center gap-1 text-xs text-gray-300">
+              <span>{leaf ? '📄' : '📁'}</span>
+              <span className="font-bold">{d.title || 'Untitled'}</span>
+            </div>
+            {leaf && (d.mmLinks||[]).length===0 && (
+              <div className="ml-4 text-[10px] text-gray-600 italic">no MMs linked</div>
+            )}
+            {leaf && (d.mmLinks||[]).map(l => {
+              const mm = mmById(mms, l.mmId);
+              const already = isTaken(d.id, l.mmId);
+              return (
+                <button key={l.id} disabled={already}
+                  data-tag-option={`${d.id}:${l.mmId}`}
+                  onClick={()=>onPick({dumpId:d.id, mmId:l.mmId})}
+                  className={`ml-4 mt-1 block w-full truncate rounded px-1 py-0.5 text-left text-xs ${already?"text-gray-600 cursor-not-allowed":"text-cyan-300 hover:bg-gray-800"}`}>
+                  ⛁ MM · {mm ? mm.name : 'Unknown MM'}{already&&<span className="text-gray-600"> · tagged</span>}
+                </button>
+              );
+            })}
+            {childrenOf(d.id).map(c => renderEntry(c, depth+1, seen))}
+          </div>
+        );
+      };
+
+      return (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60" onClick={onClose}>
+          <div className="max-h-[80vh] w-[520px] max-w-[92vw] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-4"
+            onClick={e=>e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-bold tracking-widest text-gray-300">TAG A SOURCE DUMP MM</span>
+              <button onClick={onClose} className="text-gray-500 hover:text-gray-200">✕</button>
+            </div>
+            {roots.length === 0 && (
+              <div className="py-6 text-center text-xs text-gray-500">
+                No source dumps yet. Add them in KS02 → KS03 → SOURCE DUMP.
+              </div>
+            )}
+            {roots.length > 0 && !anyLinks && (
+              <div className="pb-2 text-[10px] text-gray-500 italic">
+                Dumps exist but no leaf entry has an MM linked yet — link one in KS02 first.
+              </div>
+            )}
+            {roots.map(d => renderEntry(d, 0, new Set()))}
+          </div>
+        </div>
+      );
+    }
+
+    // ── tagged-source rows ───────────────────────────────────────────────────
+    // Reference only. One click expands the detail in place, a second click
+    // closes it, and the expanded panel's TITLE navigates to that dump in KS02.
+    // Everything inside the panel is read-only: sir-ks02.html owns sourceDumps.
+
+    function TagRow({tag, dumps, mms, open, onToggle, onRemove}) {
+      const dump = dumpById(dumps, tag.dumpId);
+      const mm = mmById(mms, tag.mmId);
+      const link = linkFor(dump, tag.mmId);
+      // A dump deleted in KS02, or an MM link removed from it, leaves this tag
+      // dangling. Say so and keep the row removable — never delete the user's
+      // tag as a side effect of a delete somewhere else.
+      const gone = !dump || !link;
+      const blocks = link ? scTextBlocks(link) : [];
+      const urls = (link && Array.isArray(link.links)) ? link.links : [];
+      return (
+        <div className="mb-1 rounded border border-gray-800 bg-gray-900" data-tag-id={tag.id}>
+          <div className="flex items-center gap-2 px-3 py-2">
+            <button onClick={onToggle} data-tag-toggle={tag.id}
+              className="flex-1 min-w-0 text-left flex items-center gap-2">
+              <span className="text-xs text-gray-600 shrink-0">{open?"▼":"▶"}</span>
+              <span className="text-xs shrink-0">⛁</span>
+              {gone?(
+                <span className="text-xs text-gray-500 italic truncate">source removed</span>
+              ):(
+                <span className="text-xs text-gray-200 truncate">
+                  {dump.title||"Untitled"} <span className="text-gray-600">·</span> <span className="text-gray-400">{mm?mm.name:"unknown MM"}</span>
+                </span>
+              )}
+            </button>
+            <button onClick={onRemove} data-tag-remove={tag.id} className="text-red-800 hover:text-red-500 text-xs shrink-0">✕</button>
+          </div>
+          {open&&(
+            <div className="border-t border-gray-800 px-3 py-2">
+              {gone?(
+                <div className="text-xs text-gray-600 italic">
+                  The source dump or its MM link no longer exists in KS02. Remove this tag with ✕, or restore the dump.
+                </div>
+              ):(
+                <>
+                  <a href={dumpHref(tag.dumpId, tag.mmId)} data-tag-title={tag.id}
+                    className="block text-xs text-indigo-400 hover:text-indigo-200 font-bold tracking-widest underline decoration-dotted mb-2">
+                    {dump.title||"Untitled"}
+                  </a>
+                  <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-2">MM · {mm?mm.name:"unknown MM"}</div>
+                  {!blocks.length&&!urls.length&&(
+                    <div className="text-xs text-gray-600 italic">Nothing recorded under this MM yet.</div>
+                  )}
+                  {blocks.map(b=>(
+                    <div key={b.id} className="bg-gray-800 rounded p-2 mb-1 select-text">
+                      <div className="text-xs font-bold text-gray-200 mb-0.5 truncate">{b.title||"text"}</div>
+                      <div className="text-xs text-gray-300 whitespace-pre-wrap">{b.explanation}</div>
+                    </div>
+                  ))}
+                  {urls.map(u=>(
+                    <div key={u.id} className="flex items-center gap-2 bg-gray-800 rounded px-2 py-1 mb-1">
+                      <a href={u.url} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-indigo-300 hover:text-indigo-100 truncate flex-1 min-w-0">{u.label||u.url}</a>
+                    </div>
+                  ))}
+                  <div className="text-[10px] text-gray-600 mt-2">Read-only here — edit this in KS02.</div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── detail ───────────────────────────────────────────────────────────────
+
+    function StorageDetail({storage, storages, dumps, mms, colorOf,
+      onBack, onRename, onDelete, onSaveParents, onDetachChild,
+      onSaveLink, onClearLink, onSaveExplanation, onAddTag, onRemoveTag}) {
+      const [confirmDelete,setConfirmDelete]=useState(null);
+      const [editingName,setEditingName]=useState(false);
+      const [nameDraft,setNameDraft]=useState("");
+      const [openTagId,setOpenTagId]=useState(null);
+      const [picking,setPicking]=useState(false);
+      const tags=TS.tagsOf(storage);
+
+      return (
+        <div className="p-4 max-w-2xl mx-auto overflow-y-auto pb-20 h-screen-nav">
+          <div className="flex items-center justify-between mb-3">
+            <button onClick={onBack} className="text-gray-500 hover:text-white text-xs">← back</button>
+            <button onClick={()=>setConfirmDelete(true)} className="text-red-700 hover:text-red-400 text-xs">delete</button>
+          </div>
+          <ConfirmDialog
+            open={!!confirmDelete}
+            title="Delete storage?"
+            message={`Delete "${storage.name}" and everything saved on it? Its children stay, detached. This cannot be undone.`}
+            onConfirm={()=>{setConfirmDelete(null);onDelete(storage.id);}}
+            onCancel={()=>setConfirmDelete(null)}
+          />
+
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-3 h-3 rounded-full shrink-0" style={{backgroundColor:colorOf(storage.id)}}/>
+            {editingName?(
+              <input autoFocus
+                className="font-bold text-lg bg-transparent border-b border-current outline-none min-w-0 w-40"
+                value={nameDraft}
+                onChange={e=>setNameDraft(e.target.value)}
+                onBlur={()=>{onRename(storage.id,nameDraft);setEditingName(false);}}
+                onKeyDown={e=>{
+                  if(e.key==="Enter"){onRename(storage.id,nameDraft);setEditingName(false);}
+                  if(e.key==="Escape"){setEditingName(false);}
+                }}
+              />
+            ):(
+              <span className="font-bold text-lg cursor-text" title="Double-click to rename"
+                onDoubleClick={()=>{setNameDraft(storage.name);setEditingName(true);}}
+              >{storage.name}</span>
+            )}
+            {storage.createdAt&&<span className="text-xs text-gray-600 ml-1">{storage.createdAt}</span>}
+          </div>
+
+          <LinkEditor link={storage.link} onSave={l=>onSaveLink(storage.id,l)} onClear={()=>onClearLink(storage.id)}/>
+
+          <div className="mb-4">
+            <ConnectionsPicker storages={storages} storage={storage} onSaveParents={onSaveParents} onDetachChild={onDetachChild} colorOf={colorOf}/>
+          </div>
+
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs text-gray-500 tracking-widest">SOURCE DUMP TAGS</div>
+              <button onClick={()=>setPicking(true)} data-add-tag
+                className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs font-bold">+ tag</button>
+            </div>
+            {!tags.length&&<div className="text-xs text-gray-600 italic">No source dump tagged yet.</div>}
+            {tags.map(t=>(
+              <TagRow key={t.id} tag={t} dumps={dumps} mms={mms}
+                open={openTagId===t.id}
+                onToggle={()=>setOpenTagId(p=>p===t.id?null:t.id)}
+                onRemove={()=>{if(openTagId===t.id)setOpenTagId(null);onRemoveTag(storage.id,t.id);}}/>
+            ))}
+            {picking&&(
+              <TagPicker dumps={dumps} mms={mms} taken={TS.tagPairs(storage)}
+                onPick={pair=>{onAddTag(storage.id,pair.dumpId,pair.mmId);setPicking(false);}}
+                onClose={()=>setPicking(false)}/>
+            )}
+          </div>
+
+          <ExplanationEditor explanation={storage.explanation||""} onSave={txt=>onSaveExplanation(storage.id,txt)}/>
+        </div>
+      );
+    }
+
+    // ── add-storage modal ────────────────────────────────────────────────────
+
+    function AddStorageModal({storages, colorOf, onAdd, onCancel}) {
+      const [name,setName]=useState("");
+      const [parentIds,setParentIds]=useState([]);
+      const [q,setQ]=useState("");
+      const filtered=storages.filter(s=>(s.name||"").toLowerCase().includes(q.toLowerCase()));
+      return (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 w-full max-w-sm">
+            <div className="font-bold tracking-widest text-xs text-indigo-300 mb-3">NEW STORAGE</div>
+            <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="Storage name…"
+              onKeyDown={e=>{if(e.key==="Enter"&&name.trim())onAdd(name,parentIds);}}
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 mb-3 text-white placeholder-gray-600 text-xs outline-none"/>
+            <div className="text-xs text-gray-400 mb-1">Parents ↑ (optional)</div>
+            {storages.length>0&&(
+              <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search storages..."
+                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 mb-1 text-white placeholder-gray-600 text-xs outline-none"/>
+            )}
+            <div className="max-h-32 overflow-y-auto space-y-0.5 mb-3">
+              {!storages.length&&<div className="text-xs text-gray-600 px-2 py-1">Nothing to nest under yet.</div>}
+              {filtered.map(s=>(
+                <button key={s.id} onClick={()=>setParentIds(p=>p.includes(s.id)?p.filter(x=>x!==s.id):[...p,s.id])}
+                  className={`w-full text-left text-xs px-2 py-1 rounded flex items-center gap-2 ${parentIds.includes(s.id)?"bg-indigo-800 text-white":"bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:colorOf(s.id)}}/>
+                  <span className="truncate">{s.name}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={()=>{if(name.trim())onAdd(name,parentIds);}} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded font-bold text-xs">ADD</button>
+              <button onClick={onCancel} className="flex-1 bg-gray-800 text-gray-300 py-2 rounded text-xs">CANCEL</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── app ──────────────────────────────────────────────────────────────────
+
+    function App() {
+      // Same contract as documentations.html: decided once at mount, and never
+      // re-decided, so a refused bootstrap cannot flip to "ready" without the
+      // user actually fixing the database and reloading.
+      const [slotReady]=useState(()=>_bootstrapSlotIfSafe());
+      const [activeSlotId,setActiveSlotId]=useState(null);
+      const [storages,setStorages]=useState([]);
+      const [manualPos,setManualPos]=useState({});
+      // Read-only mirrors of keys sir-ks02.html owns. Held so the tag rows can
+      // render; never written back from here.
+      const [dumps,setDumps]=useState([]);
+      const [mms,setMms]=useState([]);
+      const [view,setView]=useState(()=>window.location.hash.slice(1)==="tree"?"tree":"multiverse");
+      const [selectedId,setSelectedId]=useState(null);
+      const [focusId,setFocusId]=useState(null);
+      const [treeFocusId,setTreeFocusId]=useState(null);
+      const [adding,setAdding]=useState(false);
+      const loadedRef=useRef(false);
+
+      const colorOf=useCallback(id=>{
+        const s=storages.find(x=>x.id===id);
+        if (s&&s.customColor) return s.customColor;
+        const i=storages.findIndex(x=>x.id===id);
+        return i>=0?PALETTE[i%PALETTE.length]:"#6b7280";
+      },[storages]);
+
+      const current=useMemo(()=>storages.find(s=>s.id===selectedId)||null,[storages,selectedId]);
+
+      // on mount: adopt the active slot
+      useEffect(()=>{
+        if (!slotReady) return;
+        const db=_getTrackDB(), slots=db.slots||[];
+        const slot=slots.find(s=>s.id===db.activeSlotId)||slots[0];
+        if (!slot) return;
+        setActiveSlotId(slot.id);
+        setStorages(slot.trueStorages||[]);
+        setManualPos(slot.trueStoragePos||{});
+        setDumps((slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
+        setMms(slot.mms||[]);
+        loadedRef.current=true;
+        // ?storage=<id> deep link, the counterpart of documentations.html's
+        // ?page= and progress.html's ?date=. An id naming nothing opens nothing.
+        try {
+          const want=new URLSearchParams(location.search).get('storage');
+          if (want&&(slot.trueStorages||[]).some(s=>s.id===want)) {
+            setSelectedId(want);
+            setFocusId(want);
+            setTreeFocusId(want);
+          }
+        } catch {}
+      },[slotReady]);
+
+      // autosave: ONLY the two keys this page owns, merged into a fresh read.
+      // loadedRef stops the empty initial state being written over stored data
+      // before the mount effect has run.
+      useEffect(()=>{
+        if (!activeSlotId||!loadedRef.current) return;
+        // Skip a write that would store what is already stored — mounting and
+        // every cross-tab refresh would otherwise re-save identical bytes, mark
+        // track_db_pending, and arm a sync upload for nothing.
+        const db=_getTrackDB();
+        const cur=(db.slots||[]).find(s=>s.id===activeSlotId);
+        if (cur
+          && JSON.stringify(cur.trueStorages||[])===JSON.stringify(storages)
+          && JSON.stringify(cur.trueStoragePos||{})===JSON.stringify(manualPos)) return;
+        _writeSlotKeys(activeSlotId,{trueStorages:storages,trueStoragePos:manualPos});
+      },[storages,manualPos,activeSlotId]);
+
+      // cross-tab / remote freshness, matching index, progress, KS02 and
+      // documentations. Every value is compared before it is applied, so a write
+      // from another page that touches nothing here causes no re-render and, in
+      // turn, no needless save or sync upload.
+      useEffect(()=>{
+        const refresh=()=>{
+          const db=_getTrackDB(), slots=db.slots||[];
+          const slot=slots.find(s=>s.id===db.activeSlotId)||slots[0];
+          if (!slot) return;
+          const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+          const fresh=(set,val)=>set(prev=>same(prev,val)?prev:val);
+          // Move slot identity with the data snapshot, or an autosave could
+          // write A's stale fields into B after a switch in another tab.
+          setActiveSlotId(prev=>prev===slot.id?prev:slot.id);
+          fresh(setStorages,slot.trueStorages||[]);
+          fresh(setManualPos,slot.trueStoragePos||{});
+          fresh(setDumps,(slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
+          fresh(setMms,slot.mms||[]);
+        };
+        const onStorage=e=>{ if (!e.key||e.key==='track_db') refresh(); };
+        const onVis=()=>{ if (!document.hidden) refresh(); };
+        window.addEventListener('storage',onStorage);
+        document.addEventListener('visibilitychange',onVis);
+        return ()=>{
+          window.removeEventListener('storage',onStorage);
+          document.removeEventListener('visibilitychange',onVis);
+        };
+      },[]);
+
+      useEffect(()=>{
+        const onHash=()=>setView(window.location.hash.slice(1)==="tree"?"tree":"multiverse");
+        window.addEventListener('hashchange',onHash);
+        return ()=>window.removeEventListener('hashchange',onHash);
+      },[]);
+
+      // ── mutations (every one spreads: a storage may carry keys a later
+      //    version added, and normalizeSlot deliberately preserves them) ──────
+
+      function addStorage(name,parentIds){
+        const s={
+          id:genId(),
+          name:name.trim(),
+          createdAt:localToday(),
+          parentIds:[...(parentIds||[])],
+          explanation:"",
+          tags:[]
+        };
+        setStorages(p=>[...p,s]);
+        setAdding(false);
+        setSelectedId(s.id);
+      }
+      function duplicateStorage(id){
+        setStorages(p=>{
+          const s=p.find(x=>x.id===id); if(!s) return p;
+          return [...p,{
+            ...s,
+            id:genId(),
+            name:(s.name||"")+" copy",
+            createdAt:localToday(),
+            tags:TS.tagsOf(s).map(t=>({...t,id:genId()}))
+          }];
+        });
+      }
+      function renameStorage(id,name){
+        if(!name.trim())return;
+        setStorages(p=>p.map(s=>s.id===id?{...s,name:name.trim()}:s));
+      }
+      function deleteStorage(id){
+        setStorages(p=>p
+          .filter(s=>s.id!==id)
+          .map(s=>TS.parentIdsOf(s).includes(id)?{...s,parentIds:TS.parentIdsOf(s).filter(x=>x!==id)}:s));
+        setManualPos(p=>{ if(!(id in p)) return p; const n={...p}; delete n[id]; return n; });
+        setSelectedId(prev=>prev===id?null:prev);
+      }
+      function saveParents(id,parentIds){
+        setStorages(p=>p.map(s=>s.id===id?{...s,parentIds:[...parentIds]}:s));
+      }
+      function detachChild(childId,parentId){
+        setStorages(p=>p.map(s=>s.id===childId?{...s,parentIds:TS.parentIdsOf(s).filter(x=>x!==parentId)}:s));
+      }
+      function setColor(id,color){
+        setStorages(p=>p.map(s=>s.id===id?{...s,customColor:color}:s));
+      }
+      function saveLink(id,draft){
+        const url=(draft.url||"").trim(); if(!url) return;
+        const label=(draft.label||"").trim();
+        setStorages(p=>p.map(s=>s.id===id?{...s,link:label?{label,url}:{url}}:s));
+      }
+      // Delete the key rather than store an empty one, so "no link" is one
+      // state whether or not a link was ever attached.
+      function clearLink(id){
+        setStorages(p=>p.map(s=>{
+          if(s.id!==id) return s;
+          const n={...s}; delete n.link; return n;
+        }));
+      }
+      function saveExplanation(id,text){
+        setStorages(p=>p.map(s=>s.id===id?{...s,explanation:text}:s));
+      }
+      // Both tag writers go through true-storage-core.js, so a tag made here and
+      // a tag made from KS02 have exactly one shape.
+      function addTag(storageId,dumpId,mmId){
+        setStorages(p=>TS.withTag(p,storageId,dumpId,mmId,genId()));
+      }
+      function removeTag(storageId,tagId){
+        setStorages(p=>TS.withoutTag(p,storageId,tagId));
+      }
+      // Sibling reorder, ported from SRCH including its guard: only records that
+      // are actually siblings may swap places. Without that check a drag across
+      // branches would still splice the flat array, changing an order the user
+      // cannot see and never asked for. Order in `trueStorages` IS the order both
+      // views render, so there is no separate order field to keep in step.
+      function arrange(draggedId,targetId,before){
+        setStorages(p=>{
+          const byId=Object.fromEntries(p.map(s=>[s.id,s]));
+          const a=byId[draggedId], b=byId[targetId];
+          if(!a||!b)return p;
+          // Compare only parents that still exist; a dangling parent id would
+          // otherwise make two roots look like non-siblings.
+          const pa=TS.parentIdsOf(a).filter(id=>byId[id]);
+          const pb=TS.parentIdsOf(b).filter(id=>byId[id]);
+          const siblings=(pa.length===0&&pb.length===0)||pa.some(id=>pb.includes(id));
+          if(!siblings)return p;
+          const arr=[...p];
+          const [moved]=arr.splice(arr.findIndex(s=>s.id===draggedId),1);
+          const to=arr.findIndex(s=>s.id===targetId);
+          if(to<0)return p;
+          arr.splice(before?to:to+1,0,moved);
+          return arr;
+        });
+      }
+
+      const openStorage=id=>{setSelectedId(id);};
+
+      if (!slotReady) {
+        return (
+          <div className="min-h-screen bg-gray-950 text-gray-100 font-mono text-sm flex items-center justify-center p-6">
+            <div className="max-w-md text-center">
+              <div className="text-sm font-bold text-amber-300 mb-2">No workspace available yet</div>
+              <div className="text-xs text-gray-400 mb-4">
+                Either this browser's stored data could not be read, or older Progress/KS02 data is
+                waiting to be migrated. Open <a href="progress.html" className="text-cyan-300 underline">Progress</a> or
+                <a href="sir-ks02.html" className="text-cyan-300 underline mx-1">KS02</a>
+                first, or start from the <a href="index.html" className="text-cyan-300 underline">Home</a> page.
+              </div>
+              <a href="index.html" className="text-xs text-gray-600 hover:text-gray-300">← TRACK</a>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-gray-950 text-gray-100 font-mono text-sm select-none">
+          <div className="flex items-center justify-between px-3 py-3 bg-gray-900 border-b border-gray-800">
+            <a href="index.html" className="text-gray-600 hover:text-gray-300 transition-colors text-xs">← TRACK</a>
+            <div className="flex gap-1">
+              {[["multiverse","MULTIVERSE"],["tree","SRCH"]].map(([v,l])=>(
+                <button key={v} onClick={()=>{setView(v);setSelectedId(null);}}
+                  className={`px-2 py-1 rounded text-xs font-bold transition ${view===v?"bg-white text-gray-950":"text-gray-400 hover:text-white"}`}>{l}</button>
+              ))}
+            </div>
+            <div className="theme-toggle-host" data-theme-toggle-host></div>
+            <div className="flex items-center gap-2">
+              <a href="sir-ks02.html#ks03" className="text-gray-600 hover:text-gray-300 text-xs">KS02 →</a>
+              <button onClick={()=>setAdding(true)} className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs font-bold">+Storage</button>
+            </div>
+          </div>
+
+          {current?(
+            // Keyed by storage id: opening a different storage must not inherit
+            // the previous one's open tag row, rename draft, or SAVED flag.
+            <StorageDetail
+              key={current.id}
+              storage={current} storages={storages} dumps={dumps} mms={mms} colorOf={colorOf}
+              onBack={()=>setSelectedId(null)}
+              onRename={renameStorage}
+              onDelete={deleteStorage}
+              onSaveParents={saveParents}
+              onDetachChild={detachChild}
+              onSaveLink={saveLink}
+              onClearLink={clearLink}
+              onSaveExplanation={saveExplanation}
+              onAddTag={addTag}
+              onRemoveTag={removeTag}/>
+          ):view==="multiverse"?(
+            <div className="flex flex-col h-screen-nav">
+              <StorageCanvas
+                storages={storages} manualPos={manualPos} setManualPos={setManualPos}
+                onOpen={openStorage} colorOf={colorOf} onFill={setColor}
+                onDuplicate={duplicateStorage} focusId={focusId}/>
+            </div>
+          ):(
+            <div className="overflow-y-auto h-screen-nav">
+              <StorageTreeView storages={storages} colorOf={colorOf} onOpen={openStorage}
+                onArrange={arrange} focusId={treeFocusId} onClearFocus={()=>setTreeFocusId(null)}/>
+            </div>
+          )}
+
+          {adding&&(
+            <AddStorageModal storages={storages} colorOf={colorOf}
+              onAdd={addStorage} onCancel={()=>setAdding(false)}/>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App/>);
+  </script>
+  <script src="notes-widget.js?v=2"></script>
+</body>
+</html>

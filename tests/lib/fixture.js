@@ -42,7 +42,9 @@ function emptySlot(over = {}) {
     deadlines: [],
     pos: {},
     levelTemplates: {},
-    docPages: []
+    docPages: [],
+    trueStorages: [],
+    trueStoragePos: {}
   }, over);
 }
 
@@ -61,6 +63,18 @@ const note = (id, ts, over = {}) => Object.assign({ id, topic: 'Note ' + id, con
 
 const dump = (id, createdAt, over = {}) =>
   Object.assign({ id, title: 'Dump ' + id, createdAt, parentId: null, mmLinks: [] }, over);
+
+// One MM section inside a leaf dump. This is the thing a storage tag points at:
+// a tag names the (dump, mm) PAIR, not the link's own id.
+const dumpLink = (id, mmId, over = {}) =>
+  Object.assign({ id, mmId, text: '', textBlocks: [], links: [] }, over);
+
+// A True Storage record and one of its source-dump tags. `parentIds` is the
+// same relationship shape mms use, so the tree and canvas read both alike.
+const trueStorage = (id, name, over = {}) =>
+  Object.assign({ id, name, createdAt: '2026-03-01', parentIds: [], explanation: '', tags: [] }, over);
+
+const storageTag = (id, dumpId, mmId) => ({ id, dumpId, mmId });
 
 const task = (id, over = {}) =>
   Object.assign({ id, title: 'Task ' + id, children: [], completed: false }, over);
@@ -101,7 +115,9 @@ function populatedSlot(over = {}) {
     linChanges: [linChange(4, '2026-03-06', { items: [{ id: 1 }, { id: 2 }] })],
     linDayTitles: { '2026-03-06': 'Day title override' },
     notes: [note('n-1', localTs(2026, 3, 7, 23, 30))],
-    sourceDumps: [dump('d-1', '2026-03-08')],
+    // Two MM sections in one leaf dump, so a test can assert that a storage
+    // chip lands under the RIGHT one and not merely somewhere on the page.
+    sourceDumps: [dump('d-1', '2026-03-08', { mmLinks: [dumpLink(90, 10), dumpLink(91, 11)] })],
     goals: [
       task('g-1', {
         title: 'Root goal',
@@ -122,7 +138,12 @@ function populatedSlot(over = {}) {
       deadline('dl-sched', '2026-03-10', { startDate: '2026-03-08' }),
       deadline('dl-doc', '2026-03-10', { startDate: '2026-03-09', docPageId: 'p-1', time: '10:00' })
     ],
-    docPages: [docPage('p-1')]
+    docPages: [docPage('p-1')],
+    trueStorages: [
+      trueStorage('ts-1', 'Storage A', { tags: [storageTag('tg-1', 'd-1', 10)] }),
+      trueStorage('ts-2', 'Storage B', { parentIds: ['ts-1'] })
+    ],
+    trueStoragePos: { 'ts-1': { x: 120, y: 140 } }
   }, over));
 }
 
@@ -142,14 +163,15 @@ function slotWithout(missing, over = {}) {
 // that claims to load old data has to survive this one.
 const preCalendarSlot = (over = {}) => slotWithout(
   ['linDayTitles', 'notes', 'mmEntries', 'mgSchedule', 'calendarNotes',
-    'deadlines', 'pos', 'levelTemplates', 'docPages'], over);
+    'deadlines', 'pos', 'levelTemplates', 'docPages',
+    'trueStorages', 'trueStoragePos'], over);
 
 // The oldest shape: what a slot looked like before Progress and KS02 were
 // unified under one track_db, when a slot held only KS02 records.
 const preUnifiedSlot = (over = {}) => slotWithout(
   ['linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
     'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-    'levelTemplates', 'docPages'], over);
+    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos'], over);
 
 // ── malformed input ──────────────────────────────────────────────────────
 // Raw STRINGS, because the failure mode is what is stored, not what a caller
@@ -204,6 +226,7 @@ module.exports = {
   localTs, emptySlot, populatedSlot,
   slotWithout, preCalendarSlot, preUnifiedSlot,
   MALFORMED_DB_STRINGS, malformedSlot, dbWith, legacyLocalKeys,
-  mm, kolb, mgChange, linChange, note, dump, task, milestone,
-  saAction, saEntry, mmEntry, session, calNote, deadline, docPage
+  mm, kolb, mgChange, linChange, note, dump, dumpLink, task, milestone,
+  saAction, saEntry, mmEntry, session, calNote, deadline, docPage,
+  trueStorage, storageTag
 };

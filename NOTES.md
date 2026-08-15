@@ -44,10 +44,10 @@ still open.
 
 ### Nested ID remapping
 
-Import currently preserves nested IDs verbatim: goal IDs, source-dump IDs, doc-page IDs
-and block IDs all come across unchanged. That is correct for restoring a backup and wrong
-for importing a *second copy* of a workspace you already have, where the two copies then
-share IDs.
+Import currently preserves nested IDs verbatim: goal IDs, source-dump IDs, doc-page IDs,
+block IDs and storage IDs all come across unchanged. That is correct for restoring a backup
+and wrong for importing a *second copy* of a workspace you already have, where the two
+copies then share IDs.
 
 Decide whether import should offer a "copy" mode that remaps every nested ID and rewrites
 every internal reference to match. This is the same problem as the source-dump policy
@@ -71,10 +71,18 @@ Choose and document one behavior:
 - Deduplicate identical entries.
 - Import as copies and remap every internal reference.
 
+The **source-dump-only** path has a second gap now that storages tag dumps: it carries
+`sourceDumps` and nothing else, so the tags in the receiving workspace's `trueStorages` do
+not follow, and dumps imported into a different workspace arrive untagged. Both halves of a
+tag are slot-local ids, so there is nothing sensible to carry across without the remapping
+decision above. Settle the two together rather than special-casing tags.
+
 ### Acceptance criteria
 
 - The chosen duplicate behavior is documented in README and enforced by a browser test
   that imports the same file twice.
+- Whatever the dump-only path does about storage tags is stated in README rather than left
+  as a silent consequence of what that payload happens to contain.
 - Whichever mode remaps IDs rewrites every internal reference, including `mmLinks` and
   nested block IDs, so nothing points at a stale ID.
 - The ID audit includes external stores such as `trackPriorityMatrix`; the chosen behavior
@@ -131,8 +139,17 @@ Still to add:
 - Goal and task IDs are unique within their intended scope.
 - Linked task and mind-map references resolve or are intentionally marked missing.
 - Source-dump IDs and nested block IDs are unique.
-- Nested shapes outside the goal tree — including mind maps, source dumps and
-  documentation blocks — meet the contracts their readers assume.
+- Nested shapes outside the goal tree — including mind maps, source dumps,
+  documentation blocks, and storage `parentIds`/`tags` — meet the contracts their
+  readers assume. `mms` and `trueStorages` share a `parentIds` shape that a bad
+  value turns into a `TypeError` on the next render; today only the defensive
+  readers in `true-storage-core.js` stand between that and a white screen, and
+  `mms` has no equivalent. Cover both together or neither, so the rule stays
+  consistent.
+- A storage tag names a `(dumpId, mmId)` pair, and neither half is checked to
+  resolve. A dangling tag is rendered as *source removed* rather than dropped,
+  which is the intended behaviour — but "intentionally marked missing" has no
+  policy yet, so validation cannot currently tell it apart from damage.
 - The schema version is supported.
 
 Goal and task identity/reference checks need a shared goal-tree walker;
@@ -607,6 +624,7 @@ beyond calendar aggregation and the currently covered browser regressions.
 - Schedule block expansion and resizing.
 - Milestone reordering.
 - Mind-map layout movement.
+- Storage canvas movement and the storage tree's sibling drag.
 - Print/PDF output.
 
 ### Fixtures still needed
@@ -647,7 +665,8 @@ Track-website/
 │   │   ├── HomePage.jsx
 │   │   ├── ProgressPage.jsx
 │   │   ├── KS02Page.jsx
-│   │   └── DocumentationsPage.jsx
+│   │   ├── DocumentationsPage.jsx
+│   │   └── TrueStoragePage.jsx
 │   ├── features/
 │   │   ├── goals/
 │   │   ├── schedule/
@@ -656,6 +675,7 @@ Track-website/
 │   │   ├── kolb/
 │   │   ├── sir/
 │   │   ├── source-dumps/
+│   │   ├── true-storage/
 │   │   ├── notes/
 │   │   └── documentations/
 │   ├── data/

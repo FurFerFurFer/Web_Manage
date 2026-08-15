@@ -61,9 +61,17 @@ function run(label, file, env) {
 // invisibly on a machine running in UTC.
 const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js'];
 
+// Swept once, not per zone: true-storage-core.js and graph-layout.js hold no
+// date code at all, so five runs would cost five times as long and prove
+// exactly the same thing.
+const UNSWEPT_FILES = ['true-storage-core.test.js', 'graph-layout.test.js'];
+
 for (const tz of zones)
   for (const file of OFFLINE_FILES)
     run(file.replace(/\.test\.js$/, '') + '  TZ=' + tz, file, { TZ: tz });
+
+for (const file of UNSWEPT_FILES)
+  run(file.replace(/\.test\.js$/, '') + '  (no date code — one run)', file);
 
 if (offlineOnly) {
   console.log('\n(browser suite skipped: --offline)');

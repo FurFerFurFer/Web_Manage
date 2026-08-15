@@ -60,7 +60,9 @@
     deadlines: 'list',
     pos: 'map',
     levelTemplates: 'map',
-    docPages: 'list'
+    docPages: 'list',
+    trueStorages: 'list',
+    trueStoragePos: 'map'
   };
 
   var SLOT_KEYS = Object.keys(SLOT_FIELDS);

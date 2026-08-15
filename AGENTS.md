@@ -60,15 +60,17 @@ Active files:
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
+| `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, an explanation, and source-dump tags |
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
 | `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
 | `schema.js` | The canonical slot definition (`window.TrackSchema`): the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
 | `storage-guard.js` | The one `track_db` load boundary (`loadDB` — parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, both banners (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
+| `true-storage-core.js` | The one definition of the storage↔source-dump relationship (`window.TrackTrueStorage`): the pair matcher, the pure tag writers, and the parent/child tree |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js` and `schema.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js` and `true-storage-core.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -82,7 +84,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=4`, `schema.js?v=2`, `calendar-core.js?v=2`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=4`, `schema.js?v=3`, `calendar-core.js?v=2`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
 
 ## Current Data Contract
 
@@ -125,7 +127,9 @@ Current slot fields include:
   deadlines,
   pos,
   levelTemplates,
-  docPages
+  docPages,
+  trueStorages,
+  trueStoragePos
 }
 ```
 
@@ -137,12 +141,12 @@ new-slot creation site and the whole-slot importer go through it.
 
 Two rules follow:
 
-- Do not reintroduce a slot literal. All six creation sites — `index.html`
+- Do not reintroduce a slot literal. All seven creation sites — `index.html`
   `createSlot`, the legacy bootstrap IIFEs in `progress.html` and `sir-ks02.html`,
-  `sir-ks02.html`'s on-mount auto-create, `documentations.html`'s
-  `_bootstrapSlotIfSafe`, and the importer — call `TrackSchema.createEmptySlot`
-  or `TrackSchema.normalizeSlot`. They used to build 10, 11, 13, 13, 14 and 21
-  fields respectively.
+  `sir-ks02.html`'s on-mount auto-create, `documentations.html`'s and
+  `true-storage.html`'s `_bootstrapSlotIfSafe`, and the importer — call
+  `TrackSchema.createEmptySlot` or `TrackSchema.normalizeSlot`. The original six
+  used to build 10, 11, 13, 13, 14 and 21 fields respectively.
 - `normalizeSlot` repairs and always succeeds; `validateSlot` and
   `validateDatabase` report and never repair. Keep that split. The legacy rescue
   paths need a total function — refusing there strands the user's oldest data —
@@ -195,9 +199,18 @@ A deadline's `date` is editable from exactly one place: the popup's Edit form in
 - Moving the due day must **never rewrite `startDate`**. The two are independent stored dates with one ordering rule between them, and a writer that clamps or shifts the caution start to make room has destroyed a period the user chose. Refuse the edit instead; the user moves the caution start themselves, in the same form.
 - `startDate <= date` is enforced **only at authoring time** and never on a stored record. `schema.js` checks each date's format independently and has no cross-field rule, so nothing downstream will catch an inverted span — and it does not fail loudly. `dlInCaution` goes false for every day, so the run-up silently vanishes on all five surfaces; `dlDayCount` returns a negative number that `documentations.html` renders verbatim; and worst, that page's edit form gates Save on `dlValid` against the stored `startDate`, so an inverted deadline can never be edited from Documentations again. A new writer of `date` therefore has to carry the check itself. `tests/calendar-core.test.js` pins this behaviour in an offline guard case so the cost of losing the check stays visible.
 
-Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`. `progress.html`'s `uid()`, `documentations.html`'s `genId()` and `notes-widget.js`'s `generateId()` are delegates with a local fallback; do not reintroduce a page-local id shape. `sir-ks02.html` keeps its numeric `nid()` counter for its own records. Never rewrite a stored id.
+A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may carry `tags` — each one naming a **pair**: a source-dump leaf (`dumpId`) and one MM linked inside it (`mmId`). Four rules follow, and the first is the load-bearing one:
 
-Every **read** of `track_db` must go through `TrackStorage.loadDB()` from `storage-guard.js`, never a bare `JSON.parse(localStorage.getItem('track_db') …)`. All five readers — `getDB` (`index.html`), `_getTrackDB` (`progress.html`, `sir-ks02.html`, `documentations.html`) and `_twDB` (`notes-widget.js`) — are one-line delegates. `JSON.parse` does not throw on `'null'`, `'42'` or `'[…]'`, so a hand-rolled `try/catch` around it is not a check. Three rules follow:
+- The comparison that decides which storages belong to a pair has exactly **one** definition, `TrackTrueStorage.storagesForLink` in `true-storage-core.js`, and the tag record's shape has exactly one, `withTag`. `sir-ks02.html` draws an mmLink's content at **four** sites — the source-dump leaf card, the S&C tab for a leaf MM, the S&C tab for a non-leaf MM, and `DescendantSCNode` — and every one of them renders the shared `StorageTags` component through the single `renderStorageTags` helper. Never spell `t.dumpId === … && t.mmId === …` at a call site. This rule is written from a shipped bug in a different feature with the identical shape: the deadline caution predicate was spelled out at three sites, one dropped half of it, and the timeline mismarked every due day until it was found. `tests/browser.test.js` therefore asserts **negatively** at each surface — a chip must be absent under the other MM in the same dump, and absent under the same MM in another dump.
+- `trueStorages` and `trueStoragePos` are owned by `true-storage.html` and must never join `sir-ks02.html`'s `_writeSlotKeys` autosave patch, which is built from that page's React snapshot. KS02 may add or remove a tag, and only through `_mutateSlotKey` — a fresh read-modify-write of that one key. `true-storage.html` is the mirror image: it reads `sourceDumps` and `mms` and writes neither.
+- Deleting a source dump, or removing an MM link from one, must **not** touch `trueStorages`. A tag whose pair no longer resolves renders as *source removed* and stays removable by hand, exactly as a day note outlives the documentation page that authored it.
+- `parentIds` and `tags` are deliberately **not** validated in `schema.js` beyond the object-item check every list field gets. `mms` carries the identical `parentIds` exposure and is not validated either, so gating one and not the other would invent an inconsistent rule. `true-storage-core.js` pays for that instead: every nested list is read through a helper that cannot throw, and `buildTree` terminates on a parent cycle.
+
+A storage's `link` is at most **one**, and clearing it **deletes the key** rather than storing `''` — the same absence-is-meaningful rule as a day note's `time`. A storage that never had a link and one whose link was cleared must be the same state.
+
+Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`. `progress.html`'s `uid()`, `documentations.html`'s `genId()`, `true-storage.html`'s `genId()` and `notes-widget.js`'s `generateId()` are delegates with a local fallback; do not reintroduce a page-local id shape. `sir-ks02.html` keeps its numeric `nid()` counter for its own records — which is also why a storage id must stay a string: a tag holds one id of each kind, and the two counters must never be able to collide. Never rewrite a stored id.
+
+Every **read** of `track_db` must go through `TrackStorage.loadDB()` from `storage-guard.js`, never a bare `JSON.parse(localStorage.getItem('track_db') …)`. All six readers — `getDB` (`index.html`), `_getTrackDB` (`progress.html`, `sir-ks02.html`, `documentations.html`, `true-storage.html`) and `_twDB` (`notes-widget.js`) — are one-line delegates. `JSON.parse` does not throw on `'null'`, `'42'` or `'[…]'`, so a hand-rolled `try/catch` around it is not a check. Three rules follow:
 
 - `loadDB` validates; it never repairs. Nothing may run `normalizeSlot` over already-stored slots — that is a migration, and it belongs behind the `schemaVersion` that does not exist yet.
 - Never write while `TrackStorage.dbBlocked()` is true, and never work around it. A malformed database must stay byte-identical and recoverable; `saveDB` enforces this, and any new bootstrap or auto-create path must return early on it rather than rely on the write being silently refused.
@@ -240,10 +253,12 @@ index.html
 progress.html
 sir-ks02.html
 documentations.html
+true-storage.html
 calendar-core.js
 storage-guard.js
 firebase-sync.js
 notes-widget.js
+true-storage-core.js
 ```
 
 Inspect every applicable:
@@ -292,7 +307,7 @@ Do not rebuild a slot from a partial allowlist unless that is the explicitly tes
 
 Every page now writes **only the keys it owns**, merged into a fresh read of the stored slot, and refreshes from `storage` and `visibilitychange`. No page rebuilds a whole slot from its own React snapshot; `README.md` holds the per-page ownership table. Two rules follow, and both are load-bearing:
 
-- A new write must go through that page's single-key helper — `_writeP` (`progress.html`), `_writeSlotKeys` / `_writeSlotKey` / `_mutateSlotKey` (`sir-ks02.html`, `documentations.html`). Assigning `db.slots = …` from component state reintroduces exactly the bug that cost day notes, deadlines and documentation pages.
+- A new write must go through that page's single-key helper — `_writeP` (`progress.html`), `_writeSlotKeys` / `_writeSlotKey` / `_mutateSlotKey` (`sir-ks02.html`, `documentations.html`, `true-storage.html`). Assigning `db.slots = …` from component state reintroduces exactly the bug that cost day notes, deadlines and documentation pages.
 - Writing a key the page does not own is a defect even when the value looks right, because the value came from a snapshot. If a page needs to change a foreign key, it does a fresh read-modify-write of that key alone.
 - A refresh must move slot identity with the data snapshot. Progress and KS02 autosaves
   target the id whose fields are in React state, not a newly changed root `activeSlotId`;
@@ -457,6 +472,7 @@ node --check storage-guard.js
 node --check calendar-core.js
 node --check firebase-sync.js
 node --check notes-widget.js
+node --check true-storage-core.js
 ```
 
 Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
@@ -465,7 +481,7 @@ Then run the committed suite — it is the only automated check that sees the in
 node tests/run.js
 ```
 
-It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11) and then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js` once (no date code in it), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
 
 - Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
 - A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.
@@ -501,6 +517,7 @@ For changes affecting runtime HTML, scripts, CDN tags, React code, storage initi
    http://127.0.0.1:8765/progress.html
    http://127.0.0.1:8765/sir-ks02.html
    http://127.0.0.1:8765/documentations.html
+   http://127.0.0.1:8765/true-storage.html
    ```
 
 3. Verify:
@@ -741,6 +758,19 @@ recorded failing first.
 - The blank-date case earned its place immediately — it caught a real defect. The first implementation gated the ordering warning on `startDate > date` alone, on the reasoning that a blank date makes the comparison false. It does not: every non-empty string sorts above `''`, so both messages rendered at once. The ordering line is now gated on there being a due day at all.
 - 50 further assertions were run once from a task-owned script and cannot be re-run: all five pages mount with a non-empty root, `TrackStorage.loadDB`, the notes widget (`#nw-btn`), a `signed-out` sync state and no page errors; a **year**-boundary move (2026-12-20 → 2027-01-05) keeps `startDate` on 2026-12-14 and moves the timeline to "Tuesday, January 5, 2027" and the grid to "Jan 2027"; an open day panel follows to `Jan 5` while a closed one stays closed; a `?date=` link built before the move still opens the popup on the current due day; and the moved record still passes `TC.dlValid` against the draft `documentations.html` seeds from it, with `dlDayCount` reading a positive 23 — the direct check that no inverted span reached storage.
 - Not covered: real touch hardware, the live Firebase project, and print output of the new row.
+
+### True Storage and per-pair source-dump tagging (2026-08-15)
+
+- One new offline suite (`tests/true-storage-core.test.js`, 17 cases, run **once** rather than swept — the module holds no date code) and ten new browser cases. `schema.js` grew two rows, so the slot went from 21 to 23 fields; `tests/schema.test.js`'s hand-written CONTRACT, `tests/browser.test.js`'s copy of it, and `tests/lib/fixture.js` all had to follow, which is exactly what those hand-written lists are for.
+- The **fail-first proof** is the important part, and it was run against two doctored baselines rather than one, because the failure this design prevents has two symmetrical halves. Each scratch `TRACK_TEST_ROOT` held symlinks to the repository plus **one** doctored `sir-ks02.html` whose `StorageTags` re-spelled the match at the call site instead of calling `TrackTrueStorage.storagesForLink`:
+  - **Forgetting the MM half** (`t.dumpId===dump.id` alone): three cases failed — "a tag lands on its own pair and on no other" (`['ts-1']` became `['ts-1','ts-2']`), "the chip is drawn on the non-leaf S&C branch and inside a descendant node", and "a tag added from KS02 is a fresh read-modify-write" — while "the chip is drawn in the MM detail S&C tab, per pair" **passed**, because that case's seed has only one tagged storage and no second storage to bleed through. 80 of 84 subtests passed.
+  - **Forgetting the dump half** (`t.mmId===link.mmId` alone): a different three failed — "a tag lands on its own pair and on no other", "the chip is drawn in the MM detail S&C tab, per pair" (`d-2:10` returned `['ts-1']` instead of `[]`), and "the chip is drawn on the non-leaf S&C branch and inside a descendant node". 81 of 84 passed.
+  - The two sets **overlap but neither contains the other**, which is the whole argument for asserting negatively at each surface instead of once: the leaf S&C case catches only the dump half, the KS02 read-modify-write case catches only the MM half.
+- Never place either doctored copy in the repository.
+- What the browser cases assert: a storage created from `+Storage` is stored with a string id, `parentIds: []`, `tags: []` and a **local**-day `createdAt`, and survives a reload as the same record; the tree reorders siblings and **refuses** a drag onto a non-sibling; a tag written from True Storage appears in KS02 under its own MM and nowhere else, across two dumps and two MMs; the same chip appears in the leaf card, the leaf S&C tab, the non-leaf S&C branch and `DescendantSCNode`, each asserted separately; a tag added from the KS02 picker preserves a storage written by another writer between mount and click, which is the read-modify-write proof; a tag row expands, collapses, and links to `sir-ks02.html?dump=…&mm=…#ks03`; the single link is set, replaced, and cleared back to **no key at all**; the explanation is written on SAVE and not by typing; and `?storage=` / `?dump=` naming nothing open nothing and raise no error.
+- `trueStorages` and `trueStoragePos` were added to the sentinel set in "KS02 writes no key it does not own", so an ordinary KS02 edit is asserted to leave both byte-identical.
+- Export → import carries both fields, including a tag's `(dumpId, mmId)` pair and a storage's `parentIds`.
+- Not covered: real touch hardware (the storage canvas's drag/pinch path and the tree's `⇅` handle were exercised only through synthetic events or not at all), the live Firebase project, and print output.
 
 Not covered by the suite, and still requiring manual checks: touch and drag interaction, the signed-in Firebase path, real multi-device behaviour, print output, and most of the UI.
 

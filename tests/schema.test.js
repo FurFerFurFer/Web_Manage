@@ -39,14 +39,14 @@ const S = globalThis.TrackSchema;
 
 const TZ = process.env.TZ || '(system default)';
 
-// The 21 fields as AGENTS.md "Current Data Contract" writes them, in its order.
+// The 23 fields as AGENTS.md "Current Data Contract" writes them, in its order.
 // Written out by hand on purpose: if the table in schema.js is edited, this is
 // the assertion that notices.
 const CONTRACT = [
   'id', 'name', 'createdAt', 'sessions', 'mms', 'kolbs', 'mgChanges',
   'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
   'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-  'levelTemplates', 'docPages'
+  'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos'
 ];
 
 const LISTS = CONTRACT.filter(k => S.SLOT_FIELDS[k] === 'list');
@@ -59,7 +59,7 @@ test('module surface', () => {
     assert.equal(typeof S[name], 'function', name + ' is exported');
   }
   assert.equal(typeof S.SLOT_FIELDS, 'object');
-  assert.equal(S.SLOT_KEYS.length, 21);
+  assert.equal(S.SLOT_KEYS.length, 23);
   assert.ok(Object.isFrozen(S.SLOT_FIELDS), 'the field table is frozen — it is the schema, not a scratch object');
 });
 

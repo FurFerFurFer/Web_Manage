@@ -7,7 +7,9 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=2"></script>
+  <script src="schema.js?v=3"></script>
+  <script src="graph-layout.js?v=1"></script>
+  <script src="true-storage-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -82,6 +84,23 @@
       if (!slots.some(s => s.id === slotId)) return;
       db.slots = slots.map(s => s.id === slotId ? {...s, ...patch} : s);
       TrackStorage.saveDB(db);
+    }
+    // `trueStorages` is owned by true-storage.html, not by this page. This page
+    // may still add or remove a source-dump tag, and AGENTS.md allows exactly
+    // that shape for a foreign key: a fresh read-modify-write of that ONE key.
+    // It must never join the _writeSlotKeys autosave above, because that patch
+    // is built from this page's React snapshot — which is how day notes,
+    // deadlines and documentation pages were lost once already.
+    // Returns the next array so the caller can render it without a second read.
+    function _mutateSlotKey(slotId, key, fn) {
+      const db = _getTrackDB(), slots = db.slots || [];
+      const cur = slots.find(s => s.id === slotId);
+      if (!cur) return null;
+      const next = fn(cur[key] || []);
+      if (next === cur[key]) return next;   // nothing changed: no write, no sync
+      db.slots = slots.map(s => s.id === slotId ? {...s, [key]: next} : s);
+      TrackStorage.saveDB(db);
+      return next;
     }
     function _setActiveSlotId(id) {
       const db = _getTrackDB(); db.activeSlotId = id;
@@ -195,13 +214,41 @@
       if(dirty)TrackStorage.saveDB(db);
     })();
 
+    // `visited` is the cycle guard, and getAncestors right below has always had
+    // one — this was the inconsistency, not a design choice. Without it, an MM
+    // that is its own descendant recursed until the stack gave out, which tore
+    // down the whole React tree and left the page blank.
+    //
+    // It also de-duplicates: parentIds is plural, so a diamond descendant used
+    // to be pushed once per path and rendered duplicate S&C blocks. A descendant
+    // is a descendant once. DFS pre-order is kept deliberately, because the
+    // returned order is the order those S&C blocks are drawn in.
     function getDescendants(mmId, mmsArray) {
       const result = [];
+      const visited = new Set([mmId]);
       const visit = (id) => {
-        mmsArray.filter(m => (m.parentIds || []).includes(id)).forEach(k => { result.push(k); visit(k.id); });
+        mmsArray.filter(m => (m.parentIds || []).includes(id)).forEach(k => {
+          if (visited.has(k.id)) return;
+          visited.add(k.id);
+          result.push(k);
+          visit(k.id);
+        });
       };
       visit(mmId);
       return result;
+    }
+
+    // Every dump from the root down to `dumpId`, for the breadcrumb path.
+    // ONE definition: this used to be spelled out twice — guarded in the ?dump=
+    // deep-link effect and unguarded 300 lines away in onGoToSourceDump, which
+    // is the same duplication shape that cost this project the deadline caution
+    // predicate. `seen` matters because the walk goes UP from an arbitrary dump,
+    // so unlike the downward walks it can start inside a parentId cycle.
+    function dumpPathTo(dumpId, dumps, seen = new Set()) {
+      const d = (dumps || []).find(x => x.id === dumpId);
+      if (!d || seen.has(dumpId)) return [];
+      seen.add(dumpId);
+      return d.parentId ? [...dumpPathTo(d.parentId, dumps, seen), dumpId] : [dumpId];
     }
 
     function isLeafMM(mmId, mmsArray) {
@@ -312,159 +359,21 @@
 	      );
 	    }
 
-	    function computeLayerLayout(mms, layerRadii=[0,180,340,500,660]) {
-      if (!mms.length) return {};
-      const CX=360, CY=260;
-      const mmById=Object.fromEntries(mms.map(m=>[m.id,m]));
-
-      const childMap={};
-      mms.forEach(m=>{
-        childMap[m.id]=childMap[m.id]||[];
-        (m.parentIds||[]).forEach(pid=>{
-          if (!mmById[pid]) return;
-          childMap[pid]=childMap[pid]||[];
-          if (!childMap[pid].includes(m.id)) childMap[pid].push(m.id);
-        });
-      });
-
-      // Bidirectional adjacency to detect disconnected components
-      const adj={};
-      mms.forEach(m=>{
-        adj[m.id]=adj[m.id]||[];
-        (m.parentIds||[]).forEach(pid=>{
-          if (!mmById[pid]) return;
-          adj[m.id]=adj[m.id]||[];
-          adj[pid]=adj[pid]||[];
-          if (!adj[m.id].includes(pid)) adj[m.id].push(pid);
-          if (!adj[pid].includes(m.id)) adj[pid].push(m.id);
-        });
-      });
-
-      // BFS to find connected components
-      const visited={};
-      const components=[];
-      mms.forEach(m=>{
-        if (visited[m.id]) return;
-        const comp=[]; const q=[m.id]; visited[m.id]=true; let h=0;
-        while(h<q.length){ const id=q[h++]; comp.push(id); (adj[id]||[]).forEach(nid=>{ if (!visited[nid]){ visited[nid]=true; q.push(nid); } }); }
-        components.push(comp);
-      });
-
-      // Layout one component centered at (cx, cy); writes into pos
-      function layoutComponent(compIds, cx, cy, pos){
-        const compSet=new Set(compIds);
-        const compNodes=compIds.map(id=>mmById[id]);
-        const roots=compNodes.filter(m=>!(m.parentIds||[]).some(p=>mmById[p]&&compSet.has(p)));
-
-        const depth={};
-        const queue=[];
-        roots.forEach(r=>{ depth[r.id]=0; queue.push(r.id); });
-        let head=0;
-        while(head<queue.length){
-          const id=queue[head++];
-          (childMap[id]||[]).forEach(cid=>{
-            if (compSet.has(cid)&&depth[cid]===undefined){ depth[cid]=depth[id]+1; queue.push(cid); }
-          });
-        }
-        const maxDepth=Object.values(depth).length?Math.max(...Object.values(depth)):0;
-        compNodes.forEach(m=>{ if (depth[m.id]===undefined) depth[m.id]=maxDepth+1; });
-
-        const leafMemo={};
-        function leafCount(id){
-          if (leafMemo[id]!==undefined) return leafMemo[id];
-          const ch=(childMap[id]||[]).filter(c=>compSet.has(c));
-          leafMemo[id]=ch.length===0?1:ch.reduce((s,c)=>s+leafCount(c),0);
-          return leafMemo[id];
-        }
-
-        const LEAF_BRANCH=150;
-        function layout(id, a0, a1, parentPos=null){
-          const d=depth[id]||0;
-          const ch=(childMap[id]||[]).filter(c=>compSet.has(c));
-          const isLeaf=ch.length===0;
-          if (d===0){
-            pos[id]={x:cx,y:cy};
-          } else if (isLeaf && parentPos){
-            const a=(a0+a1)/2;
-            pos[id]={x:parentPos.x+LEAF_BRANCH*Math.cos(a),y:parentPos.y+LEAF_BRANCH*Math.sin(a)};
-          } else {
-            const r=layerRadii[Math.min(d,layerRadii.length-1)];
-            const a=(a0+a1)/2;
-            pos[id]={x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)};
-          }
-          if (!ch.length) return;
-          const total=ch.reduce((s,c)=>s+leafCount(c),0);
-          let cur=a0;
-          ch.forEach(cid=>{ const span=(leafCount(cid)/total)*(a1-a0); layout(cid,cur,cur+span,pos[id]); cur+=span; });
-        }
-
-        if (roots.length===1){
-          layout(roots[0].id,-Math.PI/2,3*Math.PI/2);
-        } else {
-          const total=roots.reduce((s,r)=>s+leafCount(r.id),0)||1;
-          let cur=-Math.PI/2;
-          roots.forEach(r=>{ const span=(leafCount(r.id)/total)*2*Math.PI; layout(r.id,cur,cur+span); cur+=span; });
-        }
-        compNodes.forEach(m=>{ if (!pos[m.id]) pos[m.id]={x:cx,y:cy}; });
-      }
-
-      const pos={};
-      if (components.length===1){
-        layoutComponent(components[0], CX, CY, pos);
-      } else {
-        // Estimate radius for each component, then arrange in a grid
-        const radii=components.map(comp=>{
-          const compSet=new Set(comp);
-          const compNodes=comp.map(id=>mmById[id]);
-          const maxD=compNodes.reduce((mx,m)=>{
-            let d=0; let cur=m;
-            // rough depth: count ancestors
-            const seen=new Set();
-            while(cur&&!seen.has(cur.id)){
-              seen.add(cur.id);
-              const pid=(cur.parentIds||[]).find(p=>mmById[p]&&compSet.has(p));
-              if (!pid) break; cur=mmById[pid]; d++;
-            }
-            return Math.max(mx,d);
-          },0);
-          return layerRadii[Math.min(maxD,layerRadii.length-1)]||layerRadii[layerRadii.length-1];
-        });
-        const cols=Math.ceil(Math.sqrt(components.length));
-        const rows=Math.ceil(components.length/cols);
-        const GAP=120;
-        // cell size based on largest radius in each column/row
-        const cellW=Math.max(...radii)*2+GAP;
-        const cellH=Math.max(...radii)*2+GAP;
-        const gridW=cols*cellW;
-        const gridH=rows*cellH;
-        const startX=CX-gridW/2+cellW/2;
-        const startY=CY-gridH/2+cellH/2;
-        components.forEach((comp,i)=>{
-          const col=i%cols, row=Math.floor(i/cols);
-          const cx=startX+col*cellW;
-          const cy=startY+row*cellH;
-          layoutComponent(comp, cx, cy, pos);
-        });
-      }
-
-      return pos;
+	    // The radial canvas layout lives once, in graph-layout.js. KS03's multiverse
+    // and true-storage.html's storage canvas draw the same parent/child geometry
+    // from the same two fields (`id`, `parentIds`), so a cycle guard fixed in one
+    // was a fix owed to the other — the duplication that cost this project the
+    // deadline-caution bug. These are delegates, kept as function declarations so
+    // they hoist exactly as the originals did; passing undefined lets the
+    // module's own defaults apply, so every call site below is unchanged.
+    function computeLayerLayout(nodes, layerRadii) {
+      return TrackGraphLayout.computeLayerLayout(nodes, layerRadii);
     }
 
-    function applyRepulsion(pos,minDist=90,iterations=80){
-      const ids=Object.keys(pos);
-      const out=Object.fromEntries(ids.map(id=>[id,{...pos[id]}]));
-      for(let k=0;k<iterations;k++){
-        for(let i=0;i<ids.length;i++){
-          for(let j=i+1;j<ids.length;j++){
-            const a=out[ids[i]],b=out[ids[j]];
-            const dx=b.x-a.x,dy=b.y-a.y;
-            const dist=Math.sqrt(dx*dx+dy*dy)||0.01;
-            if(dist<minDist){const push=(minDist-dist)/2,nx=dx/dist*push,ny=dy/dist*push;a.x-=nx;a.y-=ny;b.x+=nx;b.y+=ny;}
-          }
-        }
-      }
-      return out;
+    function applyRepulsion(pos, minDist, iterations) {
+      return TrackGraphLayout.applyRepulsion(pos, minDist, iterations);
     }
+
 
     function SIRWheel({sessions,onSessionClick,onRevert}) {
       const doneCount=sessions.filter(s=>s.done).length;
@@ -1169,7 +1078,8 @@
       onBack,onNavigate,onSaveParents,onDetachChild,onAddComment,onRemoveComment,onToggleComment,
       onAddLink,onRemoveLink,onNewKolb,onDupeKolb,onDelete,onSetRating,onChangeType,onRename,onUpdateExplanation,onOpenLin,
       sourceDumps,onAddDumpURLLink,onRemoveDumpURLLink,onGoToSourceDump,
-      onAddDumpMMLink,onUpdateMMSCOrder,onUpdateMMSCAggOrder,onAddDumpTextBlock,onRemoveDumpTextBlock,onToggleSourceDumpActivation,onToggleUnclear}) {
+      onAddDumpMMLink,onUpdateMMSCOrder,onUpdateMMSCAggOrder,onAddDumpTextBlock,onRemoveDumpTextBlock,onToggleSourceDumpActivation,onToggleUnclear,
+      trueStorages,onTagStorage,onUntagStorage}) {
       const [mode,setMode]=useState(initialMode||(mm&&mm.type==="anchor"?"info":"ks03"));
       const [newComment,setNewComment]=useState("");
       const [newLink,setNewLink]=useState({label:"",url:""});
@@ -1531,8 +1441,14 @@
             const descendants=isLeaf?[]:getDescendants(mm.id,mms);
             const relativeDepth={};
             if(!isLeaf){
+              // The result map doubles as the cycle guard, the same shape
+              // deleteDumpEntry's `toDelete` uses. `descendants.some(...)` is a
+              // membership test, not a visited test: a node already given a
+              // depth was re-entered, so a cycle recursed forever here too.
+              // First depth seen wins, which is the shallowest.
               const computeDepths=(id,d)=>{
                 mms.filter(m=>(m.parentIds||[]).includes(id)).forEach(child=>{
+                  if(relativeDepth[child.id]!==undefined)return;
                   if(descendants.some(desc=>desc.id===child.id)){relativeDepth[child.id]=d;computeDepths(child.id,d+1);}
                 });
               };
@@ -1605,6 +1521,13 @@
                 </>
               );
             };
+
+            // One renderer, handed to every site that draws an mmLink's content
+            // — both branches below and DescendantSCNode. See StorageTags.
+            const renderStorageTags=(dump,link)=>(
+              <StorageTags dump={dump} link={link} trueStorages={trueStorages}
+                onTag={onTagStorage} onUntag={onUntagStorage}/>
+            );
 
             const renderSCSourceBadge=entry=>entry?.isInherited&&entry.sourceMM?(
               <div className="flex items-center gap-1.5 mb-2">
@@ -1692,6 +1615,7 @@
                                     <div key={entry.link.id} className="mb-3 last:mb-0">
                                       {renderTextBlocksSection(dump,entry.link)}
                                       <div className="mt-2">{renderURLLinksOnly(dump,entry.link)}</div>
+                                      {renderStorageTags(dump,entry.link)}
                                     </div>
                                   ))}
                                 </div>
@@ -1743,6 +1667,7 @@
                                     <div key={entry.link.id} className="mb-3 last:mb-0">
                                       {renderTextBlocksSection(dump,entry.link)}
                                       <div className="mt-2">{renderURLLinksOnly(dump,entry.link)}</div>
+                                      {renderStorageTags(dump,entry.link)}
                                     </div>
                                   ))}
                                 </div>
@@ -1788,6 +1713,7 @@
                               onGoToSourceDump={onGoToSourceDump}
                               renderTextBlocksSection={renderTextBlocksSection}
                               renderURLLinksOnly={renderURLLinksOnly}
+                              renderStorageTags={renderStorageTags}
                               sourceDumps={sourceDumps}
                             />;
                           })
@@ -2046,7 +1972,7 @@
       );
     }
 
-    function DescendantSCNode({ descendantMM, depth, scLinks, mmColor, onGoToSourceDump, renderTextBlocksSection, renderURLLinksOnly, sourceDumps }) {
+    function DescendantSCNode({ descendantMM, depth, scLinks, mmColor, onGoToSourceDump, renderTextBlocksSection, renderURLLinksOnly, renderStorageTags, sourceDumps }) {
       const [open, setOpen] = React.useState(true);
       if (!scLinks.length) return null;
       return (
@@ -2076,6 +2002,7 @@
                           <div key={link.id} className="mb-3 last:mb-0">
                             {renderTextBlocksSection?renderTextBlocksSection(dump,link):null}
                             {renderURLLinksOnly?<div className="mt-2">{renderURLLinksOnly(dump,link)}</div>:null}
+                            {renderStorageTags?renderStorageTags(dump,link):null}
                           </div>
                         ))}
                       </div>
@@ -2467,7 +2394,72 @@
       );
     }
 
-    function SourceDumpView({sourceDumps,mms,mmColor,dumpPath,setDumpPath,onAddEntry,onDeleteEntry,onRename,onAddMMLink,onRemoveMMLink,onAddURLLink,onRemoveURLLink,onAddTextBlock,onRemoveTextBlock,onTransferTextBlock,onTransferURLLink,onOpenMMSC}) {
+    // ── storages tagged to one (leaf dump, MM) pair ──────────────────────────
+    // An mmLink's content is drawn in FOUR places: the dump leaf card below,
+    // both S&C branches of MMDetail, and DescendantSCNode. This component is
+    // rendered at all four, and the match it draws from lives once in
+    // true-storage-core.js. Do not re-spell `t.dumpId===… && t.mmId===…` at a
+    // call site: the deadline caution predicate was spelled out at three sites,
+    // one forgot half of it, and the timeline mismarked every due day until it
+    // was found.
+    //
+    // true-storage.html owns `trueStorages`; the writers here go through a
+    // fresh single-key read-modify-write (_mutateSlotKey), never the autosave.
+    function StorageTags({dump, link, trueStorages, onTag, onUntag}) {
+      const [picking,setPicking]=useState(false);
+      const [q,setQ]=useState("");
+      const list=trueStorages||[];
+      const tagged=TrackTrueStorage.storagesForLink(list,dump.id,link.mmId);
+      const options=list.filter(s=>
+        !TrackTrueStorage.hasTag(list,s.id,dump.id,link.mmId)&&
+        (s.name||"").toLowerCase().includes(q.toLowerCase()));
+      return (
+        <div className="mt-2" data-storage-tags={`${dump.id}:${link.mmId}`}>
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[10px] tracking-widest text-gray-600 mr-1">STORAGE</span>
+            {tagged.map(s=>(
+              <span key={s.id} className="inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded pl-2 pr-1 py-0.5">
+                <a href={`true-storage.html?storage=${encodeURIComponent(s.id)}`}
+                  data-storage-chip={s.id}
+                  className="text-xs text-amber-300 hover:text-amber-100 max-w-[12rem] truncate">⛁ {s.name}</a>
+                <button onClick={()=>onUntag&&onUntag(s.id,dump.id,link.mmId)}
+                  data-storage-untag={s.id}
+                  title="Remove this storage tag" className="text-gray-600 hover:text-red-400 text-xs px-0.5">×</button>
+              </span>
+            ))}
+            {!tagged.length&&<span className="text-[10px] text-gray-700 italic">none</span>}
+            <button onClick={()=>{setPicking(p=>!p);setQ("");}}
+              data-storage-add={`${dump.id}:${link.mmId}`}
+              className="text-xs text-gray-600 hover:text-gray-300 ml-1">+ storage</button>
+          </div>
+          {picking&&(
+            <div className="mt-1 bg-gray-900 border border-amber-900 rounded p-2">
+              {!list.length?(
+                <div className="text-xs text-gray-600 text-center py-2">
+                  No storages yet. Create them in <a href="true-storage.html" className="text-amber-300 underline">True Storage</a>.
+                </div>
+              ):(
+                <>
+                  <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="search storages..."
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs outline-none mb-1"/>
+                  <div className="max-h-40 overflow-y-auto">
+                    {!options.length&&<div className="text-xs text-gray-600 text-center py-2">Nothing left to tag.</div>}
+                    {options.map(s=>(
+                      <div key={s.id} data-storage-option={s.id}
+                        onClick={()=>{onTag&&onTag(s.id,dump.id,link.mmId);setPicking(false);setQ("");}}
+                        className="px-2 py-1 text-xs text-gray-200 rounded cursor-pointer hover:bg-gray-800 truncate">⛁ {s.name}</div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button onClick={()=>setPicking(false)} className="text-xs text-gray-500 hover:text-gray-300 mt-1">cancel</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function SourceDumpView({sourceDumps,mms,mmColor,dumpPath,setDumpPath,onAddEntry,onDeleteEntry,onRename,onAddMMLink,onRemoveMMLink,onAddURLLink,onRemoveURLLink,onAddTextBlock,onRemoveTextBlock,onTransferTextBlock,onTransferURLLink,onOpenMMSC,trueStorages,onTagStorage,onUntagStorage,focusMmId}) {
       const [showCreate,setShowCreate]=useState(false);
       const [createTitle,setCreateTitle]=useState("");
       const [mmPickerFor,setMmPickerFor]=useState(null);
@@ -2546,7 +2538,8 @@
                 const isAddingText=showTextBlockForm&&showTextBlockForm.dumpId===currentEntry.id&&showTextBlockForm.linkId===link.id;
                 const tbs=getSCTextBlocks(link);
                 return (
-                  <div key={link.id} className="bg-gray-900 border border-gray-800 rounded mb-3 p-3">
+                  <div key={link.id} data-dump-mm={link.mmId}
+                    className={`bg-gray-900 border rounded mb-3 p-3 ${focusMmId===link.mmId?"border-amber-600 ring-1 ring-amber-700/50":"border-gray-800"}`}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:mm?(mm.type==="anchor"?"#6b7280":mm.type==="1"?"#ef4444":mmColor(mm.id)):"#6b7280"}}/>
@@ -2622,6 +2615,8 @@
                     ):(
                       <button onClick={()=>{setShowLinkFormFor({dumpId:currentEntry.id,linkId:link.id});setNewLinkForm({label:"",url:""}); }} className="text-xs text-gray-600 hover:text-gray-400 mt-1">+ citation link</button>
                     )}
+                    <StorageTags dump={currentEntry} link={link} trueStorages={trueStorages}
+                      onTag={onTagStorage} onUntag={onUntagStorage}/>
                   </div>
                 );
               })}
@@ -2808,6 +2803,10 @@
       const [mgSchedule,setMgSchedule]=useState({});
       const [sourceDumps,setSourceDumps]=useState([]);
       const [dumpPath,setDumpPath]=useState([]);
+      // Read-only here except through _mutateSlotKey: true-storage.html owns it.
+      const [trueStorages,setTrueStorages]=useState([]);
+      const [focusDumpMm,setFocusDumpMm]=useState(null);
+      const dumpDeepLinkRef=useRef(false);
 
       const mmMap=useMemo(()=>Object.fromEntries(mms.map(m=>[m.id,m])),[mms]);
       const selectedKolb=useMemo(()=>kolbs.find(k=>k.id===selectedKolbId)||null,[kolbs,selectedKolbId]);
@@ -2872,6 +2871,7 @@
           fresh(setLevelTemplates,slot.levelTemplates||{});
           fresh(setMgSchedule,slot.mgSchedule||{});
           fresh(setSourceDumps,(slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
+          fresh(setTrueStorages,slot.trueStorages||[]);
         };
         const onStorage=e=>{ if (!e.key||e.key==='track_db') refresh(); };
         const onVis=()=>{ if (!document.hidden) refresh(); };
@@ -2882,6 +2882,42 @@
           document.removeEventListener('visibilitychange',onVis);
         };
       },[]);
+
+      // ?dump=<id> (optionally &mm=<id>) opens KS03 → SOURCE DUMP on that entry
+      // — the counterpart of progress.html's ?date=&dl= and documentations.html's
+      // ?page=. A tag row on the True Storage page links back here this way.
+      //
+      // The ref makes it fire once. Without it every later refresh would yank
+      // the user back to the linked dump. A ?dump= naming nothing opens nothing
+      // and raises no error.
+      useEffect(()=>{
+        if (dumpDeepLinkRef.current||!sourceDumps.length) return;
+        let want=null,wantMm=null;
+        try{
+          const q=new URLSearchParams(window.location.search);
+          want=q.get('dump'); wantMm=q.get('mm');
+        }catch{}
+        dumpDeepLinkRef.current=true;
+        if (!want) return;
+        // Dump ids are numbers; a query string is always text.
+        const target=sourceDumps.find(d=>String(d.id)===String(want));
+        if (!target) return;
+        setDumpPath(dumpPathTo(target.id,sourceDumps));
+        setKs03SubView("sourcedump");
+        setView("ks03");
+        setSelectedMM(null);
+        if (wantMm!=null){
+          const link=(target.mmLinks||[]).find(l=>String(l.mmId)===String(wantMm));
+          if (link) setFocusDumpMm(link.mmId);
+        }
+      },[sourceDumps]);
+
+      // The ring is a hint, not a mode: drop it once it has been seen.
+      useEffect(()=>{
+        if (focusDumpMm==null) return;
+        const t=setTimeout(()=>setFocusDumpMm(null),2500);
+        return ()=>clearTimeout(t);
+      },[focusDumpMm]);
 
       // nid() hands out numeric ids from a counter seeded off the highest id in
       // the slot. Adopting another tab's records can raise that ceiling, so the
@@ -2907,21 +2943,60 @@
         setLevelTemplates(slot.levelTemplates||{});
         setMgSchedule(slot.mgSchedule||{});
         setSourceDumps((slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
+        setTrueStorages(slot.trueStorages||[]);
       }
       function openMM(id,mode="ks03"){setSelectedMM(id);setSelectedMMMode(mode);}
 
+      // Adding or removing a source-dump tag is the ONE thing this page does to
+      // `trueStorages`, and it does it as a fresh read-modify-write of that key
+      // alone — never from the snapshot the autosave effect writes. Both the
+      // record shape and the match come from true-storage-core.js, so a tag made
+      // here is identical to one made on the True Storage page.
+      function tagStorage(storageId,dumpId,mmId){
+        const next=_mutateSlotKey(activeSlotId,'trueStorages',
+          cur=>TrackTrueStorage.withTag(cur,storageId,dumpId,mmId,TrackStorage.newId()));
+        if (next) setTrueStorages(next);
+      }
+      function untagStorage(storageId,dumpId,mmId){
+        const next=_mutateSlotKey(activeSlotId,'trueStorages',
+          cur=>TrackTrueStorage.withoutPair(cur,storageId,dumpId,mmId));
+        if (next) setTrueStorages(next);
+      }
+
       function setMMRating(mmId,rating){setMms(p=>p.map(m=>m.id===mmId?{...m,rating}:m));}
       function setMMColor(mmId,color){setMms(p=>p.map(m=>m.id===mmId?{...m,customColor:color}:m));}
+      // Adding a sub-title under a dump that already has mmLinks MOVES them down
+      // to the new child and empties the parent's. Any storage tag naming that
+      // (dumpId, mmId) pair has to move with them, or it stops resolving and
+      // renders as "source removed" — the content is still there, one level
+      // down, with nothing saying so.
+      //
+      // `movesLinks` is read from current state BEFORE setSourceDumps, never
+      // from inside the updater: an updater may be re-invoked, so a side effect
+      // in there could fire twice or against a stale snapshot.
       function addDumpEntry(title,parentId){
         const newId=nid();
+        const parent=parentId?sourceDumps.find(d=>d.id===parentId):null;
+        const movesLinks=!!(parent&&(parent.mmLinks||[]).length>0);
         setSourceDumps(p=>{
-          const parent=parentId?p.find(d=>d.id===parentId):null;
-          const inherited=parent&&parent.mmLinks.length>0?parent.mmLinks:[];
+          const cur=parentId?p.find(d=>d.id===parentId):null;
+          const inherited=cur&&(cur.mmLinks||[]).length>0?cur.mmLinks:[];
           return [
-            ...p.map(d=>d.id===parentId&&d.mmLinks.length>0?{...d,mmLinks:[]}:d),
+            ...p.map(d=>d.id===parentId&&(d.mmLinks||[]).length>0?{...d,mmLinks:[]}:d),
             {id:newId,title:title.trim(),createdAt:today(),parentId:parentId||null,mmLinks:inherited}
           ];
         });
+        if (movesLinks){
+          // trueStorages is true-storage.html's key. This is the one foreign
+          // write KS02 may make, and only in this shape: a fresh
+          // read-modify-write of that key alone, never the autosave snapshot.
+          // repointDump returns the same reference when no tag names this dump,
+          // and _mutateSlotKey short-circuits on that — so an untagged dump
+          // gaining a sub-title writes nothing and arms no sync upload.
+          const next=_mutateSlotKey(activeSlotId,'trueStorages',
+            cur=>TrackTrueStorage.repointDump(cur,parentId,newId));
+          if (next) setTrueStorages(next);
+        }
       }
       function addDumpMMLink(dumpId,mmId){setSourceDumps(p=>p.map(d=>d.id===dumpId&&!(d.mmLinks||[]).some(l=>l.mmId===mmId)?{...d,mmLinks:[...d.mmLinks,{id:nid(),mmId,text:"",textBlocks:[],links:[]}]}:d));}
       function removeDumpMMLink(dumpId,linkId){setSourceDumps(p=>p.map(d=>d.id===dumpId?{...d,mmLinks:d.mmLinks.filter(l=>l.id!==linkId)}:d));}
@@ -3144,8 +3219,7 @@
         onAddDumpTextBlock:addDumpTextBlock,
         onRemoveDumpTextBlock:removeDumpTextBlock,
         onGoToSourceDump:(dumpId)=>{
-          const buildPath=(id)=>{const d=sourceDumps.find(x=>x.id===id);if(!d)return[];if(!d.parentId)return[id];return[...buildPath(d.parentId),id];};
-          setDumpPath(buildPath(dumpId));
+          setDumpPath(dumpPathTo(dumpId,sourceDumps));
           setKs03SubView("sourcedump");
           setView("ks03");
           setSelectedMM(null);
@@ -3155,6 +3229,9 @@
         onUpdateMMSCAggOrder:(mmId,order)=>setMms(p=>p.map(m=>m.id===mmId?{...m,scAggBlocksOrder:order}:m)),
         onToggleSourceDumpActivation:toggleSourceDumpActivation,
         onToggleUnclear:toggleUnclear,
+        trueStorages,
+        onTagStorage:tagStorage,
+        onUntagStorage:untagStorage,
       };
 
       return (
@@ -3490,7 +3567,9 @@
                   onAddURLLink={addDumpURLLink} onRemoveURLLink={removeDumpURLLink}
                   onAddTextBlock={addDumpTextBlock} onRemoveTextBlock={removeDumpTextBlock}
                   onTransferTextBlock={transferDumpTextBlock} onTransferURLLink={transferDumpURLLink}
-                  onOpenMMSC={(mmId)=>{setSelectedMM(mmId);setSelectedMMMode("sc");setView("ks03");}}/>
+                  onOpenMMSC={(mmId)=>{setSelectedMM(mmId);setSelectedMMMode("sc");setView("ks03");}}
+                  trueStorages={trueStorages} onTagStorage={tagStorage} onUntagStorage={untagStorage}
+                  focusMmId={focusDumpMm}/>
               )}
             </div>
           )}

@@ -27,7 +27,7 @@ const { Browser, sleep } = require('./lib/cdp.js');
 const { startServer } = require('./lib/server.js');
 const F = require('./lib/fixture.js');
 
-const PAGES = ['index.html', 'progress.html', 'sir-ks02.html', 'documentations.html'];
+const PAGES = ['index.html', 'progress.html', 'sir-ks02.html', 'documentations.html', 'true-storage.html'];
 
 // Tailwind's CDN build and Babel's in-browser transform both warn loudly about
 // being used in production. That is expected here and is not a page error.
@@ -265,7 +265,12 @@ test('browser suites', skipUnlessChrome, async t => {
       saActions: [{ id: 'a-x' }], saEntries: [{ id: 'e-x' }], mmEntries: [{ id: 'me-x' }],
       mgSchedule: { '2026-03-01': [11] }, calendarNotes: [{ id: 'n-x', date: '2026-03-10' }],
       deadlines: [{ id: 'd-x', date: '2026-03-10' }], docPages: [{ id: 'p-x' }],
-      notes: [{ id: 'w-x' }], futureField: { written: 'by a later version' } };
+      notes: [{ id: 'w-x' }], futureField: { written: 'by a later version' },
+      // Owned by true-storage.html. KS02 may write these two ONLY through the
+      // single-key tag path, never as part of its autosave patch — so an
+      // ordinary KS02 edit has to leave them exactly as they were found.
+      trueStorages: [{ id: 'ts-x', name: 'owned by True Storage', parentIds: [], tags: [] }],
+      trueStoragePos: { 'ts-x': { x: 5, y: 6 } } };
     for (const [k, v] of Object.entries(foreign)) {
       assert.notEqual(await ks02.evaluate(WRITE_SLOT_KEY, k, v), false, 'seeding ' + k);
     }
@@ -1466,6 +1471,764 @@ test('browser suites', skipUnlessChrome, async t => {
     }
   });
 
+  /* ── 2b. True Storage ─────────────────────────────────────────────────────
+     A storage tag names a PAIR: one leaf source dump and one MM linked inside
+     it. sir-ks02.html draws that pair's content at four sites, so the cases
+     below assert per-site AND negatively — a chip must appear under the right
+     MM and be absent under the wrong one, and absent under the same MM in a
+     different dump. A test that only asserts presence would pass just as
+     happily against a matcher that had dropped half the comparison, which is
+     exactly how the deadline caution predicate went wrong. */
+
+  // Two leaves so a dropped dumpId is catchable, two MMs in one leaf so a
+  // dropped mmId is catchable, and one storage already tagged to exactly one
+  // of the four pairs.
+  const tagSeed = (over = {}) => seedDb(Object.assign({
+    sourceDumps: [
+      F.dump('d-1', '2026-03-08', { mmLinks: [F.dumpLink(90, 10), F.dumpLink(91, 11)] }),
+      F.dump('d-2', '2026-03-09', { mmLinks: [F.dumpLink(92, 10)] })
+    ],
+    trueStorages: [
+      F.trueStorage('ts-1', 'Storage A', { tags: [F.storageTag('tg-1', 'd-1', 10)] }),
+      F.trueStorage('ts-2', 'Storage B')
+    ],
+    trueStoragePos: {}
+  }, over));
+
+  // Which storages are drawn against one (dump, MM) pair. null means the pair
+  // is not on the page at all, which is a different failure from "no chips".
+  const CHIPS_AT = function (key) {
+    var box = document.querySelector('[data-storage-tags="' + key + '"]');
+    if (!box) return null;
+    return Array.prototype.map.call(box.querySelectorAll('[data-storage-chip]'),
+      function (a) { return a.getAttribute('data-storage-chip'); });
+  };
+
+  const CLICK_SEL = function (sel) {
+    var el = document.querySelector(sel);
+    if (!el) return false;
+    el.click();
+    return true;
+  };
+
+  // index.html is static markup; the other four mount a React #root. Declared
+  // here rather than beside the malformed-db section because the cycle cases
+  // below use them too, and a `const` is not hoisted.
+  const mountSel = file => file === 'index.html' ? '#slot-list' : '#root';
+
+  const waitMounted = (page, file) => page.waitFor(function (sel) {
+    var el = document.querySelector(sel);
+    return !!el && el.children.length > 0;
+  }, { args: [mountSel(file)], message: file + ' mounting' });
+
+  const STORAGE_BY_ID = function (id) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var slot = (db.slots || [])[0] || {};
+    return (slot.trueStorages || []).filter(function (s) { return s.id === id; })[0] || null;
+  };
+
+  // `hash` is appended verbatim, so it carries a query string too.
+  const withQuery = (query, hash) => query + hash;
+
+  await t.test('a storage created on True Storage persists in the canonical shape', async () => {
+    const page = await open('true-storage.html', {
+      db: seedDb({ trueStorages: [], trueStoragePos: {} })
+    });
+    await page.waitFor(function () {
+      return !!Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '+Storage'; });
+    }, { message: 'the +Storage button' });
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '+Storage'; }).click();
+      return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('input[placeholder="Storage name…"]'); },
+      { message: 'the new-storage input' });
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('input[placeholder="Storage name…"]'), value);
+      return true;
+    }, SET_REACT_INPUT, 'First storage');
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'ADD'; }).click();
+      return true;
+    });
+
+    const stored = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var list = ((db.slots || [])[0] || {}).trueStorages || [];
+      return list.length === 1 ? list[0] : false;
+    }, { message: 'the storage being saved' });
+
+    assert.equal(stored.name, 'First storage');
+    assert.equal(typeof stored.id, 'string', 'ids are strings — they must never collide with KS02 nid()');
+    assert.deepEqual(stored.parentIds, []);
+    assert.deepEqual(stored.tags, []);
+    assert.equal(stored.explanation, '');
+    // The LOCAL calendar day, not the UTC one. Compared against the browser's
+    // own clock so the assertion holds whatever timezone the suite runs in.
+    const localDay = await page.evaluate(function () {
+      var d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    });
+    assert.equal(stored.createdAt, localDay, 'createdAt is the local day');
+
+    // Reload, then check the canvas drew a node for it and the record is still
+    // stored. The node's LABEL is not the assertion: the canvas truncates a
+    // name past 11 characters, so matching on body text would be testing the
+    // ellipsis rather than persistence.
+    await page.reload();
+    await page.skipFirebase();
+    await page.waitFor(function () { return !!document.querySelector('[data-sid]'); },
+      { message: 'the storage node surviving a reload' });
+    const afterReload = await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return ((db.slots || [])[0] || {}).trueStorages || [];
+    });
+    assert.equal(afterReload.length, 1, 'exactly one storage after the reload');
+    assert.equal(afterReload[0].name, 'First storage');
+    assert.equal(afterReload[0].id, stored.id, 'and it is the same record, not a re-created one');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the tree reorders siblings and refuses a drag across branches', async () => {
+    // Order inside `trueStorages` IS the rendered order, so a drag that is not
+    // a sibling move would silently rewrite an order the user cannot see.
+    const page = await open('true-storage.html', {
+      db: seedDb({
+        trueStorages: [
+          F.trueStorage('root-1', 'Root one'),
+          F.trueStorage('kid-a', 'Kid A', { parentIds: ['root-1'] }),
+          F.trueStorage('kid-b', 'Kid B', { parentIds: ['root-1'] }),
+          F.trueStorage('root-2', 'Root two')
+        ],
+        trueStoragePos: {}
+      }),
+      hash: '#tree'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-row="kid-b"]'); },
+      { message: 'the storage tree' });
+
+    // The SRCH handlers read a real DataTransfer, so synthesise one rather than
+    // reaching into React.
+    const DRAG = function (draggedId, targetId, before) {
+      var row = document.querySelector('[data-storage-row="' + targetId + '"]');
+      var rect = row.getBoundingClientRect();
+      var y = before ? rect.top + 1 : rect.bottom - 1;
+      var dt = new DataTransfer();
+      dt.setData('application/truestorage-arrange-id', draggedId);
+      ['dragover', 'drop'].forEach(function (type) {
+        row.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, clientY: y }));
+      });
+      return true;
+    };
+    const ORDER = function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return (((db.slots || [])[0] || {}).trueStorages || []).map(function (s) { return s.id; });
+    };
+
+    await page.evaluate(DRAG, 'kid-b', 'kid-a', true);
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var ids = (((db.slots || [])[0] || {}).trueStorages || []).map(function (s) { return s.id; });
+      return ids[1] === 'kid-b' ? ids : false;
+    }, { message: 'the sibling move being saved' }),
+      ['root-1', 'kid-b', 'kid-a', 'root-2'], 'a sibling moved before its sibling');
+
+    const before = await page.evaluate(ORDER);
+    await page.evaluate(DRAG, 'kid-a', 'root-2', true);
+    await sleep(400);
+    assert.deepEqual(await page.evaluate(ORDER), before,
+      'a drag onto a node that is not a sibling changes nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a tag lands on its own pair and on no other', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: '?storage=ts-2' });
+    await page.waitFor(function () { return !!document.querySelector('[data-add-tag]'); },
+      { message: '?storage= opening the detail' });
+
+    await page.evaluate(CLICK_SEL, '[data-add-tag]');
+    await page.waitFor(function () { return !!document.querySelector('[data-tag-option="d-1:11"]'); },
+      { message: 'the tag picker listing leaf dumps and their MMs' });
+    await page.evaluate(CLICK_SEL, '[data-tag-option="d-1:11"]');
+
+    const tags = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || []).filter(function (x) { return x.id === 'ts-2'; })[0];
+      return (s && s.tags && s.tags.length) ? s.tags : false;
+    }, { message: 'the tag being saved' });
+    assert.equal(tags.length, 1);
+    assert.equal(tags[0].dumpId, 'd-1');
+    assert.equal(tags[0].mmId, 11, 'the MM half of the pair is the one that was picked');
+    assert.equal(typeof tags[0].id, 'string');
+
+    // The other side: KS02 draws each chip against its own pair only.
+    const leaf1 = await open('sir-ks02.html', { hash: withQuery('?dump=d-1', '#ks03'), fresh: false });
+    await leaf1.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-1:10"]'); },
+      { message: '?dump= opening the leaf card' });
+    assert.deepEqual(await leaf1.evaluate(CHIPS_AT, 'd-1:10'), ['ts-1'],
+      'the storage tagged to this pair is drawn');
+    assert.deepEqual(await leaf1.evaluate(CHIPS_AT, 'd-1:11'), ['ts-2'],
+      'and the other MM in the same dump carries only its own');
+    assert.deepEqual(realErrors(leaf1), []);
+
+    const leaf2 = await open('sir-ks02.html', { hash: withQuery('?dump=d-2', '#ks03'), fresh: false });
+    await leaf2.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-2:10"]'); },
+      { message: 'the second leaf card' });
+    assert.deepEqual(await leaf2.evaluate(CHIPS_AT, 'd-2:10'), [],
+      'the SAME MM in a different dump is a different pair and carries nothing');
+
+    await page.close(); await leaf1.close(); await leaf2.close();
+  });
+
+  await t.test('the chip is drawn in the MM detail S&C tab, per pair', async () => {
+    const page = await open('sir-ks02.html', { db: tagSeed(), hash: '#srch' });
+    await page.waitFor(function () { return document.body.textContent.indexOf('Mind Map A') >= 0; },
+      { message: 'the SRCH list' });
+    await page.evaluate(function () {
+      var row = Array.prototype.find.call(document.querySelectorAll('span'),
+        function (s) { return s.textContent.trim() === 'Mind Map A'; });
+      row.parentElement.click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'S&C'; });
+    }, { message: 'the MM detail tabs' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'S&C'; }).click();
+      return true;
+    });
+
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-1:10"]'); },
+      { message: 'the S&C dump groups' });
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-1:10'), ['ts-1'],
+      'the tagged pair carries its storage here too');
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-2:10'), [],
+      'the untagged pair in the other dump stays empty');
+    assert.equal(await page.evaluate(CHIPS_AT, 'd-1:11'), null,
+      "another MM's pair is not on this MM's page at all");
+
+    const href = await page.evaluate(function () {
+      var a = document.querySelector('[data-storage-chip="ts-1"]');
+      return a ? a.getAttribute('href') : null;
+    });
+    assert.equal(href, 'true-storage.html?storage=ts-1', 'the chip links to the storage');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the chip is drawn on the non-leaf S&C branch and inside a descendant node', async () => {
+    // The other two of the four sites. Making MM 11 the parent of MM 10 puts
+    // one MM's own dump group on the non-leaf branch and the other's inside
+    // DescendantSCNode, so a single S&C tab exercises both — and each is
+    // asserted separately, because a forgotten call site otherwise hides
+    // behind a passing sibling.
+    const page = await open('sir-ks02.html', {
+      db: tagSeed({
+        mms: [F.mm(10, 'Mind Map A', { parentIds: [11] }), F.mm(11, 'Mind Map B', { type: '2' })],
+        trueStorages: [
+          F.trueStorage('ts-1', 'Storage A', { tags: [F.storageTag('tg-1', 'd-1', 10)] }),
+          F.trueStorage('ts-2', 'Storage B', { tags: [F.storageTag('tg-2', 'd-1', 11)] })
+        ]
+      }),
+      hash: '#srch'
+    });
+    await page.waitFor(function () { return document.body.textContent.indexOf('Mind Map B') >= 0; },
+      { message: 'the SRCH list' });
+    await page.evaluate(function () {
+      var row = Array.prototype.find.call(document.querySelectorAll('span'),
+        function (s) { return s.textContent.trim() === 'Mind Map B'; });
+      row.parentElement.click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'S&C'; });
+    }, { message: 'the MM detail tabs' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'S&C'; }).click();
+      return true;
+    });
+
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-1:11"]'); },
+      { message: "the non-leaf MM's own dump group" });
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-1:11'), ['ts-2'],
+      'the non-leaf branch draws this MM\'s own pair');
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-1:10'), ['ts-1'],
+      'the descendant node draws the descendant\'s pair');
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-2:10'), [],
+      'and the descendant\'s untagged pair in the other dump stays empty');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a tag added from KS02 is a fresh read-modify-write, not a snapshot', async () => {
+    const page = await open('sir-ks02.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-add="d-1:11"]'); },
+      { message: 'the leaf card + storage button' });
+
+    // Another writer lands a storage this page has never seen. Written in this
+    // same tab, so no `storage` event fires and the page's React copy of
+    // trueStorages stays deliberately stale — which is the whole point.
+    assert.notEqual(await page.evaluate(WRITE_SLOT_KEY, 'trueStorages', [
+      { id: 'ts-1', name: 'Storage A', parentIds: [], explanation: '', tags: [{ id: 'tg-1', dumpId: 'd-1', mmId: 10 }] },
+      { id: 'ts-2', name: 'Storage B', parentIds: [], explanation: '', tags: [] },
+      { id: 'ts-3', name: 'Storage C', parentIds: [], explanation: '', tags: [] }
+    ]), false, 'seeding the concurrent write');
+
+    await page.evaluate(CLICK_SEL, '[data-storage-add="d-1:11"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-option="ts-2"]'); },
+      { message: 'the storage picker' });
+    await page.evaluate(CLICK_SEL, '[data-storage-option="ts-2"]');
+
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var list = ((db.slots || [])[0] || {}).trueStorages || [];
+      var s = list.filter(function (x) { return x.id === 'ts-2'; })[0];
+      return (s && s.tags.length) ? list : false;
+    }, { message: 'the tag being saved from KS02' });
+
+    assert.deepEqual(after.map(s => s.id), ['ts-1', 'ts-2', 'ts-3'],
+      'the storage added between mount and click survived — the write read the stored value, not the snapshot');
+    assert.deepEqual(after.find(s => s.id === 'ts-2').tags.map(t => ({ dumpId: t.dumpId, mmId: t.mmId })),
+      [{ dumpId: 'd-1', mmId: 11 }]);
+    assert.deepEqual(after.find(s => s.id === 'ts-1').tags, [{ id: 'tg-1', dumpId: 'd-1', mmId: 10 }],
+      'another storage tagged to a different pair is untouched');
+
+    // …and untagging from the same chip removes only that pair.
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-untag="ts-2"]'); },
+      { message: 'the new chip' });
+    await page.evaluate(CLICK_SEL, '[data-storage-untag="ts-2"]');
+    const untagged = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var list = ((db.slots || [])[0] || {}).trueStorages || [];
+      var s = list.filter(function (x) { return x.id === 'ts-2'; })[0];
+      return (s && s.tags.length === 0) ? list : false;
+    }, { message: 'the tag being removed' });
+    assert.deepEqual(untagged.map(s => s.id), ['ts-1', 'ts-2', 'ts-3'], 'no record was dropped');
+    assert.deepEqual(untagged.find(s => s.id === 'ts-1').tags.length, 1, 'the other pair is still tagged');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a tag row opens and closes, and its title links to the dump', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: '?storage=ts-1' });
+    await page.waitFor(function () { return !!document.querySelector('[data-tag-toggle="tg-1"]'); },
+      { message: 'the tag row' });
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-tag-title="tg-1"]'); }),
+      false, 'the detail starts closed');
+
+    await page.evaluate(CLICK_SEL, '[data-tag-toggle="tg-1"]');
+    const href = await page.waitFor(function () {
+      var a = document.querySelector('[data-tag-title="tg-1"]');
+      return a ? a.getAttribute('href') : false;
+    }, { message: 'the expanded panel' });
+    assert.equal(href, 'sir-ks02.html?dump=d-1&mm=10#ks03',
+      'the panel title carries both halves of the pair back to KS02');
+
+    await page.evaluate(CLICK_SEL, '[data-tag-toggle="tg-1"]');
+    await page.waitFor(function () { return !document.querySelector('[data-tag-title="tg-1"]'); },
+      { message: 'a second click closing it' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the one link is set, replaced, and cleared back to no key at all', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: '?storage=ts-1' });
+    const clickText = function (label) {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === label; });
+      if (!b) return false;
+      b.click();
+      return true;
+    };
+    const fillLink = function (setterSrc, label, url) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('input[placeholder="label (optional)"]'), label);
+      set(document.querySelector('input[placeholder="url"]'), url);
+      return true;
+    };
+
+    await page.waitFor(clickText, { args: ['+ add link'], message: 'the add-link button' });
+    await page.waitFor(function () { return !!document.querySelector('input[placeholder="url"]'); },
+      { message: 'the link form' });
+    await page.evaluate(fillLink, SET_REACT_INPUT, 'Paper', 'https://example.com/a');
+    await page.evaluate(clickText, 'save');
+
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])[0];
+      return s.link || false;
+    }, { message: 'the link being saved' }), { label: 'Paper', url: 'https://example.com/a' });
+
+    await page.evaluate(clickText, 'edit');
+    await page.waitFor(function () { return !!document.querySelector('input[placeholder="url"]'); },
+      { message: 'the link form again' });
+    await page.evaluate(fillLink, SET_REACT_INPUT, 'Paper v2', 'https://example.com/b');
+    await page.evaluate(clickText, 'save');
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])[0];
+      return (s.link && s.link.url === 'https://example.com/b') ? s.link : false;
+    }, { message: 'the replacement being saved' }), { label: 'Paper v2', url: 'https://example.com/b' });
+
+    await page.evaluate(clickText, 'edit');
+    await page.waitFor(function () { return !!document.querySelector('input[placeholder="url"]'); },
+      { message: 'the link form a third time' });
+    await page.evaluate(clickText, 'clear');
+
+    // The KEY goes, not just its value: '' would be a third state, and a
+    // storage that never had a link and one whose link was cleared are the
+    // same thing.
+    const cleared = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])[0];
+      return Object.prototype.hasOwnProperty.call(s, 'link') ? false : s;
+    }, { message: 'the link key being deleted' });
+    assert.equal('link' in cleared, false);
+    assert.deepEqual(cleared.tags, [{ id: 'tg-1', dumpId: 'd-1', mmId: 10 }], 'the tags were not disturbed');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the explanation is written on SAVE and not before', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: '?storage=ts-1' });
+    await page.waitFor(function () { return !!document.querySelector('textarea'); },
+      { message: 'the explanation box' });
+    assert.equal(await page.evaluate(function () { return document.querySelector('textarea').rows; }), 5,
+      'the box opens at five lines');
+
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('textarea'), value);
+      return true;
+    }, SET_REACT_INPUT, 'Why this matters.');
+    await sleep(300);
+    const midType = await page.evaluate(STORAGE_BY_ID, 'ts-1');
+    assert.equal(midType.explanation, '', 'typing alone writes nothing');
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'SAVE'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])[0];
+      return s.explanation === 'Why this matters.';
+    }, { message: 'SAVE writing the explanation' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a deep link that names nothing opens nothing, without an error', async () => {
+    const storage = await open('true-storage.html', { db: tagSeed(), hash: '?storage=no-such-storage' });
+    await storage.waitFor(function () {
+      var el = document.getElementById('root');
+      return !!el && el.children.length > 0;
+    }, { message: 'true-storage.html mounting' });
+    assert.equal(await storage.evaluate(function () { return !!document.querySelector('[data-add-tag]'); }),
+      false, 'no detail was opened');
+    assert.deepEqual(realErrors(storage), []);
+    await storage.close();
+
+    const ks02 = await open('sir-ks02.html', { hash: withQuery('?dump=no-such-dump', '#ks03'), fresh: false });
+    await ks02.waitFor(function () {
+      var el = document.getElementById('root');
+      return !!el && el.children.length > 0;
+    }, { message: 'sir-ks02.html mounting' });
+    assert.equal(await ks02.evaluate(function () { return !!document.querySelector('[data-storage-tags]'); }),
+      false, 'no leaf card was opened');
+    assert.deepEqual(realErrors(ks02), []);
+    await ks02.close();
+  });
+
+  /* ── 2f. parent cycles ────────────────────────────────────────────────────
+     `parentIds` is plural and the ConnectionsPicker on both pages lets a user
+     pick a descendant as a parent, so a cycle is reachable through ordinary
+     use — and it can also already exist in stored data or arrive from another
+     device through cloud sync.
+
+     Unguarded, every traversal below recursed until the stack gave out. Because
+     a RangeError thrown inside a React render tears the tree down, the symptom
+     was not a broken canvas: the whole page rendered NOTHING. KS02 lost CAL,
+     KS02, MG, KS03, KOLB and SRCH at once, recoverable only by hand-editing
+     localStorage.
+
+     So each case asserts BOTH that the mount survives and that no error was
+     raised — a stack overflow shows up as an empty #root, which on its own is
+     the symptom of a dozen unrelated faults.
+
+     graph-layout.test.js pins the layout contract precisely and cheaply; these
+     cases exist to prove the PAGE survives, which is the part an offline test
+     of one module cannot claim. */
+
+  // top → m → n → m: the component has a root, so the walk actually enters the
+  // cycle. A rootless cycle is survivable by accident and proves nothing.
+  const cyclicMms = [
+    F.mm(10, 'Mind Map A'),
+    F.mm(11, 'Mind Map B', { parentIds: [10, 12] }),
+    F.mm(12, 'Mind Map C', { parentIds: [11] })
+  ];
+
+  await t.test('a parent cycle in mms does not white-screen KS02', async () => {
+    const page = await open('sir-ks02.html', { db: seedDb({ mms: cyclicMms }), hash: '#ks03' });
+    await waitMounted(page, 'sir-ks02.html');
+    assert.deepEqual(realErrors(page), [], 'no RangeError escaped the render');
+    // The canvas drew the cycle rather than merely not crashing.
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('#root svg').length > 0;
+    }), true, 'the multiverse canvas rendered');
+    await page.close();
+  });
+
+  await t.test('a parent cycle in trueStorages does not white-screen True Storage', async () => {
+    const page = await open('true-storage.html', {
+      db: seedDb({
+        trueStorages: [
+          F.trueStorage('ts-1', 'Storage A'),
+          F.trueStorage('ts-2', 'Storage B', { parentIds: ['ts-1', 'ts-3'] }),
+          F.trueStorage('ts-3', 'Storage C', { parentIds: ['ts-2'] })
+        ],
+        trueStoragePos: {}
+      })
+    });
+    await waitMounted(page, 'true-storage.html');
+    assert.deepEqual(realErrors(page), []);
+    const drawn = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-sid]'),
+        function (g) { return g.getAttribute('data-sid'); }).sort();
+    });
+    assert.deepEqual(drawn, ['ts-1', 'ts-2', 'ts-3'], 'every storage in the cycle is on the canvas');
+    await page.close();
+  });
+
+  await t.test('a rootless cycle still renders every node distinguishably', async () => {
+    // No node is a root, so the main walk lays out nothing and the catch-all
+    // has to. Stacked on one point they would be one visible node, and
+    // applyRepulsion cannot separate exactly coincident positions.
+    const page = await open('true-storage.html', {
+      db: seedDb({
+        trueStorages: [
+          F.trueStorage('ts-1', 'Storage A', { parentIds: ['ts-2'] }),
+          F.trueStorage('ts-2', 'Storage B', { parentIds: ['ts-1'] })
+        ],
+        trueStoragePos: {}
+      })
+    });
+    await waitMounted(page, 'true-storage.html');
+    assert.deepEqual(realErrors(page), []);
+    const pts = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-sid]'), function (g) {
+        var b = g.getBoundingClientRect();
+        return Math.round(b.x) + ',' + Math.round(b.y);
+      });
+    });
+    assert.equal(pts.length, 2);
+    assert.notEqual(pts[0], pts[1], 'the two nodes do not sit on the same point');
+    await page.close();
+  });
+
+  await t.test("a cycle does not hang a non-leaf MM's S&C tab", async () => {
+    // getDescendants and computeDepths recurse over the same parent graph from
+    // a different entry point, so this fails independently of the canvas fix.
+    const page = await open('sir-ks02.html', {
+      db: seedDb({
+        mms: cyclicMms,
+        sourceDumps: [F.dump('d-1', '2026-03-08', { mmLinks: [F.dumpLink(90, 12)] })]
+      }),
+      hash: '#srch'
+    });
+    await page.waitFor(function () { return document.body.textContent.indexOf('Mind Map A') >= 0; },
+      { message: 'the SRCH list' });
+    await page.evaluate(function () {
+      var row = Array.prototype.find.call(document.querySelectorAll('span'),
+        function (s) { return s.textContent.trim() === 'Mind Map A'; });
+      row.parentElement.click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'S&C'; });
+    }, { message: 'the MM detail tabs' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'S&C'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      var el = document.getElementById('root');
+      return !!el && el.children.length > 0 && document.body.textContent.indexOf('S&C') >= 0;
+    }, { message: 'the S&C tab surviving a cyclic descendant walk' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* A cycle among source dumps is a DIFFERENT graph from mms/trueStorages: it
+     runs on `parentId`, which is singular. That changes what is reachable, and
+     the difference is worth stating because it sets the severity.
+
+     Walking DOWN from the roots — the tag picker, deleteDumpEntry — cannot
+     reach a parentId cycle at all: a node in one has its single parent inside
+     the cycle, so it is nobody's descendant and no root leads to it. Walking UP
+     from an arbitrary dump can, because the walk starts wherever it is asked
+     to. So the upward path builders are the ones that need the guard, and the
+     downward ones are guarded for consistency rather than against a live crash.
+
+     Nothing in the current UI creates such a cycle either — addDumpEntry only
+     ever attaches a NEW dump to an existing parent. It can only arrive from
+     damaged or hand-edited data, or from a device syncing it in. That is
+     exactly why the page has to survive it rather than assume it away. */
+  const cyclicDumps = [
+    F.dump('d-1', '2026-03-08', { mmLinks: [F.dumpLink(90, 10)] }),
+    F.dump('d-2', '2026-03-09', { parentId: 'd-3' }),
+    F.dump('d-3', '2026-03-10', { parentId: 'd-2' })
+  ];
+
+  await t.test('a source-dump parentId cycle does not break KS02 or the tag picker', async () => {
+    const ks02 = await open('sir-ks02.html', {
+      db: seedDb({ sourceDumps: cyclicDumps }),
+      hash: withQuery('?dump=d-2', '#ks03')
+    });
+    await waitMounted(ks02, 'sir-ks02.html');
+    assert.deepEqual(realErrors(ks02), [], 'the ?dump= path builder walked up out of the cycle');
+    await ks02.close();
+
+    const ts = await open('true-storage.html', {
+      db: seedDb({
+        sourceDumps: cyclicDumps,
+        trueStorages: [F.trueStorage('ts-1', 'Storage A')],
+        trueStoragePos: {}
+      }),
+      hash: '?storage=ts-1'
+    });
+    await ts.waitFor(function () { return !!document.querySelector('[data-add-tag]'); },
+      { message: '?storage= opening the detail' });
+    await ts.evaluate(CLICK_SEL, '[data-add-tag]');
+    await ts.waitFor(function () { return !!document.querySelector('[data-tag-option="d-1:10"]'); },
+      { message: 'the tag picker rendering the reachable leaf' });
+    // The cycle's own dumps are unreachable from any root, so the picker simply
+    // never draws them — asserted so a future re-parenting feature that DOES
+    // make them reachable trips this case instead of shipping a hang.
+    assert.equal(await ts.evaluate(function () {
+      return !!document.querySelector('[data-tag-option^="d-2:"], [data-tag-option^="d-3:"]');
+    }), false, 'a dump inside the cycle is not reachable from a root');
+    assert.deepEqual(realErrors(ts), []);
+    await ts.close();
+  });
+
+  /* ── 2g. a storage tag follows its content ────────────────────────────────
+     Adding a sub-title under a leaf dump MOVES that dump's mmLinks down to the
+     new child and empties the parent's. The tag names a (dumpId, mmId) pair, so
+     without re-pointing it stops resolving and renders as "source removed" —
+     the content is still there, one level down, with nothing saying so.
+
+     KS02 re-points it in the same operation, through the one foreign-key write
+     it is allowed to make: a fresh read-modify-write of `trueStorages` alone,
+     never this page's React snapshot. */
+
+  // The real authoring path in the source-dump view: "+ title" opens the form,
+  // the input carries placeholder "New title...", and "add" commits it as a
+  // child of whatever dump the breadcrumb is currently on.
+  const addSubTitle = async (page, title) => {
+    await page.evaluate(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === '+ title'; });
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!document.querySelector('input[placeholder="New title..."]');
+    }, { message: 'the create-title form' });
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('input[placeholder="New title..."]'), value);
+      return true;
+    }, SET_REACT_INPUT, title);
+    await page.evaluate(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === 'add'; });
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+  };
+
+  await t.test('nesting a title under a tagged dump re-points the tag to the child', async () => {
+    const page = await open('sir-ks02.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-1:10"]'); },
+      { message: 'the leaf card' });
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-1:10'), ['ts-1'], 'the chip starts on the parent');
+
+    const before = await page.evaluate(STORAGE_BY_ID, 'ts-1');
+    assert.equal(before.tags[0].dumpId, 'd-1');
+
+    await addSubTitle(page, 'Sub title');
+
+    const moved = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var slot = (db.slots || [])[0] || {};
+      var child = (slot.sourceDumps || []).filter(function (d) { return d.parentId === 'd-1'; })[0];
+      if (!child) return false;
+      var s = (slot.trueStorages || []).filter(function (x) { return x.id === 'ts-1'; })[0];
+      if (!s || !s.tags.length || s.tags[0].dumpId !== child.id) return false;
+      var parent = (slot.sourceDumps || []).filter(function (d) { return d.id === 'd-1'; })[0];
+      return {
+        childId: child.id,
+        tag: s.tags[0],
+        childLinks: (child.mmLinks || []).map(function (l) { return l.mmId; }),
+        parentLinks: (parent.mmLinks || []).length
+      };
+    }, { message: 'the tag being re-pointed to the new child' });
+
+    assert.equal(moved.tag.mmId, 10, 'the MM half of the pair is untouched');
+    assert.equal(moved.tag.id, 'tg-1', 'it is the same tag record, not a re-created one');
+    // d-1 seeds TWO mmLinks, and addDumpEntry moves the whole set down.
+    assert.deepEqual(moved.childLinks, [10, 11], 'every mmLink moved to the child');
+    assert.equal(moved.parentLinks, 0, 'and the parent kept none');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('nesting a title under an UNtagged dump writes no trueStorages at all', async () => {
+    // The other half: re-pointing must not turn every sub-title into a write.
+    // TrackTrueStorage.repointDump returns the same reference when nothing
+    // matches, and _mutateSlotKey short-circuits on that — so no write, and no
+    // sync upload armed for a no-op.
+    const page = await open('sir-ks02.html', { db: tagSeed(), hash: withQuery('?dump=d-2', '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-2:10"]'); },
+      { message: 'the second leaf card' });
+    const before = await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return JSON.stringify(((db.slots || [])[0] || {}).trueStorages || []);
+    });
+
+    await addSubTitle(page, 'Another sub');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return ((db.slots || [])[0] || {}).sourceDumps.some(function (d) { return d.parentId === 'd-2'; });
+    }, { message: 'the sub-title being added' });
+
+    const after = await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return JSON.stringify(((db.slots || [])[0] || {}).trueStorages || []);
+    });
+    assert.equal(after, before, 'trueStorages is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   // ── 3. export → import ──────────────────────────────────────────────────
 
   await t.test('export → import preserves docPageId and every canonical field', async () => {
@@ -1527,12 +2290,21 @@ test('browser suites', skipUnlessChrome, async t => {
     // every canonical user-owned field survives, value for value
     for (const key of ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
       'goals', 'saActions', 'saEntries', 'sourceDumps', 'notes', 'mmEntries', 'mgSchedule',
-      'calendarNotes', 'deadlines', 'pos', 'levelTemplates', 'docPages']) {
+      'calendarNotes', 'deadlines', 'pos', 'levelTemplates', 'docPages',
+      'trueStorages', 'trueStoragePos']) {
       assert.deepEqual(imported[key], original[key], key + ' round-tripped unchanged');
     }
 
+    // A storage tag points at a (dump, MM) pair by id, and both ids are
+    // slot-local. The round trip has to carry the pair, not just the record.
+    const storage = imported.trueStorages.find(s => s.id === 'ts-1');
+    assert.deepEqual(storage.tags, [{ id: 'tg-1', dumpId: 'd-1', mmId: 10 }],
+      'the source-dump tag survived with both halves of its pair');
+    assert.deepEqual(imported.trueStorages.find(s => s.id === 'ts-2').parentIds, ['ts-1'],
+      'and the storage parent/child link');
+
     // The allow-list must not silently shrink back.
-    assert.equal(Object.keys(imported).length, 21, 'the imported slot carries all 21 canonical fields');
+    assert.equal(Object.keys(imported).length, 23, 'the imported slot carries all 23 canonical fields');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -1561,7 +2333,7 @@ test('browser suites', skipUnlessChrome, async t => {
     'id', 'name', 'createdAt', 'sessions', 'mms', 'kolbs', 'mgChanges',
     'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
     'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-    'levelTemplates', 'docPages'
+    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos'
   ];
 
   await t.test('every entry point creates a slot with the same canonical shape', async () => {
@@ -1580,7 +2352,7 @@ test('browser suites', skipUnlessChrome, async t => {
 
       const slot = await page.waitFor(READ_SLOT, { message: file + ' creating its default slot' });
       assert.deepEqual(Object.keys(slot).sort(), CONTRACT.slice().sort(),
-        file + ' builds the full 21-field contract, not its own subset');
+        file + ' builds the full 23-field contract, not its own subset');
       assert.match(slot.id, /^slot-/, file + ' keeps the readable id prefix');
       assert.deepEqual(realErrors(page), [], 'no page error while bootstrapping ' + file);
       await page.close();
@@ -1754,13 +2526,6 @@ test('browser suites', skipUnlessChrome, async t => {
     return window.TrackStorage && window.TrackStorage.dbStatus
       ? window.TrackStorage.dbStatus().state : 'no-guard';
   };
-  const mountSel = file => file === 'index.html' ? '#slot-list' : '#root';
-
-  const waitMounted = (page, file) => page.waitFor(function (sel) {
-    var el = document.querySelector(sel);
-    return !!el && el.children.length > 0;
-  }, { args: [mountSel(file)], message: file + ' mounting' });
-
   // The widget's own read path: opening the panel calls loadNotes → _twDB.
   const OPEN_NOTES = function () { document.getElementById('nw-btn').click(); return true; };
 

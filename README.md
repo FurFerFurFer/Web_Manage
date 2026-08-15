@@ -45,7 +45,7 @@ When a proposed change is implemented:
 
 `index.html` is the project hub. It currently provides:
 
-- Navigation to KS02, Progress, and Documentations.
+- Navigation to KS02, Progress, Documentations, and True Storage.
 - Creation of named workspace slots.
 - Active-slot selection.
 - Slot renaming and deletion.
@@ -343,6 +343,31 @@ Each `docPages` entry is:
 }
 ```
 
+A **storage** (`trueStorages`) is:
+
+```js
+{
+  id,                         // TrackStorage.newId() — a string, so it can never
+                              // collide with the numeric nid() counter in KS02
+  name,
+  createdAt,                  // local calendar day
+  parentIds: [],              // the same relationship shape mms use
+  link: { label, url },       // optional, and at most one — absent means none
+  explanation: '',
+  tags: [ { id, dumpId, mmId } ],
+  customColor                 // optional, from the canvas fill picker
+}
+```
+
+A tag names a **pair** — one source-dump leaf and one MM linked inside it — and both halves are
+slot-local ids, so a tag only means anything inside the slot that holds it. `trueStoragePos` is a
+map of storage id → `{x, y}`, the canvas counterpart of `pos`.
+
+Neither `parentIds` nor `tags` is validated beyond "a list of objects": `mms` carries the
+identical `parentIds` exposure and is not validated either, so gating one and not the other would
+invent an inconsistent rule. `true-storage-core.js` pays for that choice instead — every nested
+list is read through a helper that cannot throw, and the tree builder terminates on a parent cycle.
+
 A day note or deadline authored from a documentation page carries one extra field:
 
 ```js
@@ -352,6 +377,67 @@ A day note or deadline authored from a documentation page carries one extra fiel
 Its absence means the item was added in the Schedule, so existing data reads exactly as before and no migration is needed. Because it is a field on an item inside an already-registered slot array, it needs no slot-constructor default and no import allow-list entry — whole-object export, the array-level import copy, and the opaque Firebase blob all carry it, and every edit path in `progress.html` spreads the item rather than rebuilding it.
 
 Sibling order in the sidebar is the pages' relative order inside the flat `docPages` array — there is no separate order field. Drag-to-arrange therefore persists by splicing the one moved page to a new array position (and re-parenting is just a `parentId` change), so export/import, Firebase sync, and the slot constructors need no order-specific handling.
+
+### True Storage
+
+`true-storage.html` is the fourth workspace page. It holds **storages**: durable records that
+carry their own parent/child structure, one reference link, a free-text explanation, and tags
+pointing back into the source material they came from. The relationship model and arrangement
+are KS03's, and the nested list is SRCH's format — the difference is that the records are
+storages rather than MMs, and that opening one gives an editor rather than a KS02 stage view.
+
+Two views, switched from the header:
+
+- **MULTIVERSE** — the same canvas as KS03: drag a node to place it, scroll or pinch to zoom,
+  drag the background to pan, `+` / `−` / `↺` to zoom and reset, `⊞` to rearrange, a fill-colour
+  picker (single click opens the palette, double click toggles it on and off), right-click for
+  Duplicate, and arrows from parent to child. Storages have no Anchor/T1/T2 types, so every node
+  is drawn the same way; a faint outer ring means the storage carries at least one source-dump
+  tag. Manual positions persist in `trueStoragePos`, exactly as MM positions persist in `pos`.
+- **SRCH** — the nested-by-parent/child list, with the same filter box, indent guides, collapse
+  toggles and `⇅` drag-to-arrange-among-siblings. Sibling order is the records' order inside
+  `trueStorages`; there is no separate order field. A drag onto a node that is **not** a sibling
+  is refused rather than applied, because it would reorder the stored array without changing
+  anything the user can see.
+
+Opening a storage shows, top to bottom:
+
+1. Its name (double-click to rename), creation day, and `delete`. Deleting a storage detaches it
+   from its children rather than deleting them.
+2. **LINK** — exactly one. A URL with an optional label. Editing replaces it; `clear` deletes the
+   key rather than storing an empty string, so a storage that never had a link and one whose link
+   was cleared are the same state.
+3. **CONNECTIONS** — the same parent/child editor KS02 uses on an MM: Parents ↑ and Children ↓ as
+   chips with `⊗` to detach, and an edit mode with search, multi-select parents, "No parents
+   (root)", and add-children.
+4. **SOURCE DUMP TAGS** — see below.
+5. **EXPLANATION** — a five-line, vertically resizable box with a `SAVE` button. Nothing is written
+   until SAVE, so cloud sync is not re-armed on every keystroke; an unsaved draft is marked.
+
+#### Tagging a source dump
+
+A tag names a **pair**: one source-dump leaf and one MM linked inside it. `+ tag` opens the dump
+tree fully expanded with each leaf's MM sections listed; picking a section records the pair. Pairs
+already tagged are shown greyed rather than offered twice.
+
+Each tag renders as one row — `dump title · MM name`. Clicking the row **expands it in place** to
+show that MM section's text blocks and citation links, read-only, because `sourceDumps` belongs to
+KS02. Clicking the row again closes it. The expanded panel's title is a link to
+`sir-ks02.html?dump=<dump>&mm=<mm>#ks03`, which opens KS03 → SOURCE DUMP on that leaf and briefly
+rings the MM's card.
+
+The same tag appears on the KS02 side, under that MM's section, everywhere that section's content
+is drawn: the source-dump leaf card, the S&C tab of a leaf MM, the S&C tab of a non-leaf MM, and a
+descendant node inside it. Each chip links to `true-storage.html?storage=<id>`. Tags can be created
+and removed from either side — KS02 has its own `+ storage` picker and an `×` on each chip.
+
+Because an mmLink's content is drawn at four separate sites, the match that decides which storages
+belong to a pair lives in exactly one place, `true-storage-core.js`, and no call site re-spells it.
+That module also owns the tag record's shape, so a tag made in KS02 is identical to one made here.
+
+Deleting a source dump, or removing an MM link from one, **does not** delete the tags that pointed
+at it — losing the user's own filing to a delete somewhere else would be data loss. Such a tag reads
+as *source removed* and stays removable by hand.
 
 ### Local and cloud data
 
@@ -394,10 +480,11 @@ Each page writes only the keys it owns, merging them into a fresh read of the st
 | `progress.html` | `goals`, `saActions`, `saEntries`, `mmEntries`, `mgSchedule`, `calendarNotes`, `deadlines` |
 | `sir-ks02.html` | `sessions`, `mms`, `kolbs`, `mgChanges`, `linChanges`, `linDayTitles`, `pos`, `levelTemplates`, `sourceDumps` |
 | `documentations.html` | `docPages`, plus `calendarNotes` and `deadlines` through a fresh read-modify-write |
+| `true-storage.html` | `trueStorages`, `trueStoragePos` |
 | `notes-widget.js` | `notes` |
 | `index.html` | the slot list itself — create, rename, delete, import |
 
-`sir-ks02.html` reads `mgSchedule` but never writes it; that key belongs to `progress.html`. Adding a key to a page's write set means adding it to this table.
+`sir-ks02.html` reads `mgSchedule` but never writes it; that key belongs to `progress.html`. It also reads `trueStorages`, and writes it in exactly one narrow case — adding or removing a source-dump tag — through a fresh single-key read-modify-write (`_mutateSlotKey`), never through its autosave patch. `true-storage.html` reads `sourceDumps` and `mms` and never writes either. Adding a key to a page's write set means adding it to this table.
 
 Progress and KS02 also bind each React snapshot to the id of the slot it came from. A
 cross-tab `storage` or `visibilitychange` refresh adopts the selected slot's data and id in
@@ -435,7 +522,7 @@ A root object with **no `slots` key** is classified `ok`, not `blocked`, and han
 
 #### Storage-quota handling
 
-Every page writes the whole workspace to the single `track_db` key, so the browser's per-origin `localStorage` quota (~5-10 MB) is the binding size limit now that cloud sync gzips and chunks the payload. All 23 `track_db` writes, plus the two `trackPriorityMatrix` writes in `progress.html`, go through `window.TrackStorage` in `storage-guard.js`:
+Every page writes the whole workspace to the single `track_db` key, so the browser's per-origin `localStorage` quota (~5-10 MB) is the binding size limit now that cloud sync gzips and chunks the payload. Every `track_db` write on every page, plus the two `trackPriorityMatrix` writes in `progress.html`, goes through `window.TrackStorage` in `storage-guard.js`:
 
 - `TrackStorage.loadDB()` — the one parse-and-validate boundary described above.
 - `TrackStorage.dbBlocked()` / `TrackStorage.dbStatus()` — the current verdict.
@@ -458,12 +545,14 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, PDF export |
+| `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, explanation, and source-dump tags |
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry and deadline rules (`window.TrackCalendar`) |
 | `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
 | `schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
 | `storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
 | `notes-widget.js` | Floating per-slot notes widget |
+| `true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
@@ -484,18 +573,21 @@ Track-website/
 ├── progress.html
 ├── sir-ks02.html
 ├── documentations.html
+├── true-storage.html
 ├── calendar-core.js
 ├── theme.js
 ├── schema.js
 ├── storage-guard.js
 ├── firebase-sync.js
 ├── notes-widget.js
+├── true-storage-core.js
 ├── styles.css
 ├── firestore.rules
 └── tests/
     ├── run.js
     ├── calendar-core.test.js
     ├── schema.test.js
+    ├── true-storage-core.test.js
     ├── browser.test.js
     └── lib/
         ├── cdp.js
@@ -573,20 +665,22 @@ The pages currently read or write fields including:
   deadlines,
   pos,
   levelTemplates,
-  docPages
+  docPages,
+  trueStorages,
+  trueStoragePos
 }
 ```
 
 #### Canonical slot schema
 
 `schema.js` holds the one definition of a slot and publishes `window.TrackSchema`. It is a
-classic script loaded in `<head>` on all four workspace pages, before their own scripts, so
+classic script loaded in `<head>` on all five pages, before their own scripts, so
 the bootstrap code that runs at page-script load can use it.
 
 | Member | What it does |
 | --- | --- |
 | `SLOT_FIELDS`, `SLOT_KEYS` | The field table: name → kind (`text`, `date`, `list`, `map`). Frozen. **Adding a slot field means adding one row here and nothing else** — every function below derives from it |
-| `createEmptySlot({id, name, createdAt})` | A complete 21-field slot, in table order, with a minted id and a local-day `createdAt` |
+| `createEmptySlot({id, name, createdAt})` | A complete 23-field slot, in table order, with a minted id and a local-day `createdAt` |
 | `normalizeSlot(input, opts)` | Fills missing fields, replaces wrong-typed ones with their default, **keeps unknown keys**, never mutates `input`, never rewrites an id it was given |
 | `validateSlot(input)`, `validateDatabase(db)` | `{ok, errors:[{field, message, fatal}]}`. Report only. Checks canonical field kinds, object items in lists, recursive goal shapes, slot identity, calendar-item dates, and an optional day-note `time`. `null` counts as missing |
 | `looksLikeDatabase(input)` | True when a file is a whole database rather than one workspace — a `slots` array and no slot data of its own |
@@ -612,6 +706,7 @@ the same string for two workspaces created in the same millisecond.
 | `sir-ks02.html` legacy bootstrap IIFE | `normalizeSlot` |
 | `sir-ks02.html` on-mount auto-create | `createEmptySlot` |
 | `documentations.html` `_bootstrapSlotIfSafe()` | `createEmptySlot` |
+| `true-storage.html` `_bootstrapSlotIfSafe()` | `createEmptySlot` |
 
 The two legacy bootstraps use `normalizeSlot` rather than `createEmptySlot` because the
 values they harvest come from `JSON.parse` of pre-`track_db` localStorage keys. They
@@ -752,20 +847,22 @@ One command, no dependencies, no `package.json`:
 node tests/run.js
 ```
 
-It runs two layers:
+It runs three layers:
 
 | Layer | File | What it covers |
 | --- | --- | --- |
 | Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, caution ranges, deadline validation, run-ups across month/year/DST boundaries, an inverted span being inert rather than explosive, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, and refused-save handling for import, legacy notes, and Documentation bootstrap |
+| Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, and the parent/child tree including cycles |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, and refused-save handling for import, legacy notes, and Documentation bootstrap |
 
-Both offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
+The first two offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
 That sweep is the point, not a detail: `calendar-core.js` exists to turn instants
 into *local* calendar days and `schema.js` stamps a new slot with one, and the
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
-machine running in UTC.
+machine running in UTC. `true-storage-core.test.js` runs **once**: that module
+holds no date code, so a sweep would cost five runs and prove the same thing.
 
 Useful variations:
 
@@ -957,10 +1054,10 @@ The committed suite is the part of this baseline a reader can reproduce:
 node tests/run.js
 ```
 
-As of 2026-08-10 that is 104 offline cases (56 in `calendar-core.test.js`, 48 in
+As of 2026-08-15 that is 104 offline cases (56 in `calendar-core.test.js`, 48 in
 `schema.test.js`, several hundred assertions) executed under five timezones from
-UTC+14 to UTC-11, plus 73 browser subtests in headless Chrome — 11 suites, all
-passing.
+UTC+14 to UTC-11, plus 17 cases in `true-storage-core.test.js` run once — it holds
+no date code — plus 84 browser subtests in headless Chrome, all passing.
 
 Several sets of regression cases were confirmed to **fail** before their fix,
 which is what makes them evidence rather than decoration:
@@ -982,6 +1079,18 @@ which is what makes them evidence rather than decoration:
 The `index.html` cases were re-confirmed against a `TRACK_TEST_ROOT` scratch
 directory holding symlinks to the repository plus the single pre-change
 `index.html`, with the other 20 browser cases still passing.
+
+The storage-tag cases were proved the same way, against **two** doctored
+`sir-ks02.html` baselines rather than one, because the failure they guard has two
+symmetrical halves. With the MM half of the match dropped at the call site, three
+cases failed — "a tag lands on its own pair and on no other" (`['ts-1']` became
+`['ts-1','ts-2']`), the non-leaf/descendant case, and the KS02 read-modify-write
+case — while the leaf S&C case passed, since its seed has only one tagged storage.
+With the dump half dropped instead, a different three failed: the own-pair case,
+the leaf S&C case (`d-2:10` returned `['ts-1']` instead of `[]`), and the
+non-leaf/descendant case. The two sets overlap but neither contains the other,
+which is exactly why the negative assertions are spread across every surface
+rather than made once.
 
 The older entries below record one-off audits kept for their detail:
 
@@ -1117,6 +1226,7 @@ The latest commits before this documentation update show current work concentrat
 - Removing the last writer that could revert another page's fields (`sir-ks02.html`).
 - Routing all five `track_db` readers through one validated load boundary, so a malformed stored database can no longer white-screen a page or be silently bootstrapped over.
 - The first committed automated tests.
+- True Storage: the fourth workspace page, and per-pair source-dump tagging shared with KS02.
 
 These are implemented areas, not roadmap items. Possible follow-up work belongs in `NOTES.md`.
 
