@@ -67,10 +67,11 @@ Active files:
 | `storage-guard.js` | The one `track_db` load boundary (`loadDB` — parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, both banners (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `true-storage-core.js` | The one definition of the storage↔source-dump relationship (`window.TrackTrueStorage`): the pair matcher, the pure tag writers, and the parent/child tree |
+| `graph-layout.js` | The one radial canvas layout (`window.TrackGraphLayout`): `computeLayerLayout`, `applyRepulsion`, and the cycle guards that keep a parent cycle from blowing the stack on either canvas page |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js` and `true-storage-core.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js` and `graph-layout.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -84,7 +85,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=4`, `schema.js?v=3`, `calendar-core.js?v=2`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=4`, `schema.js?v=3`, `calendar-core.js?v=2`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
 
 ## Current Data Contract
 
@@ -204,6 +205,30 @@ A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may
 - The comparison that decides which storages belong to a pair has exactly **one** definition, `TrackTrueStorage.storagesForLink` in `true-storage-core.js`, and the tag record's shape has exactly one, `withTag`. `sir-ks02.html` draws an mmLink's content at **four** sites — the source-dump leaf card, the S&C tab for a leaf MM, the S&C tab for a non-leaf MM, and `DescendantSCNode` — and every one of them renders the shared `StorageTags` component through the single `renderStorageTags` helper. Never spell `t.dumpId === … && t.mmId === …` at a call site. This rule is written from a shipped bug in a different feature with the identical shape: the deadline caution predicate was spelled out at three sites, one dropped half of it, and the timeline mismarked every due day until it was found. `tests/browser.test.js` therefore asserts **negatively** at each surface — a chip must be absent under the other MM in the same dump, and absent under the same MM in another dump.
 - `trueStorages` and `trueStoragePos` are owned by `true-storage.html` and must never join `sir-ks02.html`'s `_writeSlotKeys` autosave patch, which is built from that page's React snapshot. KS02 may add or remove a tag, and only through `_mutateSlotKey` — a fresh read-modify-write of that one key. `true-storage.html` is the mirror image: it reads `sourceDumps` and `mms` and writes neither.
 - Deleting a source dump, or removing an MM link from one, must **not** touch `trueStorages`. A tag whose pair no longer resolves renders as *source removed* and stays removable by hand, exactly as a day note outlives the documentation page that authored it.
+- Every traversal of a parent/child graph carries a **cycle guard**, without exception. `parentIds`
+  is plural and the connections picker on both canvas pages lets a user pick a descendant as a
+  parent, so a cycle is reachable through ordinary use — and it can also arrive from stored,
+  synced, or hand-edited data, which is why tolerating one is mandatory and preventing one at the
+  picker would not be a substitute. All guards agree on one contract, the one
+  `TrackTrueStorage.buildTree` and `SrchView` already set: **a repeated node is drawn once, and its
+  branch ends there.** Use a per-path `seen` (copied per branch) wherever a diamond must still be
+  drawn under both parents, and a visited-at-enqueue set where a node is wanted once. A memo is
+  *not* a guard: `leafCount` wrote `leafMemo[id]` only after its recursive `reduce` returned, so a
+  node still on the stack was never in it, and the RangeError escaping a React render left `#root`
+  empty — KS02 losing CAL/KS02/MG/KS03/KOLB/SRCH at once, recoverable only by hand-editing
+  `localStorage`. Guarded reference implementations: `graph-layout.js` (`leafCount`, `layout`),
+  `true-storage-core.js` `buildTree`, `sir-ks02.html` `getAncestors`, `getDescendants`,
+  `dumpPathTo`, `deleteDumpEntry.collect` and `SrchView.buildTree`.
+- The radial canvas layout has exactly **one** definition, `graph-layout.js`, loaded by
+  `sir-ks02.html` and `true-storage.html` as a one-line delegate each. It was ~120 duplicated lines
+  per page, which meant the cycle guard above had to be written twice — the same duplication shape
+  that cost this project the deadline caution predicate. Do not re-inline it, and do not add a
+  second copy for a third canvas.
+- Source dumps are a **different** graph: `parentId` is singular, so a dump inside a cycle has its
+  one parent inside that cycle and is nobody's descendant. Downward walks cannot reach one; only
+  the upward breadcrumb walk can, because it starts wherever it is asked to. That walk is
+  `dumpPathTo` and it has one definition — it used to be spelled twice, guarded at one site and
+  unguarded 300 lines away at the other.
 - `parentIds` and `tags` are deliberately **not** validated in `schema.js` beyond the object-item check every list field gets. `mms` carries the identical `parentIds` exposure and is not validated either, so gating one and not the other would invent an inconsistent rule. `true-storage-core.js` pays for that instead: every nested list is read through a helper that cannot throw, and `buildTree` terminates on a parent cycle.
 
 A storage's `link` is at most **one**, and clearing it **deletes the key** rather than storing `''` — the same absence-is-meaningful rule as a day note's `time`. A storage that never had a link and one whose link was cleared must be the same state.
@@ -259,6 +284,7 @@ storage-guard.js
 firebase-sync.js
 notes-widget.js
 true-storage-core.js
+graph-layout.js
 ```
 
 Inspect every applicable:
@@ -473,6 +499,7 @@ node --check calendar-core.js
 node --check firebase-sync.js
 node --check notes-widget.js
 node --check true-storage-core.js
+node --check graph-layout.js
 ```
 
 Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
@@ -771,6 +798,55 @@ recorded failing first.
 - `trueStorages` and `trueStoragePos` were added to the sentinel set in "KS02 writes no key it does not own", so an ordinary KS02 edit is asserted to leave both byte-identical.
 - Export → import carries both fields, including a tag's `(dumpId, mmId)` pair and a storage's `parentIds`.
 - Not covered: real touch hardware (the storage canvas's drag/pinch path and the tree's `⇅` handle were exercised only through synthetic events or not at all), the live Firebase project, and print output.
+
+### Parent-cycle guards and the shared canvas layout (2026-08-15)
+
+- One new offline suite (`tests/graph-layout.test.js`, 21 cases, run **once** — no date code)
+  and eight new browser cases. The suite went from 13 to 14 registered suites; all 14 pass.
+- The **fail-first proof for A1 is the extraction order**, and it is worth repeating for any
+  future change here. `graph-layout.js` was created as a **verbatim** move of
+  `sir-ks02.html:333-485` with the bug still in it, both pages were reduced to one-line
+  delegates, and only then was the suite written and run. Result at that moment: **19 cases, 12
+  passed, 7 failed**, and the split was exactly the predicted one — every acyclic case (single
+  root, tree, diamond, disconnected components, dangling parent, custom radii) passed, which is
+  what proves the extraction was faithful, while all **6** root-reachable cycle cases died with
+  `RangeError: Maximum call stack size exceeded` inside `leafCount`. (The 7th failure was a
+  defect in the test, not the product — see the test-authoring note below.) The guards were added
+  afterwards; the suite is 21 cases now and all pass. Extracting first and guarding second is
+  what made one run prove both things at once.
+- One case passed on **both** sides and was expected to: a *pure* cycle with no root. Such a
+  component has `roots.length === 0`, so the walk never starts and the crash never happens. Only
+  a cycle **reachable from a root** enters the recursion. A test seeded with a rootless cycle
+  proves nothing about this bug.
+- The A1 **page-level** cases were proven separately, against a `TRACK_TEST_ROOT` scratch
+  directory of symlinks to the repository plus **one** doctored `graph-layout.js` with
+  `inProgress` and the `path.has(id)` guard removed and nothing else altered. Never place such a
+  baseline copy in the repository.
+- A2 was seen failing against the untouched working tree: `a cycle does not hang a non-leaf MM's
+  S&C tab` timed out after 15s on the cyclic descendant walk, independently of the canvas.
+- A3 was seen failing the same way, but only after a **test** defect was fixed first: the case
+  looked for the create-title input without clicking `+ title`, so it timed out on the wrong
+  step and would have "proved" the bug for the wrong reason. Its sibling guard case — a
+  sub-title under an *untagged* dump leaves `trueStorages` byte-identical — passed on both
+  sides by design, and is what pins `repointDump`'s same-reference short-circuit.
+- Three test-authoring defects were caught in this task's own cases, all of the C-class kind
+  worth naming: `applyRepulsion` was asserted to separate exactly coincident nodes (it cannot —
+  identical coordinates give the push no direction, which is why the rootless-cycle catch-all
+  now fans its leftovers instead of stacking them); the `+ title` interaction above; and a
+  child asserted to inherit one mmLink when the fixture seeds two. In each case the product
+  finding held and the assertion about it did not.
+- Behaviour changed deliberately, beyond "does not crash": `getDescendants` gaining a `visited`
+  set also **de-duplicates** a diamond descendant, which was previously pushed once per path and
+  rendered duplicate S&C blocks. DFS pre-order is preserved, so S&C block ordering does not
+  shift.
+- Scope correction worth carrying forward: `TagPicker.renderEntry` and the downward dump walks
+  were guarded for consistency, **not** against a reachable crash. `parentId` is singular, so a
+  dump in a cycle is nobody's descendant and no root reaches it. Only the upward walk
+  (`dumpPathTo`) is genuinely exposed, and nothing in the current UI creates such a cycle at
+  all. The browser case asserts the unreachability explicitly, so a future re-parenting feature
+  trips it instead of shipping a hang.
+- Not covered: real touch hardware, the live Firebase project, and print output. Cycle
+  *prevention* is deliberately not implemented — see NOTES Proposal 14.
 
 Not covered by the suite, and still requiring manual checks: touch and drag interaction, the signed-in Firebase path, real multi-device behaviour, print output, and most of the UI.
 

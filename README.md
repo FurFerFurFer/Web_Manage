@@ -18,7 +18,7 @@ Status reviewed: 2026-08-06
 - `index.html`, `progress.html`, `sir-ks02.html` and `documentations.html` are the active pages.
 - Development currently happens on `master`; the inspected history contains no merge commits.
 - There is still no build step and no package manifest, but there **is** now a committed test suite: `node tests/run.js`. It uses Node's built-in `node:test` and a hand-rolled DevTools-protocol driver, so it adds no dependencies. See "Running the tests".
-- The standalone scripts `theme.js`, `schema.js`, `storage-guard.js`, `calendar-core.js`, `firebase-sync.js`, and `notes-widget.js` pass `node --check`.
+- The standalone scripts `theme.js`, `schema.js`, `storage-guard.js`, `calendar-core.js`, `firebase-sync.js`, `notes-widget.js`, `true-storage-core.js`, and `graph-layout.js` pass `node --check`.
 - React pages currently compile JSX in the browser through Babel.
 - Data is stored locally first and can optionally be synchronized through Firebase.
 - Every page provides persistent light and dark themes with a shared accessible switch.
@@ -400,6 +400,37 @@ Two views, switched from the header:
   is refused rather than applied, because it would reorder the stored array without changing
   anything the user can see.
 
+Both canvases share one layout, `graph-layout.js`, because they draw the same shape from the
+same two fields — `id` and `parentIds`. It used to be ~120 duplicated lines in each page.
+
+### Parent cycles
+
+`parentIds` is plural and the connections picker lets any record be made a parent of any other,
+including one of its own descendants. A cycle is therefore reachable through ordinary use, and it
+can also arrive from another device through sync or from hand-edited data.
+
+Every traversal over that graph is guarded, and they all agree on one contract:
+
+> a repeated node is drawn once, and its branch ends there.
+
+That is what `TrackTrueStorage.buildTree` and KS02's SRCH view have always done, and the canvas
+layout now matches. Concretely: `leafCount` counts a node already on the stack as one leaf, and
+`layout` carries a per-path `seen` set — per-path, not global, because a diamond (two parents
+sharing one child) is legal and must still be drawn under both parents. A component made
+*entirely* of a cycle has no root for the walk to start from, so its nodes are fanned around the
+centre by the catch-all rather than stacked on one point, which matters because `applyRepulsion`
+cannot separate exactly coincident nodes — identical coordinates give the push no direction.
+
+This is deliberately tolerance, not prevention. The picker still allows a cycle; the code survives
+one. Prevention alone would not help the cycles that already exist in stored data.
+
+Source dumps are a separate graph with a *singular* `parentId`, which changes what is reachable: a
+dump inside a cycle has its one parent inside that cycle, so it is nobody's descendant and no root
+leads to it. Downward walks — the tag picker, `deleteDumpEntry` — therefore cannot meet one at all.
+Only the upward walk can, because it starts wherever it is asked to, so the breadcrumb path builder
+`dumpPathTo` carries the guard and has exactly one definition. Nothing in the current UI creates
+such a cycle; `addDumpEntry` only ever attaches a new dump to an existing parent.
+
 Opening a storage shows, top to bottom:
 
 1. Its name (double-click to rename), creation day, and `delete`. Deleting a storage detaches it
@@ -438,6 +469,18 @@ That module also owns the tag record's shape, so a tag made in KS02 is identical
 Deleting a source dump, or removing an MM link from one, **does not** delete the tags that pointed
 at it — losing the user's own filing to a delete somewhere else would be data loss. Such a tag reads
 as *source removed* and stays removable by hand.
+
+Adding a sub-title under a tagged leaf is the one case that is **not** a removal, and it behaves
+differently. KS02's `addDumpEntry` moves the parent's whole `mmLinks` set down to the new child and
+leaves the parent empty, so the content a tag names is still there, one level down. The tags move
+with it: `TrackTrueStorage.repointDump` rewrites the `dumpId` half of every tag naming that dump,
+keeping the tag's own id and its `mmId` half untouched. Without this the pair would stop resolving
+and the row would read *source removed* while the content was merely relocated.
+
+KS02 makes that write the only way it is allowed to touch a key it does not own — a fresh
+read-modify-write of `trueStorages` alone, never its autosave snapshot. `repointDump` returns the
+original array when no tag names the dump, and `_mutateSlotKey` short-circuits on that, so adding a
+sub-title under an untagged dump writes nothing and arms no sync upload.
 
 ### Local and cloud data
 
@@ -553,6 +596,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
 | `notes-widget.js` | Floating per-slot notes widget |
 | `true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
+| `graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
@@ -581,6 +625,7 @@ Track-website/
 ├── firebase-sync.js
 ├── notes-widget.js
 ├── true-storage-core.js
+├── graph-layout.js
 ├── styles.css
 ├── firestore.rules
 └── tests/
@@ -588,6 +633,7 @@ Track-website/
     ├── calendar-core.test.js
     ├── schema.test.js
     ├── true-storage-core.test.js
+    ├── graph-layout.test.js
     ├── browser.test.js
     └── lib/
         ├── cdp.js
@@ -853,7 +899,8 @@ It runs three layers:
 | --- | --- | --- |
 | Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, caution ranges, deadline validation, run-ups across month/year/DST boundaries, an inverted span being inert rather than explosive, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
-| Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, and the parent/child tree including cycles |
+| Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
+| Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
 | Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, and refused-save handling for import, legacy notes, and Documentation bootstrap |
 
 The first two offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
@@ -861,8 +908,9 @@ The first two offline files run **once per timezone** — `UTC`, `Pacific/Kiriti
 That sweep is the point, not a detail: `calendar-core.js` exists to turn instants
 into *local* calendar days and `schema.js` stamps a new slot with one, and the
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
-machine running in UTC. `true-storage-core.test.js` runs **once**: that module
-holds no date code, so a sweep would cost five runs and prove the same thing.
+machine running in UTC. `true-storage-core.test.js` and `graph-layout.test.js`
+run **once**: neither module holds any date code, so a sweep would cost five runs
+and prove the same thing.
 
 Useful variations:
 
@@ -960,6 +1008,8 @@ node --check storage-guard.js
 node --check calendar-core.js
 node --check firebase-sync.js
 node --check notes-widget.js
+node --check true-storage-core.js
+node --check graph-layout.js
 ```
 
 Then the committed suite, which is the fastest way to find out whether a change

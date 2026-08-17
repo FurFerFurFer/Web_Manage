@@ -831,6 +831,45 @@ pass over one slot and has not been measurable at realistic sizes.
 Do not memoize it pre-emptively. Revisit only if profiling a large synthetic slot or a real
 user report shows editor input latency attributable to this calculation.
 
+## Proposal 14: Remaining Work Around the Canvas Cycle Guards
+
+The parent-cycle crash is fixed and the layout now has one definition in `graph-layout.js`
+(see README, "Parent cycles"). Three adjacent items were found while doing it and are
+deliberately **not** done.
+
+### KS02 still writes a byte-identical slot on mount and cross-tab refresh
+
+`true-storage.html` compares before writing, so a mount or a `storage`-event refresh that
+changes nothing performs no write. `sir-ks02.html` does not: its autosave effect writes the
+same bytes back, which sets `track_db_pending` and arms a sync upload for a no-op.
+
+Harmless to the data — the write is correct, just needless — but it costs an upload per tab
+focus and makes `track_db_pending` a noisier signal than it should be. Apply the same
+compare-before-write there. Check `progress.html` and `documentations.html` for the same
+shape before assuming KS02 is the only one.
+
+### The KS02 `+ storage` picker lists from a stale snapshot
+
+The picker's list of storages comes from KS02's React copy of `trueStorages`, so a storage
+created in another tab does not appear until a `storage` event lands. This is staleness in
+the *menu* only — the write itself is always a fresh read-modify-write through
+`_mutateSlotKey`, so nothing can be lost or overwritten by acting on the stale list.
+
+Fix by reading the list fresh when the picker opens, if it ever proves annoying in practice.
+
+### Cycle tolerance is not cycle prevention
+
+The picker still lets a user make a record its own ancestor; the code now survives it rather
+than refusing it. That was deliberate — tolerance is required regardless, because a cycle can
+already exist in stored data or arrive through sync, and prevention alone would not help
+those. But nothing currently tells a user they have built one.
+
+Open question, needing a product decision rather than a code one: should a cyclic parent
+relationship be refused at the picker, merely flagged in the canvas and SRCH views, or left
+entirely alone as a legitimate way to model mutual dependence? Do not implement a refusal
+without answering that — a mind map where two ideas genuinely feed each other may be exactly
+what the user meant.
+
 ## Additional Small Ideas
 
 ### Add a favicon
