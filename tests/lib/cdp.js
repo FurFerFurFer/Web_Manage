@@ -118,6 +118,11 @@ class Page {
     this.browser = browser;
     this.errors = [];   // uncaught exceptions and console error entries
     this.dialogs = [];  // every alert/confirm text, so a test can assert on them
+    // Accept is the default because almost every case wants the dialog out of
+    // the way. Set this true around a click to press Cancel instead — the only
+    // way to assert that a confirm() actually guards a destructive control,
+    // rather than merely being displayed before it happens anyway.
+    this.rejectDialogs = false;
   }
 
   static async create(browser, targetId, wsUrl) {
@@ -132,9 +137,10 @@ class Page {
       if (p.entry && p.entry.level === 'error') page.errors.push('console: ' + p.entry.text + ' @ ' + (p.entry.url || ''));
     });
     // Trap 1: an unhandled dialog wedges the renderer for the rest of the run.
+    // Every dialog is answered either way; `rejectDialogs` only picks which button.
     session.on('Page.javascriptDialogOpening', p => {
       page.dialogs.push(p.message);
-      page.session.send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {});
+      page.session.send('Page.handleJavaScriptDialog', { accept: !page.rejectDialogs }).catch(() => {});
     });
 
     await session.send('Page.enable');

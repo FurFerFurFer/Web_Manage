@@ -2725,4 +2725,307 @@ test('browser suites', skipUnlessChrome, async t => {
       'no phantom workspace was persisted');
     await page.close();
   });
+
+  /* ── 9. every destructive control confirms first ────────────────────────
+
+     A control that deletes or clears stored data must ask before it writes.
+     The assertion that matters is the CANCEL path: a confirm() that is merely
+     displayed before the delete happens anyway is worse than none, because it
+     reads as a guard. `page.rejectDialogs` (tests/lib/cdp.js) presses Cancel.
+
+     Coverage is one case per MECHANISM, not per button: the prompt lives in
+     the shared handler where every path through it is destructive, and at the
+     call site where the handler also serves a non-destructive path. The last
+     case pins the other side of the line — a control deliberately left
+     unconfirmed must stay unconfirmed, so "make it uniform" trips a test
+     instead of shipping friction onto a chip people click all day.        */
+
+  /* A confirm() blocks the renderer, so the click cannot be awaited inside the
+     same Runtime.evaluate — that deadlocks against the dialog. Fire it from a
+     timer instead and let the session's dialog handler answer it. */
+  const CLICK_SOON_SEL = function (sel) {
+    var el = document.querySelector(sel);
+    if (!el) return false;
+    setTimeout(function () { el.click(); }, 0);
+    return true;
+  };
+  const CLICK_SOON_TEXT = function (label) {
+    var b = Array.prototype.find.call(document.querySelectorAll('button'),
+      function (x) { return x.textContent.trim() === label; });
+    if (!b) return false;
+    setTimeout(function () { b.click(); }, 0);
+    return true;
+  };
+
+  /* Click, answer the confirm, return its message. Fails if no dialog was
+     raised at all — which is exactly how these read against a page with no
+     confirm yet. */
+  const answering = async (page, accept, fn, args = []) => {
+    const before = page.dialogs.length;
+    page.rejectDialogs = !accept;
+    try {
+      assert.notEqual(await page.evaluate(fn, ...args), false, 'the control exists');
+      const until = Date.now() + 10000;
+      while (page.dialogs.length === before && Date.now() < until) await sleep(30);
+      assert.ok(page.dialogs.length > before,
+        'the control asked before writing (no dialog was raised)');
+      await sleep(150);   // the answered dialog's continuation, or lack of one
+      return page.dialogs[page.dialogs.length - 1];
+    } finally {
+      page.rejectDialogs = false;
+    }
+  };
+
+  const expectNoDialog = async (page, fn, args = []) => {
+    const before = page.dialogs.length;
+    assert.notEqual(await page.evaluate(fn, ...args), false, 'the control exists');
+    await sleep(500);
+    assert.equal(page.dialogs.length, before,
+      'this control is deliberately NOT confirmed — see AGENTS.md');
+  };
+
+  const docBlockDb = () => seedDb({
+    docPages: [F.docPage('p-1', {
+      title: 'Notes',
+      blocks: [{ id: 'b-1', type: 'table', rows: [['keep me', 'and me'], ['row two', 'cell']] }]
+    })]
+  });
+  const storedBlocks = page => page.evaluate(function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var p = (((db.slots || [])[0] || {}).docPages || [])[0];
+    return p ? p.blocks : null;
+  });
+
+  await t.test('deleting a documentation block asks, and Cancel keeps every cell', async () => {
+    const page = await open('documentations.html', { db: docBlockDb(), hash: '?page=p-1' });
+    await page.waitFor(function () { return !!document.querySelector('.doc-block button[title="Delete"]'); },
+      { message: 'the block delete button' });
+
+    const msg = await answering(page, false, CLICK_SOON_SEL, ['.doc-block button[title="Delete"]']);
+    assert.match(msg, /delete/i, 'the message says what will happen');
+    assert.deepEqual(await storedBlocks(page),
+      [{ id: 'b-1', type: 'table', rows: [['keep me', 'and me'], ['row two', 'cell']] }],
+      'Cancel left the block and all its cell text exactly as stored');
+
+    await answering(page, true, CLICK_SOON_SEL, ['.doc-block button[title="Delete"]']);
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var p = (((db.slots || [])[0] || {}).docPages || [])[0];
+      return (p && p.blocks.length === 0) ? p.blocks : false;
+    }, { message: 'confirming still deletes the block' }), [], 'and confirming does delete it');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('dropping a table row or column asks, and Cancel keeps the text', async () => {
+    const page = await open('documentations.html', { db: docBlockDb(), hash: '?page=p-1' });
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '− row'; });
+    }, { message: 'the table row/column chrome' });
+
+    await answering(page, false, CLICK_SOON_TEXT, ['− row']);
+    assert.deepEqual(await storedBlocks(page),
+      [{ id: 'b-1', type: 'table', rows: [['keep me', 'and me'], ['row two', 'cell']] }],
+      'Cancel kept the last row');
+
+    await answering(page, false, CLICK_SOON_TEXT, ['− col']);
+    assert.deepEqual(await storedBlocks(page),
+      [{ id: 'b-1', type: 'table', rows: [['keep me', 'and me'], ['row two', 'cell']] }],
+      'Cancel kept the last column');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('removing a storage tag asks, and Cancel keeps the pair', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: '?storage=ts-1' });
+    await page.waitFor(function () { return !!document.querySelector('[data-tag-remove="tg-1"]'); },
+      { message: 'the tag remove button' });
+
+    await answering(page, false, CLICK_SOON_SEL, ['[data-tag-remove="tg-1"]']);
+    assert.deepEqual((await page.evaluate(STORAGE_BY_ID, 'ts-1')).tags,
+      [{ id: 'tg-1', dumpId: 'd-1', mmId: 10 }],
+      'Cancel left the (dump, MM) pair tagged');
+
+    await answering(page, true, CLICK_SOON_SEL, ['[data-tag-remove="tg-1"]']);
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])[0];
+      return (s && s.tags.length === 0) ? s.tags : false;
+    }, { message: 'confirming still removes the tag' }), []);
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('clearing the one link asks, and Cancel keeps the key', async () => {
+    const page = await open('true-storage.html', {
+      db: tagSeed({
+        trueStorages: [
+          F.trueStorage('ts-1', 'Storage A', {
+            tags: [F.storageTag('tg-1', 'd-1', 10)],
+            link: { label: 'Paper', url: 'https://example.com/a' }
+          })
+        ]
+      }),
+      hash: '?storage=ts-1'
+    });
+    const openEditor = async () => {
+      await page.waitFor(CLICK_SOON_TEXT, { args: ['edit'], message: 'the link edit toggle' });
+      await page.waitFor(function () { return !!document.querySelector('input[placeholder="url"]'); },
+        { message: 'the link form' });
+    };
+
+    await openEditor();
+    await answering(page, false, CLICK_SOON_TEXT, ['clear']);
+    assert.deepEqual((await page.evaluate(STORAGE_BY_ID, 'ts-1')).link,
+      { label: 'Paper', url: 'https://example.com/a' }, 'Cancel left the link untouched');
+
+    await openEditor();
+    await answering(page, true, CLICK_SOON_TEXT, ['clear']);
+    // Still the KEY that goes, not its value — confirming must not turn the
+    // guard into a writer of ''.
+    const cleared = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])[0];
+      return Object.prototype.hasOwnProperty.call(s, 'link') ? false : s;
+    }, { message: 'confirming deleting the link key' });
+    assert.equal('link' in cleared, false);
+    assert.deepEqual(cleared.tags, [{ id: 'tg-1', dumpId: 'd-1', mmId: 10 }], 'the tags survived');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('untagging from KS02 asks, and Cancel leaves trueStorages byte-identical', async () => {
+    const page = await open('sir-ks02.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-untag="ts-1"]'); },
+      { message: 'the storage chip untag button' });
+
+    const before = await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return JSON.stringify((((db.slots || [])[0] || {}).trueStorages) || null);
+    });
+
+    // This is the page's ONE foreign write: it reaches track_db immediately
+    // through _mutateSlotKey rather than via the autosave snapshot, so the
+    // prompt has to gate the call, not a later state flush.
+    await answering(page, false, CLICK_SOON_SEL, ['[data-storage-untag="ts-1"]']);
+    assert.equal(await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return JSON.stringify((((db.slots || [])[0] || {}).trueStorages) || null);
+    }), before, 'Cancel wrote nothing at all to the key KS02 does not own');
+
+    await answering(page, true, CLICK_SOON_SEL, ['[data-storage-untag="ts-1"]']);
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])[0];
+      return (s && s.tags.length === 0) ? s.tags : false;
+    }, { message: 'confirming still untags' }), []);
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('deleting a scheduled-action day asks, and Cancel keeps the entry', async () => {
+    const page = await open('progress.html', { db: seedDb(), hash: '#actions' });
+    // The chip is `03-10 ×` for saEntry e-1. Match the row, not a bare '×',
+    // which appears all over this page.
+    const CLICK_CHIP_X = function () {
+      var span = Array.prototype.find.call(document.querySelectorAll('span'),
+        function (s) {
+          return /^\s*03-10\s*$/.test(s.textContent) && s.parentElement &&
+            s.parentElement.querySelector('button');
+        });
+      if (!span) return false;
+      var b = span.parentElement.querySelector('button');
+      setTimeout(function () { b.click(); }, 0);
+      return true;
+    };
+    // `expanded` starts {}, so the day chips are behind the row's ▼ toggle.
+    await page.waitFor(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === '▼'; });
+      if (!b) return false;
+      b.click();
+      return true;
+    }, { message: 'the action row expand toggle' });
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('span'),
+        function (s) { return /^\s*03-10\s*$/.test(s.textContent); });
+    }, { message: 'the scheduled-action day chip' });
+
+    await answering(page, false, CLICK_CHIP_X);
+    assert.deepEqual(await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return (((db.slots || [])[0] || {}).saEntries || []).map(function (e) { return e.id; });
+    }), ['e-1'], 'Cancel kept the entry, with its done tick and notes');
+
+    await answering(page, true, CLICK_CHIP_X);
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var e = ((db.slots || [])[0] || {}).saEntries || [];
+      return e.length === 0 ? e : false;
+    }, { message: 'confirming still deletes the entry' }), []);
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('resetting a caution period asks, and Cancel keeps the run-up', async () => {
+    const { db, due } = cautionDb();
+    const page = await openDlPopup({ db, due });
+
+    const start = await page.evaluate(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return /^Start the caution period on /.test(x.getAttribute('title') || ''); });
+      b.click();
+      return b.getAttribute('title').replace('Start the caution period on ', '');
+    });
+    await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.startDate === v;
+    }, { args: [start], message: 'a real run-up to reset' });
+
+    await answering(page, false, CLICK_SOON_TEXT, ['reset']);
+    const kept = await storedDeadline(page);
+    assert.equal(kept.startDate, start, 'Cancel left the caution period the user chose');
+    assert.equal(kept.date, due, 'and reset never touches the due day either way');
+
+    await answering(page, true, CLICK_SOON_TEXT, ['reset']);
+    assert.equal((await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && d.startDate === v ? d : false;
+    }, { args: [due], message: 'confirming still resets' })).startDate, due);
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a detach chip is deliberately left unconfirmed', async () => {
+    /* The scope line, pinned. `⊗` severs one graph edge and the connections
+       picker puts it back in seconds; prompting there would tax a chip people
+       use constantly to buy nothing. If a later change makes every control
+       uniform, this fails and the trade-off gets re-decided on purpose. */
+    const page = await open('true-storage.html', { db: seedDb(), hash: '?storage=ts-2' });
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '⊗'; });
+    }, { message: 'the detach chip on a storage with a parent' });
+
+    await expectNoDialog(page, CLICK_SOON_TEXT, ['⊗']);
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])
+        .filter(function (x) { return x.id === 'ts-2'; })[0];
+      return (s && s.parentIds.length === 0) ? s.parentIds : false;
+    }, { message: 'the detach landing immediately, with no prompt' }), []);
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
 });
