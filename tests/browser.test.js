@@ -2235,10 +2235,20 @@ test('browser suites', skipUnlessChrome, async t => {
     // The doc-authored deadline is seeded TICKED so the round trip also proves
     // `done` survives: neither the exporter nor the importer names the field,
     // and it has to reach the other side on normalizeSlot's unknown-key path.
+    // The schedule-block keys ride the same path, which is why they are seeded
+    // here rather than in a round trip of their own — including a `parts` list,
+    // whose records are nested one level deeper than anything else on it.
     const page = await open('index.html', {
       db: seedDb({
+        calendarNotes: [
+          F.calNote('cn-sched', '2026-03-10', { time: '09:00', blockDuration: 90 }),
+          F.calNote('cn-doc', '2026-03-10', { docPageId: 'p-1', title: 'Written from a page' })
+        ],
         deadlines: [
-          F.deadline('dl-sched', '2026-03-10', { startDate: '2026-03-08' }),
+          F.deadline('dl-sched', '2026-03-10', {
+            startDate: '2026-03-08', blockDuration: 45, blockTime: '08:00',
+            parts: [{ id: 'pt-1', title: 'Outline', time: '08:00', blockDuration: 45, done: false }]
+          }),
           F.deadline('dl-doc', '2026-03-10',
             { startDate: '2026-03-09', docPageId: 'p-1', time: '10:00', done: true })
         ]
@@ -2286,6 +2296,16 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(dl.docPageId, 'p-1', 'the doc-authored deadline kept its docPageId');
     assert.equal(dl.startDate, '2026-03-09', 'and its caution period');
     assert.equal(dl.done, true, 'and its tick, which no allow-list in the importer names');
+
+    // the schedule-block keys, which no allow-list names either
+    const sched = imported.deadlines.find(d => d.id === 'dl-sched');
+    assert.equal(sched.blockDuration, 45, 'the deadline block length round-tripped');
+    assert.equal(sched.blockTime, '08:00', 'including its off-anchor start');
+    assert.deepEqual(sched.parts,
+      [{ id: 'pt-1', title: 'Outline', time: '08:00', blockDuration: 45, done: false }],
+      'and the whole nested parts list, record for record');
+    assert.equal(imported.calendarNotes.find(n => n.id === 'cn-sched').blockDuration, 90,
+      'and the day note block');
 
     // every canonical user-owned field survives, value for value
     for (const key of ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
@@ -3028,4 +3048,532 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
+
+  await t.test('the milestone-checkpoint chip raises exactly one dialog', async () => {
+    /* A GUARD, not a fail-first case: it passes on both sides by design. Before
+       the change the single prompt lived at this call site; after it, inside
+       removeMilestoneEntry, which the two MilestoneBar tooltips also reach.
+       It fails only if the handler-level prompt is added while the call-site
+       one is left behind — the one regression this refactor actually risks, and
+       one the user meets as two prompts for a single click. */
+    const page = await open('progress.html', {
+      db: seedDb({
+        goals: [F.task('g-1', {
+          title: 'Root goal',
+          toLearn: [10],
+          milestones: [F.milestone('ms-1', '2026-03-01', '2026-03-10')],
+          mmTargets: { 10: { milestones: [{ milestoneId: 'ms-1', stage: 'CE', level: 3 }] } }
+        })]
+      })
+    });
+
+    await page.waitFor(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === 'PROGRESS'; });
+      if (!b) return false;
+      b.click();
+      return true;
+    }, { message: 'the PROGRESS tab' });
+
+    /* Two elements carry the milestone title — the MILESTONES section row and
+       the chip. Only the chip is `inline-flex`, and its × is behind hover
+       state, which React delegates from mouseover. Re-dispatching until the
+       button exists keeps this off a fixed sleep. */
+    const HOVER_CHIP = function () {
+      var c = Array.prototype.find.call(document.querySelectorAll('[title="Milestone ms-1"]'),
+        function (e) { return /inline-flex/.test((e.className || '').toString()); });
+      if (!c) return false;
+      c.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      return !!c.querySelector('button');
+    };
+    const CLICK_CHIP_X = function () {
+      var c = Array.prototype.find.call(document.querySelectorAll('[title="Milestone ms-1"]'),
+        function (e) { return /inline-flex/.test((e.className || '').toString()); });
+      var b = c && c.querySelector('button');
+      if (!b) return false;
+      setTimeout(function () { b.click(); }, 0);
+      return true;
+    };
+    await page.waitFor(HOVER_CHIP, { message: 'the checkpoint chip’s × after hover' });
+
+    const before = page.dialogs.length;
+    page.rejectDialogs = true;
+    try {
+      assert.equal(await page.evaluate(CLICK_CHIP_X), true, 'the chip × exists');
+
+      const until = Date.now() + 10000;
+      while (page.dialogs.length === before && Date.now() < until) await sleep(30);
+      assert.ok(page.dialogs.length > before, 'the chip asked before writing');
+      // Long enough that a second prompt, if one is raised, is counted.
+      await sleep(800);
+    } finally {
+      page.rejectDialogs = false;
+    }
+
+    assert.equal(page.dialogs.length, before + 1,
+      'one click, exactly one prompt — a call-site confirm left beside the handler’s makes two');
+    assert.deepEqual(await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var g = (((db.slots || [])[0] || {}).goals || [])[0];
+      return ((((g || {}).mmTargets || {})['10'] || {}).milestones || [])
+        .map(function (e) { return e.milestoneId; });
+    }), ['ms-1'], 'and Cancel kept the checkpoint');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* ── 10. day-note and deadline schedule blocks ──────────────────────────
+
+     A note or a deadline becomes a real span on the hour grid by carrying an
+     optional `blockDuration`. Its ABSENCE means "not on the grid", which is
+     what makes the feature additive: no stored item needed a migration.
+
+     The rules have ONE definition, TrackCalendar.noteBlockDuration and friends
+     in calendar-core.js, with a second copy in progress.html because that page
+     does not load it. So the block is asserted on the Progress grid, on the
+     Home calendar and inside a Documentations block SEPARATELY — a rule
+     forgotten at one of several surfaces is this repository's recurring bug,
+     and a single assertion would let the forgotten one hide behind a passing
+     sibling.                                                              */
+
+  // today, on the LOCAL calendar — the grid is local-day and so must this be
+  const TODAY = (() => {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  })();
+
+  /* CLICK_SEL is declared once, above with the confirm-dialog helpers. */
+  const READ_ITEM = function (key, id) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var s = (db.slots || [])[0] || {};
+    return ((s[key] || []).filter(function (x) { return x.id === id; })[0]) || null;
+  };
+  const BLOCKS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-block-kind]'), function (e) {
+      return { kind: e.getAttribute('data-block-kind'), id: e.getAttribute('data-block-id'), top: e.style.top, height: e.style.height };
+    });
+  };
+  const mountSchedule = async page => {
+    await page.waitFor(function () { var e = document.querySelector('#root'); return !!e && e.children.length > 0; },
+      { message: 'progress.html mounting' });
+    await page.waitFor(function () { return !!document.querySelector('[data-dln-open]'); },
+      { message: 'the schedule timeline day headers' });
+  };
+  const openDlnPanel = async (page, ds) => {
+    await page.evaluate(CLICK_SEL, '[data-dln-open="' + ds + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-dln-panel]'); }, { message: 'the day-notes panel' });
+  };
+
+  await t.test('an unscheduled note keeps its marker and a deadline gets no block at all', async () => {
+    // The guard for the whole feature: existing data must render EXACTLY as it
+    // did before blockDuration existed. If this ever fails, the feature stopped
+    // being additive.
+    const db = seedDb({
+      calendarNotes: [F.calNote('n-timed', TODAY, { title: 'Timed marker note', time: '14:30' })],
+      deadlines: [F.deadline('d-bare', TODAY, { startDate: TODAY, time: '17:00', title: 'Bare deadline' })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+
+    assert.deepEqual(await page.evaluate(BLOCKS), [], 'neither item is drawn as a block');
+    assert.equal(await page.evaluate(function () {
+      return Array.prototype.some.call(document.querySelectorAll('#root span'), function (e) {
+        return /bg-fuchsia/.test(e.className || '') && e.textContent.indexOf('Timed marker note') >= 0;
+      });
+    }), true, 'the timed note still renders as its point marker');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a deadline block ends at the due time and a note block starts at its time', async () => {
+    const db = seedDb({
+      calendarNotes: [F.calNote('n-s', TODAY, { title: 'Scheduled note', time: '09:00', blockDuration: 90 })],
+      deadlines: [F.deadline('d-p', TODAY, { startDate: TODAY, time: '20:00', title: 'Prep', blockDuration: 60 })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    const blocks = await page.evaluate(BLOCKS);
+    const byId = Object.fromEntries(blocks.map(b => [b.id, b]));
+
+    // default timeline zoom is 64px/hour, so an hour is 64px
+    assert.ok(byId['n-s'], 'the note has a block');
+    assert.equal(byId['n-s'].top, 9 * 64 + 'px', 'a note block STARTS at the note time');
+    assert.equal(byId['n-s'].height, 90 / 60 * 64 + 'px');
+    assert.ok(byId['d-p'], 'the deadline has a block');
+    assert.equal(byId['d-p'].top, 19 * 64 + 'px', 'a deadline block ENDS at the due time');
+    assert.equal(byId['d-p'].height, 64 + 'px');
+
+    // the unscheduled marker is gone for the scheduled note — never both
+    assert.equal(await page.evaluate(function () {
+      return Array.prototype.some.call(document.querySelectorAll('#root span'), function (e) {
+        return /bg-fuchsia/.test(e.className || '') && e.textContent.indexOf('Scheduled note') >= 0;
+      });
+    }), false, 'a scheduled note is a block instead of a marker, never both');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a midnight-clipped run-up keeps its end on the due time', async () => {
+    const db = seedDb({
+      deadlines: [F.deadline('d-e', TODAY, { startDate: TODAY, time: '00:30', title: 'Early', blockDuration: 60 })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    const b = (await page.evaluate(BLOCKS)).find(x => x.id === 'd-e');
+    assert.ok(b, 'the block is drawn');
+    assert.equal(b.top, '0px', 'clipped at the top of the grid');
+    assert.equal(b.height, 30 / 60 * 64 + 'px', 'and shortened so it still ends at 00:30');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the fourth button lists every note and deadline, not only this day\'s', async () => {
+    const db = seedDb({
+      calendarNotes: [
+        F.calNote('n-today', TODAY, { title: 'Note today', time: '09:00' }),
+        F.calNote('n-far', '2026-01-05', { title: 'Note far away', time: '10:00' })
+      ],
+      deadlines: [F.deadline('d-far', '2026-02-09', { startDate: '2026-02-09', time: '17:00', title: 'Deadline far away' })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    await openDlnPanel(page, TODAY);
+
+    const groups = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-dln-group]'),
+        function (e) { return e.getAttribute('data-dln-group'); });
+    });
+    assert.deepEqual(groups, [TODAY, '2026-01-05', '2026-02-09'],
+      'every date is listed, and the day the panel was opened on comes first');
+
+    // the tabs narrow it by kind
+    await page.evaluate(CLICK_SEL, '[data-dln-tab="deadlines"]');
+    await page.waitFor(function () {
+      return document.querySelectorAll('[data-dln-group]').length === 1;
+    }, { message: 'the Deadlines tab filtering' });
+    assert.deepEqual(await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-dln-group]'),
+        function (e) { return e.getAttribute('data-dln-group'); });
+    }), ['2026-02-09'], 'the Deadlines tab drops both notes');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('Schedule writes blockDuration alone, and every other field survives', async () => {
+    const db = seedDb({
+      deadlines: [F.deadline('d-1', TODAY, {
+        startDate: '2026-08-01', time: '17:00', title: 'Essay', detail: 'body',
+        done: true, docPageId: 'p-1'
+      })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    const before = await page.evaluate(READ_ITEM, 'deadlines', 'd-1');
+    await openDlnPanel(page, TODAY);
+    await page.evaluate(CLICK_SEL, '[data-dln-schedule="d-1"]');
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return (d && d.blockDuration) ? d : false;
+    }, { message: 'blockDuration reaching track_db' });
+
+    assert.equal(after.blockDuration, 60, 'a default hour of run-up');
+    assert.equal('blockTime' in after, false,
+      'and NO blockTime — absence is what keeps the block anchored to the due time');
+    for (const k of ['id', 'date', 'time', 'startDate', 'title', 'detail', 'done', 'docPageId', 'createdAt']) {
+      assert.deepEqual(after[k], before[k], k + ' survived the write');
+    }
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('remove from schedule DELETES the keys rather than zeroing them', async () => {
+    // Writing 0 or '' would mean an item could never go back to being
+    // unscheduled — the same rule as clearing a day note's `time`.
+    const db = seedDb({
+      deadlines: [F.deadline('d-1', TODAY, {
+        startDate: TODAY, time: '17:00', title: 'Essay', blockDuration: 60, blockTime: '08:00'
+      })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    await openDlnPanel(page, TODAY);
+    await page.evaluate(CLICK_SEL, '[data-dln-unschedule="d-1"]');
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return (d && !('blockDuration' in d)) ? d : false;
+    }, { message: 'the block keys being deleted' });
+
+    assert.equal('blockDuration' in after, false, 'the key is gone, not 0');
+    assert.equal('blockTime' in after, false, 'and so is blockTime');
+    assert.equal(after.title, 'Essay', 'the deadline itself is untouched');
+    assert.equal(after.time, '17:00');
+    assert.equal(after.startDate, TODAY, 'and its caution period is untouched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('an untimed note stays a chip until a time is picked, and never gets time:""', async () => {
+    const db = seedDb({ calendarNotes: [F.calNote('n-u', TODAY, { title: 'Untimed note' })] });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    assert.deepEqual(await page.evaluate(BLOCKS), [], 'no block without a time to anchor to');
+    await openDlnPanel(page, TODAY);
+
+    assert.equal(await page.evaluate(function () {
+      var b = document.querySelector('[data-dln-schedule="n-u"]'); return b ? b.disabled : null;
+    }), true, 'Schedule is refused while there is no time');
+    // clicking it anyway must not write a blank time
+    await page.evaluate(CLICK_SEL, '[data-dln-schedule="n-u"]');
+    await sleep(300);
+    const still = await page.evaluate(READ_ITEM, 'calendarNotes', 'n-u');
+    assert.equal('time' in still, false, 'no time key was invented');
+    assert.equal('blockDuration' in still, false, 'and no block either');
+
+    await page.evaluate(function (setterSrc) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-dln-time="n-u"]'), '08:15');
+      return true;
+    }, SET_REACT_INPUT);
+    await page.waitFor(function () {
+      var b = document.querySelector('[data-dln-schedule="n-u"]'); return !!b && !b.disabled;
+    }, { message: 'Schedule becoming available once a time is picked' });
+    await page.evaluate(CLICK_SEL, '[data-dln-schedule="n-u"]');
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var n = (((db.slots || [])[0] || {}).calendarNotes || [])[0];
+      return (n && n.blockDuration) ? n : false;
+    }, { message: 'the note being scheduled' });
+    assert.equal(after.time, '08:15', 'the time and the block are written together');
+    assert.equal(after.blockDuration, 60);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('dissecting replaces the parent block with its parts, and emptying restores it', async () => {
+    const db = seedDb({
+      deadlines: [F.deadline('d-1', TODAY, { startDate: TODAY, time: '17:00', title: 'Essay', blockDuration: 60 })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    assert.deepEqual((await page.evaluate(BLOCKS)).map(b => b.id), ['d-1'], 'the parent block to begin with');
+
+    await openDlnPanel(page, TODAY);
+    await page.evaluate(CLICK_SEL, '[data-dln-dissect="deadline:d-1"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-dln-part-input="deadline:d-1"]'); },
+      { message: 'the dissect sub-panel' });
+    await page.evaluate(function (setterSrc) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-dln-part-input="deadline:d-1"]'), 'Outline');
+      return true;
+    }, SET_REACT_INPUT);
+    await page.evaluate(CLICK_SEL, '[data-dln-part-add="deadline:d-1"]');
+
+    const withPart = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return (d && d.parts && d.parts.length === 1) ? d : false;
+    }, { message: 'the part reaching track_db' });
+    assert.equal(withPart.parts[0].title, 'Outline');
+    assert.equal(withPart.parts[0].time, '16:00', 'a new part inherits the parent block start');
+    assert.equal(withPart.parts[0].blockDuration, 60, 'and its length');
+    assert.equal(withPart.blockDuration, 60, 'the parent keeps its own block record');
+
+    const ids = await page.waitFor(function () {
+      var b = Array.prototype.map.call(document.querySelectorAll('[data-block-kind]'),
+        function (e) { return e.getAttribute('data-block-id'); });
+      return (b.length === 1 && b[0].indexOf(':') > 0) ? b : false;
+    }, { message: 'the parts standing in for the parent block' });
+    assert.match(ids[0], /^d-1:/, 'the parent block is replaced by its part');
+
+    // removing the last part deletes the key, so the parent block comes back
+    await page.evaluate(function () {
+      var rows = document.querySelectorAll('[data-dln-panel] .group\\/part button');
+      if (!rows.length) return false;
+      rows[rows.length - 1].click();
+      return true;
+    });
+    const back = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return (d && !('parts' in d)) ? d : false;
+    }, { message: 'the parts key being deleted' });
+    assert.equal('parts' in back, false, 'emptied rather than left as []');
+    assert.deepEqual((await page.evaluate(BLOCKS)).map(b => b.id), ['d-1'], 'and the parent block is back');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the new blocks join the overlap layout instead of covering a task', async () => {
+    // The markers and the hairline are deliberately EXCLUDED from the overlap
+    // layout. These are real blocks, so they must be included — otherwise a
+    // note block silently sits on top of a scheduled task.
+    const db = seedDb({
+      goals: [F.task('g-x', { title: 'Overlapping task', scheduledDate: TODAY, scheduledTime: '09:00', duration: 60 })],
+      calendarNotes: [F.calNote('n-o', TODAY, { title: 'Overlapping note', time: '09:00', blockDuration: 60 })],
+      deadlines: []
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    /* computeOverlapInfo gives exactly ONE member of a group the front z-index
+       15 and the rest 10; a block in no group is always 10. So "exactly one of
+       the two is 15" is the assertion that actually proves they were grouped —
+       checking that the note is 10-or-15 would pass even if it were excluded. */
+    const z = await page.waitFor(function () {
+      var note = document.querySelector('[data-block-id="n-o"]');
+      if (!note) return false;
+      var task = Array.prototype.find.call(document.querySelectorAll('#root div'), function (e) {
+        return e.textContent.indexOf('Overlapping task') >= 0 && e.style && e.style.height
+          && !e.querySelector('[data-block-kind]');
+      });
+      if (!task) return false;
+      return { note: note.style.zIndex, task: task.style.zIndex };
+    }, { message: 'both blocks being laid out' });
+
+    const fronts = [z.note, z.task].filter(v => v === '15').length;
+    assert.equal(fronts, 1,
+      'exactly one of the overlapping pair is the group front, so the note block joined the ' +
+      'layout — got note=' + z.note + ' task=' + z.task);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('an untimed note carrying a stray blockDuration is still not on the grid', async () => {
+    /* This is the case that catches a divergence in progress.html's OWN copy of
+       noteBlockDuration, which is why it is separate from the panel test above:
+       clearing a note's time in documentations.html drops the `time` key and
+       knows nothing about blocks, so a stray blockDuration can genuinely be
+       stored. With the noteTimed guard dropped from that copy, the note is drawn
+       as a block at an undefined time. Seeding a note with NO blockDuration —
+       as the panel test does — cannot detect that. */
+    const db = seedDb({
+      calendarNotes: [F.calNote('n-orphan', TODAY, { title: 'Orphan note', blockDuration: 60 })],
+      deadlines: []
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    await sleep(400);   // give a wrong block time to appear before asserting absence
+    assert.deepEqual(await page.evaluate(BLOCKS), [],
+      'an untimed note has no time to anchor a block to, however it was stored');
+    assert.equal(await page.evaluate(function () {
+      return Array.prototype.some.call(document.querySelectorAll('#root button'),
+        function (e) { return e.textContent.indexOf('Orphan note') >= 0; });
+    }), true, 'and it stays a chip in the day strip');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the Home calendar draws the same two blocks', async () => {
+    // Asserted separately from Progress on purpose: this surface reads
+    // calendar-core.js, Progress reads its own copy of the same rules.
+    const db = seedDb({
+      calendarNotes: [F.calNote('n-s', TODAY, { title: 'Scheduled note', time: '09:00', blockDuration: 90 })],
+      deadlines: [F.deadline('d-p', TODAY, { startDate: TODAY, time: '20:00', title: 'Prep block', blockDuration: 60 })]
+    });
+    // index.html is static markup with no React #root — its calendar is a
+    // plain DOM build, and the day preview only exists once a day is selected.
+    const page = await open('index.html', { db });
+    await page.waitFor(function () {
+      var g = document.querySelector('#cal-grid'); return !!g && g.children.length > 0;
+    }, { message: 'the Home calendar grid' });
+    await page.evaluate(function () {
+      var cells = Array.prototype.filter.call(document.querySelectorAll('.cal-cell'),
+        function (c) { return !c.classList.contains('empty'); });
+      cells[new Date().getDate() - 1].click();
+      return true;
+    });
+    const seen = await page.waitFor(function () {
+      var d = document.querySelector('#cal-detail');
+      if (!d) return false;
+      var blocks = Array.prototype.map.call(d.querySelectorAll('.cal-sched-block'),
+        function (b) { return b.textContent.replace(/\s+/g, ' ').trim(); });
+      return blocks.length >= 2 ? blocks : false;
+    }, { message: 'both blocks on the Home day preview' });
+
+    assert.ok(seen.some(t => /Prep block/.test(t) && /19:00/.test(t)),
+      'the deadline run-up block reaches Home, ending at its 20:00 due time — got ' + JSON.stringify(seen));
+    assert.ok(seen.some(t => /Scheduled note/.test(t) && /09:00/.test(t)),
+      'and so does the note block — got ' + JSON.stringify(seen));
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a Documentations calendar block draws the deadline run-up too', async () => {
+    // The third surface, again asserted on its own. The block is added through
+    // the real block menu rather than a hand-built record, so the test cannot
+    // drift from the shape the page actually writes.
+    const db = seedDb({
+      docPages: [F.docPage('p-1', { title: 'Test Page' })],
+      deadlines: [F.deadline('d-p', TODAY, { startDate: TODAY, time: '20:00', title: 'Prep block', blockDuration: 60 })],
+      calendarNotes: []
+    });
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.docs-addmenu button'),
+        function (b) { return /Calendar/.test(b.textContent); }).click();
+    });
+    await page.waitFor(function () { return !!document.querySelector('.doc-cal'); },
+      { message: 'the calendar block' });
+    // open today's detail panel, where the day's blocks are listed
+    await page.evaluate(function () {
+      var d = new Date();
+      var cells = Array.prototype.filter.call(document.querySelectorAll('.doc-cal .cal-cell'),
+        function (c) { return !c.classList.contains('empty'); });
+      cells[d.getDate() - 1].click();
+      return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('.doc-cal .cal-detail'); },
+      { message: 'the day detail panel' });
+    const text = await page.waitFor(function () {
+      var cal = document.querySelector('.doc-cal');
+      if (!cal || cal.textContent.indexOf('Prep block') < 0) return false;
+      return cal.textContent.replace(/\s+/g, ' ');
+    }, { message: 'the run-up block inside the calendar block' });
+    // the time matters, not just the presence: a block anchored to the wrong
+    // end would still be "there"
+    assert.match(text, /Prep block ?19:00/,
+      'the run-up ENDS at the 20:00 due time, so it starts at 19:00 — got ' + text.slice(0, 200));
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('scheduling a block writes no key progress.html does not own', async () => {
+    const db = seedDb({
+      deadlines: [F.deadline('d-1', TODAY, { startDate: TODAY, time: '17:00', title: 'Essay' })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    const FOREIGN = ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
+      'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes'];
+    const before = await page.evaluate(function (keys) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (db.slots || [])[0] || {};
+      var out = {}; keys.forEach(function (k) { out[k] = JSON.stringify(s[k]); }); return out;
+    }, FOREIGN);
+
+    await openDlnPanel(page, TODAY);
+    await page.evaluate(CLICK_SEL, '[data-dln-schedule="d-1"]');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return !!(d && d.blockDuration);
+    }, { message: 'the write landing' });
+
+    assert.deepEqual(await page.evaluate(function (keys) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (db.slots || [])[0] || {};
+      var out = {}; keys.forEach(function (k) { out[k] = JSON.stringify(s[k]); }); return out;
+    }, FOREIGN), before, 'every foreign key is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* Export → import of the three block keys is asserted in "export → import
+     preserves docPageId and every canonical field", which drives the REAL
+     exporter and importer rather than a stand-in payload. */
 });

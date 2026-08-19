@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%23b45309%22/%3E%3Cpath d=%22M6 11h20M6 11v13h20V11M6 11l3-4h14l3 4M16 15v5%22 stroke=%22white%22 stroke-width=%222.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 fill=%22none%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=3"></script>
+  <script src="schema.js?v=4"></script>
   <script src="graph-layout.js?v=1"></script>
   <script src="true-storage-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -660,7 +660,7 @@
                 <button onClick={()=>{if(draft.url.trim()){onSave(draft);setEditing(false);}}}
                   className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs font-bold">save</button>
                 <button onClick={()=>setEditing(false)} className="bg-gray-700 text-gray-300 px-2 py-1 rounded text-xs">cancel</button>
-                {has&&<button onClick={()=>{onClear();setEditing(false);}} className="ml-auto text-red-700 hover:text-red-400 text-xs px-2 py-1">clear</button>}
+                {has&&<button onClick={()=>{if(onClear()!==false) setEditing(false);}} className="ml-auto text-red-700 hover:text-red-400 text-xs px-2 py-1">clear</button>}
               </div>
             </div>
           ):has?(
@@ -1125,7 +1125,10 @@
       }
       // Delete the key rather than store an empty one, so "no link" is one
       // state whether or not a link was ever attached.
+      // Returns false when declined, so the call site can leave the editor open
+      // instead of closing it on a change that never happened.
       function clearLink(id){
+        if(!window.confirm('Remove the link from this storage?')) return false;
         setStorages(p=>p.map(s=>{
           if(s.id!==id) return s;
           const n={...s}; delete n.link; return n;
@@ -1140,6 +1143,7 @@
         setStorages(p=>TS.withTag(p,storageId,dumpId,mmId,genId()));
       }
       function removeTag(storageId,tagId){
+        if(!window.confirm('Remove this source tag?\n\nThe source dump itself is not deleted.')) return;
         setStorages(p=>TS.withoutTag(p,storageId,tagId));
       }
       // Sibling reorder, ported from SRCH including its guard: only records that

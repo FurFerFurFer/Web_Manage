@@ -343,6 +343,80 @@ test('validateSlot checks the dates and times on calendar items', () => {
   assert.match(messages, /deadlines\[0\]" needs a YYYY-MM-DD date/, 'February 30 is not a day');
 });
 
+test('validateSlot warns about a malformed schedule-block value but stays editable', () => {
+  // These two reach block geometry, so a bad value renders `height: NaNpx` or
+  // misplaces the block — the same class of damage as a malformed `time`, and
+  // treated the same way: warn, never freeze the database. The split from `done`
+  // is deliberate; `done` is safe by construction so a check there could only
+  // invent a way to block a database.
+  // `null` is reported here rather than read as absent, which matches the
+  // existing item-level `time` check (`item.time !== undefined`) that this one
+  // is modelled on. It is the OPPOSITE of the choice made for `parts` in the
+  // next test, and the difference is severity, not oversight: a warning can
+  // afford to point at a suspect value, while `parts` damage is fatal and fatal
+  // must be certain — `parts: null` unambiguously means "no parts".
+  for (const v of ['60', 0, -30, NaN, Infinity, true, null]) {
+    const r = S.validateSlot(F.emptySlot({
+      calendarNotes: [F.calNote('cn-1', '2026-03-10', { time: '09:00', blockDuration: v })]
+    }));
+    assert.equal(r.ok, false, JSON.stringify(v) + ' is reported');
+    assert.match(r.errors.map(e => e.message).join('\n'), /invalid blockDuration/);
+    assert.ok(r.errors.every(e => e.fatal !== true), JSON.stringify(v) + ' is a warning, not damage');
+  }
+  const bt = S.validateSlot(F.emptySlot({
+    deadlines: [F.deadline('dl-1', '2026-03-10', { time: '17:00', blockTime: '9am' })]
+  }));
+  assert.equal(bt.ok, false);
+  assert.match(bt.errors[0].message, /invalid blockTime/);
+  assert.ok(bt.errors.every(e => e.fatal !== true), 'also a warning');
+
+  // and a well-formed pair passes cleanly
+  assert.equal(S.validateSlot(F.emptySlot({
+    calendarNotes: [F.calNote('cn-1', '2026-03-10', { time: '09:00', blockDuration: 90 })],
+    deadlines: [F.deadline('dl-1', '2026-03-10', { time: '17:00', blockDuration: 60, blockTime: '08:00' })]
+  })).ok, true);
+});
+
+test('validateSlot treats a damaged `parts` list as structural, not semantic', () => {
+  // parts holds records and is traversed, so it is fatal like a goal's children:
+  // a stray null imports cleanly under a field-only check and then throws out of
+  // the next render.
+  for (const key of ['calendarNotes', 'deadlines']) {
+    const notList = S.validateSlot(F.emptySlot({ [key]: [{ id: 'i', date: '2026-03-10', parts: 'x' }] }));
+    assert.equal(notList.ok, false, key + ' with parts:"x" is refused');
+    assert.match(notList.errors.map(e => e.message).join('\n'), /\.parts must be a list/);
+    assert.ok(S.hasFatalErrors(notList), 'and it is fatal');
+
+    for (const junk of [null, 'a string', 42, true, []]) {
+      const r = S.validateSlot(F.emptySlot({ [key]: [{ id: 'i', date: '2026-03-10', parts: [junk] }] }));
+      assert.equal(r.ok, false, key + ' parts[0] = ' + JSON.stringify(junk) + ' is refused');
+      assert.match(r.errors.map(e => e.message).join('\n'), /\.parts\[0\] must be an object/);
+      assert.ok(S.hasFatalErrors(r), 'and it is fatal');
+    }
+
+    assert.equal(S.validateSlot(F.emptySlot({
+      [key]: [{ id: 'i', date: '2026-03-10', parts: [{ id: 'p', title: 't' }] }]
+    })).ok, true, 'a well-formed parts list passes');
+    assert.equal(S.validateSlot(F.emptySlot({
+      [key]: [{ id: 'i', date: '2026-03-10', parts: null }]
+    })).ok, true, 'null counts as absent');
+    assert.equal(S.validateSlot(F.emptySlot({
+      [key]: [{ id: 'i', date: '2026-03-10', parts: [] }]
+    })).ok, true, 'and an empty list is simply not dissected');
+  }
+});
+
+test('the schedule-block keys survive normalizeSlot untouched', () => {
+  // They are item-level keys inside two known list fields, so they ride the
+  // list through verbatim — no SLOT_FIELDS row, and nothing to migrate.
+  const note = { id: 'n', date: '2026-03-10', time: '09:00', blockDuration: 90, parts: [{ id: 'p', title: 'step' }] };
+  const dl = { id: 'd', date: '2026-03-10', time: '17:00', startDate: '2026-03-08', blockDuration: 60, blockTime: '08:00' };
+  const out = S.normalizeSlot({ calendarNotes: [note], deadlines: [dl] });
+  assert.deepEqual(out.calendarNotes[0], note);
+  assert.deepEqual(out.deadlines[0], dl);
+  assert.equal(Object.keys(S.SLOT_FIELDS).length, 23, 'the slot did NOT grow a field');
+});
+
 test('validateSlot rejects junk INSIDE a correctly-typed list', () => {
   // The field being a list is not enough. `{"goals":[null]}` used to pass, land
   // in track_db, and then throw out of flattenGoals on the next render — the

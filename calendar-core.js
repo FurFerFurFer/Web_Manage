@@ -245,13 +245,84 @@
   // only a well-formed HH:MM puts a note on the hour grid.
   const TIME_RE = /^\d{2}:\d{2}$/;
   const noteTimed = n => TIME_RE.test((n && n.time) || '');
-  const NOTE_BLOCK_MIN = 30;   // block height only — a note has no duration
+  const NOTE_BLOCK_MIN = 30;   // default height — an unscheduled note has no duration
   const NOTE_COLOR = '#e879f9';
+  const DL_BLOCK_COLOR = '#f87171';
 
   // ── read-only day schedule ───────────────────────────────────────────────
   // Mirrors the geometry and collectors of SchedulePanel in progress.html so
   // the preview reads the same as the real thing. Nothing here writes.
   const SCHED_START_HOUR = 0, SCHED_END_HOUR = 24, SCHED_PX_PER_HOUR = 28;
+
+  // ── schedule blocks for day notes and deadlines ───────────────────────────
+  // Either item may carry an optional `blockDuration` in minutes, which is what
+  // turns it into a real span on the hour grid instead of a point marker. A
+  // deadline's block ENDS at its due time — it is the run-up to the deadline,
+  // not the deadline itself — while a day note's block STARTS at its time.
+  //
+  // ABSENCE IS MEANINGFUL, three times over, and all three are load-bearing:
+  //   * no `blockDuration` on a deadline  → no block at all, exactly as before
+  //     the field existed. This is what makes the whole feature additive and is
+  //     why no stored deadline needed a migration.
+  //   * no `blockTime`                    → "still anchored to the due time".
+  //     It is written only when the user drags the block off that anchor, and
+  //     reset DELETES the key rather than storing the value it would have
+  //     computed, so reset is a restore and not a recomputed guess — the same
+  //     reasoning that keeps `dlDone` blind to `startDate`.
+  //   * no `parts`                        → not dissected.
+  // Removing a block therefore deletes the key rather than writing 0, or an
+  // item could never go back to being unscheduled.
+  const MIN_BLOCK = 5;
+  // Any positive finite number, matching what schema.js accepts. The reader must
+  // not silently discard a value validation let through: the UI cannot author a
+  // block shorter than the 5-minute snap, but an import or a hand edit can, and
+  // dropping it would render the item unscheduled while the key sat in storage.
+  const blockMins = v => (typeof v === 'number' && isFinite(v) && v > 0) ? v : null;
+  const minsOf = t => { const m = TIME_RE.exec(String((t == null ? '' : t))); return m ? Number(m[0].slice(0, 2)) * 60 + Number(m[0].slice(3)) : null; };
+  const hhmmOf = mins => {
+    const c = Math.max(0, Math.min(SCHED_END_HOUR * 60 - MIN_BLOCK, Math.round(mins)));
+    return String(Math.floor(c / 60)).padStart(2, '0') + ':' + String(c % 60).padStart(2, '0');
+  };
+
+  // A note's block starts at its time, so an UNTIMED note can never have one.
+  // That is deliberately a reader rule rather than a write-time cleanup:
+  // clearing a note's time in documentations.html drops the `time` key and
+  // knows nothing about blocks, so this is what stops it stranding a block —
+  // and re-adding a time restores the block at the duration the user chose.
+  const noteBlockDuration = n => noteTimed(n) ? blockMins(n && n.blockDuration) : null;
+  const dlBlockDuration = d => TIME_RE.test((d && d.time) || '') ? blockMins(d && d.blockDuration) : null;
+
+  // The deadline block's stored span, or null when it is not scheduled. A
+  // run-up that would start before 00:00 is clipped at the top rather than
+  // pushed past its due time, so the end stays where the user put it.
+  function dlBlockSpan(d) {
+    const mins = dlBlockDuration(d);
+    if (mins === null) return null;
+    const stored = minsOf(d.blockTime);
+    let start = stored !== null ? stored : minsOf(d.time) - mins;
+    let dur = mins;
+    if (start < 0) { dur = Math.max(MIN_BLOCK, dur + start); start = 0; }
+    return { time: hhmmOf(start), duration: dur };
+  }
+  const dlBlockTime = d => { const s = dlBlockSpan(d); return s ? s.time : null; };
+
+  // Dissecting an item stores its steps in `parts`, mirroring a goal task's
+  // `children`. Never throws on a malformed stored value: a nested list is
+  // exactly where hand-edited, imported or synced data goes wrong.
+  function itemParts(item) {
+    const raw = item && item.parts;
+    return Array.isArray(raw) ? raw.filter(p => p && typeof p === 'object' && !Array.isArray(p)) : [];
+  }
+  // A part resolves its own start and length, falling back to the parent
+  // block's. Null when neither yields a time, so a part can never be drawn at
+  // a position nobody chose.
+  function partSpan(p, fbTime, fbDur) {
+    const own = TIME_RE.test((p && p.time) || '') ? p.time : null;
+    const time = own !== null ? own : (TIME_RE.test(fbTime || '') ? fbTime : null);
+    if (time === null) return null;
+    const dur = blockMins(p && p.blockDuration);
+    return { time, duration: dur !== null ? dur : fbDur };
+  }
 
   function buildDaySchedule(slot, ds, opts) {
     const show = shownFn(opts);
@@ -330,20 +401,68 @@
     // `calNotes` is therefore the strip's list and `calNotesAll` is the whole
     // day's, for callers that list notes for editing rather than by position.
     const dayNotes = (slot.calendarNotes || []).filter(n => n.date === ds && show(originKey(n, 'daynote')));
-    dayNotes.filter(noteTimed).forEach(n => blocks.push({
-      id: n.id,
-      title: n.title || 'Note',
-      kind: 'Day note',
-      time: n.time,
-      duration: NOTE_BLOCK_MIN,
-      // a note is a point in time, not a span. NOTE_BLOCK_MIN only gives the
-      // block a height; metaLabel keeps the surface from captioning it with a
-      // duration the user never entered.
-      metaLabel: n.time,
-      done: false,
-      color: NOTE_COLOR,
-      item: n
-    }));
+    dayNotes.filter(noteTimed).forEach(n => {
+      const mins = noteBlockDuration(n);
+      // Dissected: the parts stand in for the parent, exactly as a goal task's
+      // scheduled children hide the parent block in progress.html.
+      const parts = itemParts(n);
+      if (parts.length) {
+        parts.forEach(p => {
+          const s = partSpan(p, n.time, mins === null ? NOTE_BLOCK_MIN : mins);
+          if (!s) return;
+          blocks.push({
+            id: n.id + ':' + p.id, title: p.title || 'Part', kind: 'Day note part',
+            time: s.time, duration: s.duration, done: !!p.done,
+            color: NOTE_COLOR, item: n, part: p
+          });
+        });
+        return;
+      }
+      blocks.push({
+        id: n.id,
+        title: n.title || 'Note',
+        kind: 'Day note',
+        time: n.time,
+        duration: mins === null ? NOTE_BLOCK_MIN : mins,
+        // An UNSCHEDULED note is still a point in time, not a span:
+        // NOTE_BLOCK_MIN only gives the block a height, and metaLabel keeps the
+        // surface from captioning it with a duration the user never entered.
+        // Once it carries a blockDuration that duration IS the user's, so the
+        // caption is left alone — this branch must keep behaving exactly as it
+        // did before the field existed.
+        ...(mins === null ? { metaLabel: n.time } : {}),
+        done: false,
+        color: NOTE_COLOR,
+        item: n
+      });
+    });
+
+    // A deadline's run-up block. Only one that was explicitly scheduled gets a
+    // block; `deadlines` and `deadlinesCaution` below are deliberately blind to
+    // all of it, because the due-time hairline and the caution run-up are a
+    // different concern from where the work sits.
+    allDl.filter(d => d.date === ds && show(originKey(d, 'deadline'))).forEach(d => {
+      const span = dlBlockSpan(d);
+      if (!span) return;
+      const parts = itemParts(d);
+      if (parts.length) {
+        parts.forEach(p => {
+          const s = partSpan(p, span.time, span.duration);
+          if (!s) return;
+          blocks.push({
+            id: d.id + ':' + p.id, title: p.title || 'Part', kind: 'Deadline part',
+            time: s.time, duration: s.duration, done: !!p.done,
+            color: DL_BLOCK_COLOR, item: d, part: p
+          });
+        });
+        return;
+      }
+      blocks.push({
+        id: d.id, title: d.title || 'Deadline', kind: 'Deadline prep',
+        time: span.time, duration: span.duration, done: dlDone(d),
+        color: DL_BLOCK_COLOR, item: d
+      });
+    });
 
     return {
       blocks,
@@ -402,6 +521,11 @@
     SCHED_START_HOUR, SCHED_END_HOUR, SCHED_PX_PER_HOUR,
     flattenGoals, goalDuration, goalDone, mgsForDay, noteTimed,
     dlStart, dlInCaution, dlByTime, dlByDate, dlDayCount, dlValid, dlDone, daysBetween,
+    // the ONE definition of the day-note / deadline block rules. progress.html
+    // holds a second copy only because it does not load this file, the same
+    // documented exception it relies on for noteTimed and dlDone; the two must
+    // agree, and tests/browser.test.js asserts each surface separately.
+    noteBlockDuration, dlBlockDuration, dlBlockSpan, dlBlockTime, itemParts, partSpan,
     originKey,
     buildBuckets, buildMilestoneLanes, buildDaySchedule, overlapInfo, durLabel
   };

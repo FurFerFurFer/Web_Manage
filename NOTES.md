@@ -812,8 +812,6 @@ remain explicit and separately authorized.
 
 Remaining candidate directions:
 
-- Drag timed day notes on the hour grid.
-- Decide whether timed notes have a duration before adding resize behavior.
 - Click-to-create tasks and documentation pages from calendar days.
 - Deep-link KS02 calendar items into their owning record.
 - Add filter toggles to the Home legend and/or Progress schedule.
@@ -822,6 +820,28 @@ Remaining candidate directions:
 
 Any new write path must use a fresh read-modify-write of the single owned key and local
 calendar dates. Home should remain read-only unless write ownership is explicitly designed.
+
+### Left undone by the schedule-block work
+
+Day-note and deadline schedule blocks are implemented — see README "Schedule blocks for day
+notes and deadlines". That settled the "do timed notes have a duration" question (yes, opt-in
+and stored as `blockDuration`) and delivered dragging them on the hour grid. Two pieces were
+deliberately **not** built:
+
+- **A deadline's run-up block on an earlier caution-period day.** The block is currently pinned
+  to the due day, and a horizontal drag is ignored. Putting prep on a run-up day needs a
+  `blockDate` (or a date on each part), plus a decision about what happens when the caution
+  period is later shortened past it. Do not reuse `blockTime` for this — it is an `HH:MM` and
+  its absence already means "anchored to the due time".
+- **Folding `progress.html`'s copy of the block helpers back into `calendar-core.js`.** There
+  are now six twinned helpers (`noteBlockDuration`, `dlBlockDuration`, `dlBlockSpan`,
+  `dlBlockTime`, `itemParts`, `partSpan`) on top of the existing `noteTimed`, `dlStart`,
+  `dlDone`, `dlValid`, `dlDayCount` and `deadlinesCautionOn`, all duplicated for one reason:
+  `progress.html` does not load `calendar-core.js`. Making it load that file would delete the
+  whole duplication class, but it is a cross-page change (script tag plus a cache-bust bump on
+  every page) and the two copies differ on purpose in one place — an unscheduled timed note is
+  a marker on Progress and a block on the read-only surfaces. Any such consolidation has to
+  preserve that difference, not "tidy" it away.
 
 ## Proposal 13: Memoize Documentation Day Aggregation if Needed
 
@@ -869,6 +889,39 @@ relationship be refused at the picker, merely flagged in the canvas and SRCH vie
 entirely alone as a legitimate way to model mutual dependence? Do not implement a refusal
 without answering that — a mind map where two ideas genuinely feed each other may be exactly
 what the user meant.
+
+## Proposal 15: Extract the Duplicated `ConfirmDialog`
+
+Every destructive control now confirms (see README, "Destructive controls"), and the
+mechanism chosen was the native `window.confirm()` — it already had 21 call sites, it works
+in non-React `notes-widget.js`, and it needed no new shared file.
+
+That left a duplication in place rather than creating one. `ConfirmDialog` is a styled React
+modal defined **verbatim twice**, in `sir-ks02.html` and `true-storage.html`. A third copy
+was deliberately not made: expanding a verbatim duplicate to a third page is precisely the
+shape the `graph-layout.js` one-definition rule forbids, and it would have had to be written
+twice more to cover the pages that do not have it.
+
+The residue is a split surface. Some deletions raise a styled in-page modal, others a browser
+dialog, and which one a user sees depends on nothing they can perceive.
+
+Proposed direction:
+
+- Extract `ConfirmDialog` into a shared versioned script (`confirm-dialog.js?v=1`), loaded by
+  every page that needs it, with the two existing copies reduced to a delegate each.
+- Give it a promise-returning imperative entry point so a plain function can `await` it. The
+  native `confirm()` sites are synchronous and sit inside plain handlers, so a component-only
+  API would force each of them to be restructured into state.
+- Migrate the native `confirm()` sites to it, page by page, keeping the message text.
+- Keep `notes-widget.js` on native `confirm()` unless the shared script is made usable
+  outside React, which is a separate decision.
+
+Do not start this to "tidy" the duplication alone. The prompts work today; this is a
+consistency and styling improvement, and it touches every destructive path in the
+application, so it needs the full Cancel-path browser coverage re-run against the new
+mechanism. `tests/lib/cdp.js`'s `page.rejectDialogs` only answers **native** dialogs — a
+DOM-modal implementation makes every existing destructive-control case unable to see the
+prompt at all, so those cases must be rewritten in the same change rather than after it.
 
 ## Additional Small Ideas
 

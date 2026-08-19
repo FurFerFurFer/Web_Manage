@@ -85,7 +85,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=4`, `schema.js?v=3`, `calendar-core.js?v=2`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=4`, `schema.js?v=4`, `calendar-core.js?v=3`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
 
 ## Current Data Contract
 
@@ -199,6 +199,14 @@ A deadline's `date` is editable from exactly one place: the popup's Edit form in
 
 - Moving the due day must **never rewrite `startDate`**. The two are independent stored dates with one ordering rule between them, and a writer that clamps or shifts the caution start to make room has destroyed a period the user chose. Refuse the edit instead; the user moves the caution start themselves, in the same form.
 - `startDate <= date` is enforced **only at authoring time** and never on a stored record. `schema.js` checks each date's format independently and has no cross-field rule, so nothing downstream will catch an inverted span — and it does not fail loudly. `dlInCaution` goes false for every day, so the run-up silently vanishes on all five surfaces; `dlDayCount` returns a negative number that `documentations.html` renders verbatim; and worst, that page's edit form gates Save on `dlValid` against the stored `startDate`, so an inverted deadline can never be edited from Documentations again. A new writer of `date` therefore has to carry the check itself. `tests/calendar-core.test.js` pins this behaviour in an offline guard case so the cost of losing the check stays visible.
+
+A `calendarNotes` or `deadlines` item may also carry an optional `blockDuration` (minutes), a `deadlines` item an optional `blockTime` (`HH:MM`), and either an optional `parts` list. Together these give the item a real **schedule block** on the hour grid: a deadline's block **ends** at its due time (it is the run-up), a day note's **starts** at its time. `blockDuration` is the single switch for being on the grid, and its absence means the item renders exactly as it did before the field existed — which is what makes the feature additive with nothing to migrate. Five rules follow:
+
+- The block geometry has exactly **one** definition, `noteBlockDuration` / `dlBlockDuration` / `dlBlockSpan` / `dlBlockTime` / `itemParts` / `partSpan` in `calendar-core.js`, with a second copy in `progress.html` for the documented reason that it does not load that file. Never re-spell `d.time - d.blockDuration` at a call site. Three surfaces render these blocks — the Progress grid, the Home calendar and a Documentations calendar block — and `tests/browser.test.js` asserts each one **separately**, because a rule forgotten at one of several surfaces is this repository's recurring bug and a single assertion lets the forgotten one hide behind a passing sibling.
+- The two copies differ **on purpose** in exactly one place, and it must be preserved: an unscheduled *timed* note is a point marker on Progress and a block on the read-only surfaces. Progress had a marker before this feature and the others did not, so each keeps its own pre-existing behaviour. Do not "align" them.
+- Removing a block **deletes** `blockDuration` and `blockTime`; emptying `parts` deletes `parts`. Never write `0`, `''` or `[]`, or the item can never go back to being unscheduled or undissected. Absence of `blockTime` while `blockDuration` is present is a meaningful **third** state — "still anchored to the due time" — so `reset` deletes the key rather than storing the value it would have computed, exactly as a tick never rewrites `startDate`.
+- A **deadline** block writes `blockTime` only, and never `date` or `time`. A note block may write both, because re-dating a note is ordinary. This asymmetry is load-bearing: it keeps `date` editable from the single place that checks `startDate <= date`, so a drag can never produce the inverted span described above. A horizontal drag of a deadline block is ignored, and the ghost is pinned to its own column so it does not promise a move that will be refused.
+- An **untimed** note can never carry a block, and that is enforced in the *reader* rather than by cleaning up on write. `documentations.html` clears a note's time by dropping the key and knows nothing about blocks, so the reader rule is what stops it stranding one — and re-adding a time restores the block at the duration the user chose. `blockDuration` and `blockTime` are validated in `schema.js` as **warnings** because they reach geometry (`height: NaNpx`), unlike `done` which is safe under `!!`; `parts` is validated **fatally** like a goal's `children`, because it holds records and is traversed.
 
 A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may carry `tags` — each one naming a **pair**: a source-dump leaf (`dumpId`) and one MM linked inside it (`mmId`). Four rules follow, and the first is the load-bearing one:
 
@@ -379,6 +387,51 @@ Consider:
 - Offline/local-only use.
 
 Do not describe sync as conflict-safe unless these cases are actually handled and tested.
+
+### Confirm before deleting or clearing stored data
+
+Every control that deletes or clears data in `track_db` must ask first, through a
+native `window.confirm()`. There is no undo in this application, so the prompt is
+the only barrier between a stray click and lost work.
+
+Placement is not a style choice — it is the rule that keeps the guard from being
+forgotten at one site:
+
+- **In the handler** when every path through it is destructive. A call site added
+  later inherits the prompt rather than having to remember it.
+- **At the call site** when the handler also serves a non-destructive path, or is
+  a pure tree function that must stay pure.
+
+`removeMilestoneEntry` is reached from three buttons and `onUnlinkTask` from four,
+which is exactly why their prompts live in the shared handler. Where a call-site
+prompt is required it is because a handler-level one would be *wrong*:
+`toggleMGDay` both adds and removes and also serves two deliberately unconfirmed
+toggles, `onUpdateDate` also sets dates, and `deleteNode` and `removeDissectChild`
+are pure tree functions with other callers. This is the deadline-caution failure
+shape again — one rule spelled at several call sites and dropped at one — so when
+you move a prompt into a handler, **delete the call-site copy in the same edit**
+or the user gets two prompts for one click.
+
+Two further rules:
+
+- A guard that writes before it asks is not a guard. Where a write reaches
+  `track_db` immediately rather than through a React autosave snapshot — KS02's
+  `untagStorage` and its `_mutateSlotKey` call is the one such case — the prompt
+  must gate the **call**, not a later state update.
+- Prompt **after** an existing no-op guard, never before it. `− row` and `− col`
+  already refuse to drop the last row or column; asking first would make a button
+  that does nothing still demand an answer.
+
+Not every `✕` is in scope. Pure-dismiss controls — closing a modal, cancelling a
+form — stay one click. So do three deliberate exclusions, each pinned by a browser
+case: the four detach `⊗` chips, the two MG schedule `✓` toggle-offs
+(`progress.html`), and the emoji icon `Clear` (`documentations.html`). Do not
+"make it uniform" without re-deciding those on purpose.
+
+`tests/lib/cdp.js` answers dialogs automatically and accepts by default; set
+`page.rejectDialogs = true` around a click to press Cancel. A new confirmation is
+tested on its **Cancel** path — that the stored bytes are unchanged — because a
+prompt that displays and then deletes anyway is worse than none.
 
 ### Use local calendar dates
 
@@ -848,7 +901,108 @@ recorded failing first.
 - Not covered: real touch hardware, the live Firebase project, and print output. Cycle
   *prevention* is deliberately not implemented — see NOTES Proposal 14.
 
+### Day-note and deadline schedule blocks (2026-08-19)
+
+- 16 new offline cases (`tests/calendar-core.test.js` and `tests/schema.test.js` go from 104
+  to 120, swept under all five timezones) and 12 new browser cases. No `SLOT_FIELDS` row was
+  added — the slot stays at **23** fields — so the hand-written CONTRACT lists and
+  `tests/lib/fixture.js` needed no change, which is itself asserted.
+- **Two of the offline cases are guards and pass on both sides by design.** One pins that a
+  timed note with no `blockDuration` still yields the pre-field shape (`duration` 30 and a
+  `metaLabel`, claiming no duration the user never entered); the other pins that adding a
+  block changes neither the due list, nor the caution run-up, nor the `done` suppression, on
+  any of the three days of a span. If either ever fails, the feature has stopped being
+  additive.
+- The **fail-first proof** was run against two doctored `TRACK_TEST_ROOT` roots, each holding
+  symlinks to the repository plus **one** doctored file, because the failure this design
+  prevents has two asymmetric halves:
+  - `calendar-core.js` with the deadline span **re-spelled at the call site**
+    (`{ time: d.time, duration: d.blockDuration }`, i.e. anchored to the wrong end) — the Home
+    and Documentations cases fail while the Progress one passes, because Progress reads its
+    own copy.
+  - `progress.html` with the `noteTimed` guard **dropped from its copy** of
+    `noteBlockDuration` — only `an untimed note carrying a stray blockDuration is still not on
+    the grid` fails, while Home and Documentations pass.
+  The two failure sets are disjoint, which is the whole argument for asserting each surface
+  separately rather than once. Never place either doctored copy in the repository.
+- **That second case exists because the first attempt at the proof failed to prove anything:**
+  the doctored `progress.html` passed all 113 cases. The panel test seeds an untimed note with
+  *no* `blockDuration`, so the doctored line is never reached — dropping the guard only shows
+  up when a stray `blockDuration` is stored alongside a missing `time`, which is exactly what
+  `documentations.html` can leave behind when it clears a note's time. A case was added for
+  that and seen failing. The lesson generalises: a guard-clause test has to seed the state the
+  guard is guarding *against*, or it passes on both sides and proves nothing.
+- Behaviour deliberately **differs** between the two copies and is asserted that way: an
+  unscheduled *timed* note is a point marker on Progress and a block on the read-only
+  surfaces. Each keeps its own pre-existing behaviour; that is the invariant, not sameness.
+- Drag and resize were verified from a **task-owned script**, not the suite — the committed
+  suite has never simulated a drag, and adding one here would have been a new and fragile
+  precedent. Confirmed by that script: a deadline block's vertical drag writes `blockTime`
+  and leaves `date`, `time` and `startDate` byte-identical; its horizontal drag changes
+  nothing; a note block's drag writes `time`. These cannot be re-run from `node tests/run.js`.
+- Not covered: real touch hardware (the long-press-to-resize path on the new blocks was
+  written to match the existing three kinds but exercised only through synthetic events),
+  the live Firebase project, and print output of the new blocks and panel.
+
 Not covered by the suite, and still requiring manual checks: touch and drag interaction, the signed-in Firebase path, real multi-device behaviour, print output, and most of the UI.
+
+### Confirmation on every destructive control (2026-08-18)
+
+- 19 controls that deleted or cleared stored data on one unguarded click now ask
+  first. One new browser case brings the file to **100 subtests, all passing**;
+  13 suites pass.
+- The **fail-first evidence is the point of this entry**, and it was recorded
+  against the untouched product pages before a single confirm was added. The test
+  half went in first as its own commit (`63055c1`), so the working tree *was* the
+  pre-change file and no `TRACK_TEST_ROOT` scratch directory was needed — the same
+  situation as "Movable deadline due date". Result: **99 subtests, 7 failed**, and
+  every one of the seven carried the identical assertion message,
+  `the control asked before writing (no dialog was raised)`:
+  the documentation block delete, `− row`/`− col`, the True Storage tag remove and
+  link clear, the KS02 untag, the scheduled-action day delete, and the caution
+  reset. The eighth case — a detach `⊗` chip is deliberately left unconfirmed —
+  **passed**, as a scope guard must on both sides.
+- One case failing for the *wrong* reason was caught before it could be believed.
+  The Supporting Actions case first timed out looking for a day chip that was not
+  in the DOM: `expanded` initialises to `{}`, so the action row starts collapsed.
+  It clicks the row's `▼` first now, and only then failed on
+  `no dialog was raised`. A case that times out on its own selector proves the
+  control is unreachable, not that it is unguarded — always read the message, not
+  the pass/fail.
+- The 9th case, added with the fix, is a **guard** and passes on both sides by
+  design: the milestone-checkpoint chip must raise **exactly one** dialog. Moving
+  the prompt into `removeMilestoneEntry` while leaving the call-site `confirm` at
+  its chip would prompt twice for one click, and nothing else in the suite would
+  have noticed. It asserts `page.dialogs.length === before + 1` after an 800 ms
+  settle, so a second prompt is counted rather than missed.
+- The chip's `×` is behind hover state, which React delegates from `mouseover`;
+  the case re-dispatches until the button exists rather than sleeping. Two
+  elements carry the milestone title — the MILESTONES row and the chip — and only
+  the chip is `inline-flex`.
+- Coverage is honest rather than complete: **8 of the 19 controls** are exercised
+  by an automated Cancel-path case, chosen one per mechanism. The other 11 are
+  **not** covered by the suite and were **not** clicked by hand either — they rest
+  on code reading alone, which is weaker evidence and is recorded as such. They
+  are: the two MilestoneBar tooltips, the four unlink buttons, the clear-date
+  button, `clearMilestonePeriod`, the MG bullet `×`, the dissect `×`, and KS02
+  `removeLink`. Of these, the tooltips and the unlink buttons at least share a
+  handler with something covered (`removeMilestoneEntry` via case 100,
+  `confirmUnlinkTask` via neither) — the remaining five have no automated
+  evidence at all. A manual confirm-and-cancel pass over those is still owed.
+- Not covered, as ever: real touch hardware, the live Firebase project, and print
+  output.
+- **Environment note worth carrying forward.** The first full-suite run after the
+  edits reported 4 failures in the malformed-`track_db` cases, with
+  `CDP connection closed` and `progress.html mounting` timeouts. All four passed
+  on a re-run once the machine was quiet. Those cases load all five pages six
+  times over and are the suite's heaviest section, so they are the first to break
+  under contention — two other `node --test` runs and ~19 headless Chrome
+  processes were live at the time. Before trusting any browser-layer failure,
+  check `pgrep -fc "user-data-dir=/tmp/track-cdp-"` and re-run on an idle
+  machine; a `CDP connection closed` is a resource symptom, not a regression.
+  Note also that `Browser.close()` can fail with `ENOTEMPTY` while removing its
+  profile directory, which is where the stray `/tmp/track-cdp-*` directories come
+  from.
 
 ### Documentations calendar blocks (2026-08-06)
 

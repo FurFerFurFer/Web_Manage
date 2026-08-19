@@ -189,7 +189,8 @@ required time, and carries a required caution-period start date, a title, and an
 description:
 
 ```js
-{ id, date: 'YYYY-MM-DD', time: 'HH:MM', startDate: 'YYYY-MM-DD', title, detail, createdAt, done }
+{ id, date: 'YYYY-MM-DD', time: 'HH:MM', startDate: 'YYYY-MM-DD', title, detail, createdAt, done,
+  blockDuration, blockTime, parts }   // all three optional — see "Schedule blocks" below
 ```
 
 The caution period runs `startDate` through `date` **inclusive**; `startDate` defaults to the due day,
@@ -262,6 +263,47 @@ editable but dims and reads `· hidden while ticked`, rather than promising mark
 The popup can also be opened straight from a link: `progress.html?date=<due day>&dl=<deadline id>#schedule`
 selects the Schedule, anchors the timeline on the due day, and opens that deadline. The id has to match
 a stored deadline, so a stale link opens nothing instead of erroring.
+
+**Schedule blocks for day notes and deadlines.** Either item can be given a real block on the hour
+grid, auto-placed relative to the time it already has: a **deadline's block ends at its due time**
+(it is the run-up to the deadline, not the deadline itself) and a **day note's block starts at its
+time**. A block is a first-class block — it takes part in the side-by-side overlap layout with goal,
+supporting-action and MM blocks, and it drags and resizes by mouse and by touch — unlike the
+zero-height note marker and deadline hairline, which are deliberately excluded from that layout.
+
+`blockDuration` is the single switch for being on the grid, so nothing changes for an item that has
+not been scheduled. On this page that means a timed note is a **point marker until it is scheduled
+and a block afterwards**, never both, exactly as the day-strip chip and the hour grid are already
+mutually exclusive for `time`. A deadline keeps its red due-time hairline painted over its own
+run-up block, which is the pairing that makes the run-up readable. An **untimed** note can never
+have a block, because a note's block starts at its time and there is nothing to anchor to; that is
+enforced in the reader, so clearing a note's time from Documentations — which drops the key and
+knows nothing about blocks — cannot strand one.
+
+The two kinds commit a drag **differently**, and the asymmetry is load-bearing. A note block writes
+`time` and `date`, because re-dating a note is ordinary. A deadline block writes `blockTime` only
+and never `date` or `time`: a horizontal drag is ignored and the ghost stays in its own column,
+because moving a deadline's *due* day remains the sole business of the popup's Edit form, which is
+the one path that checks `startDate <= date`. A run-up that would begin before `00:00` is clipped at
+the top of the grid and shortened, so it still ends on its due time rather than being pushed past it.
+
+**The `☰` button** sits beside `+ ◎ ⊕` in each timeline day header and opens a browser over **every**
+day note and deadline in the slot — not only that day's — grouped by date, with the day it was opened
+on expanded and listed first. `All` / `Notes` / `Deadlines` tabs and a text filter narrow it. Each row
+links to that item's existing popup, and carries:
+
+- `＋ add block to schedule`, which writes a default 60-minute block. For an untimed note the row
+  first reveals a time input and the button stays disabled until a well-formed `HH:MM` is picked, so
+  the time and the block are written in one go and `time` is never stored as `''`.
+- `remove from schedule`, which deletes `blockDuration` and `blockTime` and **keeps the item** — its
+  marker, hairline and caution run-up are untouched.
+- `reset to due time` on a deadline whose block has been dragged off the anchor.
+- `✂`, which dissects the item into `parts`, mirroring what `✂` already does to a scheduled goal
+  task. A new part inherits the parent block's start and length, so the parts stack where the parent
+  block was and can then be moved apart one at a time. While an item has parts, **the parts replace
+  the parent block** on the grid, exactly as a goal task whose child sits on the same day is
+  represented by the child. Each part gets its own checkbox, and removing the last one deletes the
+  key so the parent block returns.
 
 ### Floating notes
 
@@ -481,6 +523,37 @@ KS02 makes that write the only way it is allowed to touch a key it does not own 
 read-modify-write of `trueStorages` alone, never its autosave snapshot. `repointDump` returns the
 original array when no tag names the dump, and `_mutateSlotKey` short-circuits on that, so adding a
 sub-title under an untagged dump writes nothing and arms no sync upload.
+
+### Destructive controls
+
+Every control that deletes or clears stored data asks first, through a native `window.confirm()`.
+There is no undo anywhere in the application, so the prompt is the only thing between a misplaced
+click and lost work — a `✕` on hover chrome is easy to hit by accident, and a filled table, an
+embedded image or a scheduled day with its tick and notes all disappear silently without one.
+
+Where the prompt lives follows one rule:
+
+> in the **handler** when every path through it is destructive, at the **call site** when the
+> handler also serves a non-destructive path or is a pure tree function.
+
+The handler case is the one that matters. `removeMilestoneEntry` is reached from three buttons and
+`onUnlinkTask` from four; putting the prompt in the shared handler means a fifth button added later
+inherits it instead of having to remember it. This is the same duplication failure the deadline
+caution predicate already cost this project — one rule spelled at several call sites and forgotten
+at one. Where a call-site prompt is genuinely required, it is because a handler-level one would be
+wrong: `toggleMGDay` both adds and removes, `onUpdateDate` also *sets* dates, and `deleteNode` and
+`removeDissectChild` are pure tree functions that must stay pure.
+
+Deliberately **not** confirmed, and pinned by a test so a later "make it uniform" change has to
+re-decide it on purpose rather than ship friction:
+
+- The four detach `⊗` chips. They sever one graph edge, and the connections picker puts it back in
+  seconds.
+- The two Marginal Gain schedule `✓` toggle-offs, which are ordinary scheduling toggles.
+- The emoji icon `Clear` in Documentations, which only resets a picker.
+
+Pure-dismiss `×` and `cancel` buttons — closing a modal, abandoning a form — are not destructive and
+stay one click.
 
 ### Local and cloud data
 
@@ -766,7 +839,7 @@ still apply their own `slot.goals || []` fallbacks, and the per-page field-prese
 migration IIFEs are unchanged — centralizing those is `NOTES.md` Proposal 2, along with
 `schemaVersion`.
 
-Three item-level fields inside `calendarNotes` and `deadlines` are optional, and
+Six item-level fields inside `calendarNotes` and `deadlines` are optional, and
 their **absence carries meaning**:
 
 - `docPageId` names the `docPages` entry that authored the item. Absent means the
@@ -784,6 +857,30 @@ their **absence carries meaning**:
   writes `false` rather than deleting the key, and no stored deadline needed a
   migration. It is not validated in `schema.js`: a malformed value cannot break a
   render the way a malformed date can.
+- `blockDuration` (both) is the length in minutes of the item's **schedule
+  block**, and its presence is what puts the item on the hour grid at all.
+  Absent means not scheduled, and the item renders exactly as it did before the
+  field existed — which is what made the feature additive, with nothing to
+  migrate. Taking a block off the schedule therefore **deletes the key** rather
+  than writing `0`, or an item could never go back to being unscheduled.
+- `blockTime` (`deadlines` only) is the block's own start. Absent is a
+  meaningful **third** state — "still anchored to the due time" — so it is
+  written only when the block is dragged off that anchor, and `reset to due
+  time` deletes the key rather than storing the value it would have computed.
+  That is what makes reset a restore rather than a recomputed guess, the same
+  reasoning that keeps a tick from rewriting `startDate`.
+- `parts` (both) holds the steps an item was dissected into. Absent means not
+  dissected, and removing the last part deletes the key so the parent block
+  comes back rather than the item being left "dissected into nothing".
+
+`blockDuration` and `blockTime` **are** validated in `schema.js`, and the split
+from `done` above is deliberate: `done` is safe by construction because every
+reader goes through `!!`, while these two reach block geometry, where a string
+or a `NaN` renders `height: NaNpx`. They are the same class of risk as a
+malformed `time`, so they get the same treatment — a warning that leaves the
+database editable. `parts` is checked more strictly and **fatally**, like a
+goal's `children`: it holds records and is traversed, so a stray `null` in it
+imports cleanly under a field-only check and then throws out of the next render.
 
 Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`
 (timestamp + random, e.g. `mshajngq-ehhoj`), which `progress.html`'s `uid()`,
@@ -901,7 +998,7 @@ It runs three layers:
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, and refused-save handling for import, legacy notes, and Documentation bootstrap |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed |
 
 The first two offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
@@ -925,6 +1022,22 @@ The browser layer drives the system Chrome (`/usr/bin/google-chrome`, or
 `CHROME_PATH`) over the DevTools protocol using Node 22's built-in `WebSocket` —
 no Playwright or Puppeteer in the tree. If no Chrome is found the run **fails**
 rather than passing quietly, because a skipped browser layer is not a pass.
+
+`tests/lib/cdp.js` answers every `alert`/`confirm` automatically — an unhandled
+dialog wedges the renderer for the rest of the run — and records each message in
+`page.dialogs`. It **accepts** by default. Set `page.rejectDialogs = true` around
+a click to press Cancel instead, and reset it afterwards:
+
+```js
+page.rejectDialogs = true;
+try { /* click the destructive control */ } finally { page.rejectDialogs = false; }
+```
+
+That flag is what makes a confirmation testable at all. Asserting only that a
+dialog appeared proves nothing about whether it guards anything: a prompt that is
+displayed and then deletes regardless is worse than no prompt, because it reads
+as a guard. The Cancel path is the assertion that matters, so the destructive-
+control cases check that `track_db` is byte-identical after declining.
 
 To prove a regression test actually catches the bug it names, serve a scratch
 directory instead of the repository:

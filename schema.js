@@ -350,6 +350,44 @@
         if (item.time !== undefined && !isTime(item.time)) {
           errors.push(validationError(key, at + ' has an invalid time ' + describe(item.time) + ', expected HH:MM', false));
         }
+        // The schedule-block keys. Their ABSENCE is the default and it is
+        // meaningful — no blockDuration means the item is not on the hour grid
+        // at all — so only a present value is checked, exactly as for `time`.
+        //
+        // Non-fatal, and the split from `done` is deliberate: `done` is safe by
+        // construction because every reader goes through `!!`, so a check there
+        // could only invent a way to block a database. These two reach geometry
+        // instead. A string or a NaN duration renders `height: NaNpx` and a
+        // malformed blockTime misplaces the block, which is the same class of
+        // damage as a malformed `time` — so it warns and stays editable rather
+        // than freezing the database.
+        if (item.blockDuration !== undefined
+            && !(typeof item.blockDuration === 'number' && isFinite(item.blockDuration) && item.blockDuration > 0)) {
+          errors.push(validationError(key, at + ' has an invalid blockDuration ' + describe(item.blockDuration) + ', expected a positive number of minutes', false));
+        }
+        if (item.blockTime !== undefined && !isTime(item.blockTime)) {
+          errors.push(validationError(key, at + ' has an invalid blockTime ' + describe(item.blockTime) + ', expected HH:MM', false));
+        }
+        // `parts` holds records and is traversed, so it is FATAL like a goal's
+        // children rather than a warning like the two values above: a stray null
+        // in it imports cleanly under a field-only check and then throws out of
+        // the next render.
+        //
+        // `null` is read as absent here, unlike the two warnings above, and the
+        // difference is severity rather than oversight: those only warn, so they
+        // can afford to point at a suspect value, while this one freezes the
+        // whole database — and `parts: null` unambiguously means "no parts".
+        if (item.parts !== undefined && item.parts !== null) {
+          if (!isList(item.parts)) {
+            errors.push(validationError(key, at + '.parts must be a list when present, found ' + describe(item.parts), true));
+          } else {
+            item.parts.forEach(function (part, p) {
+              if (!isMap(part)) {
+                errors.push(validationError(key, at + '.parts[' + p + '] must be an object, found ' + describe(part), true));
+              }
+            });
+          }
+        }
       });
     });
     return errors;

@@ -7,8 +7,8 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%230d9488%22/%3E%3Cpath d=%22M10 9h12M10 15h12M10 21h8%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=3"></script>
-  <script src="calendar-core.js?v=2"></script>
+  <script src="schema.js?v=4"></script>
+  <script src="calendar-core.js?v=3"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -362,9 +362,18 @@
           </div>
           <div className="doc-chrome mt-1 flex gap-1 text-[10px] opacity-0 transition-opacity group-hover:opacity-100">
             <button onClick={()=>onChange({...block, rows:[...block.rows, block.rows[0].map(()=> '')]})} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ row</button>
-            <button onClick={()=>{ if(block.rows.length>1) onChange({...block, rows: block.rows.slice(0,-1)}); }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− row</button>
+            <button onClick={()=>{
+              // After the length guard, never before it — a no-op must not ask.
+              if(block.rows.length<=1) return;
+              if(!window.confirm('Delete the last row?\n\nAny text in its cells goes with it.')) return;
+              onChange({...block, rows: block.rows.slice(0,-1)});
+            }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− row</button>
             <button onClick={()=>onChange({...block, rows: block.rows.map(r=>[...r,''])})} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ col</button>
-            <button onClick={()=>{ if(block.rows[0].length>1) onChange({...block, rows: block.rows.map(r=>r.slice(0,-1))}); }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− col</button>
+            <button onClick={()=>{
+              if(block.rows[0].length<=1) return;
+              if(!window.confirm('Delete the last column?\n\nAny text in its cells goes with it.')) return;
+              onChange({...block, rows: block.rows.map(r=>r.slice(0,-1))});
+            }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− col</button>
           </div>
         </div>
       );
@@ -1203,7 +1212,17 @@
         setActiveBlockId(b.id);
       }
       const updateBlock = b => patchBlocks(activePage.id, blocks => blocks.map(x => x.id===b.id ? b : x));
-      const deleteBlock = id => patchBlocks(activePage.id, blocks => blocks.filter(x => x.id!==id));
+      // The ✕ sits in hover chrome right beside Move up / Move down, and a table
+      // or an embedded image can carry a lot of work. Name the kind so the
+      // prompt says what is actually at stake.
+      const deleteBlock = id => {
+        const KIND = { p:'text', h1:'heading', h2:'heading', h3:'heading', divider:'divider',
+          image:'image', link:'link', table:'table', calendar:'calendar' };
+        const b = ((activePage && activePage.blocks) || []).find(x => x.id === id);
+        const kind = (b && KIND[b.type]) || 'block';
+        if (!window.confirm(`Delete this ${kind} block?\n\nThis cannot be undone.`)) return;
+        patchBlocks(activePage.id, blocks => blocks.filter(x => x.id!==id));
+      };
       const moveBlock = (id, dir) => patchBlocks(activePage.id, blocks => {
         const i = blocks.findIndex(x => x.id===id), j = i + dir;
         if (i < 0 || j < 0 || j >= blocks.length) return blocks;

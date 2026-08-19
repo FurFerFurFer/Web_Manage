@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=3"></script>
+  <script src="schema.js?v=4"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -257,6 +257,92 @@
     const NOTE_TIME_RE = /^\d{2}:\d{2}$/;
     function noteTimed(n) { return NOTE_TIME_RE.test((n && n.time) || ''); }
 
+    // ── day-note and deadline schedule blocks ───────────────────────────────
+    // A note or a deadline becomes a real span on the hour grid by carrying an
+    // optional `blockDuration` in minutes. A deadline's block ENDS at its due
+    // time — it is the run-up to the deadline, not the deadline itself — while a
+    // note's block STARTS at its time.
+    //
+    // These are copies of noteBlockDuration / dlBlockDuration / dlBlockSpan /
+    // dlBlockTime / itemParts / partSpan in calendar-core.js, which this page
+    // does NOT load — the same documented exception that twins noteTimed above
+    // and dlStart, dlDone, dlValid and dlDayCount inside SchedulePanel. The two
+    // copies must agree; tests/browser.test.js asserts the Progress grid, the
+    // Home calendar and a Documentations block SEPARATELY so a forgotten one
+    // cannot hide behind a passing sibling.
+    //
+    // ABSENCE IS MEANINGFUL three times over, and each is load-bearing:
+    //   * no `blockDuration`  → not on the grid. This is what makes the feature
+    //     additive, and why no stored item needed a migration. Removing a block
+    //     therefore DELETES the key rather than writing 0.
+    //   * no `blockTime`      → "still anchored to the due time". Written only
+    //     when the user drags the block off that anchor; reset deletes the key
+    //     rather than storing the value it would have computed, so reset is a
+    //     restore, not a recomputed guess.
+    //   * no `parts`          → not dissected.
+    const MIN_BLOCK_MINS = 5;
+    // Any positive finite number, matching what schema.js accepts and what
+    // calendar-core.js reads. The reader must not silently discard a value
+    // validation let through: the UI cannot author a block shorter than the
+    // 5-minute snap, but an import or a hand edit can.
+    const blockMins = v => (typeof v === 'number' && isFinite(v) && v > 0) ? v : null;
+    const NOTE_BLOCK_MIN = 30;   // default height only — an unscheduled note has no duration
+    const minsOfTime = t => { const m = NOTE_TIME_RE.exec(String(t == null ? '' : t)); return m ? Number(m[0].slice(0, 2)) * 60 + Number(m[0].slice(3)) : null; };
+    const timeOfMins = mins => {
+      const c = Math.max(0, Math.min(24 * 60 - MIN_BLOCK_MINS, Math.round(mins)));
+      return String(Math.floor(c / 60)).padStart(2, '0') + ':' + String(c % 60).padStart(2, '0');
+    };
+    // An UNTIMED note can never carry a block — its block starts at its time, so
+    // there is nothing to anchor to. Deliberately a reader rule: clearing a
+    // note's time in documentations.html drops the `time` key and knows nothing
+    // about blocks, so this is what stops it stranding one, and re-adding a time
+    // restores the block at the duration the user chose.
+    const noteBlockDuration = n => noteTimed(n) ? blockMins(n && n.blockDuration) : null;
+    const dlBlockDuration = d => NOTE_TIME_RE.test((d && d.time) || '') ? blockMins(d && d.blockDuration) : null;
+    // A run-up that would start before 00:00 is clipped at the top rather than
+    // pushed past its due time, so the end stays where the user put it.
+    function dlBlockSpan(d) {
+      const mins = dlBlockDuration(d);
+      if (mins === null) return null;
+      const stored = minsOfTime(d.blockTime);
+      let start = stored !== null ? stored : minsOfTime(d.time) - mins;
+      let dur = mins;
+      if (start < 0) { dur = Math.max(MIN_BLOCK_MINS, dur + start); start = 0; }
+      return { time: timeOfMins(start), duration: dur };
+    }
+    // Dissection stores steps in `parts`, mirroring a goal task's `children`.
+    // Never throws on a malformed stored value: a nested list is exactly where
+    // hand-edited, imported or synced data goes wrong.
+    function itemParts(item) {
+      const raw = item && item.parts;
+      return Array.isArray(raw) ? raw.filter(p => p && typeof p === 'object' && !Array.isArray(p)) : [];
+    }
+    // Null when neither the part nor the parent yields a time, so a part can
+    // never be drawn at a position nobody chose.
+    function partSpan(p, fbTime, fbDur) {
+      const own = NOTE_TIME_RE.test((p && p.time) || '') ? p.time : null;
+      const time = own !== null ? own : (NOTE_TIME_RE.test(fbTime || '') ? fbTime : null);
+      if (time === null) return null;
+      const dur = blockMins(p && p.blockDuration);
+      return { time, duration: dur !== null ? dur : fbDur };
+    }
+    // The BLOCK span of a note, or null when it has none. `blockDuration` is the
+    // single on-grid switch for both kinds, so on this page a timed note is a
+    // point marker until it is scheduled and a block afterwards — the two are
+    // mutually exclusive, exactly as the strip chip and the hour grid already
+    // are for `time`. That keeps the feature purely additive: an existing timed
+    // note renders exactly as it did before this field existed.
+    //
+    // calendar-core.js deliberately differs here — there a timed note is a
+    // block whether or not it is scheduled, because those read-only surfaces
+    // never had a marker to show it with, and `blockDuration` only sets its
+    // height. Each surface preserves its OWN pre-existing behaviour, which is
+    // the invariant that matters; do not "align" them by changing either.
+    function noteBlockSpan(n) {
+      const mins = noteBlockDuration(n);
+      return mins === null ? null : { time: n.time, duration: mins };
+    }
+
     function isMilestoneNode(node) {
       return node?.taskType === 'milestone';
     }
@@ -363,6 +449,16 @@
       return goals
         .filter(g => g.id !== id)
         .map(g => ({ ...g, children: deleteNode(g.children || [], id) }));
+    }
+
+    // deleteNode stays PURE — onDelete calls it too, and a tree function that
+    // prompts cannot be reused or reasoned about. The guard lives beside it
+    // instead, called from the two onUnlinkTask wrappers, which is what makes
+    // one message cover all four unlink buttons.
+    function confirmUnlinkTask() {
+      return window.confirm(
+        'Remove this linked task from the goal tree?\n\n' +
+        'The original task is not deleted — only the link here goes.');
     }
 
     function deleteNodeKeepChildren(goals, id) {
@@ -1787,7 +1883,16 @@
         addMilestoneEntry(milestoneId, stage, level);
       }
 
+      // The prompt lives HERE rather than at the three buttons that reach it —
+      // the two MilestoneBar tooltips (via the onRemove prop) and the checkpoint
+      // chip. Every path through this function deletes a stored checkpoint, so a
+      // future call site inherits the guard instead of having to remember it.
       function removeMilestoneEntry(milestoneId) {
+        const msTitle = (nodeMilestones.find(m => m.id === milestoneId) || {}).title;
+        if (!window.confirm(msTitle
+          ? `Remove milestone checkpoint "${msTitle}"?`
+          : 'Remove this milestone checkpoint?')) return;
+
         const cur = (node.mmTargets || {})[mmId] || {};
         const sorted = sortMsBySubgoalOrder(cur.milestones || []);
         const deletedEntry = sorted.find(e => e.milestoneId === milestoneId);
@@ -1918,8 +2023,9 @@
                       <button
                         onClick={ev => {
                           ev.stopPropagation();
-                          if (window.confirm(`Remove milestone checkpoint "${ms.title}"?`))
-                            removeMilestoneEntry(e.milestoneId);
+                          // No confirm here: removeMilestoneEntry asks. Restoring
+                          // one would prompt twice for a single click.
+                          removeMilestoneEntry(e.milestoneId);
                         }}
                         className="text-gray-500 hover:text-red-400 leading-none flex-shrink-0 ml-0.5">
                         ×
@@ -2286,8 +2392,13 @@
           <input type="date" value={node.scheduledDate || ''}
             onChange={e => { onUpdateDate(node.id, e.target.value || null); setShowDate(false); }}
             className="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-300 outline-none focus:border-indigo-500" />
+          {/* Call site, not onUpdateDate — that handler also SETS the date from
+              the input above, and must not prompt when it does. */}
           {node.scheduledDate && (
-            <button onClick={() => { onUpdateDate(node.id, null); setShowDate(false); }}
+            <button onClick={() => {
+                if (!window.confirm('Clear the scheduled date for this task?')) return;
+                onUpdateDate(node.id, null); setShowDate(false);
+              }}
               className="text-xs text-gray-500 hover:text-red-400">clear</button>
           )}
           <button onClick={() => setShowDate(false)} className="text-xs text-gray-500 hover:text-gray-300">cancel</button>
@@ -2994,7 +3105,7 @@
         onReorderMilestoneType: (id, mid, dir) => setGoals(prev => reorderMilestoneType(prev, id, mid, dir)),
         allGoals: goals,
         onAddLinkedTask:    (parentId, linkedTaskId) => setGoals(prev => addLinkedTask(prev, parentId, linkedTaskId)),
-        onUnlinkTask:       id              => setGoals(prev => deleteNode(prev, id)),
+        onUnlinkTask:       id              => { if (confirmUnlinkTask()) setGoals(prev => deleteNode(prev, id)); },
         onArrangeTask:      (draggedId, targetId, insertBefore) => setGoals(prev => reorderSibling(prev, draggedId, targetId, insertBefore)),
         onAddNote:          (taskId, note)   => setGoals(prev => addNoteToTask(prev, taskId, note)),
         onRemoveNote:       (taskId, noteId) => setGoals(prev => removeNoteFromTask(prev, taskId, noteId)),
@@ -3429,6 +3540,7 @@
       }
 
       function clearMilestonePeriod(ownerId, milestoneId) {
+        if (!window.confirm('Clear this milestone’s start and end dates?')) return;
         chooseMilestone(ownerId, milestoneId);
         setMilestonePeriod(ownerId, milestoneId, null, null);
       }
@@ -3755,7 +3867,7 @@
         onReorderMilestoneType: (id, mid, dir) => setGoals(prev => reorderMilestoneType(prev, id, mid, dir)),
         allGoals: goals,
         onAddLinkedTask:    (parentId, linkedTaskId) => setGoals(prev => addLinkedTask(prev, parentId, linkedTaskId)),
-        onUnlinkTask:       id              => setGoals(prev => deleteNode(prev, id)),
+        onUnlinkTask:       id              => { if (confirmUnlinkTask()) setGoals(prev => deleteNode(prev, id)); },
         onNestGoal:         (draggedId, targetId) => { setGoals(prev => nestGoalIntoGoal(prev, draggedId, targetId)); setActiveGoalId(targetId); },
         onPromoteSubGoal:   subGoalId       => setGoals(prev => promoteSubGoalToUltimate(prev, subGoalId)),
         onNestSubGoal:      (draggedId, targetId) => setGoals(prev => nestSubGoalIntoSubGoal(prev, draggedId, targetId)),
@@ -4018,6 +4130,9 @@
       }
 
       function deleteEntry(id) {
+        // The record carries its own done tick, time and notes, so this is not
+        // "unschedule a day" — it is a delete.
+        if (!window.confirm('Delete this scheduled day?\n\nIts tick and any notes on it go too.')) return;
         setSaEntries(prev => prev.filter(e => e.id !== id));
       }
 
@@ -4605,6 +4720,15 @@
       const [mgPickerDay, setMgPickerDay] = useState(null);
       const [search, setSearch]   = useState('');
       const [pickerView, setPickerView] = useState('tree');
+      // The day-note / deadline browser behind the fourth add button. It lists
+      // every note and deadline in the slot, not only this day's, so the day it
+      // was opened on is only used to decide which group starts expanded.
+      const [dlnPickerDay, setDlnPickerDay] = useState(null);
+      const [dlnTab, setDlnTab] = useState('all');        // 'all' | 'notes' | 'deadlines'
+      const [dlnOpenGroups, setDlnOpenGroups] = useState({});
+      const [dlnDissect, setDlnDissect] = useState(null); // null | 'dayNote:<id>' | 'deadline:<id>'
+      const [dlnPartInput, setDlnPartInput] = useState('');
+      const [dlnTimeDraft, setDlnTimeDraft] = useState({}); // noteId → 'HH:MM' for an untimed note
       const [expandedNodes, setExpandedNodes] = useState(new Set());
       const [ghost, setGhost]     = useState(null);
       const [nowY, setNowY]       = useState(null);
@@ -4833,7 +4957,12 @@
           const relX   = clientX - rect.left + el.scrollLeft - TIME_COL_W;
           const colW   = (el.scrollWidth - TIME_COL_W) / currDays.length;
           const dayIdx = Math.max(0, Math.min(currDays.length - 1, Math.floor(relX / colW)));
-          const newDate = toDateStr(currDays[dayIdx]);
+          // A deadline's run-up block is pinned to its own day: only the popup's
+          // Edit form may move a due day, so the ghost must not promise a column
+          // change that handlePointerUp will refuse to commit.
+          const newDate = dragRef.current.type === 'deadline'
+            ? (ghostRef.current ? ghostRef.current.srcDate : toDateStr(currDays[dayIdx]))
+            : toDateStr(currDays[dayIdx]);
 
           const prev = ghostRef.current;
           if (prev && (prev.date !== newDate || prev.time !== newTime)) {
@@ -4847,7 +4976,39 @@
           stopEdgeScroll();
           // Commit resize
           if (resizeRef.current) {
-            const { type, id, previewDuration, previewTime, dateStr } = resizeRef.current;
+            const { type, id, itemId, partId, edge, previewDuration, previewTime, dateStr } = resizeRef.current;
+            if (previewDuration !== undefined && (type === 'dayNote' || type === 'deadline')) {
+              // These two carry their length in `blockDuration`, not `duration`.
+              // A part's own time/length live on the part; the parent's live on
+              // the item — and for a DEADLINE the start is `blockTime`, so a
+              // top-edge resize can never touch the due `time`.
+              if (partId) {
+                updatePart(type, itemId, partId, {
+                  blockDuration: previewDuration,
+                  ...(previewTime ? { time: previewTime } : {})
+                });
+              } else if (type === 'dayNote') {
+                setCalendarNotes(prev => prev.map(n => n.id === itemId
+                  ? { ...n, blockDuration: previewDuration, ...(previewTime ? { time: previewTime } : {}) } : n));
+              } else {
+                setDeadlines(prev => prev.map(d => {
+                  if (d.id !== itemId) return d;
+                  // The BOTTOM edge is the block's end. While the block is still
+                  // anchored (no blockTime), growing blockDuration alone would
+                  // hold the end on the due time and extend the block UPWARDS,
+                  // so the edge would not follow the pointer. Dragging the end
+                  // is the user saying where the end goes, so pin the current
+                  // start into blockTime and let the anchor go — which is
+                  // precisely the state blockTime exists to record.
+                  const startNow = previewTime || (edge === 'bottom' && !d.blockTime
+                    ? (dlBlockSpan(d) || {}).time : null);
+                  return { ...d, blockDuration: previewDuration, ...(startNow ? { blockTime: startNow } : {}) };
+                }));
+              }
+              resizeRef.current = null;
+              setGhost(null);
+              return;
+            }
             if (previewDuration !== undefined) {
               const update = { duration: previewDuration, ...(previewTime ? (type === 'goal' ? { scheduledTime: previewTime } : { time: previewTime }) : {}) };
               if (type === 'goal') {
@@ -4880,6 +5041,20 @@
               setSaEntries(prev => prev.map(e => e.id === g.entryId ? { ...e, date: g.date, time: g.time } : e));
             } else if (d.type === 'mmEntry') {
               setMmEntries(prev => prev.map(e => e.id === g.entryId ? { ...e, date: g.date, time: g.time } : e));
+            } else if (d.type === 'dayNote') {
+              // Re-dating a day note is ordinary, so a note block writes both.
+              if (g.partId) updatePart('dayNote', g.itemId, g.partId, { time: g.time });
+              else setCalendarNotes(prev => prev.map(n => n.id === g.itemId ? { ...n, date: g.date, time: g.time } : n));
+            } else if (d.type === 'deadline') {
+              // A deadline block writes `blockTime` ONLY, and never `date` or
+              // `time`. Moving a deadline's due day is the sole business of the
+              // popup's Edit form, which is the one path that checks
+              // `startDate <= date` — nothing validates that on a stored record,
+              // and an inverted span silently erases the run-up on all five
+              // surfaces and soft-locks the Documentations edit form. A
+              // horizontal drag is therefore ignored rather than obeyed.
+              if (g.partId) updatePart('deadline', g.itemId, g.partId, { time: g.time });
+              else setDeadlines(prev => prev.map(x => x.id === g.itemId ? { ...x, blockTime: g.time } : x));
             }
           }
           dragRef.current  = null;
@@ -4923,21 +5098,35 @@
           if (!touchRef.current.moved && (dx > TOUCH_SLOP || dy > TOUCH_SLOP)) {
             touchRef.current.moved = true;
             if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-            const { type, item, offsetY, blockHeight } = touchRef.current;
+            const { type, item, offsetY, blockHeight, part, span } = touchRef.current;
             const isRoutine = item.taskType === 'routine';
             const tds = touchRef.current.resizeDate;
-            const isArmed = selMatch(selectedForDragRef.current, item.id, isRoutine, tds) ||
-                            selMatch(selectedForResizeRef.current, item.id, isRoutine, tds);
+            // A day-note or deadline block is keyed by item id plus part id, so
+            // two parts of one item arm independently.
+            const bkey = (type === 'dayNote' || type === 'deadline')
+              ? (part ? item.id + ':' + part.id : item.id) : item.id;
+            const isArmed = selMatch(selectedForDragRef.current, bkey, isRoutine, tds) ||
+                            selMatch(selectedForResizeRef.current, bkey, isRoutine, tds);
             if (isArmed) {
               touchRef.current.dragging = true;
               const HANDLE_PX = 16;
-              const isExpandable = selMatch(selectedForResizeRef.current, item.id, isRoutine, tds);
+              const isExpandable = selMatch(selectedForResizeRef.current, bkey, isRoutine, tds);
               const inTopHandle = isExpandable && offsetY < HANDLE_PX;
               const inBottomHandle = isExpandable && blockHeight !== undefined && offsetY > blockHeight - HANDLE_PX;
               if (inTopHandle || inBottomHandle) {
-                const timeStr = touchRef.current.resolvedTime || (type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00'));
+                const timeStr = (span && span.time) || touchRef.current.resolvedTime || (type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00'));
                 const [th, tm] = timeStr.split(':').map(Number);
-                resizeRef.current = { type, id: item.id, edge: inTopHandle ? 'top' : 'bottom', startY: t.clientY, startDuration: type === 'goal' ? goalDurationFor(item, touchRef.current.resizeDate) : (item.duration || 60), startTotalMin: th * 60 + tm, dateStr: touchRef.current.resizeDate };
+                resizeRef.current = {
+                  type, id: bkey, itemId: item.id, partId: part ? part.id : undefined,
+                  edge: inTopHandle ? 'top' : 'bottom', startY: t.clientY,
+                  startDuration: span ? span.duration : (type === 'goal' ? goalDurationFor(item, touchRef.current.resizeDate) : (item.duration || 60)),
+                  startTotalMin: th * 60 + tm, dateStr: touchRef.current.resizeDate
+                };
+              } else if (type === 'dayNote' || type === 'deadline') {
+                dragRef.current = { type, itemId: item.id, partId: part ? part.id : undefined, offsetY };
+                const g = { type, itemId: item.id, partId: part ? part.id : undefined, id: bkey,
+                  date: item.date, srcDate: item.date, time: span.time, duration: span.duration };
+                ghostRef.current = g; setGhost(g);
               } else {
                 if (type === 'goal') {
                   dragRef.current = { type: 'goal', taskId: item.id, offsetY };
@@ -4968,15 +5157,17 @@
           if (resizeRef.current || (touchRef.current && touchRef.current.dragging)) {
             handlePointerUp();
           } else if (touchRef.current && !touchRef.current.moved) {
-            const { type, item } = touchRef.current;
+            const { type, item, part } = touchRef.current;
             const isRoutine = item.taskType === 'routine';
             const tds = touchRef.current.resizeDate;
-            if (selMatch(selectedForResizeRef.current, item.id, isRoutine, tds)) {
+            const bkey = (type === 'dayNote' || type === 'deadline')
+              ? (part ? item.id + ':' + part.id : item.id) : item.id;
+            if (selMatch(selectedForResizeRef.current, bkey, isRoutine, tds)) {
               setSelectedForResize(null);
-            } else if (selMatch(selectedForDragRef.current, item.id, isRoutine, tds)) {
+            } else if (selMatch(selectedForDragRef.current, bkey, isRoutine, tds)) {
               setSelectedForDrag(null);
             } else {
-              setSelectedForDrag({ type, id: item.id, date: tds });
+              setSelectedForDrag({ type, id: bkey, date: tds });
               setSelectedForResize(null);
             }
             dragRef.current = null; ghostRef.current = null; setGhost(null);
@@ -5278,6 +5469,30 @@
         setMouseDownInfo({ blockType: 'entry', id: entry.id });
       }
 
+      // Day-note and deadline blocks. `partId` is set when the block being
+      // dragged is one part of a dissected item rather than the item itself.
+      //
+      // The two kinds commit DIFFERENTLY on drop, and the asymmetry is
+      // deliberate — see handlePointerUp. A note block writes `time` and `date`,
+      // because re-dating a note is ordinary. A deadline block writes `blockTime`
+      // only and never `date` or `time`: moving a deadline's DUE day stays the
+      // sole business of the popup's Edit form and dlDraftValid, which is the one
+      // place that checks the caution-period ordering.
+      function startDragBlockItem(e, kind, item, span, partId) {
+        if (suppressMouseRef.current) return;
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        const key = partId ? item.id + ':' + partId : item.id;
+        mouseDownRef.current = {
+          startX: e.clientX, startY: e.clientY,
+          dragInfo: { type: kind, itemId: item.id, partId, offsetY: e.clientY - rect.top },
+          ghostInfo: { type: kind, itemId: item.id, partId, id: key, date: item.date, srcDate: item.date, time: span.time, duration: span.duration }
+        };
+        setMouseDownInfo({ blockType: kind, id: key });
+      }
+
       function startDragMMEntry(e, entry) {
         if (suppressMouseRef.current) return;
         if (e.button !== 0) return;
@@ -5292,16 +5507,21 @@
         setMouseDownInfo({ blockType: 'mmEntry', id: entry.id });
       }
 
-      function startResize(e, item, edge, type, resolvedTime, dateStr) {
+      // `resolvedDuration` and `partId` are for the day-note and deadline block
+      // kinds, whose length comes from a computed span rather than from a plain
+      // `duration` field — a deadline's run-up can be clipped by midnight, and a
+      // part's may be inherited from its parent.
+      function startResize(e, item, edge, type, resolvedTime, dateStr, resolvedDuration, partId) {
         e.preventDefault();
         e.stopPropagation();
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
         const timeStr = resolvedTime || (type === 'goal' ? (item.scheduledTime || '09:00') : (item.time || '09:00'));
         const [th, tm] = timeStr.split(':').map(Number);
         const startTotalMin = th * 60 + tm;
-        const startDuration = type === 'goal' ? goalDurationFor(item, dateStr) : (item.duration || 60);
-        const id = item.id;
-        resizeRef.current = { type, id, edge, startY: clientY, startDuration, startTotalMin, dateStr };
+        const startDuration = resolvedDuration !== undefined ? resolvedDuration
+          : (type === 'goal' ? goalDurationFor(item, dateStr) : (item.duration || 60));
+        const id = partId ? item.id + ':' + partId : item.id;
+        resizeRef.current = { type, id, itemId: item.id, partId, edge, startY: clientY, startDuration, startTotalMin, dateStr };
       }
 
       function assignToDate(task, dateStr) {
@@ -5589,6 +5809,92 @@
         if (dlPopup === id)   { setDlPopup(null); setDlPopupEdit(false); }
       }
 
+      // ── schedule-block writers ─────────────────────────────────────────────
+      // Every one of these SPREADS the stored record instead of rebuilding it
+      // from a field list, so docPageId, createdAt, done, startDate, time and
+      // any key a later version added all survive. Rebuilding is exactly the bug
+      // that cost day notes, deadlines and documentation pages before.
+      // They all run through setCalendarNotes / setDeadlines, so they reach
+      // storage on the existing _writeP effects — no new persistence path.
+      const DEFAULT_BLOCK_MINS = 60;
+
+      // Putting a note on the grid may need to set its time in the SAME write:
+      // a note with no time cannot have a block, and `time` must never be
+      // written as '' — so it is either a well-formed HH:MM or not written.
+      function scheduleNoteBlock(id, time, mins) {
+        const dur = blockMins(mins) === null ? DEFAULT_BLOCK_MINS : mins;
+        setCalendarNotes(prev => prev.map(n => {
+          if (n.id !== id) return n;
+          const withTime = NOTE_TIME_RE.test(time || '') ? { time } : {};
+          if (!NOTE_TIME_RE.test(time || '') && !noteTimed(n)) return n;  // nothing to anchor to
+          return { ...n, ...withTime, blockDuration: dur };
+        }));
+      }
+      function scheduleDlBlock(id, mins) {
+        const dur = blockMins(mins) === null ? DEFAULT_BLOCK_MINS : mins;
+        setDeadlines(prev => prev.map(d => d.id === id ? { ...d, blockDuration: dur } : d));
+      }
+      // Removing a block DELETES the keys rather than writing 0 or '', or an
+      // item could never go back to being unscheduled. Same rule as clearing a
+      // note's `time`.
+      function unscheduleBlock(kind, id) {
+        const strip = item => {
+          const { blockDuration, blockTime, ...rest } = item;
+          return rest;
+        };
+        if (kind === 'dayNote') setCalendarNotes(prev => prev.map(n => n.id === id ? strip(n) : n));
+        else setDeadlines(prev => prev.map(d => d.id === id ? strip(d) : d));
+      }
+      // Reset deletes `blockTime` rather than storing the anchored value it
+      // would have computed, so the block goes back to FOLLOWING the due time
+      // instead of being pinned to wherever it currently sits. Same reasoning
+      // that keeps a tick from rewriting `startDate`.
+      function resetDlBlockAnchor(id) {
+        setDeadlines(prev => prev.map(d => {
+          if (d.id !== id) return d;
+          const { blockTime, ...rest } = d;
+          return rest;
+        }));
+      }
+      // Dissection, mirroring addDissectChild / removeDissectChild for goals.
+      // A new part inherits the parent block's start and length, so the parts
+      // stack exactly where the parent block was and can then be moved apart
+      // one at a time — which is what dissecting a goal task already does.
+      function addPart(kind, id, title) {
+        const t = String(title || '').trim();
+        if (!t) return;
+        const mk = item => {
+          const span = kind === 'dayNote' ? noteBlockSpan(item) : dlBlockSpan(item);
+          const part = {
+            id: uid(), title: t, createdAt: Date.now(), done: false,
+            ...(span ? { time: span.time, blockDuration: span.duration } : {})
+          };
+          return { ...item, parts: [...itemParts(item), part] };
+        };
+        if (kind === 'dayNote') setCalendarNotes(prev => prev.map(n => n.id === id ? mk(n) : n));
+        else setDeadlines(prev => prev.map(d => d.id === id ? mk(d) : d));
+      }
+      // Emptying `parts` deletes the key, so the parent block comes back rather
+      // than the item being left "dissected into nothing".
+      function removePart(kind, id, partId) {
+        const drop = item => {
+          const left = itemParts(item).filter(p => p.id !== partId);
+          if (left.length) return { ...item, parts: left };
+          const { parts, ...rest } = item;
+          return rest;
+        };
+        if (kind === 'dayNote') setCalendarNotes(prev => prev.map(n => n.id === id ? drop(n) : n));
+        else setDeadlines(prev => prev.map(d => d.id === id ? drop(d) : d));
+      }
+      function updatePart(kind, id, partId, patch) {
+        const edit = item => ({
+          ...item,
+          parts: itemParts(item).map(p => p.id === partId ? { ...p, ...patch } : p)
+        });
+        if (kind === 'dayNote') setCalendarNotes(prev => prev.map(n => n.id === id ? edit(n) : n));
+        else setDeadlines(prev => prev.map(d => d.id === id ? edit(d) : d));
+      }
+
       return (
         <div className="flex flex-col h-full">
 
@@ -5716,6 +6022,19 @@
                       {!isPast && <button
                         onClick={() => { setMgPickerDay(mgPickerDay === ds ? null : ds); setPickerDay(null); setMmPickerDay(null); setSearch(''); }}
                         className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">⊕</button>}
+                      {/* Day notes and deadlines: browse every one of them,
+                          dissect them, and put them on the schedule. */}
+                      <button
+                        onClick={() => {
+                          const opening = dlnPickerDay !== ds;
+                          setDlnPickerDay(opening ? ds : null);
+                          setPickerDay(null); setMmPickerDay(null); setMgPickerDay(null); setSearch('');
+                          setDlnDissect(null); setDlnPartInput('');
+                          if (opening) { setDlnTab('all'); setDlnOpenGroups({ [ds]: true }); }
+                        }}
+                        title="Day notes & deadlines"
+                        data-dln-open={ds}
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-fuchsia-400 transition-colors rounded">☰</button>
                     </div>
                     </div>
 
@@ -5765,8 +6084,16 @@
                                 <li key={mmId} className="flex items-start gap-1 group">
                                   <span className="text-emerald-600 mt-px flex-shrink-0">•</span>
                                   <span className="flex-1 text-emerald-300 leading-tight">{getMGTextForDay(mmId, ds, mgChanges) || mm.name}</span>
+                                  {/* Call site only. toggleMGDay both adds and
+                                      removes, and also serves the two ✓ toggles
+                                      that are deliberately left unconfirmed — a
+                                      handler-level prompt would fire on
+                                      scheduling. */}
                                   {!isPast && <button
-                                    onClick={() => toggleMGDay(ds, mmId, mgSchedule, setMgSchedule)}
+                                    onClick={() => {
+                                      if (!window.confirm('Remove this Marginal Gain from this day?')) return;
+                                      toggleMGDay(ds, mmId, mgSchedule, setMgSchedule);
+                                    }}
                                     className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-opacity ml-1 flex-shrink-0 p-1"
                                   >×</button>}
                                 </li>
@@ -5829,6 +6156,39 @@
                   }
                 });
 
+                /* Day-note and deadline blocks for this column. A dissected item
+                   is represented by its PARTS and the parent block is dropped,
+                   exactly as a goal task whose child sits on the same day is
+                   (see tasksForDate). One flat list so the renderer, the drag
+                   machinery and the overlap layout all read the same geometry. */
+                const dayItemBlocks = [];
+                (calendarNotes || []).filter(n => n.date === ds).forEach(n => {
+                  const span = noteBlockSpan(n);
+                  if (!span) return;
+                  const parts = itemParts(n);
+                  if (parts.length) {
+                    parts.forEach(p => {
+                      const s = partSpan(p, span.time, span.duration);
+                      if (s) dayItemBlocks.push({ kind: 'dayNote', item: n, part: p, span: s, id: n.id + ':' + p.id });
+                    });
+                    return;
+                  }
+                  dayItemBlocks.push({ kind: 'dayNote', item: n, part: null, span, id: n.id });
+                });
+                deadlinesDueOn(ds).forEach(d => {
+                  const span = dlBlockSpan(d);
+                  if (!span) return;   // absence of blockDuration is the one on-grid switch
+                  const parts = itemParts(d);
+                  if (parts.length) {
+                    parts.forEach(p => {
+                      const s = partSpan(p, span.time, span.duration);
+                      if (s) dayItemBlocks.push({ kind: 'deadline', item: d, part: p, span: s, id: d.id + ':' + p.id });
+                    });
+                    return;
+                  }
+                  dayItemBlocks.push({ kind: 'deadline', item: d, part: null, span, id: d.id });
+                });
+
                 const dayBlockDescs = [
                   ...dayTasks.map(t => {
                     const [th, tm] = ((t.taskType === 'routine' ? t.routineDates?.[ds]?.time || t.scheduledTime : t.scheduledTime) || '09:00').split(':').map(Number);
@@ -5841,6 +6201,13 @@
                   ...dayMmEntries.map(e => {
                     const [th, tm] = (e.time || '09:00').split(':').map(Number);
                     return { id: e.id, top: (th + tm/60 - START_HOUR) * pxPerHour, height: Math.max(22, ((e.duration||60)/60) * pxPerHour) };
+                  }),
+                  /* These ARE blocks and so they join the overlap layout, unlike
+                     the zero-height note marker and deadline hairline below,
+                     which are deliberately excluded from it. */
+                  ...dayItemBlocks.map(b => {
+                    const [th, tm] = b.span.time.split(':').map(Number);
+                    return { id: b.id, top: (th + tm/60 - START_HOUR) * pxPerHour, height: Math.max(22, (b.span.duration/60) * pxPerHour) };
                   }),
                 ];
                 const dayOverlapInfo = computeOverlapInfo(dayBlockDescs);
@@ -5911,12 +6278,18 @@
                       );
                     })}
 
-                    {/* Timed day notes. A note is a point in time, not a span,
-                        so it is drawn like a deadline marker rather than as a
-                        block: no height to resize, and nothing for the drag
-                        machinery to fight over. Clicking opens the same note
-                        popup the day strip uses. */}
-                    {(calendarNotes || []).filter(n => n.date === ds && noteTimed(n)).map(note => {
+                    {/* Timed day notes that have NOT been given a block. Such a
+                        note is a point in time, not a span, so it is drawn like a
+                        deadline marker: no height to resize, and nothing for the
+                        drag machinery to fight over. Clicking opens the same note
+                        popup the day strip uses.
+
+                        Scheduling one moves it to dayItemBlocks below, and the
+                        two are mutually exclusive so it is never drawn twice —
+                        the same rule that already keeps a timed note out of the
+                        day strip. An unscheduled note therefore still renders
+                        exactly as it did before blockDuration existed. */}
+                    {(calendarNotes || []).filter(n => n.date === ds && noteTimed(n) && !noteBlockSpan(n)).map(note => {
                       const [nh, nm] = String(note.time).split(':').map(Number);
                       const top = (nh + (nm || 0) / 60 - START_HOUR) * pxPerHour;
                       if (top < 0 || top > TOTAL_H) return null;
@@ -6747,6 +7120,109 @@
                       );
                     })}
 
+                    {/* Day-note and deadline blocks. Real spans: they take part
+                        in the overlap layout, drag and resize, unlike the marker
+                        and hairline above. A deadline's block is its RUN-UP and
+                        ends at the due time, so the hairline still marks the due
+                        moment on top of it — that pairing is the point. */}
+                    {dayItemBlocks.map(b => {
+                      const isNote = b.kind === 'dayNote';
+                      const ghostHere = ghost && ghost._resize && ghost.type === b.kind && ghost.id === b.id;
+                      const dur      = ghostHere ? (ghost.duration || b.span.duration) : b.span.duration;
+                      const dispTime = (ghostHere && ghost.time) ? ghost.time : b.span.time;
+                      const [bh, bm] = dispTime.split(':').map(Number);
+                      const top      = (bh + bm / 60 - START_HOUR) * pxPerHour;
+                      const height   = Math.max(22, (dur / 60) * pxPerHour);
+                      if (top < -height || top >= TOTAL_H) return null;
+                      const col      = isNote ? '#e879f9' : '#f87171';
+                      const done     = b.part ? !!b.part.done : (isNote ? false : dlDone(b.item));
+                      const dragged  = ghost && !ghost._resize && ghost.type === b.kind && ghost.id === b.id;
+                      const isSelected = selectedForResize && selectedForResize.id === b.id;
+                      const isArmed    = selectedForDrag   && selectedForDrag.id   === b.id;
+                      const isPickedUp = mouseDownInfo?.blockType === b.kind && mouseDownInfo.id === b.id && !dragged;
+                      const label    = b.part ? b.part.title || 'Part' : (b.item.title || (isNote ? 'Note' : 'Deadline'));
+                      const openItem = e => {
+                        e.stopPropagation();
+                        if (isNote) {
+                          setCalNoteTimelineModal({ date: ds, noteId: b.item.id });
+                          setCalNoteTimelineDraft({ title: b.item.title, detail: b.item.detail || '', time: b.item.time || '' });
+                        } else {
+                          openDlPopup(b.item.id);
+                        }
+                      };
+                      return (
+                        <div key={b.id}
+                          style={{
+                            top: top + 'px', height: height + 'px', left: '3px', right: '3px',
+                            position: 'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(b.id),
+                            backgroundColor: col + '18', borderColor: done ? col + '40' : col + 'aa',
+                            ...(isPickedUp && { transform: 'translateY(-3px) scale(1.02)' }),
+                          }}
+                          className={`rounded px-1.5 py-0.5 overflow-hidden group border border-dashed transition-transform duration-100 ${
+                            dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
+                          } ${done ? 'opacity-50' : ''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
+                          data-block-kind={b.kind}
+                          data-block-id={b.id}
+                          onMouseDown={e => startDragBlockItem(e, b.kind, b.item, b.span, b.part ? b.part.id : undefined)}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type: b.kind, item: b.item, part: b.part, span: b.span, offsetY: t.clientY - rect.top, blockHeight: rect.height, startX: t.clientX, startY: t.clientY, moved: false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type: b.kind, id: b.id }); }, 600); }}
+                          onClick={e => e.stopPropagation()}
+                          onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(b.id); }}
+                          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: b.kind, id: b.id }); }}
+                        >
+                          {isSelected && (
+                            <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
+                              onMouseDown={e => startResize(e, b.item, 'top', b.kind, b.span.time, ds, b.span.duration, b.part ? b.part.id : undefined)}
+                              onTouchStart={e => startResize(e, b.item, 'top', b.kind, b.span.time, ds, b.span.duration, b.part ? b.part.id : undefined)} />
+                          )}
+                          <div className="flex items-start gap-1 h-full">
+                            {b.part && (
+                              <input type="checkbox" checked={!!b.part.done}
+                                onChange={() => updatePart(b.kind, b.item.id, b.part.id, { done: !b.part.done })}
+                                onClick={e => e.stopPropagation()}
+                                onMouseDown={e => e.stopPropagation()}
+                                className="flex-shrink-0 cursor-pointer"
+                                style={{ accentColor: col, marginTop: '3px', width: '12px', height: '12px' }} />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className={`text-xs font-semibold truncate leading-tight ${done ? 'line-through opacity-60' : ''}`}
+                                style={{ color: done ? '#6b7280' : col }}>
+                                {isNote ? '📌' : '⏰'} {label}
+                              </div>
+                              {height >= 32 && (
+                                <div className="text-[10px] leading-tight opacity-50">
+                                  {formatTime12(dispTime)} – {formatTime12(addMins(dispTime, dur))}
+                                  {!isNote && !b.part ? ` · due ${b.item.time}` : ''}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            className="absolute top-0.5 right-4 text-[11px] leading-none p-0.5 rounded text-gray-500 hover:text-white transition-colors"
+                            onClick={openItem}
+                            onMouseDown={e => e.stopPropagation()}
+                            title={isNote ? 'open this note' : 'open this deadline'}
+                          >ⓘ</button>
+                          <button
+                            className={`absolute top-0.5 right-0.5 text-sm ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none p-1`}
+                            onClick={e => {
+                              e.stopPropagation();
+                              /* Removing a BLOCK never deletes the item — the note
+                                 or deadline itself is untouched and keeps its
+                                 marker, hairline and caution run-up. */
+                              if (b.part) { if (window.confirm('Remove this part?')) removePart(b.kind, b.item.id, b.part.id); }
+                              else if (window.confirm('Take this off the schedule? The ' + (isNote ? 'note' : 'deadline') + ' itself is kept.')) unscheduleBlock(b.kind, b.item.id);
+                            }}
+                            onMouseDown={e => e.stopPropagation()}
+                          >×</button>
+                          {isSelected && (
+                            <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
+                              onMouseDown={e => startResize(e, b.item, 'bottom', b.kind, b.span.time, ds, b.span.duration, b.part ? b.part.id : undefined)}
+                              onTouchStart={e => startResize(e, b.item, 'bottom', b.kind, b.span.time, ds, b.span.duration, b.part ? b.part.id : undefined)} />
+                          )}
+                        </div>
+                      );
+                    })}
+
                     {/* Ghost block while dragging */}
                     {ghost && !ghost._resize && ghost.date === ds && (() => {
                       const [th, tm] = ghost.time.split(':').map(Number);
@@ -6783,6 +7259,29 @@
                               ◎ {mm.name}
                             </div>
                             <div className="text-[10px] opacity-70">{formatTime12(ghost.time)}</div>
+                          </div>
+                        );
+                      } else if (ghost.type === 'dayNote' || ghost.type === 'deadline') {
+                        const isNote = ghost.type === 'dayNote';
+                        const src = isNote
+                          ? (calendarNotes || []).find(n => n.id === ghost.itemId)
+                          : (deadlines || []).find(d => d.id === ghost.itemId);
+                        if (!src) return null;
+                        const part = ghost.partId ? itemParts(src).find(p => p.id === ghost.partId) : null;
+                        if (ghost.partId && !part) return null;
+                        const col = isNote ? '#e879f9' : '#f87171';
+                        return (
+                          <div style={{ top: top + 'px', height: h + 'px', left: '3px', right: '3px', position: 'absolute',
+                            borderColor: col, backgroundColor: col + '20' }}
+                            className="rounded px-1.5 py-0.5 text-xs border border-dashed pointer-events-none z-20">
+                            <div className="font-semibold truncate leading-tight" style={{ color: col }}>
+                              {isNote ? '📌' : '⏰'} {part ? (part.title || 'Part') : (src.title || (isNote ? 'Note' : 'Deadline'))}
+                            </div>
+                            <div className="text-[10px] opacity-70">
+                              {formatTime12(ghost.time)}
+                              {/* A deadline's due time never moves with its block */}
+                              {!isNote && !part ? ` · due ${src.time}` : ''}
+                            </div>
                           </div>
                         );
                       } else {
@@ -6858,6 +7357,196 @@
 
           {/* Day-view overlays — rendered here, outside the timeline scroller, so they
                are not clipped to it and their z-50 is not trapped under the sticky header */}
+
+          {/* Day notes & deadlines browser — the fourth add button. Lists every
+              note and deadline in the slot grouped by date, dissects them, and
+              puts them on the schedule. Nothing here deletes an item: taking a
+              block off the schedule deletes only the block keys. */}
+          {dlnPickerDay && (() => {
+            const openedOn = dlnPickerDay;
+            const q = search.trim().toLowerCase();
+            const hit = it => !q || String(it.title || '').toLowerCase().includes(q)
+              || String(it.detail || '').toLowerCase().includes(q);
+            const rows = [];
+            if (dlnTab !== 'deadlines') (calendarNotes || []).filter(hit).forEach(n => rows.push({ kind: 'dayNote', item: n }));
+            if (dlnTab !== 'notes') (deadlines || []).filter(hit).forEach(d => rows.push({ kind: 'deadline', item: d }));
+            const groups = {};
+            rows.forEach(r => { (groups[r.item.date] = groups[r.item.date] || []).push(r); });
+            // the day the panel was opened on first, then the rest by date
+            const dates = Object.keys(groups).sort((a, b) =>
+              (a === openedOn ? -1 : b === openedOn ? 1 : 0) || a.localeCompare(b));
+            const close = () => { setDlnPickerDay(null); setSearch(''); setDlnDissect(null); setDlnPartInput(''); };
+            return (
+              <>
+                <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
+                <div data-dln-panel className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[560px] max-w-[94vw] max-h-[82vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                  <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex-shrink-0 flex items-center justify-between">
+                    <span>DAY NOTES &amp; DEADLINES</span>
+                    <button className="text-gray-500 hover:text-white text-base leading-none px-1" onClick={close}>×</button>
+                  </div>
+                  <div className="p-3 border-b border-gray-800 flex-shrink-0 flex items-center gap-2">
+                    <div className="flex gap-1">
+                      {[['all', 'All'], ['notes', 'Notes'], ['deadlines', 'Deadlines']].map(([k, lbl]) => (
+                        <button key={k} onClick={() => setDlnTab(k)}
+                          data-dln-tab={k}
+                          className={`text-[10px] px-2 py-1 rounded transition-colors ${dlnTab === k ? 'bg-fuchsia-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>{lbl}</button>
+                      ))}
+                    </div>
+                    <input value={search} onChange={e => setSearch(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                      placeholder="filter…"
+                      className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-fuchsia-600" />
+                  </div>
+                  <div className="overflow-y-auto flex-1">
+                    {!dates.length && (
+                      <div className="px-3 py-4 text-[11px] text-gray-600 italic">No day notes or deadlines yet.</div>
+                    )}
+                    {dates.map(date => {
+                      const open = dlnOpenGroups[date] !== false && (dlnOpenGroups[date] || date === openedOn);
+                      return (
+                        <div key={date} className="border-b border-gray-800/60">
+                          <button
+                            onClick={() => setDlnOpenGroups(prev => ({ ...prev, [date]: !open }))}
+                            data-dln-group={date}
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-800/50 transition-colors">
+                            <span className="text-[10px] text-gray-500">{open ? '▾' : '▸'}</span>
+                            <span className="text-[11px] font-semibold text-gray-300">{date}</span>
+                            {date === openedOn && <span className="text-[9px] text-fuchsia-400">this day</span>}
+                            <span className="text-[9px] text-gray-600 ml-auto">{groups[date].length}</span>
+                          </button>
+                          {open && groups[date].map(({ kind, item }) => {
+                            const isNote = kind === 'dayNote';
+                            const col = isNote ? 'text-fuchsia-300' : 'text-red-300';
+                            const span = isNote ? noteBlockSpan(item) : dlBlockSpan(item);
+                            const parts = itemParts(item);
+                            const dkey = kind + ':' + item.id;
+                            const dissecting = dlnDissect === dkey;
+                            const untimedNote = isNote && !noteTimed(item);
+                            const draftTime = dlnTimeDraft[item.id] || '';
+                            return (
+                              <div key={dkey} className="px-3 py-1.5 border-t border-gray-800/40">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] flex-shrink-0">{isNote ? '📌' : '⏰'}</span>
+                                  <button
+                                    onClick={() => {
+                                      if (isNote) {
+                                        setCalNoteTimelineModal({ date: item.date, noteId: item.id });
+                                        setCalNoteTimelineDraft({ title: item.title, detail: item.detail || '', time: item.time || '' });
+                                      } else { openDlPopup(item.id); }
+                                      setDlnPickerDay(null);
+                                    }}
+                                    title="open this item"
+                                    className={`flex-1 text-left text-xs truncate hover:underline ${col}`}>
+                                    {item.title || (isNote ? 'Untitled note' : 'Untitled deadline')}
+                                  </button>
+                                  <span className="text-[10px] text-gray-500 flex-shrink-0 font-mono">
+                                    {isNote ? (noteTimed(item) ? item.time : '—') : item.time}
+                                  </span>
+                                  <button
+                                    onClick={() => { setDlnDissect(dissecting ? null : dkey); setDlnPartInput(''); }}
+                                    title="Dissect into parts"
+                                    data-dln-dissect={dkey}
+                                    className={`text-[11px] px-1 rounded flex-shrink-0 transition-colors ${dissecting || parts.length ? 'text-indigo-300' : 'text-gray-600 hover:text-indigo-300'}`}>
+                                    ✂{parts.length ? ' ' + parts.length : ''}
+                                  </button>
+                                </div>
+
+                                {/* schedule state / controls */}
+                                <div className="flex items-center gap-2 mt-1 pl-5">
+                                  {span ? (
+                                    <>
+                                      <span className="text-[10px] text-gray-400 font-mono">
+                                        {span.time}–{addMins(span.time, span.duration)} · {span.duration}min
+                                      </span>
+                                      {!isNote && item.blockTime && (
+                                        <button onClick={() => resetDlBlockAnchor(item.id)}
+                                          data-dln-reset={item.id}
+                                          title="Put the block back to ending at the due time"
+                                          className="text-[10px] text-amber-400 hover:text-amber-300">reset to due time</button>
+                                      )}
+                                      <button onClick={() => unscheduleBlock(kind, item.id)}
+                                        data-dln-unschedule={item.id}
+                                        className="text-[10px] text-gray-500 hover:text-red-400 ml-auto">remove from schedule</button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      {untimedNote && (
+                                        <input type="time" value={draftTime}
+                                          data-dln-time={item.id}
+                                          onChange={e => setDlnTimeDraft(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                          className="bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-[10px] text-white outline-none focus:border-fuchsia-600" />
+                                      )}
+                                      <button
+                                        onClick={() => {
+                                          // An untimed note needs its time in the SAME write, and
+                                          // `time` is never written as '' — so Schedule stays
+                                          // disabled until a well-formed one is picked.
+                                          if (isNote) scheduleNoteBlock(item.id, untimedNote ? draftTime : item.time, DEFAULT_BLOCK_MINS);
+                                          else scheduleDlBlock(item.id, DEFAULT_BLOCK_MINS);
+                                        }}
+                                        disabled={untimedNote && !NOTE_TIME_RE.test(draftTime)}
+                                        data-dln-schedule={item.id}
+                                        className="text-[10px] bg-fuchsia-700 hover:bg-fuchsia-600 disabled:opacity-40 disabled:hover:bg-fuchsia-700 text-white rounded px-2 py-0.5 transition-colors">
+                                        ＋ add block to schedule
+                                      </button>
+                                      {untimedNote && !NOTE_TIME_RE.test(draftTime) && (
+                                        <span className="text-[9px] text-gray-600 italic">pick a time first</span>
+                                      )}
+                                      {!isNote && <span className="text-[9px] text-gray-600 italic">ends at {item.time}</span>}
+                                    </>
+                                  )}
+                                </div>
+
+                                {/* dissect sub-panel — mirrors the goal dissect modal */}
+                                {dissecting && (
+                                  <div className="mt-1.5 ml-5 border-l border-indigo-800/60 pl-2">
+                                    {!parts.length && (
+                                      <div className="text-[10px] text-gray-500 italic py-0.5">
+                                        Add parts below — they replace this block on the schedule.
+                                      </div>
+                                    )}
+                                    {parts.map(p => (
+                                      <div key={p.id} className="flex items-center gap-2 group/part py-0.5">
+                                        <span className={`flex-1 text-[11px] truncate ${p.done ? 'line-through text-emerald-400' : 'text-gray-200'}`}>
+                                          {p.done ? '✓ ' : ''}{p.title}
+                                        </span>
+                                        {p.time && <span className="text-[9px] text-gray-500 font-mono">{p.time}</span>}
+                                        <button
+                                          className="text-[10px] text-gray-600 hover:text-red-400 opacity-0 group-hover/part:opacity-100 transition-opacity leading-none flex-shrink-0"
+                                          onClick={() => removePart(kind, item.id, p.id)}>×</button>
+                                      </div>
+                                    ))}
+                                    <div className="flex gap-1.5 mt-1">
+                                      <input
+                                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-[11px] text-white placeholder-gray-600 outline-none focus:border-indigo-500"
+                                        placeholder="Part name…"
+                                        data-dln-part-input={dkey}
+                                        value={dlnPartInput}
+                                        onChange={e => setDlnPartInput(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter' && dlnPartInput.trim()) { addPart(kind, item.id, dlnPartInput.trim()); setDlnPartInput(''); }
+                                        }} />
+                                      <button
+                                        className="bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] px-2 py-1 rounded transition-colors disabled:opacity-40"
+                                        disabled={!dlnPartInput.trim()}
+                                        data-dln-part-add={dkey}
+                                        onClick={() => { if (dlnPartInput.trim()) { addPart(kind, item.id, dlnPartInput.trim()); setDlnPartInput(''); } }}
+                                      >Add</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+
           {/* MG picker modal */}
           {mgPickerDay && mgPickerDay >= todayStr && (() => {
             const ds = mgPickerDay;
@@ -7380,7 +8069,14 @@
                                     title={`Start the caution period on ${dlShift(d.date, -n)}`}
                                     className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-amber-900/50 text-[10px] text-amber-300/80 transition-colors">−{n}d</button>
                                 ))}
-                                <button onClick={() => setDlCautionStart(d, d.date)}
+                                {/* Call site — setDlCautionStart also serves the
+                                    −3d/−7d/−14d quick-sets above, which are not
+                                    destructive. Passing d.date restores the due
+                                    day as the start; it never touches d.date. */}
+                                <button onClick={() => {
+                                    if (!window.confirm('Remove the caution period?\n\nThe deadline keeps its due day.')) return;
+                                    setDlCautionStart(d, d.date);
+                                  }}
                                   disabled={dlStart(d) === d.date}
                                   title="No caution period — the due day only"
                                   className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default text-[10px] text-gray-400 transition-colors">reset</button>
@@ -7703,9 +8399,13 @@
                           <span className={`flex-1 text-xs truncate ${childDone ? 'line-through text-emerald-400' : 'text-gray-200'}`}>
                             {childDone ? '✓ ' : ''}{child.title}
                           </span>
+                          {/* Call site — removeDissectChild is a pure tree function. */}
                           <button
                             className="text-[10px] text-gray-600 hover:text-red-400 opacity-0 group-hover/child:opacity-100 transition-opacity leading-none flex-shrink-0"
-                            onClick={() => setGoals(prev => removeDissectChild(prev, parent.id, child.id))}
+                            onClick={() => {
+                              if (!window.confirm(`Delete "${child.title}"?\n\nAnything nested under it is deleted too.`)) return;
+                              setGoals(prev => removeDissectChild(prev, parent.id, child.id));
+                            }}
                           >×</button>
                         </div>
                       );

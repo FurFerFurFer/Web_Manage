@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=3"></script>
+  <script src="schema.js?v=4"></script>
   <script src="graph-layout.js?v=1"></script>
   <script src="true-storage-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -2958,6 +2958,10 @@
         if (next) setTrueStorages(next);
       }
       function untagStorage(storageId,dumpId,mmId){
+        // The prompt gates the CALL, not a later state flush: _mutateSlotKey is
+        // a read-modify-write that reaches track_db immediately, so by the time
+        // setTrueStorages runs the foreign key is already gone.
+        if(!window.confirm('Remove this storage tag?\n\nThe storage itself is not deleted.')) return;
         const next=_mutateSlotKey(activeSlotId,'trueStorages',
           cur=>TrackTrueStorage.withoutPair(cur,storageId,dumpId,mmId));
         if (next) setTrueStorages(next);
@@ -3141,7 +3145,10 @@
       function toggleComment(mmId,cid){setMms(p=>p.map(m=>m.id===mmId?{...m,comments:(m.comments||[]).map(c=>c.id===cid?{...c,done:!c.done}:c)}:m));}
       function toggleUnclear(mmId){setMms(p=>p.map(m=>m.id===mmId?{...m,unclear:!m.unclear}:m));}
       function addLink(mmId,link){if (!link.url.trim()) return;setMms(p=>p.map(m=>m.id===mmId?{...m,links:[...(m.links||[]),{id:nid(),label:link.label||link.url,url:link.url}]}:m));}
-      function removeLink(mmId,lid){setMms(p=>p.map(m=>m.id===mmId?{...m,links:(m.links||[]).filter(l=>l.id!==lid)}:m));}
+      function removeLink(mmId,lid){
+        if(!window.confirm('Remove this link from the mind map?')) return;
+        setMms(p=>p.map(m=>m.id===mmId?{...m,links:(m.links||[]).filter(l=>l.id!==lid)}:m));
+      }
       function updateMMExplanation(mmId,text){setMms(p=>p.map(m=>m.id===mmId?{...m,explanation:text}:m));}
       function changeMMType(mmId,newType){
         if (newType==="anchor"){
