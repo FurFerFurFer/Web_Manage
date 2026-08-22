@@ -85,7 +85,17 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=4`, `schema.js?v=4`, `calendar-core.js?v=3`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=5`, `schema.js?v=5`, `calendar-core.js?v=5`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
+
+A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
+than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,
+which is *after* every page's `<link rel="stylesheet" href="styles.css">`, so a one-class
+selector like `.docs-sidebar-full` merely **ties** `.w-60`/`.p-2`/`.hidden` and loses on source
+order. Double it (`.docs-sidebar.docs-sidebar-full`) or reach the element through a descendant
+or attribute selector; do not reach for `!important`, which the print block already uses for a
+different reason and which would make the next override harder still. This is not theoretical —
+it silently cost the full-screen sidebar its width once, and the panel simply stayed 240px with
+no error anywhere.
 
 ## Current Data Contract
 
@@ -195,7 +205,11 @@ A `deadlines` item may also carry an optional `done` (boolean). Ticked means the
 - The doneness test belongs **inside** the three caution predicates, never at a call site. They are `deadlinesCautionOn` (`progress.html`), `deadlinesCaution` (`calendar-core.js`) and `ownedDates.caution` (`documentations.html`), and between them they feed five surfaces — the Progress month grid, timeline strip and day panel, the Home calendar, and a Documentations calendar block. `progress.html` holds its own copy of `dlDone` because it does not load `calendar-core.js`, exactly as it does for `noteTimed`. This rule is written from a shipped bug: `d.date !== ds` was spelled out at two of three call sites and forgotten at the third, and the timeline double-marked every due day until it was found.
 - `done` is deliberately **not** validated in `schema.js`. A malformed date breaks a render — `daysBetween` bails and `dlDayCount` goes `NaN` — but `!!'yes'` is just `true`, so a check there would only invent a way to block a database over a field that is safe by construction.
 
-A deadline's `date` is editable from exactly one place: the popup's Edit form in `progress.html`, through `dlDraftValid`. Every other authoring path — the day-cell composer, `documentations.html` — still takes the due day from the calendar cell it was opened on. Two rules follow, and they are the mirror of the tick rules above:
+A deadline's `date` is written by exactly three forms, and every one of them goes through `dlDraftValid`: the popup's Edit form in `progress.html`, and the two **compose** forms — the day-cell composer in `progress.html` and the `+ deadline` form in `documentations.html` — which each carry a due-date field seeded to the cell they were opened on. `dlDraftValid` has one definition per side, `TrackCalendar.dlDraftValid` in `calendar-core.js` and the documented copy in `progress.html`, which does not load that file; never re-spell `startDate <= date` at a call site. The format test on the draft's own date is part of the check, not decoration — a blank date sorts below every `startDate` and would otherwise read as in order.
+
+Moving an **existing** deadline stays the popup's alone, because that writer also has to check the prep placed inside the caution period (`dlStrandedBlockDays`); a deadline being composed has none. The two **edit** forms therefore still take the due day from the record. A fourth writer of `date` would have to carry both checks, which is the duplication shape this project keeps paying for — prefer routing through the popup.
+
+Two rules follow, and they are the mirror of the tick rules above:
 
 - Moving the due day must **never rewrite `startDate`**. The two are independent stored dates with one ordering rule between them, and a writer that clamps or shifts the caution start to make room has destroyed a period the user chose. Refuse the edit instead; the user moves the caution start themselves, in the same form.
 - `startDate <= date` is enforced **only at authoring time** and never on a stored record. `schema.js` checks each date's format independently and has no cross-field rule, so nothing downstream will catch an inverted span — and it does not fail loudly. `dlInCaution` goes false for every day, so the run-up silently vanishes on all five surfaces; `dlDayCount` returns a negative number that `documentations.html` renders verbatim; and worst, that page's edit form gates Save on `dlValid` against the stored `startDate`, so an inverted deadline can never be edited from Documentations again. A new writer of `date` therefore has to carry the check itself. `tests/calendar-core.test.js` pins this behaviour in an offline guard case so the cost of losing the check stays visible.
@@ -1013,7 +1027,80 @@ applies; its behavioural claims do not. See the next section.
   gap in this entry and it is a real one. Also not covered: real touch hardware, the live
   Firebase project, and print output.
 
-Not covered by the suite, and still requiring manual checks: touch and drag interaction, the signed-in Firebase path, real multi-device behaviour, print output, and most of the UI.
+### A full-screen sidebar, and tree drag by finger (2026-08-22)
+
+- **No data-contract change at all.** The touch path calls the same three mutators the mouse
+  path does — `nestPage`, `arrangePage`, `promotePageToRoot` — so the `docDescendantIds` cycle
+  refusal and the splice logic keep one definition and cannot drift between pointer kinds. The
+  slot stays at **23** fields, nothing was added to `SLOT_FIELDS`, and the new state
+  (`sidebarFull`, the drag ref) is ephemeral and never reaches `track_db`. This adds **7**
+  browser subtests; the offline suites are untouched and pass identically under all five
+  timezones. All 13 suites passed on 2026-08-22.
+- `styles.css` changed, so its `?v=4` went to `?v=5` in **all five** pages.
+- **The fail-first evidence took two runs, and the first one was worthless — that is the part
+  worth carrying forward.** All seven new cases were written against the untouched tree and all
+  seven failed, which looked like proof and was not: every one died on the *same* message,
+  `waitFor timed out — the sidebar page tree (with data-doc-row hooks)`. They were failing
+  because a test hook did not exist yet, not because of the behaviour each names. The fix was to
+  land the **hooks alone** as their own step — `data-doc-row`, `data-doc-handle`,
+  `data-doc-root-drop`, and nothing else — and re-run. Only then did the failures become real:
+  - `TOUCH: the nest handle …` → `the touch nest being saved`
+  - `TOUCH: the arrange handle …` → `the touch arrange being saved`
+  - `the handles are reachable …` → `a @media (hover: none) rule shows the row action cluster`
+  - `the sidebar expands to full screen …` → `Cannot read properties of null (reading 'click')`
+
+  This is the same lesson as the 2026-08-18 Supporting Actions case and the 2026-08-19
+  guard-clause case, in a third shape: **read the failure message, never the pass/fail.** Seven
+  identical messages are a signal that the cases are all blocked on one missing thing upstream
+  of what they test.
+- **Two of the seven are guards, not evidence, and they passed on both sides by design.**
+  `a drag into the page's own subtree is refused` and `touchcancel abandons the drag` both
+  assert `track_db` is byte-identical — which is trivially true when touch does nothing at all.
+  They only became meaningful once the drag worked. `GUARD: the desktop mouse drag still nests
+  and arranges` is the genuine both-sides guard: it **passed** the moment the hooks landed,
+  which is what proved the hooks were right and the HTML5 path intact.
+- **A defect in this task's own test, caught by the suite and not by the smoke script.** The
+  full-screen case ended by asserting the picked page was open via
+  `/Bravo/.test(editor.textContent)`. The editor renders a page title as an `<input>`, and an
+  input's value is not part of `textContent`, so the assertion read `''` and failed against a
+  page that had opened correctly. It reads `input[placeholder="Untitled"].value` now. The
+  task-owned smoke script missed this because it never made that assertion — a narrower check
+  passing is not evidence that a broader one will.
+- **Two product defects were found by code reading before any test ran, and both would have
+  shipped silently.** (1) `.docs-sidebar-full` is a single class, which *ties* the Tailwind
+  utilities it has to beat on the same element (`w-60`, `p-2`, `bg-gray-900/60`, `border-r`) —
+  and Tailwind's CDN injects its `<style>` into `<head>` **after** this file's `<link>`, so a tie
+  goes to Tailwind and the "full screen" panel would have stayed 240px wide. The selector is
+  `.docs-sidebar.docs-sidebar-full`. Any future rule in this file that overrides a Tailwind
+  utility on the same element needs the same doubling. (2) React 18 registers `touchstart` at its
+  root as **passive**, so a `preventDefault()` in `onTouchStart` is ignored and only logs an
+  intervention. Stopping the browser's pan is `touch-action: none` on `.doc-row-handle`, which is
+  declarative and applies before the first event; the `touchmove` listener is registered by hand
+  with `{ passive: false }`, so `preventDefault` genuinely works there.
+- Listeners are attached **imperatively inside the touchstart handler**, not from a `useEffect`
+  on the drag state. An effect does not run until React has re-rendered, so a fast flick — and
+  any synchronous test — would lose every `touchmove` that arrived first.
+- Near-edge auto-scroll is stepped by `requestAnimationFrame`, not by `touchmove`: a finger held
+  still at the edge fires no further move events, so scrolling from the move handler alone stalls
+  after one nudge. The drop target is recomputed on each frame because rows slide under a
+  stationary finger.
+- **Not covered, and weaker than the rest.** The cases synthesise `TouchEvent`s from inside the
+  page, exactly as the true-storage case synthesises a `DataTransfer`. That exercises the handler
+  logic and **not** real hardware: browser gesture arbitration, scroll interception, momentum,
+  and iOS/iPadOS Safari's own behaviour are all still unverified, as is the near-edge auto-scroll
+  and the `@media (hover: none)` layout (headless Chrome reports `hover: hover`, so only the
+  *existence* of that rule is asserted, never its effect). A real iPhone and iPad pass is still
+  owed and is the point of the change, so it is the largest gap here. Also not covered: the live
+  Firebase project, and print output.
+- **Environment note, again.** A full run reported one failure in the malformed-`track_db`
+  section (`progress.html mounting` timeout) — the contention symptom the 2026-08-18 entry
+  already describes. Confirm on an idle machine before believing any browser-layer failure, and
+  kill leftover Chrome by explicit PID: a `pkill -f "user-data-dir=/tmp/track-cdp-"` matches its
+  own shell's command line and kills the caller.
+
+Not covered by the suite, and still requiring manual checks: touch and drag interaction on real
+hardware, the signed-in Firebase path, real multi-device behaviour, print output, and most of the
+UI.
 
 ### Confirmation on every destructive control (2026-08-18)
 

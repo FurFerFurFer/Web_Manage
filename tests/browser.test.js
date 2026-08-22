@@ -1450,6 +1450,242 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  // ── 2f. the due day is TYPED when composing, on both authoring pages ────
+
+  /* A new deadline used to inherit the calendar cell its composer was opened
+     on, so filing one for next week meant navigating there first. Both add
+     forms now carry a due-date field of their own, which makes each of them a
+     WRITER of `date` — and nothing validates `startDate <= date` on a stored
+     record, so each has to carry the ordering check itself. That is what
+     `dlDraftValid` is, and these cases assert it at BOTH surfaces separately:
+     progress.html holds its own copy because it does not load calendar-core.js,
+     which is the same duplication that cost this project the caution predicate
+     once.
+
+     The caution start must NOT follow the typed due day. It is an independent
+     stored date, exactly as in the popup's Edit form; a composer that quietly
+     re-homed it would be rewriting a day the user chose. */
+
+  const composeSeed = () => seedDb({
+    calendarNotes: [], deadlines: [], docPages: [F.docPage('p-1')]
+  });
+  const storedDl = page => page.evaluate(function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return ((db.slots || [])[0] || {}).deadlines || [];
+  });
+
+  // Open the month grid and the deadline composer on the cell for `day`.
+  const openDlComposerOn = async (page, day) => {
+    await page.waitFor(function () {
+      var el = document.querySelector('#root'); return !!el && el.children.length > 0;
+    }, { message: 'progress.html mounting' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('#root button'),
+        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return document.querySelectorAll('#root .grid.grid-cols-7').length > 0;
+    }, { message: 'the month grid' });
+    // one ⏰ per real day cell, so the nth is day n — the leading blanks carry none
+    await page.evaluate(function (n) {
+      document.querySelectorAll('#root button[title="Add deadline"]')[n - 1].click();
+      return true;
+    }, day);
+    await page.waitFor(function () { return !!document.getElementById('dl-new-date'); },
+      { message: 'the NEW DEADLINE composer showing a Due date row' });
+  };
+  const fillDlComposer = (page, { date, time, title }) =>
+    page.evaluate(function (setterSrc, v) {
+      var set = new Function('return ' + setterSrc)();
+      var box = document.getElementById('dl-new-date').closest('div.bg-gray-950');
+      if (v.date !== undefined) set(document.getElementById('dl-new-date'), v.date);
+      if (v.time !== undefined) set(box.querySelector('input[type="time"]'), v.time);
+      if (v.title !== undefined) set(box.querySelector('input[placeholder="Title…"]'), v.title);
+      return true;
+    }, SET_REACT_INPUT, { date, time, title });
+  const dlComposerDone = page => page.evaluate(function () {
+    var box = document.getElementById('dl-new-date').closest('div.bg-gray-950');
+    var btn = Array.prototype.find.call(box.querySelectorAll('button'),
+      function (b) { return b.textContent.trim() === 'Done'; });
+    var disabled = !!btn.disabled;
+    btn.click();
+    return { disabled: disabled, text: box.textContent };
+  });
+
+  await t.test('the Schedule composer files a deadline on a TYPED due day', async () => {
+    const page = await open('progress.html', { db: composeSeed(), hash: '#schedule' });
+    await openDlComposerOn(page, 15);
+
+    const seeded = await page.evaluate(function () {
+      var box = document.getElementById('dl-new-date').closest('div.bg-gray-950');
+      return {
+        date: document.getElementById('dl-new-date').value,
+        min: document.getElementById('dl-new-date').getAttribute('min'),
+        start: box.querySelector('input[type="date"][max]').value
+      };
+    });
+    assert.equal(seeded.date, thisMonthDay(15), 'the field opens on the cell it was launched from');
+    assert.equal(seeded.start, thisMonthDay(15), 'and so does the caution start');
+    assert.equal(seeded.min, thisMonthDay(15), 'which caps the picker from below');
+
+    const due = thisMonthDay(22);
+    await fillDlComposer(page, { date: due, time: '17:00', title: 'Filed ahead' });
+    const state = await dlComposerDone(page);
+    assert.equal(state.disabled, false, 'Done is live for a well-formed draft');
+
+    const saved = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d ? d : false;
+    }, { message: 'the new deadline reaching track_db' });
+    assert.equal(saved.date, due, 'the deadline lands on the typed day, not the cell');
+    assert.equal(saved.startDate, thisMonthDay(15),
+      'and the caution start stays where it was — it does not follow the due day');
+    assert.equal(saved.time, '17:00');
+    assert.equal(saved.title, 'Filed ahead');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the Schedule composer refuses a due day before the caution start', async () => {
+    const page = await open('progress.html', { db: composeSeed(), hash: '#schedule' });
+    await openDlComposerOn(page, 18);
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    // fill everything else first, so the ONLY fault is the ordering
+    await fillDlComposer(page, { time: '09:00', title: 'Backwards' });
+    await fillDlComposer(page, { date: thisMonthDay(14) });
+    const blocked = await page.waitFor(function () {
+      var box = document.getElementById('dl-new-date').closest('div.bg-gray-950');
+      var btn = Array.prototype.find.call(box.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Done'; });
+      return btn.disabled ? { text: box.textContent } : false;
+    }, { message: 'Done going disabled on an inverted span' });
+    assert.match(blocked.text, /Caution start must be on or before the deadline/,
+      'and the composer says why');
+
+    // the Cancel path is the one that matters: a refusal must write nothing
+    await dlComposerDone(page);
+    await sleep(250);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
+      before, 'clicking Done anyway writes nothing at all');
+    assert.deepEqual(await storedDl(page), [], 'and no inverted deadline reaches storage');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  const openDocDlForm = async (page, day) => {
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, day);
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal button'),
+        function (b) { return b.textContent.trim() === '+ deadline'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!document.querySelector('.cal-doc-form input[type="date"]');
+    }, { message: 'the deadline composer showing a Due on row' });
+  };
+  const docDlFields = page => page.evaluate(function () {
+    var form = document.querySelector('.cal-doc-form');
+    var dates = form.querySelectorAll('input[type="date"]');
+    return { count: dates.length, due: dates[0].value, start: dates[1] ? dates[1].value : null };
+  });
+  const fillDocDl = (page, { date, time, title }) =>
+    page.evaluate(function (setterSrc, v) {
+      var set = new Function('return ' + setterSrc)();
+      var form = document.querySelector('.cal-doc-form');
+      if (v.date !== undefined) set(form.querySelectorAll('input[type="date"]')[0], v.date);
+      if (v.time !== undefined) set(form.querySelector('input[type="time"]'), v.time);
+      if (v.title !== undefined) set(form.querySelector('input:not([type])'), v.title);
+      return true;
+    }, SET_REACT_INPUT, { date, time, title });
+  const docDlSave = page => page.evaluate(function () {
+    var form = document.querySelector('.cal-doc-form');
+    var btn = form.querySelector('button.primary');
+    var disabled = !!btn.disabled;
+    btn.click();
+    return { disabled: disabled, text: form.textContent };
+  });
+
+  await t.test('a Documentations block files a deadline on a TYPED due day', async () => {
+    const page = await open('documentations.html', { db: composeSeed() });
+    await openDocDlForm(page, 15);
+
+    const seeded = await docDlFields(page);
+    assert.equal(seeded.count, 2, 'composing shows a due date beside the caution start');
+    assert.equal(seeded.due, thisMonthDay(15), 'seeded from the selected cell');
+    assert.equal(seeded.start, thisMonthDay(15), 'and so is the caution start');
+
+    const due = thisMonthDay(22);
+    await fillDocDl(page, { date: due, time: '17:00', title: 'Filed ahead' });
+    const state = await docDlSave(page);
+    assert.equal(state.disabled, false, 'Add deadline is live for a well-formed draft');
+
+    const saved = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d ? d : false;
+    }, { message: 'the new deadline reaching track_db' });
+    assert.equal(saved.date, due, 'the deadline lands on the typed day, not the selected cell');
+    assert.equal(saved.startDate, thisMonthDay(15), 'and the caution start does not follow it');
+    assert.equal(saved.docPageId, 'p-1', 'the page that authored it is still named');
+    assert.equal(saved.time, '17:00');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a Documentations block refuses a due day before the caution start', async () => {
+    const page = await open('documentations.html', { db: composeSeed() });
+    await openDocDlForm(page, 18);
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    await fillDocDl(page, { time: '09:00', title: 'Backwards' });
+    await fillDocDl(page, { date: thisMonthDay(14) });
+    const blocked = await page.waitFor(function () {
+      var form = document.querySelector('.cal-doc-form');
+      return form.querySelector('button.primary').disabled ? { text: form.textContent } : false;
+    }, { message: 'Add deadline going disabled on an inverted span' });
+    assert.match(blocked.text, /caution start on or before/, 'and the form says why');
+
+    await docDlSave(page);
+    await sleep(250);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
+      before, 'clicking Add anyway writes nothing at all');
+    assert.deepEqual(await storedDl(page), [], 'and no inverted deadline reaches storage');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('editing an existing deadline still takes its day from the record', async () => {
+    // The due day of a STORED deadline moves from the Progress popup alone —
+    // it is the one writer that checks the prep placed inside the caution
+    // period. A second mover would have to repeat that check, which is exactly
+    // the shape that cost this project the caution predicate.
+    const { db, due } = moveDb();
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 18);
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal .cal-doc-row-acts button'),
+        function (b) { return b.getAttribute('title') === 'Edit'; }).click();
+      return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('.cal-doc-form'); },
+      { message: 'the deadline edit form' });
+    const fields = await docDlFields(page);
+    assert.equal(fields.count, 1, 'the edit form carries the caution start alone');
+    assert.equal(fields.due, thisMonthDay(15), 'and that one field is the caution start');
+    assert.equal((await storedDl(page))[0].date, due, 'the stored due day is untouched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('both pages mint ids in one shape', async () => {
     const SHAPE = /^[0-9a-z]+-[0-9a-z]{1,5}$/;
     for (const [file, fn] of [['progress.html', 'uid'], ['documentations.html', 'genId']]) {
@@ -4089,9 +4325,13 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.evaluate(function () { document.querySelector('[data-doc-row="p-b"]').click(); });
     await page.waitFor(function () { return !document.querySelector('.docs-sidebar-full'); },
       { message: 'picking a page closing full screen' });
-    assert.ok(await page.evaluate(function () {
-      return /Bravo/.test(document.querySelector('.docs-editor').textContent);
-    }), 'and the picked page is the one now open in the editor');
+    /* The editor renders the title as an <input>, whose value is NOT part of
+       textContent — reading the panel's text here would report an empty string
+       and "fail" against a page that opened correctly. */
+    assert.equal(await page.evaluate(function () {
+      var i = document.querySelector('.docs-editor input[placeholder="Untitled"]');
+      return i ? i.value : null;
+    }), 'Bravo', 'and the picked page is the one now open in the editor');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });

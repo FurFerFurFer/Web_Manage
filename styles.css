@@ -2382,6 +2382,165 @@ button.cal-doc-origin:hover {
   letter-spacing: 0.04em;
 }
 
+/* ── documentations sidebar ───────────────────────────────── */
+
+/* The ⠿ and ⇅ handles must claim the gesture from the sidebar's own scroller,
+   or a finger starting on one pans the list instead of dragging the page.
+   They are <span>s, so the global `touch-action: manipulation` near the top of
+   this file — which lists button, a, label, input, select, textarea and
+   [role="button"] — never reached them. */
+.doc-row-handle {
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* the dragged page, following the finger. pointer-events: none is what keeps
+   elementFromPoint returning the row underneath rather than the ghost. */
+.doc-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 60vw;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-strong);
+  box-shadow: var(--shadow-float);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-drag-ghost-mode {
+  color: var(--color-text-muted);
+}
+
+/* Full screen. The sidebar leaves the split layout and takes the viewport,
+   modelled on .cal-panel above — same dvh and safe-area reasoning, and the
+   same deliberate absence of backdrop-filter, which would make this element a
+   containing block for anything fixed inside it.
+   z-index 50 sits inside #root's `isolation: isolate` stacking context, so it
+   covers the page header (10) and the fixed theme toggle (45) while staying
+   under the notes widget (9000) and the storage/sync banners (9998).
+
+   Doubled class deliberately: every property here overrides a single-class
+   Tailwind utility on the same element (w-60, p-2, bg-gray-900/60, border-r),
+   and Tailwind's CDN injects its <style> into <head> AFTER this file's <link>,
+   so a one-class selector would tie and LOSE — the panel would stay 240px. */
+.docs-sidebar.docs-sidebar-full {
+  --doc-indent: 22px;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: auto;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  border-right: 0;
+  /* the page's own gray-950: documentations.html hardcodes its Tailwind dark
+     palette, so a theme token here would not match the editor behind it */
+  background: #080d18;
+  padding:
+    max(0.75rem, env(safe-area-inset-top))
+    max(0.75rem, env(safe-area-inset-right))
+    /* clears the notes-widget button (48px plus its 16px inset) so the last
+       row is not sitting underneath it */
+    calc(4.5rem + env(safe-area-inset-bottom))
+    max(0.75rem, env(safe-area-inset-left));
+}
+
+/* the way back out has to stay reachable down a long tree */
+.docs-sidebar-full .docs-sidebar-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 0.5rem;
+  background: #080d18;
+}
+
+/* Scaled-up type and targets. Two-class selectors beat the Tailwind CDN's
+   single-class utilities (.text-xs, .hidden), which matters because Tailwind
+   injects its <style> into <head> AFTER this file's <link> — a tie would go
+   the other way. */
+.docs-sidebar-full [data-doc-row],
+.docs-sidebar-full .doc-fav-row {
+  gap: 0.5rem;
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+  font-size: 1rem;
+  /* text-xs pins line-height to 1rem, which crushes a 1rem font */
+  line-height: 1.45;
+}
+
+.docs-sidebar-full .doc-side-label {
+  font-size: 0.8125rem;
+}
+
+.docs-sidebar-full .doc-side-addrow,
+.docs-sidebar-full .doc-drop-hint {
+  font-size: 0.9375rem;
+}
+
+.docs-sidebar-full .doc-row-acts {
+  display: flex;
+}
+
+.docs-sidebar-full .doc-row-acts > *,
+.docs-sidebar-full .doc-row-caret,
+.docs-sidebar-full .doc-side-full,
+.docs-sidebar-full .doc-side-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  font-size: 1.0625rem;
+}
+
+/* A finger raises no :hover, so the hover-revealed row actions were invisible
+   on a phone and iPad — the second, independent half of why reordering did not
+   work there. Fixing the drag alone would have left them unreachable.
+   The cluster takes its own line: five 44px targets need 220px, and the column
+   is 240px. Denser rows are what the full-screen mode above is for. */
+@media (hover: none) {
+  .docs-sidebar .doc-row-acts {
+    display: flex;
+  }
+
+  .docs-sidebar:not(.docs-sidebar-full) [data-doc-row] {
+    flex-wrap: wrap;
+  }
+
+  .docs-sidebar:not(.docs-sidebar-full) .doc-row-acts {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 0.25rem;
+  }
+
+  .docs-sidebar .doc-row-acts > *,
+  .docs-sidebar .doc-side-full,
+  .docs-sidebar .doc-side-add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  /* the ★ badge and the action cluster are both permanent now, so the badge
+     would otherwise double up beside its own ☆ button */
+  .docs-sidebar .doc-fav-badge {
+    display: none;
+  }
+}
+
 /* ── documentations print / export ────────────────────────── */
 @media print {
   body.docs-page {

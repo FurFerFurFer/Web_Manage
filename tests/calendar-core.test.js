@@ -40,7 +40,7 @@ const ids = list => list.map(x => x.id);
 test('module surface', () => {
   assert.ok(TC, 'calendar-core.js published window.TrackCalendar under TZ=' + TZ);
   for (const name of ['toDateStr', 'dim', 'firstDay', 'dStr', 'flattenGoals', 'goalDuration',
-    'goalDone', 'mgsForDay', 'dlStart', 'dlInCaution', 'dlDayCount', 'dlValid', 'dlDone', 'originKey',
+    'goalDone', 'mgsForDay', 'dlStart', 'dlInCaution', 'dlDayCount', 'dlValid', 'dlDraftValid', 'dlDone', 'originKey',
     'buildBuckets', 'buildMilestoneLanes', 'buildDaySchedule', 'overlapInfo', 'durLabel',
     'noteTimed', 'daysBetween',
     'noteBlockDuration', 'dlBlockDuration', 'dlBlockSpan', 'dlBlockTime', 'itemParts', 'partSpan',
@@ -982,6 +982,32 @@ test('dlValid rejects every malformed draft', () => {
   assert.equal(TC.dlValid(Object.assign({}, ok, { startDate: undefined }), '2026-03-10'), false);
   assert.equal(TC.dlValid(Object.assign({}, ok, { startDate: '2026-03-11' }), '2026-03-10'), false,
     'a caution period may not begin after the due day');
+});
+
+/* The compose forms on both authoring pages type the due day rather than
+   taking it from the calendar cell they were opened on, which makes each of
+   them a writer of `date`. Nothing validates `startDate <= date` on a STORED
+   record, so the check has to happen at authoring time — this is it. */
+test('dlDraftValid gates a draft that carries its own due day', () => {
+  const ok = { title: 'Ship it', time: '09:00', startDate: '2026-03-08', date: '2026-03-10' };
+  assert.equal(TC.dlDraftValid(ok), true);
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: '2026-03-08' })), true,
+    'a zero-length caution period is the default, not a fault');
+
+  // the format test is the load-bearing half: '' sorts BELOW every startDate,
+  // so a blank due day would pass the ordering check on its own
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: '' })), false,
+    'a blank due day is refused rather than reading as in order');
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: undefined })), false);
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: '2026-3-10' })), false);
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: 'nonsense' })), false);
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: '2026-03-07' })), false,
+    'a due day before the caution start is the inverted span, refused');
+
+  // everything dlValid already refuses, it still refuses through this door
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { title: '  ' })), false);
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { time: '9:00' })), false);
+  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { startDate: undefined })), false);
 });
 
 test('dlDayCount survives month, year and DST boundaries', () => {

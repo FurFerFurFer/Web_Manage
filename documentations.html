@@ -8,7 +8,7 @@
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
   <script src="schema.js?v=5"></script>
-  <script src="calendar-core.js?v=4"></script>
+  <script src="calendar-core.js?v=5"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -16,7 +16,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=5">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -525,7 +525,7 @@
       const [composer, setComposer] = useState(null);            // null | 'note' | 'deadline'
       const [editing, setEditing] = useState(null);              // null | {kind, id}
       const [noteDraft, setNoteDraft] = useState({title:'', detail:''});
-      const [dlDraft, setDlDraft] = useState({title:'', detail:'', time:'', startDate:''});
+      const [dlDraft, setDlDraft] = useState({title:'', detail:'', time:'', startDate:'', date:''});
 
       const hidden = block.hidden || [];
       const hiddenKey = hidden.join(',');
@@ -603,7 +603,7 @@
       function closeForms() {
         setComposer(null); setEditing(null);
         setNoteDraft({title:'', detail:'', time:''});
-        setDlDraft({title:'', detail:'', time:'', startDate:''});
+        setDlDraft({title:'', detail:'', time:'', startDate:'', date:''});
       }
       const toggleFilter = key => onChange({...block,
         hidden: hidden.includes(key) ? hidden.filter(k => k !== key) : [...hidden, key]});
@@ -636,14 +636,25 @@
         }));
         closeForms();
       };
+      // The due day comes from the DRAFT, not from the selected cell, so this
+      // is a second writer of `date` — and `dlDraftValid` is what makes that
+      // safe: nothing checks `startDate <= date` on a stored record, so every
+      // writer of `date` carries the ordering check itself, and the format
+      // check stops a blank field (which sorts below every startDate) reading
+      // as in-order. A deadline that does not exist yet has no placed prep, so
+      // nothing here can be stranded.
       const addDeadline = () => {
-        if (!selDs || !TC.dlValid(dlDraft, selDs)) return;
+        if (!TC.dlDraftValid(dlDraft)) return;
+        const date = dlDraft.date;
         onMutate('deadlines', prev => [...prev, {
-          id: genId(), date: selDs, time: dlDraft.time, startDate: dlDraft.startDate,
+          id: genId(), date, time: dlDraft.time, startDate: dlDraft.startDate,
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim(),
           createdAt: Date.now(), docPageId: page.id
         }]);
-        closeForms();
+        // Filed on another day it would land outside the open day panel, so
+        // follow it there — the same move the origin chip and the caution rows
+        // already make. goToDay closes the forms for us.
+        if (date !== selDs) goToDay(date); else closeForms();
       };
       // A deadline's prep lives inside its caution period, so shrinking that
       // period past a block or task the user placed by hand would strand it.
@@ -698,33 +709,58 @@
       );
       // `dl` is the stored record when editing, and absent when composing a new
       // deadline — a deadline that does not exist yet has no prep to strand.
-      const dlForm = (onSave, label, dueDate, dl) => (
+      const dlForm = (onSave, label, dueDate, dl) => {
+        // Composing, the due day is TYPED and starts on the selected cell;
+        // editing, it still comes from the record. Moving an EXISTING deadline
+        // has to check the prep placed inside its caution period, and the
+        // Progress popup's Edit form is the one writer that does — so it stays
+        // the only place an existing due day moves.
+        const composing = !dl;
+        const due = composing ? dlDraft.date : dueDate;
+        const valid = composing ? TC.dlDraftValid(dlDraft) : TC.dlValid(dlDraft, due);
+        const stranded = dlStranded(dl, due);
+        return (
         <div className="cal-doc-form doc-chrome">
           <input value={dlDraft.title} autoFocus placeholder="Deadline title"
             onChange={e=>setDlDraft(d=>({...d, title: e.target.value}))} />
           <div className="cal-doc-form-row">
+            {/* the two date fields cap each other from opposite sides, and both
+                read the DRAFT, so the pair can be moved in either order within
+                one edit; min/max only grey out the picker, `valid` is the gate */}
+            {composing && (
+              <label>Due on<input type="date" value={dlDraft.date} min={dlDraft.startDate}
+                onChange={e=>setDlDraft(d=>({...d, date: e.target.value}))} /></label>
+            )}
             <label>Due at<input type="time" value={dlDraft.time}
               onChange={e=>setDlDraft(d=>({...d, time: e.target.value}))} /></label>
-            <label>Caution from<input type="date" value={dlDraft.startDate} max={dueDate}
+            <label>Caution from<input type="date" value={dlDraft.startDate} max={due}
               onChange={e=>setDlDraft(d=>({...d, startDate: e.target.value}))} /></label>
           </div>
           <textarea rows={2} value={dlDraft.detail} placeholder="Detail (optional)"
             onChange={e=>setDlDraft(d=>({...d, detail: e.target.value}))} />
           <div className="cal-doc-form-acts">
-            <button type="button" className="primary" disabled={!dlSavable(dl, dueDate)} onClick={onSave}>{label}</button>
+            <button type="button" className="primary" disabled={!valid || stranded.length > 0} onClick={onSave}>{label}</button>
             <button type="button" onClick={closeForms}>Cancel</button>
-            {!TC.dlValid(dlDraft, dueDate) && dlDraft.title.trim() && (
-              <span className="cal-doc-hint">Needs a time, and a caution start on or before {dueDate}.</span>
+            {/* One fault, one message: a blank due day is its own, because
+                every non-empty string sorts above '' and it would otherwise
+                also read as an out-of-order caution start. */}
+            {!valid && dlDraft.title.trim() && (
+              <span className="cal-doc-hint">
+                {composing && !due
+                  ? 'Needs a due date, a time, and a caution start on or before it.'
+                  : `Needs a time, and a caution start on or before ${due}.`}
+              </span>
             )}
-            {dlStranded(dl, dueDate).length > 0 && (
+            {stranded.length > 0 && (
               <span className="cal-doc-hint" data-dl-stranded>
-                Prep is scheduled on {dlStranded(dl, dueDate).join(', ')}, outside this caution period.
+                Prep is scheduled on {stranded.join(', ')}, outside this caution period.
                 Move it first — nothing here will move it for you.
               </span>
             )}
           </div>
         </div>
-      );
+        );
+      };
 
       const shownLanes = Math.min(ms.laneCount, TC.MS_MAX_LANES);
       const todayDs = TC.toDateStr(new Date());
@@ -907,7 +943,9 @@
                   Deadlines ({day.deadlines.length})
                   <button type="button" className="doc-cal-add doc-chrome"
                     onClick={()=>{ closeForms(); setComposer('deadline');
-                      setDlDraft({title:'', detail:'', time:'', startDate: selDs}); }}>+ deadline</button>
+                      /* the selected cell is only the DEFAULT due day now — the
+                         form lets it be typed, so both dates start there */
+                      setDlDraft({title:'', detail:'', time:'', startDate: selDs, date: selDs}); }}>+ deadline</button>
                 </div>
                 {day.deadlines.map(dl => {
                   const o = originOf(dl);
@@ -933,7 +971,7 @@
                           <button type="button" title="Edit" onClick={()=>{
                             closeForms(); setEditing({kind:'deadline', id:dl.id});
                             setDlDraft({title: dl.title||'', detail: dl.detail||'',
-                              time: dl.time||'', startDate: TC.dlStart(dl)});
+                              time: dl.time||'', startDate: TC.dlStart(dl), date: dl.date});
                           }}>✎</button>
                           <button type="button" title="Delete" className="danger"
                             onClick={()=>removeItem('deadlines', dl.id, 'deadline')}>✕</button>
@@ -990,19 +1028,27 @@
 
     // ── sidebar ──────────────────────────────────────────────────────────────
 
-    function PageTreeItem({page, pages, depth, activePageId, collapsed, onToggleCollapse, onSelect, onAddChild, onToggleFav, onDelete, onNest, onArrange}) {
+    function PageTreeItem({page, pages, depth, activePageId, collapsed, onToggleCollapse, onSelect, onAddChild, onToggleFav, onDelete, onNest, onArrange, onTouchDragStart, touchDrop}) {
       const children = pages.filter(p => p.parentId === page.id);
       const isCollapsed = !!collapsed[page.id];
-      // drag-over feedback stays local to the row; never lifted to App
+      // mouse drag-over feedback stays local to the row; never lifted to App
       const [nestDragOver, setNestDragOver] = useState(false);
       const [arrangeDragOver, setArrangeDragOver] = useState(null); // null | 'before' | 'after'
+      /* The touch drop target is App-level — one finger crosses many rows, so
+         a row cannot know from its own events that it stopped being the
+         target. The two sources are ORed so both pointer kinds light up the
+         same way and neither has to know the other exists. */
+      const tDrop = touchDrop && touchDrop.targetId === page.id ? touchDrop : null;
+      const nestOn = nestDragOver || (tDrop && tDrop.mode === 'nest');
+      const arrangeOn = arrangeDragOver
+        || (tDrop && tDrop.mode === 'arrange' ? (tDrop.before ? 'before' : 'after') : null);
       return (
         <div>
           <div className={"group flex items-center gap-1 rounded px-1 py-0.5 text-xs cursor-pointer "
               +(page.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')
-              +(nestDragOver?' ring-1 ring-indigo-500 bg-indigo-950/30':'')
-              +(arrangeDragOver==='before'?' border-t-2 border-green-500':arrangeDragOver==='after'?' border-b-2 border-green-500':'')}
-            style={{paddingLeft: 4 + depth*14}}
+              +(nestOn?' ring-1 ring-indigo-500 bg-indigo-950/30':'')
+              +(arrangeOn==='before'?' border-t-2 border-green-500':arrangeOn==='after'?' border-b-2 border-green-500':'')}
+            style={{paddingLeft: 'calc(4px + ' + depth + ' * var(--doc-indent, 14px))'}}
             data-doc-row={page.id}
             onClick={()=>onSelect(page.id)}
             onDragOver={e=>{
@@ -1031,7 +1077,7 @@
               setNestDragOver(false); setArrangeDragOver(null);
             }}>
             <button onClick={e=>{e.stopPropagation(); onToggleCollapse(page.id);}}
-              className={"w-3 text-[9px] "+(children.length?'text-gray-500 hover:text-gray-200':'invisible')}>
+              className={"doc-row-caret w-3 text-[9px] "+(children.length?'text-gray-500 hover:text-gray-200':'invisible')}>
               {isCollapsed ? '▸' : '▾'}
             </button>
             <span>{page.icon || '📄'}</span>
@@ -1039,24 +1085,27 @@
             <span className="doc-row-acts hidden shrink-0 gap-0.5 group-hover:flex">
               <span draggable onClick={e=>e.stopPropagation()} data-doc-handle="nest"
                 onDragStart={e=>{e.dataTransfer.setData('application/docpage-nest-id', page.id); e.dataTransfer.effectAllowed='move'; e.stopPropagation();}}
+                onTouchStart={e=>onTouchDragStart(e, 'nest', page)}
                 title="Drag to nest into another page"
                 className="doc-row-handle cursor-grab select-none rounded px-1 text-gray-500 hover:text-indigo-400">⠿</span>
               <span draggable onClick={e=>e.stopPropagation()} data-doc-handle="arrange"
                 onDragStart={e=>{e.dataTransfer.setData('application/docpage-arrange-id', page.id); e.dataTransfer.effectAllowed='move'; e.stopPropagation();}}
+                onTouchStart={e=>onTouchDragStart(e, 'arrange', page)}
                 title="Drag to arrange among pages"
                 className="doc-row-handle cursor-grab select-none rounded px-1 text-gray-500 hover:text-green-400">⇅</span>
               <button title="Add sub-page" onClick={e=>{e.stopPropagation(); onAddChild(page.id);}} className="rounded px-1 text-gray-500 hover:text-white">+</button>
               <button title={page.favorite?'Unfavorite':'Favorite'} onClick={e=>{e.stopPropagation(); onToggleFav(page.id);}} className="rounded px-1 text-gray-500 hover:text-amber-300">{page.favorite?'★':'☆'}</button>
               <button title="Delete page" onClick={e=>{e.stopPropagation(); onDelete(page.id);}} className="rounded px-1 text-gray-500 hover:text-red-400">✕</button>
             </span>
-            {page.favorite && <span className="text-[9px] text-amber-400 group-hover:hidden">★</span>}
+            {page.favorite && <span className="doc-fav-badge text-[9px] text-amber-400 group-hover:hidden">★</span>}
           </div>
           {!isCollapsed && children.map(c => (
             <PageTreeItem key={c.id} page={c} pages={pages} depth={depth+1}
               activePageId={activePageId} collapsed={collapsed}
               onToggleCollapse={onToggleCollapse} onSelect={onSelect}
               onAddChild={onAddChild} onToggleFav={onToggleFav} onDelete={onDelete}
-              onNest={onNest} onArrange={onArrange} />
+              onNest={onNest} onArrange={onArrange}
+              onTouchDragStart={onTouchDragStart} touchDrop={touchDrop} />
           ))}
         </div>
       );
@@ -1077,6 +1126,16 @@
       const [collapsed, setCollapsed] = useState({});
       const [showDumpModal, setShowDumpModal] = useState(false);
       const [rootDragOver, setRootDragOver] = useState(false);
+      // the sidebar filling the viewport. Ephemeral: never written to track_db.
+      const [sidebarFull, setSidebarFull] = useState(false);
+      // touch drag: `dragging` is set once at touchstart (it renders the ghost),
+      // `touchDrop` only when the row under the finger CHANGES, and the live
+      // coordinates live in a ref so following the finger costs no re-render.
+      const [dragging, setDragging] = useState(null);
+      const [touchDrop, setTouchDrop] = useState(null);
+      const touchRef = useRef(null);
+      const ghostRef = useRef(null);
+      const asideRef = useRef(null);
       const [showEmoji, setShowEmoji] = useState(false);
       const [dbSize, setDbSize] = useState(() => dbSizeBytes());
       const [dumpsSnapshot, setDumpsSnapshot] = useState(() => ({
@@ -1096,6 +1155,21 @@
         if (stored !== next) _writeSlotKey('docPages', docPages);
         setDbSize(dbSizeBytes());
       }, [docPages]);
+
+      // Escape is the second way out of full screen; the ✕ is the first.
+      useEffect(() => {
+        if (!sidebarFull) return;
+        const onKey = e => { if (e.key === 'Escape') setSidebarFull(false); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+      }, [sidebarFull]);
+
+      // a drag live at unmount would leave three document listeners behind
+      useEffect(() => () => {
+        const d = touchRef.current;
+        if (d && d.raf) cancelAnimationFrame(d.raf);
+        touchRef.current = null;
+      }, []);
 
       // cross-tab / remote freshness
       useEffect(() => {
@@ -1199,6 +1273,132 @@
             {...moved, parentId: target.parentId || null, updatedAt: Date.now()});
           return arr;
         });
+      }
+
+      /* ── the same three moves, by finger ──
+         HTML5 drag-and-drop never fires from a touch, so the handles were dead
+         on a phone and iPad. This is a second, parallel event family driving
+         the SAME three mutators above — nestPage / arrangePage /
+         promotePageToRoot — so the cycle refusal and the splice logic have one
+         definition and cannot drift between pointer kinds.
+
+         The listeners are bound imperatively at touchstart rather than from a
+         useEffect on `dragging`: an effect does not run until after React has
+         re-rendered, so a fast flick (and a synchronous test) would lose every
+         touchmove that arrived first. */
+
+      function touchDropAt(x, y) {
+        const d = touchRef.current;
+        if (!d) return null;
+        const el = document.elementFromPoint(x, y);
+        if (!el) return null;
+        // only ⠿ promotes to root; ⇅ has no meaning on the section header
+        if (d.mode === 'nest' && el.closest('[data-doc-root-drop]')) return { mode: 'nest', root: true };
+        const row = el.closest('[data-doc-row]');
+        if (!row) return null;
+        const targetId = row.getAttribute('data-doc-row');
+        if (targetId === d.pageId) return null;   // onto itself is not a move
+        if (d.mode === 'nest') return { mode: 'nest', targetId };
+        const rect = row.getBoundingClientRect();
+        return { mode: 'arrange', targetId, before: y < rect.top + rect.height / 2 };
+      }
+
+      function sameDrop(a, b) {
+        if (!a || !b) return a === b;
+        return a.mode === b.mode && a.root === b.root
+          && a.targetId === b.targetId && a.before === b.before;
+      }
+
+      function startTouchDrag(e, mode, page) {
+        const t = e.touches[0];
+        if (!t) return;
+        /* No preventDefault here, deliberately: React 18 registers touchstart
+           at its root as PASSIVE, so the call would be ignored and only log an
+           intervention warning. `touch-action: none` on .doc-row-handle is what
+           actually stops the browser panning — declarative, and it applies
+           before the first event. Everywhere ELSE in the row a finger still
+           scrolls the sidebar, which is the point of putting it on the handle
+           alone. The touchmove listener below IS registered non-passive by
+           hand, so preventDefault genuinely works there. */
+        e.stopPropagation();
+
+        const moveGhost = (x, y) => {
+          if (ghostRef.current) ghostRef.current.style.transform = 'translate(' + (x + 14) + 'px,' + (y + 14) + 'px)';
+        };
+
+        const applyHit = hit => {
+          touchRef.current.drop = hit;
+          setTouchDrop(prev => sameDrop(prev, hit) ? prev : hit);
+        };
+
+        const onMove = ev => {
+          const p = ev.touches[0];
+          if (!p || !touchRef.current) return;
+          ev.preventDefault();                       // and never scroll the list
+          touchRef.current.x = p.clientX;
+          touchRef.current.y = p.clientY;
+          moveGhost(p.clientX, p.clientY);
+          // near-edge auto-scroll is armed here but STEPPED by rAF below: a
+          // finger held still at the edge fires no further touchmove, so
+          // scrolling from this handler alone would stall after one nudge.
+          const aside = asideRef.current;
+          if (aside) {
+            const r = aside.getBoundingClientRect();
+            touchRef.current.edge = p.clientY < r.top + 48 ? -1
+              : p.clientY > r.bottom - 48 ? 1 : 0;
+          }
+          applyHit(touchDropAt(p.clientX, p.clientY));
+        };
+
+        const step = () => {
+          const d = touchRef.current;
+          if (!d) return;
+          const aside = asideRef.current;
+          if (d.edge && aside) {
+            aside.scrollTop += d.edge * 8;
+            // rows moved under a stationary finger, so the target may differ
+            applyHit(touchDropAt(d.x, d.y));
+          }
+          d.raf = requestAnimationFrame(step);
+        };
+
+        const detach = () => {
+          const d = touchRef.current;
+          if (d && d.raf) cancelAnimationFrame(d.raf);
+          touchRef.current = null;
+          document.removeEventListener('touchmove', onMove);
+          document.removeEventListener('touchend', onEnd);
+          document.removeEventListener('touchcancel', onCancel);
+          setDragging(null);
+          setTouchDrop(null);
+        };
+
+        const onEnd = () => {
+          const d = touchRef.current;
+          const drop = d && d.drop;
+          const mode = d && d.mode;
+          const pageId = d && d.pageId;
+          detach();
+          if (!drop) return;                          // released over nothing
+          if (drop.root) promotePageToRoot(pageId);
+          else if (mode === 'nest') nestPage(pageId, drop.targetId);
+          else arrangePage(pageId, drop.targetId, drop.before);
+        };
+
+        /* iPadOS fires touchcancel instead of touchend whenever the system
+           takes the gesture over — an edge swipe, a notification. Committing
+           there would move a page the finger was only passing across. */
+        const onCancel = () => detach();
+
+        touchRef.current = { mode, pageId: page.id, x: t.clientX, y: t.clientY, drop: null, edge: 0, raf: 0 };
+        setDragging({ mode, pageId: page.id, x: t.clientX, y: t.clientY,
+          label: (page.icon || '📄') + '  ' + (page.title || 'Untitled') });
+        setTouchDrop(null);
+
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onEnd);
+        document.addEventListener('touchcancel', onCancel);
+        touchRef.current.raf = requestAnimationFrame(step);
       }
 
       // promote: dragged leaves its parent and becomes the last root page
@@ -1350,21 +1550,34 @@
 
           <div className="flex min-h-0 flex-1">
             {/* Sidebar */}
-            <aside className="docs-sidebar flex w-60 shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900/60 p-2">
+            <aside ref={asideRef}
+              className={"docs-sidebar flex w-60 shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900/60 p-2"
+                +(sidebarFull?' docs-sidebar-full':'')}>
+              <div className="docs-sidebar-top mb-2 flex items-center justify-between gap-2">
+                <span className="doc-side-label text-[10px] font-bold uppercase tracking-widest text-gray-600">
+                  {sidebarFull ? 'All pages' : ''}
+                </span>
+                <button data-doc-fullscreen onClick={()=>setSidebarFull(f=>!f)}
+                  title={sidebarFull ? 'Exit full screen (Esc)' : 'Expand to full screen'}
+                  aria-label={sidebarFull ? 'Exit full screen' : 'Expand to full screen'}
+                  className="doc-side-full rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white">
+                  {sidebarFull ? '✕' : '⛶'}
+                </button>
+              </div>
               {favorites.length > 0 && (
                 <div className="mb-3">
-                  <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-widest text-gray-600">Favorites</div>
+                  <div className="doc-side-label mb-1 px-1 text-[10px] font-bold uppercase tracking-widest text-gray-600">Favorites</div>
                   {favorites.map(p => (
                     <div key={p.id}
-                      className={"flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-xs "+(p.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')}
-                      onClick={()=>setActivePageId(p.id)}>
+                      className={"doc-fav-row flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-xs "+(p.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')}
+                      onClick={()=>{setActivePageId(p.id); setSidebarFull(false);}}>
                       <span>{p.icon || '📄'}</span>
                       <span className="truncate">{p.title || 'Untitled'}</span>
                     </div>
                   ))}
                 </div>
               )}
-              <div className={"mb-1 flex items-center justify-between rounded border px-1 "+(rootDragOver?'border-violet-500 bg-violet-950/20':'border-transparent')}
+              <div className={"mb-1 flex items-center justify-between rounded border px-1 "+((rootDragOver||(touchDrop&&touchDrop.root))?'border-violet-500 bg-violet-950/20':'border-transparent')}
                 data-doc-root-drop
                 onDragOver={e=>{ if (e.dataTransfer.types.includes('application/docpage-nest-id')) { e.preventDefault(); setRootDragOver(true); } }}
                 onDragLeave={e=>{ if (!e.currentTarget.contains(e.relatedTarget)) setRootDragOver(false); }}
@@ -1373,12 +1586,12 @@
                   if (id) { e.preventDefault(); promotePageToRoot(id); }
                   setRootDragOver(false);
                 }}>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-gray-600">Pages</span>
-                {rootDragOver ? (
-                  <span className="text-[9px] text-violet-300">↑ drop to move to top level</span>
+                <span className="doc-side-label text-[10px] font-bold uppercase tracking-widest text-gray-600">Pages</span>
+                {(rootDragOver || (touchDrop && touchDrop.root)) ? (
+                  <span className="doc-drop-hint text-[9px] text-violet-300">↑ drop to move to top level</span>
                 ) : (
                   <button onClick={()=>addPage(null)} title="Add page"
-                    className="rounded px-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white">＋</button>
+                    className="doc-side-add rounded px-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white">＋</button>
                 )}
               </div>
               {roots.length === 0 && (
@@ -1391,15 +1604,24 @@
                 <PageTreeItem key={p.id} page={p} pages={docPages} depth={0}
                   activePageId={activePageId} collapsed={collapsed}
                   onToggleCollapse={id=>setCollapsed(c=>({...c,[id]:!c[id]}))}
-                  onSelect={setActivePageId} onAddChild={addPage}
+                  onSelect={id=>{setActivePageId(id); setSidebarFull(false);}} onAddChild={addPage}
                   onToggleFav={toggleFav} onDelete={deletePage}
-                  onNest={nestPage} onArrange={arrangePage} />
+                  onNest={nestPage} onArrange={arrangePage}
+                  onTouchDragStart={startTouchDrag} touchDrop={touchDrop} />
               ))}
               <button onClick={()=>addPage(null)}
-                className="mt-2 rounded px-2 py-1 text-left text-xs text-gray-600 hover:bg-gray-800 hover:text-gray-300">
+                className="doc-side-addrow mt-2 rounded px-2 py-1 text-left text-xs text-gray-600 hover:bg-gray-800 hover:text-gray-300">
                 ＋ Add page
               </button>
             </aside>
+            {/* follows the finger; moved imperatively so a drag costs no render */}
+            {dragging && (
+              <div ref={ghostRef} className="doc-drag-ghost"
+                style={{transform: 'translate(' + (dragging.x + 14) + 'px,' + (dragging.y + 14) + 'px)'}}>
+                <span className="doc-drag-ghost-mode">{dragging.mode === 'nest' ? '⠿' : '⇅'}</span>
+                {dragging.label}
+              </div>
+            )}
 
             {/* Editor */}
             <main className="docs-editor min-w-0 flex-1 overflow-y-auto">

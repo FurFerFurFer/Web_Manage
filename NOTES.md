@@ -618,8 +618,13 @@ beyond calendar aggregation and the currently covered browser regressions.
 
 ### Interaction matrix still needed
 
-- Mouse and touch drag.
-- Near-edge auto-scroll.
+- Mouse and touch drag. The Documentations sidebar tree is now covered by
+  synthetic-TouchEvent cases; the Progress goal tree, the priority matrix, the
+  KS02 and True Storage trees and both canvases are still mouse-only in the
+  product as well as untested, and are the obvious next candidates for the same
+  parallel touch path.
+- Near-edge auto-scroll — implemented for the Documentations sidebar drag only,
+  and there it is exercised by hand rather than by the suite.
 - Context menus.
 - Schedule block expansion and resizing.
 - Milestone reordering.
@@ -830,13 +835,19 @@ notes and deadlines". One piece is still deliberately **not** built:
   are now twelve twinned helpers (`blockOn`, `noteBlockStart`, `noteBlockDuration`,
   `dlBlockDuration`, `noteBlockSpan`, `dlBlockSpan`, `blockDay`, `partDay`, `itemParts`,
   `partSpan`, `dlBlockDayValid`, `dlStrandedBlockDays`) on top of the existing `noteTimed`,
-  `dlStart`, `dlDone`, `dlValid`, `dlDayCount` and `deadlinesCautionOn`, all duplicated for one
+  `dlStart`, `dlDone`, `dlValid`, `dlDraftValid`, `dlDayCount` and `deadlinesCautionOn`, all duplicated for one
   reason: `progress.html` does not load `calendar-core.js`. Making it load that file would
   delete the whole duplication class, and the case is now stronger than it was — the copies no
   longer differ on purpose anywhere, so there is nothing left that a consolidation would have
   to preserve. It is still a cross-page change (script tag plus a cache-bust bump on every
   page), and the two copies must be confirmed identical in behaviour before one is deleted:
   the per-surface browser cases are what would catch a silent difference.
+- **Moving an existing deadline is still the Progress popup's alone.** Both compose forms now
+  type a due date, but neither edit form does: moving a stored deadline has to refuse a caution
+  period that would strand placed prep (`dlStrandedBlockDays`), and repeating that check at a
+  third writer is the duplication shape this project keeps paying for. If the Documentations
+  edit form should ever move a due day, it needs the stranding refusal in the same change — not
+  the date field on its own.
 - **A note's block is unrestricted; a deadline's is not.** A note block may be dragged to any
   day at all, which is deliberate — a note has no period to belong to. If notes ever grow one,
   the deadline rule (`dlBlockDayValid` plus a refusal on the edit form) is the shape to copy,

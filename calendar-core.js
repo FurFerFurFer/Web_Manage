@@ -140,6 +140,15 @@
       && /^\d{4}-\d{2}-\d{2}$/.test(draft.startDate)
       && draft.startDate <= dueDate;
   }
+  // A draft that carries its OWN due day, for the authoring paths where the due
+  // date is typed rather than taken from the calendar cell the form was opened
+  // on. Identical to dlDraftValid in progress.html. The format check is not
+  // decoration: nothing validates `startDate <= date` on a STORED record, so
+  // every writer of `date` has to carry the ordering check itself, and a blank
+  // date would otherwise sort below every startDate and read as in-order.
+  function dlDraftValid(draft) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(draft.date) && dlValid(draft, draft.date);
+  }
 
   // Every local calendar day from `from` through `to`, inclusive. Stepping a
   // Date anchored at noon means a 23- or 25-hour DST day can neither skip nor
@@ -590,7 +599,7 @@
     CATS, FILTERS, MS_PALETTE, MS_MAX_LANES,
     SCHED_START_HOUR, SCHED_END_HOUR, SCHED_PX_PER_HOUR,
     flattenGoals, goalDuration, goalDone, mgsForDay, noteTimed,
-    dlStart, dlInCaution, dlByTime, dlByDate, dlDayCount, dlValid, dlDone, daysBetween,
+    dlStart, dlInCaution, dlByTime, dlByDate, dlDayCount, dlValid, dlDraftValid, dlDone, daysBetween,
     // the ONE definition of the day-note / deadline block rules. progress.html
     // holds a second copy only because it does not load this file, the same
     // documented exception it relies on for noteTimed and dlDone; the two must

@@ -207,8 +207,10 @@ through that one helper rather than filtering at each call site.
 
 Deadlines are created in Schedule → CALENDAR, next to date notes: a `⏰` hover button in each month
 day cell, and a `+` on the DEADLINES header of the selected-day panel. Both open an inline composer
-whose save is blocked until the title, the due time, and a caution start on or before the due day are
-all present. In the month grid a due day shows a red `⏰ HH:MM Title` line and every other caution day
+carrying a `Due date` row of its own, seeded to the cell it was opened on, so a deadline can be filed
+for any day without navigating there first. Save is blocked until the title, the due time, a
+well-formed due date, and a caution start on or before it are all present. Filing one on another day
+moves the Schedule to that day, so the new deadline is never written out of sight. In the month grid a due day shows a red `⏰ HH:MM Title` line and every other caution day
 shows an amber `! Title` line. The selected-day panel lists deadlines due that day as editable rows
 (double-click to edit, `×` to delete) and caution-only deadlines as read-only amber rows.
 
@@ -230,9 +232,11 @@ period. `Edit` still exists for changing the time, title and description togethe
 same field.
 
 **Moving the due day.** `Edit` also carries a `Due date` row, above `Due time`. It is the only place
-a deadline's own date can change — the day-cell composer and the Documentations editor still take the
-due day from the calendar cell they were opened on. The two date fields cap each other from opposite
-sides: `Due date` will not go below the caution start, `Caution from` will not go above the due day,
+an **existing** deadline's date can change: moving one has to check the prep already placed inside its
+caution period, and this is the one writer that does. The two composers type a due date only while
+creating, where there is no placed prep to strand; both edit forms — the day-cell composer's and the
+Documentations one's — still take the day from the record. The two date fields cap each other from
+opposite sides: `Due date` will not go below the caution start, `Caution from` will not go above the due day,
 and because both read the draft rather than the stored record, the pair can be moved in either order
 inside one edit. An out-of-order or cleared date is **refused** — Save is disabled and the form says
 which — rather than repaired: the caution start is a period the user chose and is never clamped or
@@ -245,7 +249,10 @@ moves to the new due day while a closed one stays closed.
 That refusal is load-bearing rather than fussy. Nothing validates `startDate <= date` on a *stored*
 record — `schema.js` checks each date's format on its own — and an inverted span disables the
 Documentations edit form for that deadline, whose Save is gated on `dlValid` against the stored
-caution start. The popup is the only writer that could produce one.
+caution start. Every writer of `date` therefore carries the ordering check itself, through one helper:
+`dlDraftValid` — `TrackCalendar.dlDraftValid` in `calendar-core.js`, with the documented second copy in
+`progress.html`, which does not load that file. It tests the draft's own date for format first, because
+a blank date sorts below every caution start and would otherwise read as in order.
 
 **Ticking a deadline.** A deadline carries an optional `done` flag, and ticking it makes every `!` it
 puts on its run-up disappear — the month grid, the timeline day headers, the selected-day panel, the
@@ -343,7 +350,10 @@ still cleaned up without requiring a slot write.
 `documentations.html` is a Notion-style documentation workspace for recording external events and information. It currently supports:
 
 - Nested pages in a sidebar tree (any depth, flat `parentId` structure like source dumps), with expand/collapse, add page, add sub-page, and cascade delete with a count confirmation.
-- Drag to nest and drag to arrange, ported from the Progress goal tree: every sidebar row reveals two handles on hover — `⠿` (indigo) drags the page onto another page to nest it as that page's last child (auto-expanding a collapsed target), and `⇅` (green) drags it before/after a target row by vertical midpoint, adopting the target's parent so one drag can also move a page between parents or out to root level. Dropping the `⠿` handle on the "Pages" header promotes a page to top level. Drops onto the page itself or any of its own descendants are refused outright (a `parentId` cycle would make the whole subtree unreachable). Desktop mouse only — like the Progress tree drag, it uses the HTML5 drag-and-drop API, which does not fire on touch devices.
+- Drag to nest and drag to arrange, ported from the Progress goal tree: every sidebar row carries two handles — `⠿` (indigo) drags the page onto another page to nest it as that page's last child (auto-expanding a collapsed target), and `⇅` (green) drags it before/after a target row by vertical midpoint, adopting the target's parent so one drag can also move a page between parents or out to root level. Dropping the `⠿` handle on the "Pages" header promotes a page to top level. Drops onto the page itself or any of its own descendants are refused outright (a `parentId` cycle would make the whole subtree unreachable).
+- **Both handles work by finger as well as by mouse.** The mouse path is the HTML5 drag-and-drop API, which never fires on touch; a second, parallel touch path drives the *same* three mutators (`nestPage`, `arrangePage`, `promotePageToRoot`), so the cycle refusal and the splice logic have one definition and cannot drift between pointer kinds. Pressing a handle starts the drag immediately — no arming step, because a handle is an unambiguous grab affordance — while a finger anywhere else in the row still scrolls the sidebar; `touch-action: none` on the handles is what separates the two. A ghost chip follows the finger, the row underneath lights up exactly as it does under a mouse, the list auto-scrolls when the finger nears the top or bottom edge, and `touchcancel` (which iPadOS fires instead of `touchend` when the system takes a gesture over) abandons the drag without moving anything.
+- Where hover does not exist (`@media (hover: none)`), the row's `⠿ ⇅ ＋ ☆ ✕` cluster is permanently visible instead of hover-revealed, and each control is a 44px target. Five of those need 220px and the column is 240px, so on touch the cluster takes its own line under the title — rows get taller, which is the cost of reachable targets, and the full-screen mode below is the answer for browsing a long tree.
+- **A `⛶` button at the top of the sidebar expands it to fill the viewport**, with 16px rows, 44px controls and a wider indent. Picking a page selects it *and* exits, so it is one tap in, one tap to a page, out; `✕` and `Escape` also exit. It is `position: fixed` at `z-index: 50`, which covers the page header and the theme toggle while staying under the notes widget and the storage/sync banners, and its bottom padding clears the notes-widget button so the last row stays tappable.
 - A Favorites sidebar section toggled per page from either of two star buttons that share the same `favorite` field: the small one revealed on hover in the sidebar page row, and a large touch-sized one at the right end of the page's toolbar row.
 - A per-page emoji icon chosen from a picker grid or typed freely.
 - Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
@@ -361,6 +371,8 @@ Pages are stored in the per-slot `docPages` field, and day notes and deadlines a
 **🗓 Calendar** in the add-block menu drops a calendar into the page body. It behaves like any other block: several can coexist on a page, and the hover chrome moves and deletes them.
 
 A calendar shows the same aggregation as the Universal calendar on Home — month grid, today highlight, milestone period bars, category dots, and a click-to-open day detail with the read-only day timeline — plus the two things a documentation page can author itself: **day notes** and **deadlines**. Both are written into the shared slot arrays, so they appear on the Progress Schedule and the Home calendar like any others.
+
+**Authoring.** `+ note` and `+ deadline` on the selected day's panel open an inline composer. The deadline composer carries a `Due on` date of its own, seeded to the selected cell and capped below by the caution start, so a deadline can be filed for any day from any page; filing one on another day moves the calendar to that day. Its **edit** form has no such field — an existing deadline's due day still moves only from the Progress popup, the one writer that checks the prep placed inside its caution period. Save is gated on `TrackCalendar.dlDraftValid` while composing and on `dlValid` while editing, and an out-of-order or blank date is refused with the reason shown rather than repaired.
 
 **Filtering.** A new calendar shows everything. The filter bar switches any of thirteen categories off: Kolb / MG change, LIN record, Floating note, Source dump, Milestones, Goal tasks & routines, Supporting actions, MM sessions, SIR sessions, MG focus, Day notes, Deadlines, and **Documentation**. Everything added from Documentations — notes *and* deadlines, from any page — answers to that single Documentation key, and correspondingly the Day notes and Deadlines keys cover only items authored in the Schedule. The block stores the switched-**off** keys (`hidden: []` means show all), so a category added later is on by default for calendars that already exist. "Show all" clears the set. Filters are per block; Home and the Schedule are unaffected.
 

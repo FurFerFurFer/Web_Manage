@@ -15,7 +15,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=5">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -4786,7 +4786,7 @@
       const [calNoteTimelineModal, setCalNoteTimelineModal] = useState(null);
       const [calNoteTimelineDraft, setCalNoteTimelineDraft] = useState({ title: '', detail: '', time: '' });
       const [dlOpenDay,   setDlOpenDay]   = useState(null);   // day number for the inline composer
-      const [dlDraft,     setDlDraft]     = useState({ title: '', detail: '', time: '', startDate: '' });
+      const [dlDraft,     setDlDraft]     = useState({ title: '', detail: '', time: '', startDate: '', date: '' });
       const [dlEditing,   setDlEditing]   = useState(null);   // deadline id being edited inline
       // deadline id — red-line / ! popup. Seeded from ?dl= so a deadline chip on
       // the Home calendar lands on the deadline itself. A lazy initializer, not
@@ -5827,14 +5827,17 @@
       function openDlComposer(day, ds) {
         setDlOpenDay(day);
         setDlEditing(null);
-        setDlDraft({ title: '', detail: '', time: '', startDate: ds });
+        // The cell the composer was opened on is only the DEFAULT due day now;
+        // `date` is typed in the form, so both dates start on `ds` and the
+        // caution period is a zero-length one until the user widens it.
+        setDlDraft({ title: '', detail: '', time: '', startDate: ds, date: ds });
         setCalNoteOpenDay(null);
         setCalNoteEditing(null);
       }
       function closeDlComposer() {
         setDlOpenDay(null);
         setDlEditing(null);
-        setDlDraft({ title: '', detail: '', time: '', startDate: '' });
+        setDlDraft({ title: '', detail: '', time: '', startDate: '', date: '' });
       }
       // Move whichever schedule view is on screen onto `ds`. Used when an edit
       // re-homes a record to another day, so closing the popup does not leave
@@ -5879,13 +5882,24 @@
       function toggleDlDone(id) {
         setDeadlines(prev => prev.map(x => x.id === id ? { ...x, done: !x.done } : x));
       }
-      function addDeadline(date) {
-        if (!dlValid(dlDraft, date)) return;
+      // `panelDs` is the day the composer sits on, NOT the due day — the due
+      // day comes from the draft. dlDraftValid is the gate rather than dlValid
+      // because the date is typed here, so its format has to be checked too;
+      // an inverted span is refused rather than repaired, exactly as in the
+      // popup's Edit form. A new deadline has no prep placed inside it yet, so
+      // there is nothing here that could be stranded.
+      function addDeadline(panelDs) {
+        if (!dlDraftValid(dlDraft)) return;
+        const date = dlDraft.date;
         setDeadlines(prev => [...prev, {
           id: uid(), date, time: dlDraft.time, startDate: dlDraft.startDate,
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim(), createdAt: Date.now()
         }]);
-        setDlDraft({ title: '', detail: '', time: '', startDate: date });
+        setDlDraft({ title: '', detail: '', time: '', startDate: date, date });
+        // Filed on another day, the deadline would otherwise land out of sight
+        // while the composer stayed open on a day it is not on. Same move the
+        // popup's Edit form makes when it re-homes a deadline.
+        if (date !== panelDs) focusScheduleDay(date);
       }
       function updateDeadline(id) {
         const dl = (deadlines || []).find(d => d.id === id);
@@ -5895,11 +5909,11 @@
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim()
         } : d));
         setDlEditing(null);
-        setDlDraft({ title: '', detail: '', time: '', startDate: dl.date });
+        setDlDraft({ title: '', detail: '', time: '', startDate: dl.date, date: dl.date });
       }
       function deleteDeadline(id) {
         setDeadlines(prev => prev.filter(d => d.id !== id));
-        if (dlEditing === id) { setDlEditing(null); setDlDraft({ title: '', detail: '', time: '', startDate: '' }); }
+        if (dlEditing === id) { setDlEditing(null); setDlDraft({ title: '', detail: '', time: '', startDate: '', date: '' }); }
         if (dlPopup === id)   { setDlPopup(null); setDlPopupEdit(false); }
       }
 
@@ -8403,7 +8417,7 @@
                           {selDue.map(d=>(
                             <div key={d.id}
                               className={`flex items-start gap-2 rounded px-2 py-1.5 border cursor-pointer group/dl transition-colors ${dlEditing===d.id?'border-red-500/70 bg-red-900/20':'border-gray-700/60 hover:border-gray-600 bg-gray-900/50'}`}
-                              onDoubleClick={()=>{setCalNoteOpenDay(null);setCalNoteEditing(null);setDlOpenDay(selDay);setDlEditing(d.id);setDlDraft({title:d.title,detail:d.detail||'',time:d.time,startDate:dlStart(d)});}}>
+                              onDoubleClick={()=>{setCalNoteOpenDay(null);setCalNoteEditing(null);setDlOpenDay(selDay);setDlEditing(d.id);setDlDraft({title:d.title,detail:d.detail||'',time:d.time,startDate:dlStart(d),date:d.date});}}>
                               {/* stopPropagation on both: the row's dblclick opens the
                                   inline editor, and a double tap on the box would
                                   otherwise tick twice and open it as well */}
@@ -8443,7 +8457,11 @@
                           ))}
                         </div>
                       )}
-                      {dlOpenDay===selDay&&(
+                      {dlOpenDay===selDay&&(()=>{
+                        // The day the form is ABOUT: the record's own day while
+                        // editing, the typed draft day while composing.
+                        const dueDs = dlEditing ? ds : dlDraft.date;
+                        return (
                         <div className="bg-gray-950 border border-red-700/40 rounded-lg overflow-hidden">
                           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
                             <span className="text-[10px] text-red-400 tracking-widest font-semibold">{dlEditing?'EDIT DEADLINE':'NEW DEADLINE'}</span>
@@ -8451,6 +8469,24 @@
                               className="text-gray-500 hover:text-gray-300 text-sm leading-none px-1">×</button>
                           </div>
                           <div className="px-3 pt-2 pb-1">
+                            {/* Composing, the due day is TYPED and starts on the
+                                cell this composer was opened on; editing, it
+                                still comes from the record, because moving an
+                                existing deadline has to check the prep placed
+                                inside its caution period and the popup's Edit
+                                form is the one writer that does. The two date
+                                fields cap each other from opposite sides, and
+                                both read the DRAFT so the pair can be moved in
+                                either order; min/max only grey out the picker,
+                                dlDraftValid is the actual gate. */}
+                            {!dlEditing&&(
+                              <div className="flex items-center gap-2 mb-2">
+                                <label className="text-[10px] text-gray-500 w-20 flex-shrink-0" htmlFor="dl-new-date">Due date</label>
+                                <input id="dl-new-date" type="date" value={dlDraft.date} min={dlDraft.startDate}
+                                  onChange={e=>setDlDraft(p=>({...p,date:e.target.value}))}
+                                  className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none focus:border-red-600"/>
+                              </div>
+                            )}
                             <div className="flex items-center gap-2 mb-2">
                               <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Due time</label>
                               <input type="time" value={dlDraft.time}
@@ -8459,7 +8495,7 @@
                             </div>
                             <div className="flex items-center gap-2 mb-2">
                               <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Caution from</label>
-                              <input type="date" value={dlDraft.startDate} max={ds}
+                              <input type="date" value={dlDraft.startDate} max={dueDs}
                                 onChange={e=>setDlDraft(p=>({...p,startDate:e.target.value}))}
                                 className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none focus:border-amber-600"/>
                             </div>
@@ -8473,17 +8509,25 @@
                               placeholder="Details… (optional)" rows={3}
                               className="w-full bg-transparent text-xs text-gray-400 outline-none placeholder-gray-600 resize-none"/>
                           </div>
-                          {dlDraft.startDate>ds&&(
+                          {/* One fault, one message. The ordering line is gated
+                              on there BEING a due day: every non-empty string
+                              sorts above '', so a cleared field would otherwise
+                              also read as an out-of-order caution start. */}
+                          {!dueDs&&(
+                            <div className="px-3 pb-1 text-[10px] text-amber-400">Pick a due date.</div>
+                          )}
+                          {!!dueDs&&dlDraft.startDate>dueDs&&(
                             <div className="px-3 pb-1 text-[10px] text-amber-400">Caution start must be on or before the deadline.</div>
                           )}
                           <div className="flex justify-end px-3 pb-3">
-                            <button disabled={!dlValid(dlDraft, ds)}
+                            <button disabled={dlEditing?!dlValid(dlDraft, ds):!dlDraftValid(dlDraft)}
                               onClick={()=>{dlEditing?updateDeadline(dlEditing):addDeadline(ds);}}
                               className="text-[11px] px-3 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-default text-white rounded transition-colors">
                               {dlEditing?'Save':'Done'}</button>
                           </div>
                         </div>
-                      )}
+                        );
+                      })()}
                       {!selDue.length&&!selCaution.length&&dlOpenDay!==selDay&&(
                         <div className="text-[10px] text-gray-700 italic text-center py-1">No deadlines. Click + to add.</div>
                       )}
