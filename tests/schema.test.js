@@ -438,11 +438,68 @@ test('the schedule-block keys survive normalizeSlot untouched', () => {
   // They are item-level keys inside two known list fields, so they ride the
   // list through verbatim — no SLOT_FIELDS row, and nothing to migrate.
   const note = { id: 'n', date: '2026-03-10', time: '09:00', blockDuration: 90, blockDate: '2026-03-12', blockOff: true, parts: [{ id: 'p', title: 'step', date: '2026-03-11' }] };
-  const dl = { id: 'd', date: '2026-03-10', time: '17:00', startDate: '2026-03-08', blockDuration: 60, blockTime: '08:00' };
+  const dl = { id: 'd', date: '2026-03-10', time: '17:00', cautionDates: ['2026-03-08'], blockDuration: 60, blockTime: '08:00' };
   const out = S.normalizeSlot({ calendarNotes: [note], deadlines: [dl] });
   assert.deepEqual(out.calendarNotes[0], note);
   assert.deepEqual(out.deadlines[0], dl);
   assert.equal(Object.keys(S.SLOT_FIELDS).length, 23, 'the slot did NOT grow a field');
+
+  // An un-migrated record rides through just as verbatim, which is what makes
+  // importing a pre-choice export safe: normalizeSlot neither drops `startDate`
+  // nor invents a `cautionDates` beside it. The conversion is progress.html's
+  // migration, deliberately not this function — normalizing stored slots would
+  // BE a migration, and this file must stay total and repair-free.
+  const legacy = { id: 'l', date: '2026-03-10', time: '17:00', startDate: '2026-03-05' };
+  assert.deepEqual(S.normalizeSlot({ deadlines: [legacy] }).deadlines[0], legacy);
+});
+
+test('cautionDates warns on a malformed value but leaves the database editable', () => {
+  const at = cautionDates => S.validateSlot({
+    name: 'x', deadlines: [{ id: 'd', date: '2026-03-10', time: '17:00', cautionDates }]
+  });
+
+  // absence is the pre-choice state, and an empty list is a real choice
+  assert.equal(S.validateSlot({ name: 'x', deadlines: [{ id: 'd', date: '2026-03-10', time: '17:00' }] }).ok, true);
+  assert.equal(at([]).ok, true, 'an empty list is a real, valid choice — never damage');
+  assert.equal(at(['2026-03-08', '2026-03-09']).ok, true);
+
+  // A malformed entry reaches RENDERING — an amber "!" on a day that does not
+  // exist — which is the blockDate class of damage. It is reported, but never
+  // FATAL: a single bad string must not freeze the whole database.
+  const bad = at(['2026-03-08', 'nonsense']);
+  assert.equal(bad.ok, false, 'reported');
+  assert.equal(bad.errors.length, 1);
+  assert.ok(bad.errors.every(e => e.fatal !== true), 'a warning, like blockDate — never fatal like parts');
+  assert.match(bad.errors[0].message, /cautionDates\[1\] must be a YYYY-MM-DD day/);
+
+  // `null` is REPORTED rather than read as absent, matching blockDuration /
+  // blockTime / blockDate and unlike `parts`. A warning can afford to point at
+  // a suspect value; a fatal check cannot.
+  for (const junk of [null, '2026-03-08', 42, true, {}]) {
+    const r = at(junk);
+    assert.equal(r.ok, false, JSON.stringify(junk) + ' is reported');
+    assert.equal(r.errors.length, 1);
+    assert.ok(r.errors.every(e => e.fatal !== true), JSON.stringify(junk) + ' warns rather than blocking');
+    assert.match(r.errors[0].message, /cautionDates must be a list when present/);
+  }
+});
+
+test('a leftover startDate is still format-checked, and is never damage on its own', () => {
+  // Nothing writes it any more, but an un-migrated record resolves its caution
+  // days through it, and a malformed one silently yields none. Saying so beats
+  // letting a run-up vanish with no explanation.
+  const ok = S.validateSlot({
+    name: 'x', deadlines: [{ id: 'd', date: '2026-03-10', time: '17:00', startDate: '2026-03-08' }]
+  });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.errors.length, 0, 'a well-formed legacy record is not an error');
+
+  const bad = S.validateSlot({
+    name: 'x', deadlines: [{ id: 'd', date: '2026-03-10', time: '17:00', startDate: '2026-3-8' }]
+  });
+  assert.equal(bad.ok, false, 'reported');
+  assert.ok(bad.errors.every(e => e.fatal !== true), 'but never fatal — the database stays editable');
+  assert.match(bad.errors[0].message, /invalid startDate/);
 });
 
 test('validateSlot rejects junk INSIDE a correctly-typed list', () => {

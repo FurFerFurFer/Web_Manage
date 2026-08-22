@@ -98,8 +98,20 @@ const session = (id, date, mmId, over = {}) =>
 const calNote = (id, date, over = {}) =>
   Object.assign({ id, date, title: 'Day note ' + id, detail: '', createdAt: localTs(2026, 1, 1) }, over);
 
+// A deadline carries NO caution key by default: `cautionDates` is written on
+// the first pick, and its absence with no `startDate` either means the deadline
+// warns on no day at all. Pass `{ cautionDates: [...] }` for chosen days, or
+// `{ startDate: ... }` to build a deliberately UN-MIGRATED legacy record — see
+// legacyDeadline below, which is the one the fallback branch is tested through.
 const deadline = (id, date, over = {}) =>
-  Object.assign({ id, date, title: 'Deadline ' + id, detail: '', time: '17:00', startDate: date }, over);
+  Object.assign({ id, date, title: 'Deadline ' + id, detail: '', time: '17:00' }, over);
+
+// A pre-choice record, exactly as it sat in storage before caution days became
+// a list. It exists so dlCautionDays' legacy branch and progress.html's
+// migration both stay exercised for as long as either can meet one — an old
+// export can be imported at any time, so neither ever becomes dead code.
+const legacyDeadline = (id, date, startDate, over = {}) =>
+  Object.assign({ id, date, title: 'Deadline ' + id, detail: '', time: '17:00', startDate }, over);
 
 const docPage = (id, over = {}) =>
   Object.assign({ id, title: 'Page ' + id, parentId: null, blocks: [], favorite: false }, over);
@@ -135,8 +147,8 @@ function populatedSlot(over = {}) {
       calNote('cn-doc', '2026-03-10', { docPageId: 'p-1', title: 'Written from a page' })
     ],
     deadlines: [
-      deadline('dl-sched', '2026-03-10', { startDate: '2026-03-08' }),
-      deadline('dl-doc', '2026-03-10', { startDate: '2026-03-09', docPageId: 'p-1', time: '10:00' })
+      deadline('dl-sched', '2026-03-10', { cautionDates: ['2026-03-08', '2026-03-09'] }),
+      deadline('dl-doc', '2026-03-10', { cautionDates: ['2026-03-09'], docPageId: 'p-1', time: '10:00' })
     ],
     docPages: [docPage('p-1')],
     trueStorages: [
@@ -227,6 +239,6 @@ module.exports = {
   slotWithout, preCalendarSlot, preUnifiedSlot,
   MALFORMED_DB_STRINGS, malformedSlot, dbWith, legacyLocalKeys,
   mm, kolb, mgChange, linChange, note, dump, dumpLink, task, milestone,
-  saAction, saEntry, mmEntry, session, calNote, deadline, docPage,
+  saAction, saEntry, mmEntry, session, calNote, deadline, legacyDeadline, docPage,
   trueStorage, storageTag
 };

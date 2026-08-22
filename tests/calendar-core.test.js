@@ -40,14 +40,19 @@ const ids = list => list.map(x => x.id);
 test('module surface', () => {
   assert.ok(TC, 'calendar-core.js published window.TrackCalendar under TZ=' + TZ);
   for (const name of ['toDateStr', 'dim', 'firstDay', 'dStr', 'flattenGoals', 'goalDuration',
-    'goalDone', 'mgsForDay', 'dlStart', 'dlInCaution', 'dlDayCount', 'dlValid', 'dlDraftValid', 'dlDone', 'originKey',
+    'goalDone', 'mgsForDay', 'dlStart', 'dlInCaution', 'dlValid', 'dlDraftValid', 'dlDone', 'originKey',
+    'dlCautionDays', 'dlCautionSet', 'dlCautionCount', 'dlWithCautionDays', 'dlToggleCautionDay',
     'buildBuckets', 'buildMilestoneLanes', 'buildDaySchedule', 'overlapInfo', 'durLabel',
-    'noteTimed', 'daysBetween',
+    'noteTimed', 'daysBetween', 'dayShift',
     'noteBlockDuration', 'dlBlockDuration', 'dlBlockSpan', 'dlBlockTime', 'itemParts', 'partSpan',
     'blockOn', 'noteBlockSpan', 'noteBlockStart', 'blockDay', 'partDay',
     'dlBlockDayValid', 'dlStrandedBlockDays']) {
     assert.equal(typeof TC[name], 'function', name + ' is exported');
   }
+  // dlDayCount was REMOVED rather than renamed: the number it returned changed
+  // meaning (span length including the due day → count of chosen days), and a
+  // changed meaning behind an unchanged name is worse than the churn.
+  assert.equal(TC.dlDayCount, undefined, 'dlDayCount is gone, replaced by dlCautionCount');
   // the two automatic defaults are values, not functions
   assert.equal(TC.DEFAULT_BLOCK_MINS, 60, 'every item starts with a 60-minute block');
   assert.equal(TC.DEFAULT_NOTE_TIME, '08:00', 'and an untimed note starts at 08:00');
@@ -641,7 +646,7 @@ test('a run-up clipped by midnight keeps its end on the due time', () => {
 });
 
 test('GUARD: a block changes neither the due list nor the caution run-up', () => {
-  const base = { startDate: '2026-03-08', time: '17:00' };
+  const base = { cautionDates: ['2026-03-08', '2026-03-09'], time: '17:00' };
   const plain = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base })] });
   const withBlock = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockDuration: 60 })] });
   const moved = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockDate: '2026-03-09' })] });
@@ -655,11 +660,12 @@ test('GUARD: a block changes neither the due list nor the caution run-up', () =>
       assert.deepEqual(ids(a.deadlines), ids(b.deadlines), 'due list unchanged by ' + label + ' on ' + ds);
       assert.deepEqual(ids(a.deadlinesCaution), ids(b.deadlinesCaution), 'run-up unchanged by ' + label + ' on ' + ds);
     }
-    // the caution period itself is blind to all of it
+    // the chosen days themselves are blind to all of it
     assert.equal(TC.dlInCaution(moved.deadlines[0], ds), TC.dlInCaution(plain.deadlines[0], ds));
   }
-  assert.equal(TC.dlDayCount(moved.deadlines[0]), TC.dlDayCount(plain.deadlines[0]));
-  assert.equal(TC.dlStart(moved.deadlines[0]), '2026-03-08', 'and blockDate never rewrites startDate');
+  assert.equal(TC.dlCautionCount(moved.deadlines[0]), TC.dlCautionCount(plain.deadlines[0]));
+  assert.deepEqual(TC.dlCautionDays(moved.deadlines[0]), ['2026-03-08', '2026-03-09'],
+    'and blockDate never rewrites the chosen days');
   // and the tick still suppresses the run-up, block or no block
   assert.deepEqual(ids(TC.buildDaySchedule(ticked, '2026-03-09').deadlinesCaution), []);
   assert.deepEqual(ids(TC.buildDaySchedule(ticked, '2026-03-10').deadlines), ['d'],
@@ -791,31 +797,73 @@ test('a part follows a moved parent block rather than the item\'s own date', () 
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-12').blocks), ['n:p']);
 });
 
-test('dlStrandedBlockDays names every block day a proposed span would orphan', () => {
+test('dlStrandedBlockDays names every block day an un-pick or a move would orphan', () => {
+  const all = ['2026-03-05', '2026-03-06', '2026-03-07', '2026-03-08', '2026-03-09'];
   const d = F.deadline('d', '2026-03-10', {
-    startDate: '2026-03-05', time: '17:00', blockDate: '2026-03-06',
+    cautionDates: all, time: '17:00', blockDate: '2026-03-06',
     parts: [{ id: 'a', title: 'x', date: '2026-03-07' }, { id: 'b', title: 'y' }]
   });
-  // the span it is stored with strands nothing
-  assert.deepEqual(TC.dlStrandedBlockDays(d, { startDate: '2026-03-05', date: '2026-03-10' }), []);
-  // shrinking the caution start past the block, and past one part
-  assert.deepEqual(TC.dlStrandedBlockDays(d, { startDate: '2026-03-07', date: '2026-03-10' }),
+  // the set it is stored with strands nothing
+  assert.deepEqual(TC.dlStrandedBlockDays(d, null), []);
+  assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: all, date: '2026-03-10' }), []);
+
+  // UN-PICKING a day that holds a block, and one that holds a part. This is
+  // the case the old contiguous span could not express: 03-06 is un-picked
+  // while 03-05 and 03-07 stay, so the orphaned day is in the MIDDLE of the
+  // remaining set rather than off one end.
+  assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: all.filter(x => x !== '2026-03-06') }),
     ['2026-03-06']);
-  assert.deepEqual(TC.dlStrandedBlockDays(d, { startDate: '2026-03-08', date: '2026-03-10' }),
+  assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: ['2026-03-05', '2026-03-08', '2026-03-09'] }),
     ['2026-03-06', '2026-03-07']);
+  assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: [] }),
+    ['2026-03-06', '2026-03-07'], 'clearing every day strands both');
+
   // pulling the due day back past the undated part, which sits on the block day
-  assert.deepEqual(TC.dlStrandedBlockDays(d, { startDate: '2026-03-05', date: '2026-03-05' }),
+  assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: ['2026-03-05'], date: '2026-03-05' }),
     ['2026-03-06', '2026-03-07']);
+
   // a blockOff deadline has no block to strand, so no edit is ever refused
-  assert.deepEqual(TC.dlStrandedBlockDays({ ...d, blockOff: true },
-    { startDate: '2026-03-09', date: '2026-03-10' }), []);
-  // and the plain single-day deadline every form starts from strands nothing
+  assert.deepEqual(TC.dlStrandedBlockDays({ ...d, blockOff: true }, { cautionDates: [] }), []);
+
+  // THE case that a due-day move depends on. With no blockDate and no parts the
+  // block sits on the item's OWN date, so it MOVES WITH a due-day change and
+  // cannot be stranded by one. Reading the stored blockDay here instead would
+  // report the old due day as orphaned and refuse every move of an un-anchored
+  // deadline — which is exactly what it did until a browser case caught it.
+  const unanchored = F.deadline('u', '2026-03-10', { cautionDates: ['2026-03-08'], time: '17:00' });
+  assert.deepEqual(TC.dlStrandedBlockDays(unanchored, { date: '2026-03-22' }), [],
+    'moving the due day carries the automatic block with it');
+  assert.deepEqual(TC.dlStrandedBlockDays(unanchored, { date: '2026-03-09' }), [],
+    'in either direction');
+  assert.deepEqual(TC.dlStrandedBlockDays(unanchored, { cautionDates: [] }), [],
+    'and un-picking every caution day cannot strand it either — it is on the due day');
+  // ...while an ANCHORED block is still checked against the proposed due day
+  const anchored = F.deadline('a', '2026-03-10',
+    { cautionDates: ['2026-03-08'], time: '17:00', blockDate: '2026-03-08' });
+  assert.deepEqual(TC.dlStrandedBlockDays(anchored, { date: '2026-03-22' }), [],
+    '03-08 is still a chosen day, so the move is fine');
+  assert.deepEqual(TC.dlStrandedBlockDays(anchored, { cautionDates: [] }), ['2026-03-08'],
+    'but un-picking the day it sits on strands it');
+
+  // and the plain deadline every form starts from — no chosen days at all —
+  // strands nothing, because its block sits on the due day it always occupies
   assert.deepEqual(
-    TC.dlStrandedBlockDays(F.deadline('p', '2026-03-10', { startDate: '2026-03-10' }),
-      { startDate: '2026-03-10', date: '2026-03-10' }), []);
-  assert.equal(TC.dlBlockDayValid(d, '2026-03-06', { startDate: '2026-03-05', date: '2026-03-10' }), true);
-  assert.equal(TC.dlBlockDayValid(d, '2026-03-04', { startDate: '2026-03-05', date: '2026-03-10' }), false);
-  assert.equal(TC.dlBlockDayValid(d, '2026-03-11', { startDate: '2026-03-05', date: '2026-03-10' }), false);
+    TC.dlStrandedBlockDays(F.deadline('p', '2026-03-10', { cautionDates: [] }), { cautionDates: [] }), []);
+
+  // MEMBERSHIP, not a range: 03-04 is outside, 03-11 is outside, and so is a
+  // day that merely falls BETWEEN two chosen ones.
+  assert.equal(TC.dlBlockDayValid(d, '2026-03-06', null), true);
+  assert.equal(TC.dlBlockDayValid(d, '2026-03-10', null), true, 'the due day is always allowed');
+  assert.equal(TC.dlBlockDayValid(d, '2026-03-04', null), false);
+  assert.equal(TC.dlBlockDayValid(d, '2026-03-11', null), false);
+  assert.equal(TC.dlBlockDayValid(d, '', null), false);
+  const gapped = F.deadline('g', '2026-03-10', { cautionDates: ['2026-03-05', '2026-03-09'] });
+  assert.equal(TC.dlBlockDayValid(gapped, '2026-03-07', null), false,
+    'a day inside the old span but outside the chosen set is REFUSED — the whole point');
+  // a legacy record is gated through the same door, on its expanded span
+  const legacy = F.legacyDeadline('l', '2026-03-10', '2026-03-08');
+  assert.equal(TC.dlBlockDayValid(legacy, '2026-03-08', null), true);
+  assert.equal(TC.dlBlockDayValid(legacy, '2026-03-07', null), false);
 });
 
 test('itemParts tolerates every malformed stored value', () => {
@@ -884,28 +932,150 @@ test('daysBetween refuses malformed input instead of spinning', () => {
 
 // ── deadlines ──────────────────────────────────────────────────────────────
 
-test('the caution run-up covers startDate..date and excludes the due day from the caution list', () => {
-  const slot = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { startDate: '2026-03-08' })] });
+test('the caution list holds exactly the chosen days, and never the due day', () => {
+  const slot = F.emptySlot({
+    deadlines: [F.deadline('d', '2026-03-10', { cautionDates: ['2026-03-06', '2026-03-09'] })]
+  });
   const on = ds => TC.buildDaySchedule(slot, ds);
 
-  assert.deepEqual(ids(on('2026-03-07').deadlinesCaution), []);
-  assert.deepEqual(ids(on('2026-03-08').deadlinesCaution), ['d'], 'the run-up starts on startDate');
-  assert.deepEqual(ids(on('2026-03-09').deadlinesCaution), ['d']);
+  assert.deepEqual(ids(on('2026-03-06').deadlinesCaution), ['d'], 'the first chosen day');
+  assert.deepEqual(ids(on('2026-03-07').deadlinesCaution), [],
+    'a GAP between two chosen days is not a caution day — this is the whole feature');
+  assert.deepEqual(ids(on('2026-03-08').deadlinesCaution), [], 'nor is the second gap day');
+  assert.deepEqual(ids(on('2026-03-09').deadlinesCaution), ['d'], 'the second chosen day');
   assert.deepEqual(ids(on('2026-03-10').deadlines), ['d'], 'the due day lists it as due');
   assert.deepEqual(ids(on('2026-03-10').deadlinesCaution), [], 'and NOT also as caution');
   assert.deepEqual(ids(on('2026-03-11').deadlinesCaution), []);
 });
 
-test('dlStart and dlInCaution', () => {
-  const withStart = { date: '2026-03-10', startDate: '2026-03-08' };
-  const noStart = { date: '2026-03-10' };
-  assert.equal(TC.dlStart(withStart), '2026-03-08');
-  assert.equal(TC.dlStart(noStart), '2026-03-10', 'no startDate means the run-up is the due day itself');
-  assert.equal(TC.dlInCaution(withStart, '2026-03-08'), true, 'inclusive at the start');
-  assert.equal(TC.dlInCaution(withStart, '2026-03-10'), true, 'inclusive at the due day');
-  assert.equal(TC.dlInCaution(withStart, '2026-03-07'), false);
-  assert.equal(TC.dlInCaution(withStart, '2026-03-11'), false);
-  assert.equal(TC.dlInCaution(noStart, '2026-03-09'), false);
+test('dlCautionDays: the chosen list wins, and an empty one is a real answer', () => {
+  const chosen = { date: '2026-03-10', cautionDates: ['2026-03-09', '2026-03-06'] };
+  assert.deepEqual(TC.dlCautionDays(chosen), ['2026-03-06', '2026-03-09'], 'sorted, whatever the order stored');
+
+  // An EMPTY list is a value, not an absence: it must short-circuit the legacy
+  // branch, or clearing every day on a record that still carries `startDate`
+  // would resurrect the span the user just cleared.
+  const clearedLegacy = { date: '2026-03-10', startDate: '2026-03-05', cautionDates: [] };
+  assert.deepEqual(TC.dlCautionDays(clearedLegacy), [],
+    'cautionDates: [] beats a leftover startDate rather than falling through to it');
+
+  // ...and a list that is present but not empty beats it too.
+  const bothKeys = { date: '2026-03-10', startDate: '2026-03-05', cautionDates: ['2026-03-08'] };
+  assert.deepEqual(TC.dlCautionDays(bothKeys), ['2026-03-08']);
+
+  assert.deepEqual(TC.dlCautionDays({ date: '2026-03-10' }), [],
+    'no key at all means no caution days');
+});
+
+/* The legacy branch is NOT dead code, and this case is why it must stay. The
+   migration converts records already in storage, but an old export imported
+   later, a second device still running the previous version, and a migration
+   write the quota refused all deliver a `startDate` span to this resolver. */
+test('dlCautionDays expands a legacy startDate span, minus the due day', () => {
+  const legacy = F.legacyDeadline('d', '2026-03-10', '2026-03-08');
+  assert.deepEqual(TC.dlCautionDays(legacy), ['2026-03-08', '2026-03-09'],
+    'every day of the old span except the due day itself');
+
+  const zero = F.legacyDeadline('z', '2026-03-10', '2026-03-10');
+  assert.deepEqual(TC.dlCautionDays(zero), [],
+    'the old zero-length default becomes no caution days, which is the same thing');
+
+  // An inverted legacy span used to silently erase the run-up; it still does,
+  // and still cannot throw. daysBetween bails on from > to.
+  const inverted = F.legacyDeadline('i', '2026-03-08', '2026-03-10');
+  assert.deepEqual(TC.dlCautionDays(inverted), []);
+
+  const slot = F.emptySlot({ deadlines: [legacy] });
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-09').deadlinesCaution), ['d'],
+    'and an un-migrated record still renders its run-up on every surface');
+});
+
+test('dlCautionDays sanitises anything a hand edit or an import can deliver', () => {
+  const due = '2026-03-10';
+  const of = cautionDates => TC.dlCautionDays({ date: due, cautionDates });
+
+  assert.deepEqual(of(['2026-03-09', '2026-03-09', '2026-03-08']), ['2026-03-08', '2026-03-09'],
+    'duplicates collapse');
+  assert.deepEqual(of(['2026-03-10']), [], 'the due day can never be a caution day');
+  assert.deepEqual(of(['2026-03-11']), [], 'nor can a day after it');
+  assert.deepEqual(of(['2026-3-08', 'nonsense', '', null, 42, {}, ['2026-03-08']]), [],
+    'a malformed entry is dropped rather than rendered on a day that does not exist');
+  assert.deepEqual(of(['2026-03-08', 'nonsense']), ['2026-03-08'],
+    'and one bad entry does not poison the good ones');
+  assert.deepEqual(of('2026-03-08'), [], 'a non-array with no startDate behind it yields nothing');
+  assert.deepEqual(TC.dlCautionDays({ date: 'nonsense', cautionDates: ['2026-03-08'] }), [],
+    'a malformed DUE day yields nothing — there is nothing to be before');
+  assert.deepEqual(TC.dlCautionDays(null), []);
+  assert.deepEqual(TC.dlCautionDays(undefined), []);
+});
+
+test('dlCautionSet, dlCautionCount and dlInCaution read the same list', () => {
+  const d = { date: '2026-03-10', cautionDates: ['2026-03-06', '2026-03-09'] };
+  assert.equal(TC.dlCautionCount(d), 2);
+  assert.ok(TC.dlCautionSet(d).has('2026-03-06'));
+  assert.ok(!TC.dlCautionSet(d).has('2026-03-07'));
+  assert.equal(TC.dlInCaution(d, '2026-03-06'), true);
+  assert.equal(TC.dlInCaution(d, '2026-03-07'), false, 'a gap day is not in caution');
+  assert.equal(TC.dlInCaution(d, '2026-03-10'), false,
+    'and neither is the due day — it is red, never amber');
+  assert.equal(TC.dlCautionCount({ date: '2026-03-10' }), 0);
+});
+
+test('dlStart is the earliest day the deadline occupies, not a period boundary', () => {
+  assert.equal(TC.dlStart({ date: '2026-03-10', cautionDates: ['2026-03-09', '2026-03-06'] }), '2026-03-06');
+  assert.equal(TC.dlStart({ date: '2026-03-10', cautionDates: [] }), '2026-03-10',
+    'with nothing chosen the deadline occupies its due day alone');
+  assert.equal(TC.dlStart({ date: '2026-03-10' }), '2026-03-10');
+  assert.equal(TC.dlStart(F.legacyDeadline('d', '2026-03-10', '2026-03-08')), '2026-03-08');
+});
+
+/* THE writer. Both of its rules are load-bearing and neither is obvious, so
+   they are pinned here rather than left to the picker that calls it. */
+test('dlWithCautionDays deletes startDate and always stores a list', () => {
+  const legacy = F.legacyDeadline('d', '2026-03-10', '2026-03-05',
+    { docPageId: 'p-1', done: true, blockDuration: 90, createdAt: 12345 });
+
+  const out = TC.dlWithCautionDays(legacy, ['2026-03-09', '2026-03-06', '2026-03-06']);
+  assert.deepEqual(out.cautionDates, ['2026-03-06', '2026-03-09'], 'sorted and de-duplicated');
+  assert.ok(!('startDate' in out),
+    'the legacy key is DELETED, so a record migrates by the act of being edited');
+  // everything else is spread through — rebuilding from a field list is the bug
+  // that cost this project day notes and deadlines before
+  assert.equal(out.id, 'd');
+  assert.equal(out.docPageId, 'p-1');
+  assert.equal(out.done, true);
+  assert.equal(out.blockDuration, 90);
+  assert.equal(out.createdAt, 12345);
+  assert.equal(out.date, '2026-03-10');
+  assert.equal(out.time, '17:00');
+
+  const cleared = TC.dlWithCautionDays(legacy, []);
+  assert.deepEqual(cleared.cautionDates, [], 'clearing STORES [] rather than deleting the key');
+  assert.ok('cautionDates' in cleared,
+    'because a deleted key would fall back to the span that was just cleared');
+  assert.ok(!('startDate' in cleared));
+  assert.deepEqual(TC.dlCautionDays(cleared), [], 'and the resolver agrees it is empty');
+
+  assert.deepEqual(TC.dlWithCautionDays(legacy, ['2026-03-10', '2026-03-11', 'junk']).cautionDates, [],
+    'a caller cannot store the due day, a later day, or a malformed one');
+  assert.deepEqual(TC.dlWithCautionDays(legacy, null).cautionDates, []);
+
+  // pure: the record handed in is never touched
+  assert.equal(legacy.startDate, '2026-03-05', 'the input is left alone');
+});
+
+test('dlToggleCautionDay adds then removes the same day', () => {
+  const d = F.deadline('d', '2026-03-10', { cautionDates: ['2026-03-08'] });
+  const added = TC.dlToggleCautionDay(d, '2026-03-06');
+  assert.deepEqual(added.cautionDates, ['2026-03-06', '2026-03-08']);
+  const removed = TC.dlToggleCautionDay(added, '2026-03-06');
+  assert.deepEqual(removed.cautionDates, ['2026-03-08'], 'toggling twice is a no-op');
+  assert.deepEqual(TC.dlToggleCautionDay(removed, '2026-03-08').cautionDates, [],
+    'and the last one leaves a stored empty list');
+  // toggling a legacy record materialises the span first, then edits it
+  const legacy = TC.dlToggleCautionDay(F.legacyDeadline('l', '2026-03-10', '2026-03-08'), '2026-03-05');
+  assert.deepEqual(legacy.cautionDates, ['2026-03-05', '2026-03-08', '2026-03-09']);
+  assert.ok(!('startDate' in legacy));
 });
 
 test('dlDone reads an absent, false, and true tick alike', () => {
@@ -914,51 +1084,54 @@ test('dlDone reads an absent, false, and true tick alike', () => {
   assert.equal(TC.dlDone({ date: '2026-03-10', done: true }), true);
 });
 
-test('a ticked deadline drops out of the caution run-up but stays on its due day', () => {
+test('a ticked deadline drops out of the caution list but stays on its due day', () => {
   const slot = F.emptySlot({
-    deadlines: [F.deadline('d', '2026-03-10', { startDate: '2026-03-08', done: true })]
+    deadlines: [F.deadline('d', '2026-03-10', { cautionDates: ['2026-03-08', '2026-03-09'], done: true })]
   });
   const on = ds => TC.buildDaySchedule(slot, ds);
 
-  // EVERY run-up day, not just the first: a stray "!" left on one day is the
+  // EVERY chosen day, not just the first: a stray "!" left on one day is the
   // whole failure mode this feature exists to prevent.
-  assert.deepEqual(ids(on('2026-03-08').deadlinesCaution), [], 'no "!" on the start day');
-  assert.deepEqual(ids(on('2026-03-09').deadlinesCaution), [], 'no "!" on the day before');
+  assert.deepEqual(ids(on('2026-03-08').deadlinesCaution), [], 'no "!" on the first chosen day');
+  assert.deepEqual(ids(on('2026-03-09').deadlinesCaution), [], 'nor on the second');
   assert.deepEqual(ids(on('2026-03-10').deadlines), ['d'], 'the deadline itself is left');
 });
 
-test('ticking suppresses the caution period without altering it', () => {
+test('GUARD: ticking suppresses the chosen days without altering them', () => {
   // This is what makes unticking a pure restore rather than a guess: `done`
-  // changes what is RENDERED, never what is stored about the span.
-  const dl = F.deadline('d', '2026-03-10', { startDate: '2026-03-08', done: true });
-  assert.equal(TC.dlStart(dl), '2026-03-08', 'the start day survives the tick');
-  assert.equal(TC.dlDayCount(dl), 3, 'and so does the span');
+  // changes what is RENDERED, never what is stored about the days.
+  const dl = F.deadline('d', '2026-03-10', { cautionDates: ['2026-03-06', '2026-03-09'], done: true });
+  assert.deepEqual(TC.dlCautionDays(dl), ['2026-03-06', '2026-03-09'], 'the days survive the tick');
+  assert.equal(TC.dlCautionCount(dl), 2, 'and so does the count');
+  assert.equal(TC.dlStart(dl), '2026-03-06');
   assert.equal(TC.dlInCaution(dl, '2026-03-09'), true,
-    'the day is still inside the period — only deadlinesCaution declines to show it');
+    'the day is still chosen — only deadlinesCaution declines to show it');
 
   const unticked = Object.assign({}, dl, { done: false });
   const slot = F.emptySlot({ deadlines: [unticked] });
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-09').deadlinesCaution), ['d'],
-    'unticking brings the same run-up back');
+    'unticking brings the same days back');
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-07').deadlinesCaution), [],
+    'and brings back only those — the gaps stay gaps');
 });
 
 test('a ticked deadline is still filtered by origin like any other', () => {
   const slot = F.emptySlot({
     deadlines: [F.deadline('dl-doc', '2026-03-10',
-      { startDate: '2026-03-08', docPageId: 'p-1', done: true })]
+      { cautionDates: ['2026-03-08'], docPageId: 'p-1', done: true })]
   });
   const hidden = TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['doc'] });
   assert.deepEqual(ids(hidden.deadlines), [], 'hiding doc still hides a ticked doc-authored one');
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10').deadlines), ['dl-doc']);
 });
 
-test('deadlines sort by time on the day, and by date then time in the run-up', () => {
+test('deadlines sort by time on the day, and by date then time in the caution list', () => {
   const slot = F.emptySlot({
     deadlines: [
       F.deadline('late', '2026-03-10', { time: '17:00' }),
       F.deadline('early', '2026-03-10', { time: '08:00' }),
-      F.deadline('far', '2026-03-12', { time: '08:00', startDate: '2026-03-01' }),
-      F.deadline('near', '2026-03-11', { time: '23:00', startDate: '2026-03-01' })
+      F.deadline('far', '2026-03-12', { time: '08:00', cautionDates: ['2026-03-09'] }),
+      F.deadline('near', '2026-03-11', { time: '23:00', cautionDates: ['2026-03-09'] })
     ]
   });
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10').deadlines), ['early', 'late']);
@@ -967,90 +1140,74 @@ test('deadlines sort by time on the day, and by date then time in the run-up', (
 });
 
 test('dlValid rejects every malformed draft', () => {
-  const ok = { title: 'Ship it', time: '09:00', startDate: '2026-03-08' };
-  assert.equal(TC.dlValid(ok, '2026-03-10'), true);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { startDate: '2026-03-10' }), '2026-03-10'), true,
-    'a run-up may begin on the due day');
+  const ok = { title: 'Ship it', time: '09:00' };
+  assert.equal(TC.dlValid(ok), true, 'a title and a due time are the whole contract now');
 
-  assert.equal(TC.dlValid(Object.assign({}, ok, { title: '' }), '2026-03-10'), false);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { title: '   ' }), '2026-03-10'), false);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { title: undefined }), '2026-03-10'), false);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { time: '9:00' }), '2026-03-10'), false);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { time: '0900' }), '2026-03-10'), false);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { time: undefined }), '2026-03-10'), false);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { startDate: '2026-3-08' }), '2026-03-10'), false);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { startDate: undefined }), '2026-03-10'), false);
-  assert.equal(TC.dlValid(Object.assign({}, ok, { startDate: '2026-03-11' }), '2026-03-10'), false,
-    'a caution period may not begin after the due day');
+  assert.equal(TC.dlValid(Object.assign({}, ok, { title: '' })), false);
+  assert.equal(TC.dlValid(Object.assign({}, ok, { title: '   ' })), false);
+  assert.equal(TC.dlValid(Object.assign({}, ok, { title: undefined })), false);
+  assert.equal(TC.dlValid(Object.assign({}, ok, { time: '9:00' })), false);
+  assert.equal(TC.dlValid(Object.assign({}, ok, { time: '0900' })), false);
+  assert.equal(TC.dlValid(Object.assign({}, ok, { time: undefined })), false);
+  assert.equal(TC.dlValid(null), false, 'and it never throws on a missing draft');
 });
 
 /* The compose forms on both authoring pages type the due day rather than
    taking it from the calendar cell they were opened on, which makes each of
-   them a writer of `date`. Nothing validates `startDate <= date` on a STORED
-   record, so the check has to happen at authoring time — this is it. */
+   them a writer of `date`. The format check is what stops a blank field
+   reaching storage; there is no second date left to order it against. */
 test('dlDraftValid gates a draft that carries its own due day', () => {
-  const ok = { title: 'Ship it', time: '09:00', startDate: '2026-03-08', date: '2026-03-10' };
+  const ok = { title: 'Ship it', time: '09:00', date: '2026-03-10' };
   assert.equal(TC.dlDraftValid(ok), true);
-  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: '2026-03-08' })), true,
-    'a zero-length caution period is the default, not a fault');
 
-  // the format test is the load-bearing half: '' sorts BELOW every startDate,
-  // so a blank due day would pass the ordering check on its own
   assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: '' })), false,
-    'a blank due day is refused rather than reading as in order');
+    'a blank due day is refused');
   assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: undefined })), false);
   assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: '2026-3-10' })), false);
   assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: 'nonsense' })), false);
-  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { date: '2026-03-07' })), false,
-    'a due day before the caution start is the inverted span, refused');
 
   // everything dlValid already refuses, it still refuses through this door
   assert.equal(TC.dlDraftValid(Object.assign({}, ok, { title: '  ' })), false);
   assert.equal(TC.dlDraftValid(Object.assign({}, ok, { time: '9:00' })), false);
-  assert.equal(TC.dlDraftValid(Object.assign({}, ok, { startDate: undefined })), false);
+  assert.equal(TC.dlDraftValid(null), false);
 });
 
-test('dlDayCount survives month, year and DST boundaries', () => {
-  const n = (startDate, date) => TC.dlDayCount({ startDate, date });
-  assert.equal(n('2026-03-08', '2026-03-10'), 3, 'inclusive of both ends');
-  assert.equal(n('2026-03-10', '2026-03-10'), 1);
-  assert.equal(n('2026-02-26', '2026-03-02'), 5, 'across a non-leap February');
-  assert.equal(n('2024-02-26', '2024-03-02'), 6, 'across a leap February');
-  assert.equal(n('2025-12-30', '2026-01-02'), 4, 'across a year boundary');
-  assert.equal(n('2026-01-01', '2026-12-31'), 365);
-  assert.equal(n('2024-01-01', '2024-12-31'), 366);
-  // Northern-hemisphere DST transitions. Parsing at T12:00:00 is what keeps a
-  // 23- or 25-hour day from rounding into the wrong number of days.
-  assert.equal(n('2026-03-07', '2026-03-09'), 3, 'across US spring-forward');
-  assert.equal(n('2026-10-31', '2026-11-02'), 3, 'across US fall-back');
-  assert.equal(n('2026-03-28', '2026-03-30'), 3, 'across EU spring-forward');
-  assert.equal(n('2026-04-04', '2026-04-06'), 3, 'across southern-hemisphere transitions');
+test('dayShift crosses month, year, leap-day and DST boundaries', () => {
+  assert.equal(TC.dayShift('2026-03-10', -3), '2026-03-07');
+  assert.equal(TC.dayShift('2026-03-02', -4), '2026-02-26', 'across a non-leap February');
+  assert.equal(TC.dayShift('2024-03-02', -5), '2024-02-26', 'across a leap February');
+  assert.equal(TC.dayShift('2026-01-02', -3), '2025-12-30', 'across a year boundary');
+  assert.equal(TC.dayShift('2026-03-09', -2), '2026-03-07', 'across US spring-forward');
+  assert.equal(TC.dayShift('2026-11-02', -2), '2026-10-31', 'across US fall-back');
+  assert.equal(TC.dayShift('2026-03-30', -2), '2026-03-28', 'across EU spring-forward');
+  assert.equal(TC.dayShift('2026-04-06', -2), '2026-04-04', 'across southern-hemisphere transitions');
+  assert.equal(TC.dayShift('2026-03-10', 0), '2026-03-10');
+  assert.equal(TC.dayShift('nonsense', -1), null, 'and a malformed day yields null, never a Date');
+  assert.equal(TC.dayShift('', -1), null);
 });
 
-/* A guard, not a feature. Nothing validates startDate <= date on a STORED
-   record — schema.js checks each date's format independently — so the only
-   thing keeping an inverted span out of the data is that every authoring path
-   refuses to write one. This pins what such a record would actually do if one
-   ever arrived, which is why that refusal has to stay at the writers:
-   the run-up silently vanishes on every surface, and dlDayCount reports a
-   nonsense length that documentations.html renders verbatim. */
-test('an inverted span is inert rather than explosive, which is why writers must refuse it', () => {
-  const inverted = { date: '2026-03-08', startDate: '2026-03-10' };
-  const slot = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-08', { startDate: '2026-03-10' })] });
+/* A guard, and the reason the whole inverted-span hazard class is gone. The
+   old contract had TWO stored dates with an ordering rule between them, which
+   nothing validated on a stored record; an inverted pair silently erased the
+   run-up on all five surfaces and soft-locked an edit form. A chosen day list
+   cannot be inverted — there is no second date — and any entry that would have
+   been out of order is dropped by the resolver instead. */
+test('GUARD: nothing a caution list can hold reproduces the inverted span', () => {
+  const backwards = { date: '2026-03-08', cautionDates: ['2026-03-10', '2026-03-09'] };
+  const slot = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-08', { cautionDates: ['2026-03-10'] })] });
 
-  assert.equal(TC.dlDayCount(inverted), -1, 'a negative length, not NaN — the dates are well-formed');
-  assert.ok(!Number.isNaN(TC.dlDayCount(inverted)), 'NaN is reserved for a MALFORMED date');
+  assert.deepEqual(TC.dlCautionDays(backwards), [],
+    'days at or after the due day are dropped, not stored as a negative span');
+  assert.equal(TC.dlCautionCount(backwards), 0, 'a count, never a negative number');
+  assert.equal(TC.dlStart(backwards), '2026-03-08', 'and the due day is still the earliest day');
   for (const ds of ['2026-03-07', '2026-03-08', '2026-03-09', '2026-03-10', '2026-03-11']) {
-    assert.equal(TC.dlInCaution(inverted, ds), false, 'no day can satisfy ds >= start && ds <= date');
-    assert.deepEqual(ids(TC.buildDaySchedule(slot, ds).deadlinesCaution), [],
-      'so the run-up disappears entirely rather than warning on the wrong days');
+    assert.equal(TC.dlInCaution(backwards, ds), false);
+    assert.deepEqual(ids(TC.buildDaySchedule(slot, ds).deadlinesCaution), []);
   }
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-08').deadlines), ['d'],
-    'the deadline itself is still drawn on its due day, so the damage is silent');
-  assert.deepEqual(TC.daysBetween('2026-03-10', '2026-03-08'), [],
-    'and the range walk bails instead of spinning');
-  assert.equal(TC.dlValid({ title: 'x', time: '09:00', startDate: '2026-03-10' }, '2026-03-08'), false,
-    'dlValid is the one check standing between a draft and this state');
+    'the deadline itself is still drawn on its due day');
+  // and the writer cannot put one back
+  assert.deepEqual(TC.dlWithCautionDays(backwards, ['2026-03-10']).cautionDates, []);
 });
 
 // ── MG focus carry-forward ─────────────────────────────────────────────────

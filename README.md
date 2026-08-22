@@ -65,7 +65,7 @@ The Universal calendar is a month grid with a legend, a today highlight, milesto
 
 **Clicking a day** opens a read-only preview of that day's schedule, mirroring the Progress Schedule day view: a 00:00–24:00 timeline at 28px/hour with blocks positioned by time and duration, overlapping blocks split side by side using the same connected-component algorithm as `SchedulePanel`, plus a strip above it for MG focus (with the same 30-day carry-forward and `↑ carried` hint as Progress), SIR sessions due that day (shown on `finishDate` when done, skipped sessions excluded), calendar notes, and deadlines. The preview has no handlers or inputs and never writes to `track_db`. A `→` button beside the date opens `progress.html?date=YYYY-MM-DD#schedule`, which loads the Schedule tab in day mode focused on that date; the date rides in the query string so the existing `#hash` tab routing is untouched. A `×` button beside it closes the day again.
 
-**Deadlines** appear in that strip as red `⏰ HH:MM Title` chips on their due day, followed by amber `! Title` chips for any caution period still running through the day (the due day itself is not repeated as a caution, and a ticked deadline contributes no `!` at all — its due chip turns green, struck through, with a `✓`). Both kinds are links to `progress.html?date=<due day>&dl=<id>#schedule`, which opens that deadline's popup in the Schedule — always the **due** day, so a `!` three weeks out still leads to the thing it is warning about rather than to the day it sits on. Hovering a note or deadline shows where it came from — "Added in the Schedule", or the documentation page that added it. The Home calendar stays read-only: it links out to where a deadline is edited rather than editing one itself, so provenance is a tooltip here while Progress and Documentations render it as a link.
+**Deadlines** appear in that strip as red `⏰ HH:MM Title` chips on their due day, followed by amber `! Title` chips on each day the user chose as a caution day (the due day itself is never also a caution day, and a ticked deadline contributes no `!` at all — its due chip turns green, struck through, with a `✓`). Both kinds are links to `progress.html?date=<due day>&dl=<id>#schedule`, which opens that deadline's popup in the Schedule — always the **due** day, so a `!` three weeks out still leads to the thing it is warning about rather than to the day it sits on. Hovering a note or deadline shows where it came from — "Added in the Schedule", or the documentation page that added it. The Home calendar stays read-only: it links out to where a deadline is edited rather than editing one itself, so provenance is a tooltip here while Progress and Documentations render it as a link.
 
 The aggregation behind this calendar lives in `calendar-core.js`, shared with the calendar blocks in Documentations. Home renders all of it — it passes no filter set.
 
@@ -174,7 +174,7 @@ Current scheduling behavior includes:
 - MM schedule entries.
 - MG schedule entries.
 - Calendar notes.
-- Deadlines with caution periods.
+- Deadlines with hand-picked caution days.
 - Source pins connected to scheduled work.
 - Drag, touch, expansion, and near-edge interaction behavior.
 - A locally stored priority matrix.
@@ -185,80 +185,111 @@ start to the `00:00`–`23:55` range, so every hour of the day is a valid drop t
 `12am` through `11pm`.
 
 **Deadlines** are a separate slot field from calendar notes. A deadline is due on one date at a
-required time, and carries a required caution-period start date, a title, and an optional
-description:
+required time, and carries a title, an optional description, and the list of days it warns on:
 
 ```js
-{ id, date: 'YYYY-MM-DD', time: 'HH:MM', startDate: 'YYYY-MM-DD', title, detail, createdAt, done,
-  blockOff, blockDuration, blockTime, blockDate, parts }  // all optional — see "Schedule blocks" below
+{ id, date: 'YYYY-MM-DD', time: 'HH:MM', cautionDates: ['YYYY-MM-DD', …], title, detail, createdAt,
+  done, blockOff, blockDuration, blockTime, blockDate, parts }  // all optional — see "Schedule blocks" below
 ```
 
-The caution period runs `startDate` through `date` **inclusive**; `startDate` defaults to the due day,
-so the minimum period is that single day and a brand-new deadline marks no run-up until one is chosen.
-Because both are `'YYYY-MM-DD'` strings, membership is a plain lexicographic comparison (`inCaution` in
-`SchedulePanel`) and needs no date arithmetic, so it does not drift across DST, a month boundary, or a
-year boundary. A deadline with no `startDate` — for instance one hand-edited out of an export — falls
-back to a one-day caution period rather than failing.
+**Caution days are chosen one by one, not derived from a span.** `cautionDates` holds exactly the days
+the user picked; the gaps between them are ordinary days and carry no mark. Every entry must fall
+strictly **before** the due day, which is drawn red on every surface and is never also drawn amber. A
+deadline with no `cautionDates` warns on no day at all, which is what every creation path produces.
 
-`deadlinesCautionOn(ds)` in `SchedulePanel` returns the **run-up only**: it excludes the due day, which
-is already drawn as the deadline itself, and it excludes any deadline that has been ticked. It matches
-`deadlinesCaution` in `calendar-core.js`, which applies the same pair. Every surface reads the run-up
-through that one helper rather than filtering at each call site.
+`TrackCalendar.dlCautionDays` is the one resolver, with the documented twin in `progress.html`, which
+does not load `calendar-core.js`. It sorts, de-duplicates, and drops anything malformed or on/after the
+due day, so a hand edit, an import or a sync can put nothing on screen that does not belong there.
+Because it drops the due day itself, the `d.date !== ds` test that every caution filter used to repeat
+is gone — the rule is now structurally impossible to forget at a call site, which is how it was
+forgotten once before.
+
+Two storage rules follow, and both are load-bearing:
+
+- **`cautionDates: []` is a real stored value, not an absence.** Clearing every day writes the empty
+  list rather than deleting the key. This is deliberately the opposite of `time` and `blockTime`, and
+  the reason is the legacy branch below: a deleted key would fall through to it and resurrect the span
+  the user just cleared.
+- **Every write of `cautionDates` deletes `startDate` in the same spread.** `TrackCalendar.dlWithCautionDays`
+  is the one writer and does both, so a record migrates by the act of being edited.
+
+**The legacy `startDate` span.** Before this, a deadline stored one `startDate` and every day through
+the due day was a caution day. `progress.html` carries a one-time migration that converts every stored
+deadline and removes `startDate`; its guard is the **presence** of that key, so it is idempotent by
+construction and needs no `schemaVersion`. A record it has not reached is still read correctly:
+`dlCautionDays` expands the old span on the fly. That branch is **not** dead code and must not be
+tidied away — an old export imported later, a second device still running the previous version, a
+hand-edited file, and a migration write the quota refused all deliver a `startDate` record, and none of
+them may lose its run-up. It is also what makes a refused migration write harmless rather than data
+loss.
+
+`deadlinesCautionOn(ds)` in `SchedulePanel` returns the **chosen days only**, and only while the
+deadline is still outstanding. It matches `deadlinesCaution` in `calendar-core.js`. Every surface reads
+them through one of those two helpers rather than filtering at each call site.
 
 Deadlines are created in Schedule → CALENDAR, next to date notes: a `⏰` hover button in each month
 day cell, and a `+` on the DEADLINES header of the selected-day panel. Both open an inline composer
 carrying a `Due date` row of its own, seeded to the cell it was opened on, so a deadline can be filed
-for any day without navigating there first. Save is blocked until the title, the due time, a
-well-formed due date, and a caution start on or before it are all present. Filing one on another day
-moves the Schedule to that day, so the new deadline is never written out of sight. In the month grid a due day shows a red `⏰ HH:MM Title` line and every other caution day
-shows an amber `! Title` line. The selected-day panel lists deadlines due that day as editable rows
-(double-click to edit, `×` to delete) and caution-only deadlines as read-only amber rows.
+for any day without navigating there first. Save is blocked until the title, the due time and a
+well-formed due date are all present. **Neither composer sets caution days** — a new deadline has
+none, and they are chosen afterwards in the popup, which is the only surface that can see the prep a
+day already holds. Filing one on another day moves the Schedule to that day, so the new deadline is
+never written out of sight. In the month grid a due day shows a red `⏰ HH:MM Title` line and every
+chosen caution day shows an amber `! Title` line. The selected-day panel lists deadlines due that day
+as editable rows (double-click to edit, `×` to delete) and caution-day deadlines as read-only amber
+rows.
 
 In Schedule → TIMELINE, a deadline draws a **red line across its day column at its due time**, on its
 own date only, with a clickable diamond and a `HH:MM Title` label. The line paints above every block
 state — normal, selected, and picked-up — so a task block can never cover it; its full-width hairline
 is click-through, so only the diamond and the label take pointer events and a block underneath stays
-draggable and resizable. Every other day of the caution period instead shows an amber `!` chip in the
-day header, beside the 📌 note chips; the due day shows the red line alone, never both. The red line,
-the `!` chips, the month-cell lines, and the caution rows all open the same deadline popup.
+draggable and resizable. Each chosen caution day instead shows an amber `!` chip in the day header,
+beside the 📌 note chips; the due day shows the red line alone, never both. The red line, the `!`
+chips, the month-cell lines, and the caution rows all open the same deadline popup.
 
-**Choosing the caution period.** The popup sets it directly, in its read view rather than behind
-`Edit`: a `Caution from` date picker capped at the due day, `−3d` / `−7d` / `−14d` quick-sets, a
-`reset` that returns the start to the due day, and a live `→ due-date · N days` readout. Each pick
-writes `startDate` on its own, spreading the stored record so `docPageId`, `createdAt` and any field a
-later version adds survive. The picker **refuses** rather than writes a cleared value or a start after
-the due day, so `startDate` is never blank and never inverted; `reset` is what undoes a caution
-period. `Edit` still exists for changing the time, title and description together, and carries the
-same field.
+**Choosing the caution days.** The popup does it on a **calendar**, in its read view rather than
+behind `Edit`. A compact month grid opens on the due day's month with `‹ ›` navigation; clicking a day
+toggles it and writes immediately, and a `N caution days · due <date>` readout tracks the count. Days
+on or after the due day are disabled, so the due day can never also be amber. Days already holding
+this deadline's prep are underlined, and beneath the grid `+3d` / `+7d` / `+14d` **union** the last n
+days into whatever is already picked — additive, so they can only add a mark and need no confirmation.
+`clear all` removes every day and **asks first**, being the one destructive control here.
 
-**Moving the due day.** `Edit` also carries a `Due date` row, above `Due time`. It is the only place
-an **existing** deadline's date can change: moving one has to check the prep already placed inside its
-caution period, and this is the one writer that does. The two composers type a due date only while
-creating, where there is no placed prep to strand; both edit forms — the day-cell composer's and the
-Documentations one's — still take the day from the record. The two date fields cap each other from
-opposite sides: `Due date` will not go below the caution start, `Caution from` will not go above the due day,
-and because both read the draft rather than the stored record, the pair can be moved in either order
-inside one edit. An out-of-order or cleared date is **refused** — Save is disabled and the form says
-which — rather than repaired: the caution start is a period the user chose and is never clamped or
-shifted to make room for a new due day. Saving keeps the record itself, so `createdAt`, `docPageId`,
-the tick and above all the **id** survive, and every `progress.html?date=…&dl=…` link still opens the
-deadline even though its `date` parameter now names the old day. The Schedule follows the move: the
-timeline re-anchors and the month grid opens on the new month, and a day panel that was already open
-moves to the new due day while a closed one stays closed.
+**Un-picking a day that holds prep is refused**, with the day named, and nothing is written. Work the
+user placed by hand is never moved or dropped for them; they move the block and come back. The check
+is `dlStrandedBlockDays` against the proposed set — the same single definition the Edit form uses, so
+the two cannot drift.
 
-That refusal is load-bearing rather than fussy. Nothing validates `startDate <= date` on a *stored*
-record — `schema.js` checks each date's format on its own — and an inverted span disables the
-Documentations edit form for that deadline, whose Save is gated on `dlValid` against the stored
-caution start. Every writer of `date` therefore carries the ordering check itself, through one helper:
-`dlDraftValid` — `TrackCalendar.dlDraftValid` in `calendar-core.js`, with the documented second copy in
-`progress.html`, which does not load that file. It tests the draft's own date for format first, because
-a blank date sorts below every caution start and would otherwise read as in order.
+`Edit` still exists for changing the due date, time, title and description together, and carries no
+caution field of its own.
+
+**Moving the due day.** `Edit` carries a `Due date` row, above `Due time`. It is the only place an
+**existing** deadline's date can change: moving one has to refuse a move that orphans a chosen caution
+day or strands placed prep, and this is the one writer that does. The two composers type a due date
+only while creating, where there is neither. The due day moves **alone** — the chosen days are never
+rewritten to make room, because a day the user picked is not ours to drop.
+
+Two refusals guard it, each with its own message. A due day that would land on or before a chosen day
+would silently delete that day, so it is **refused** and the days are **named**. A due day that would
+leave already-placed prep on a day the deadline no longer occupies is refused the same way. Either way
+Save is disabled and the form says which; nothing is clamped, shifted or dropped. Saving keeps the
+record itself, so `createdAt`, `docPageId`, `cautionDates`, the tick and above all the **id** survive,
+and every `progress.html?date=…&dl=…` link still opens the deadline even though its `date` parameter
+now names the old day. The Schedule follows the move: the timeline re-anchors and the month grid opens
+on the new month, and a day panel that was already open moves to the new due day while a closed one
+stays closed.
+
+`dlDraftValid` — `TrackCalendar.dlDraftValid`, with the documented second copy in `progress.html` —
+remains the format gate on a typed due day, so a blank field can never reach storage. The old
+`startDate <= date` ordering rule is gone with `startDate`: there is no second stored date left to put
+out of order, and with it goes the whole inverted-span hazard class that used to soft-lock the
+Documentations edit form.
 
 **Ticking a deadline.** A deadline carries an optional `done` flag, and ticking it makes every `!` it
-puts on its run-up disappear — the month grid, the timeline day headers, the selected-day panel, the
-Home calendar and any Documentations calendar block — while the deadline itself stays on its due day in
-green with a `✓` and a struck-through title. Nothing is deleted and the caution period is not rewritten:
-`dlDone` only suppresses the run-up's *rendering*, so unticking restores exactly the same `!` days.
+puts on its chosen days disappear — the month grid, the timeline day headers, the selected-day panel,
+the Home calendar and any Documentations calendar block — while the deadline itself stays on its due day
+in green with a `✓` and a struck-through title. Nothing is deleted and the chosen days are not rewritten:
+`dlDone` only suppresses their *rendering*, so unticking restores exactly the same `!` days.
 Absence of the key is "not done", so no existing deadline needed a migration.
 
 The tick is in the popup, on the selected-day panel row as a checkbox, and on a Documentations calendar
@@ -294,15 +325,17 @@ already visible, and taking a block off the grid never makes the item disappear.
 and a `date` on a part puts that one step somewhere else again — so a deadline's prep can live on an
 earlier caution day, or be split across several. The item's chip, marker, due line and caution
 run-up all stay on the item's own `date` regardless. A deadline's block and every one of its parts
-must sit **inside its caution period** (`startDate` through `date`): a horizontal drag is clamped to
-that window, the task-day picker is capped to it, and an edit to `startDate` or `date` that would
-strand already-placed prep is **refused** with the offending day named — in both the Progress popup
-and the Documentations form. Nothing here moves or clamps a day the user chose; the user moves the
-block and comes back. A day note's block has no such restriction and may go anywhere.
+must sit on a day the deadline **occupies** — one of its chosen caution days, or the due day itself.
+That is set membership, not a range: a day that merely falls between two chosen ones is outside it. A
+horizontal drag SNAPS to the nearest allowed day, the task-day picker refuses anything outside the set,
+and un-picking a caution day or moving the due day in a way that would strand already-placed prep is
+**refused** with the offending day named. Nothing here moves or clamps a day the user chose; the user
+moves the block and comes back. A day note's block has no such restriction and may go anywhere.
 
 A drag therefore writes `blockDate`/`blockTime` — or a part's own `date`/`time` — and **never** the
 item's `date` or `time`. That is load-bearing for a deadline: moving a *due* day remains the sole
-business of its edit form, which is the one path that checks `startDate <= date`. A run-up that
+business of its edit form, which is the one path that refuses an orphaned caution day and stranded
+prep. A run-up that
 would begin before `00:00` is clipped at the top of the grid and shortened, so it still ends on its
 due time rather than being pushed past it.
 
@@ -316,8 +349,9 @@ from the item and nowhere else), and carries:
 - `＋`, which opens a task composer: a name, a **day** and an optional time, then `Add`. Tasks are
   stored in `parts`, mirroring what `✂` already does to a scheduled goal task. A task inherits the
   parent block's start and length unless given its own, and its day is written only when it differs
-  from the parent block's. On a deadline the day picker is capped to the caution period and `Add` is
-  refused outside it. While an item has tasks, **the tasks replace the parent block** on the grid,
+  from the parent block's. On a deadline `Add` is refused unless the day is a chosen caution day or
+  the due day; `min`/`max` narrow the native picker, but with a sparse set they cannot express the
+  gaps, so `dlBlockDayValid` is the gate. While an item has tasks, **the tasks replace the parent block** on the grid,
   exactly as a goal task whose child sits on the same day is represented by the child. Each task
   gets its own checkbox, and removing the last one deletes the key so the parent block returns.
 - `remove from schedule`, which sets `blockOff` and **deletes nothing** — the length, day and anchor
@@ -372,19 +406,19 @@ Pages are stored in the per-slot `docPages` field, and day notes and deadlines a
 
 A calendar shows the same aggregation as the Universal calendar on Home — month grid, today highlight, milestone period bars, category dots, and a click-to-open day detail with the read-only day timeline — plus the two things a documentation page can author itself: **day notes** and **deadlines**. Both are written into the shared slot arrays, so they appear on the Progress Schedule and the Home calendar like any others.
 
-**Authoring.** `+ note` and `+ deadline` on the selected day's panel open an inline composer. The deadline composer carries a `Due on` date of its own, seeded to the selected cell and capped below by the caution start, so a deadline can be filed for any day from any page; filing one on another day moves the calendar to that day. Its **edit** form has no such field — an existing deadline's due day still moves only from the Progress popup, the one writer that checks the prep placed inside its caution period. Save is gated on `TrackCalendar.dlDraftValid` while composing and on `dlValid` while editing, and an out-of-order or blank date is refused with the reason shown rather than repaired.
+**Authoring.** `+ note` and `+ deadline` on the selected day's panel open an inline composer. The deadline composer carries a `Due on` date of its own, seeded to the selected cell, so a deadline can be filed for any day from any page; filing one on another day moves the calendar to that day. Its **edit** form has no date field at all — an existing deadline's due day still moves only from the Progress popup, the one writer that refuses an orphaned caution day and stranded prep. This page also **cannot choose caution days**: that needs the same prep-aware refusal, and a second writer of it is the duplication this project keeps paying for. Save is gated on `TrackCalendar.dlDraftValid` while composing and on `dlValid` while editing, and a blank date is refused with the reason shown rather than repaired.
 
 **Filtering.** A new calendar shows everything. The filter bar switches any of thirteen categories off: Kolb / MG change, LIN record, Floating note, Source dump, Milestones, Goal tasks & routines, Supporting actions, MM sessions, SIR sessions, MG focus, Day notes, Deadlines, and **Documentation**. Everything added from Documentations — notes *and* deadlines, from any page — answers to that single Documentation key, and correspondingly the Day notes and Deadlines keys cover only items authored in the Schedule. The block stores the switched-**off** keys (`hidden: []` means show all), so a category added later is on by default for calendars that already exist. "Show all" clears the set. Filters are per block; Home and the Schedule are unaffected.
 
 **Ownership.** Items added from Documentations carry `docPageId`, the id of the page that added them. A calendar highlights and exclusively edits the items within its scope, which the header button toggles between **this page** and **this page + sub-pages** (the default, resolved through the same descendant walk the sidebar drag uses). Items from any other documentation page stay visible but read-only, with a `📄 <page title>` chip that opens that page. Items added in the Schedule are visible and read-only with no chip.
 
-Days carrying an owned item get an indigo edge bar on the month grid. For a deadline that means its due day; the days of its caution run-up get the same bar in amber at reduced opacity, so a three-week run-up reads as one approaching deadline rather than as twenty-one due dates. A ticked deadline keeps its due-day bar and loses the amber ones, so the cell highlighting and the `!` rows disappear together.
+Days carrying an owned item get an indigo edge bar on the month grid. For a deadline that means its due day; each of its chosen caution days gets the same bar in amber at reduced opacity, so a long run-up reads as one approaching deadline rather than as many due dates. Days between two chosen ones get no bar. A ticked deadline keeps its due-day bar and loses the amber ones, so the cell highlighting and the `!` rows disappear together.
 
 Deleting a documentation page **does not** delete the notes and deadlines it authored — losing scheduled work to a page delete would be data loss. The delete confirmation says how many items will stay behind. Those items keep their `docPageId` and read as "source page removed". They are **read-only in every calendar block**, including this one: an item whose owner is gone belongs to no page, and handing it to whichever calendar happens to display it would invent an ownership the user never expressed. It stays fully editable from the Progress Schedule, which is the surface that owns these arrays.
 
-Deadlines authored here use the same rules as the Schedule: a title, an `HH:MM` due time, and a caution start on or before the due day (defaulting to the due day itself). An owned deadline's row also carries a `✓` / `↺` tick button beside its `✎` and `✕`, which is the same `done` flag the Schedule sets; a ticked row turns green and struck through, and its caution rows vanish from the run-up days.
+Deadlines authored here use the same rules as the Schedule: a title and an `HH:MM` due time. They are created with no caution days, and the row shows how many have since been chosen in the popup. An owned deadline's row also carries a `✓` / `↺` tick button beside its `✎` and `✕`, which is the same `done` flag the Schedule sets; a ticked row turns green and struck through, and its caution rows vanish from the chosen days.
 
-A caution run-up day lists the deadline as a read-only amber `!` row, and that row's text is a button leading to the deadline's **due** day — changing month if it falls in another one. Ownership is unchanged by the jump: the due day is where the page that authored the deadline gets its `✎`/`✕`, and where a stranger's deadline still shows none. The `📄` origin chip beside the row keeps its own job of opening the source page, which is why the row's text is the button rather than the whole row.
+A chosen caution day lists the deadline as a read-only amber `!` row, and that row's text is a button leading to the deadline's **due** day — changing month if it falls in another one. Ownership is unchanged by the jump: the due day is where the page that authored the deadline gets its `✎`/`✕`, and where a stranger's deadline still shows none. The `📄` origin chip beside the row keeps its own job of opening the source page, which is why the row's text is the button rather than the whole row.
 
 Day notes take an **optional** time. Left blank — the default, and what every existing note has — the note is a chip in the day strip, as before. Given an `HH:MM`, it is positioned on the hour grid instead and disappears from the strip, so it is never shown twice. Clearing the field removes the time again. Timed notes are positioned but not yet draggable; they are edited through the same popup as any other note.
 
@@ -865,7 +899,7 @@ still apply their own `slot.goals || []` fallbacks, and the per-page field-prese
 migration IIFEs are unchanged — centralizing those is `NOTES.md` Proposal 2, along with
 `schemaVersion`.
 
-Six item-level fields inside `calendarNotes` and `deadlines` are optional, and
+Nine item-level fields inside `calendarNotes` and `deadlines` are optional, and
 their **absence carries meaning**:
 
 - `docPageId` names the `docPages` entry that authored the item. Absent means the
@@ -876,8 +910,17 @@ their **absence carries meaning**:
   writer must **omit the key** rather than store `''`, and clearing the field in
   the UI deletes the key. `deadlines` have always had a required `time`; this is
   the note-only addition.
+- `cautionDates` (`deadlines` only) is the list of days the deadline warns on,
+  chosen one by one. Absent means the record predates the choice: its days come
+  from the legacy `startDate` span instead, expanded by `dlCautionDays`. An
+  **empty list is a real value** meaning "no caution days", so clearing writes
+  `[]` rather than deleting the key — deleting it would fall through to that
+  legacy branch and resurrect the span. Every write of it deletes `startDate` in
+  the same spread. Validated in `schema.js` as a **warning**, alongside
+  `blockDate`: a malformed entry reaches rendering, but it holds strings rather
+  than records, so it is not the fatal class `parts` is.
 - `done` (`deadlines` only) marks the deadline as handled and suppresses its
-  caution `!` run-up everywhere. Absent means not done, and every reader goes
+  caution `!` days everywhere. Absent means not done, and every reader goes
   through `dlDone`'s `!!`, so an absent key, `false` and `undefined` are
   indistinguishable — unlike `time` there is no third state, so unticking simply
   writes `false` rather than deleting the key, and no stored deadline needed a
@@ -898,14 +941,15 @@ their **absence carries meaning**:
   note's starts at its own — so it is written only when the block is moved off
   that anchor, and `reset to due time` deletes the key rather than storing the
   value it would have computed. That is what makes reset a restore rather than a
-  recomputed guess, the same reasoning that keeps a tick from rewriting
-  `startDate`.
+  recomputed guess, the same reasoning that keeps a tick from rewriting the
+  chosen caution days.
 - `blockDate` (both) is the day the block is **drawn** on, which need not be the
   day the item belongs to. Absent means the item's own `date`. It is what lets a
   deadline's prep sit on an earlier caution day; the item's chip, marker, due
-  line and caution run-up all stay on `date` regardless. On a deadline it must
-  fall inside the caution period, enforced at every authoring path and by
-  refusing an edit that would strand it.
+  line and caution marks all stay on `date` regardless. On a deadline it must be
+  one of the chosen caution days or the due day — membership, not a range —
+  enforced at every authoring path and by refusing an un-pick or a due-day move
+  that would strand it.
 - `parts` (both) holds the tasks an item was dissected into. Absent means not
   dissected, and removing the last one deletes the key so the parent block comes
   back rather than the item being left "dissected into nothing". A part may carry
@@ -1035,7 +1079,7 @@ It runs three layers:
 
 | Layer | File | What it covers |
 | --- | --- | --- |
-| Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, caution ranges, deadline validation, run-ups across month/year/DST boundaries, an inverted span being inert rather than explosive, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
+| Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, the chosen-caution-day resolver and its writer, the legacy `startDate` fallback, deadline validation, `dayShift` across month/year/DST boundaries, an inverted set being impossible rather than merely inert, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
@@ -1258,13 +1302,92 @@ The committed suite is the part of this baseline a reader can reproduce:
 node tests/run.js
 ```
 
-As of 2026-08-22 that is 131 offline cases (79 in `calendar-core.test.js`, 52 in
+As of 2026-08-22 that is 140 offline cases (86 in `calendar-core.test.js`, 54 in
 `schema.test.js`, several hundred assertions) executed under five timezones from
-UTC+14 to UTC-11, plus 17 cases in `true-storage-core.test.js` and 21 in
-`graph-layout.test.js` run once — neither holds date code — plus 126 browser
-subtests in headless Chrome. Every offline suite passes, as do 119 of the 126
-browser subtests; the seven that do not are the TOUCH sidebar drag-to-nest cases,
-written ahead of the feature they describe.
+UTC+14 to UTC-11, plus 24 cases in `true-storage-core.test.js` and 21 in
+`graph-layout.test.js` run once — neither holds date code — plus 136 browser
+subtests in headless Chrome. **All 13 suites pass.**
+
+### Hand-picked caution days (2026-08-22)
+
+The slot stays at **23** fields — `cautionDates` is an item-level key inside the
+existing `deadlines` list — so the hand-written CONTRACT lists in
+`tests/schema.test.js`, `tests/browser.test.js` and `tests/lib/fixture.js` needed
+no change, which the normalize case asserts. Offline cases go from 132 to **140**
+(calendar-core 80 → 86, schema 52 → 54), swept under all five timezones with
+identical results; browser subtests go from 131 to **136**. `node tests/run.js`:
+all 13 suites pass.
+
+**Fail-first: two doctored baselines, and their failure sets are exactly
+DISJOINT.** Each `TRACK_TEST_ROOT` scratch directory held symlinks to the
+repository, a *real* copy of `tests/`, and **one** doctored file whose
+`dlCautionDays` ignored `cautionDates` and read only the legacy `startDate` span:
+
+- doctored **`calendar-core.js`** → **5** failures, every one on a read-only
+  surface: the Documentations cell bars, the Home chips, the Documentations
+  caution row, and both gap cases (`HOME` and `DOCUMENTATIONS`). All eleven
+  Progress caution cases **passed**.
+- doctored **`progress.html`** → **11** failures, every one on Progress: the
+  timeline run-up, the picker, the quick-set, `clear all`, the un-pick refusal,
+  the migration, both tick cases, both due-day-move cases, and the Progress gap
+  case. All five Home/Documentations cases **passed**.
+
+Zero overlap between the two sets. That is the whole argument for asserting each
+surface separately rather than once, and it is the direct proof that
+`progress.html` genuinely needs its own copy of the resolver. Never place either
+doctored file in the repository.
+
+**A real product defect the browser cases caught, which code reading had
+missed.** `dlStrandedBlockDays` read block days off the **stored** record. A
+deadline with no `blockDate` has its block on its own `date`, so the block moves
+*with* a due-day change and cannot be stranded by one — but the check compared
+the old block day against the new window and reported it orphaned, refusing every
+due-day move of an un-anchored deadline. That is the default shape of every
+deadline, so the feature would have shipped with due dates effectively frozen.
+Both copies now build a probe carrying the proposed `date` first, and
+`tests/calendar-core.test.js` pins it offline.
+
+**Three test defects, all of the kind worth carrying forward, and each found by
+reading the failure message rather than the pass/fail:**
+
+- The migration case seeded its second load with `db:` rather than `raw:`. The
+  value was already the serialised `track_db` string, so it was stringified a
+  second time and the byte-comparison failed on double encoding, not on the
+  migration — which was correct all along.
+- The new calendar cell for the due day was titled `Due day — …`, and three
+  existing cases count `!` marks by selecting `[title^="Due "]`. The popup's cell
+  was counted as a second deadline mark on the day underneath. The **product**
+  tooltip was changed rather than the selectors, since the picker is what
+  arrived.
+- The picker is also a `.grid.grid-cols-7`, and it renders *before* the month
+  grid in the DOM, so every bare month-grid selector read the picker's header
+  instead. They now carry `:not([data-dl-caution-cal])`.
+
+Each of these is the same lesson in a new shape: a case that fails for a reason
+other than the one it names proves nothing.
+
+What the cases assert, beyond the reversals: two **non-adjacent** days are picked
+and the gap between them stays unmarked on all three rendering surfaces,
+separately; a pick writes `cautionDates` and **deletes `startDate`** while
+`docPageId`, `createdAt`, `done`, `time` and `title` all survive; the due day and
+every later day are disabled and clicking one anyway leaves `track_db`
+byte-identical; a quick-set **unions** rather than replaces; `clear all` asks and
+**Cancel keeps every day**; un-picking a day that holds prep is refused with the
+day named while a harmless un-pick still goes through; a due-day move that would
+orphan a chosen day is refused with the days named, and one that orphans nothing
+re-enables Save; the migration converts a legacy record on first load and is a
+**no-op on the second**; neither compose form nor the Documentations edit form
+shows a caution field; and export → import carries `cautionDates` on
+`normalizeSlot`'s unknown-key path while an un-migrated record keeps its
+`startDate` unconverted.
+
+**Not covered, and weaker than the rest.** The drag path was **not** re-verified:
+the committed suite still simulates no drag, so the new nearest-allowed-day snap
+rests on code reading alone. That is the largest gap here and it is a real one.
+Also not covered: real touch hardware, the live Firebase project, print output of
+the picker, and the multi-device window where one device has migrated and another
+has not — that last one is reasoned through the resolver's legacy branch, not
+tested.
 
 Several sets of regression cases were confirmed to **fail** before their fix,
 which is what makes them evidence rather than decoration:
@@ -1438,7 +1561,7 @@ The latest commits before this documentation update show current work concentrat
 - Kolb ordering and preservation of unsaved state.
 - MG schedule layout.
 - Calendar notes.
-- Deadlines with caution periods, and a full 00:00–24:00 schedule timeline.
+- Deadlines with hand-picked caution days, and a full 00:00–24:00 schedule timeline.
 - Source visibility in Schedule.
 - Expanded and filtered task-directory views.
 - Repeated stabilization of touch schedule behavior and Firebase reload behavior.

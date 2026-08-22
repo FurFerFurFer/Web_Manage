@@ -114,41 +114,7 @@
     return [];
   }
 
-  // ── deadlines ────────────────────────────────────────────────────────────
-  // A deadline is due on `date` at `time`; its caution period runs from
-  // `startDate` through `date` inclusive. Same rules as progress.html.
-
-  const dlStart = d => d.startDate || d.date;
-  const dlInCaution = (d, ds) => ds >= dlStart(d) && ds <= d.date;
-  // Ticked: the user has handled it, so the run-up stops warning. ABSENCE is
-  // "not done" and `!!` reads an absent key, false and undefined alike, so
-  // there is no third state and no migration — every existing deadline is
-  // already correct. The tick SUPPRESSES the caution period, it does not alter
-  // it: dlStart, dlInCaution and dlDayCount are deliberately left blind to it,
-  // which is what makes unticking a restore rather than a guess.
-  const dlDone = d => !!d.done;
-  const dlByTime = (a, b) => String(a.time).localeCompare(String(b.time));
-  const dlByDate = (a, b) => a.date.localeCompare(b.date) || dlByTime(a, b);
-  const dlDayCount = d => Math.round(
-    (new Date(d.date + 'T12:00:00') - new Date(dlStart(d) + 'T12:00:00')) / 86400000
-  ) + 1;
-  // title, HH:MM, a well-formed start date, and a caution period that does not
-  // begin after the due day — identical to dlValid in progress.html
-  function dlValid(draft, dueDate) {
-    return !!String(draft.title || '').trim()
-      && /^\d{2}:\d{2}$/.test(draft.time)
-      && /^\d{4}-\d{2}-\d{2}$/.test(draft.startDate)
-      && draft.startDate <= dueDate;
-  }
-  // A draft that carries its OWN due day, for the authoring paths where the due
-  // date is typed rather than taken from the calendar cell the form was opened
-  // on. Identical to dlDraftValid in progress.html. The format check is not
-  // decoration: nothing validates `startDate <= date` on a STORED record, so
-  // every writer of `date` has to carry the ordering check itself, and a blank
-  // date would otherwise sort below every startDate and read as in-order.
-  function dlDraftValid(draft) {
-    return /^\d{4}-\d{2}-\d{2}$/.test(draft.date) && dlValid(draft, draft.date);
-  }
+  // ── local calendar day ranges ────────────────────────────────────────────
 
   // Every local calendar day from `from` through `to`, inclusive. Stepping a
   // Date anchored at noon means a 23- or 25-hour DST day can neither skip nor
@@ -167,6 +133,113 @@
       d.setDate(d.getDate() + 1);
     }
     return out;
+  }
+
+  // `days` before or after a 'YYYY-MM-DD', on the LOCAL calendar. Same
+  // T12:00:00 anchor, so a DST change in between cannot shift the result onto
+  // the neighbouring day the way a UTC-midnight parse would.
+  function dayShift(ds, days) {
+    if (!DAY_RE.test(ds || '')) return null;
+    const t = new Date(ds + 'T12:00:00');
+    t.setDate(t.getDate() + days);
+    return toDateStr(t);
+  }
+
+  // ── deadlines ────────────────────────────────────────────────────────────
+  // A deadline is due on `date` at `time`, and it warns on the days the user
+  // CHOSE — `cautionDates`, a plain list of days, not a span with a start.
+  // Same rules as progress.html, which holds a documented copy of this whole
+  // family because it does not load this file.
+
+  // THE resolver, and the only code anywhere that has heard of `startDate`.
+  //
+  // `cautionDates` is the stored choice, and an EMPTY LIST IS A REAL VALUE
+  // meaning "no caution days". That is why `Array.isArray` decides the branch,
+  // and why clearing every day writes `[]` rather than deleting the key: a
+  // deleted key falls through to the legacy branch below and would resurrect
+  // the span the user just cleared. This is deliberately the opposite of
+  // `time` and `blockTime`, where absence is the meaningful state.
+  //
+  // The legacy branch expands a pre-choice `startDate` span, and it is NOT
+  // dead code now that progress.html migrates stored records. An old export
+  // imported later, a second device still running the previous version, a
+  // hand-edited file, and a migration write the quota refused all arrive here
+  // un-migrated — and none of them may lose its run-up.
+  //
+  // The due day is filtered out HERE rather than at each call site. It is
+  // drawn red and must never also be drawn amber. That rule used to be spelled
+  // `d.date !== ds` at three separate call sites; one of them forgot it, and
+  // the timeline double-marked every due day until it was found.
+  function dlCautionDays(d) {
+    if (!d || !DAY_RE.test(d.date || '')) return [];
+    const raw = Array.isArray(d.cautionDates)
+      ? d.cautionDates
+      : (DAY_RE.test(d.startDate || '') ? daysBetween(d.startDate, d.date) : []);
+    const seen = new Set(), out = [];
+    for (let i = 0; i < raw.length; i++) {
+      const ds = raw[i];
+      if (typeof ds !== 'string' || !DAY_RE.test(ds)) continue;
+      if (ds >= d.date || seen.has(ds)) continue;
+      seen.add(ds);
+      out.push(ds);
+    }
+    return out.sort();
+  }
+  const dlCautionSet = d => new Set(dlCautionDays(d));
+  const dlInCaution = (d, ds) => dlCautionDays(d).indexOf(ds) !== -1;
+  const dlCautionCount = d => dlCautionDays(d).length;
+  // The earliest day this deadline occupies: its first chosen caution day, or
+  // the due day when it has chosen none. It is the `min` of a day picker, NOT
+  // a period boundary — with a sparse set there is no such thing, which is why
+  // membership is always tested through dlBlockDayValid and never through a
+  // comparison against this.
+  const dlStart = d => { const days = dlCautionDays(d); return days.length ? days[0] : (d && d.date); };
+
+  // THE writer, mirroring TrackTrueStorage.withTag. Two rules live here and
+  // nowhere else:
+  //
+  //   * `startDate` is deleted in the same spread, so any record this touches
+  //     is migrated by the act of being edited — and progress.html's bulk
+  //     migration is simply this function applied to every stored deadline.
+  //   * `cautionDates` is always written, even when empty. See dlCautionDays.
+  //
+  // Sanitising the result through dlCautionDays means no caller can store a
+  // duplicate, an unsorted list, a malformed day, or a day on or after the due
+  // day. Everything else is spread through untouched, so docPageId, createdAt,
+  // done, the block keys and any field a later version adds all survive.
+  function dlWithCautionDays(d, days) {
+    const next = Object.assign({}, d, { cautionDates: Array.isArray(days) ? days.slice() : [] });
+    delete next.startDate;
+    next.cautionDates = dlCautionDays(next);
+    return next;
+  }
+  const dlToggleCautionDay = (d, ds) => {
+    const days = dlCautionDays(d);
+    return dlWithCautionDays(d, days.indexOf(ds) === -1 ? days.concat([ds]) : days.filter(x => x !== ds));
+  };
+
+  // Ticked: the user has handled it, so the run-up stops warning. ABSENCE is
+  // "not done" and `!!` reads an absent key, false and undefined alike, so
+  // there is no third state and no migration — every existing deadline is
+  // already correct. The tick SUPPRESSES the chosen days, it does not alter
+  // them: dlCautionDays, dlInCaution and dlCautionCount are deliberately left
+  // blind to it, which is what makes unticking a restore rather than a guess.
+  const dlDone = d => !!d.done;
+  const dlByTime = (a, b) => String(a.time).localeCompare(String(b.time));
+  const dlByDate = (a, b) => a.date.localeCompare(b.date) || dlByTime(a, b);
+  // A title and a due time. There is no caution start to order any more, and
+  // the whole inverted-span hazard class went with it — there is no second
+  // stored date left to put out of order. Identical to dlValid in
+  // progress.html.
+  function dlValid(draft) {
+    return !!String((draft && draft.title) || '').trim()
+      && /^\d{2}:\d{2}$/.test((draft && draft.time) || '');
+  }
+  // A draft that carries its OWN due day, for the compose paths where the due
+  // date is typed rather than taken from the calendar cell the form was opened
+  // on. Identical to dlDraftValid in progress.html.
+  function dlDraftValid(draft) {
+    return DAY_RE.test((draft && draft.date) || '') && dlValid(draft);
   }
 
   // ── month dots ───────────────────────────────────────────────────────────
@@ -365,26 +438,40 @@
     return { time, duration: dur !== null ? dur : fbDur };
   }
 
-  // A deadline's prep belongs INSIDE its caution period: the run-up is work for
-  // the deadline, so it can neither start before the period the user chose nor
-  // fall after the day the thing is due. `span` is the proposed
-  // {startDate, date}, so an edit form can ask about a period it has not
-  // committed yet.
+  // A deadline's prep belongs on a day the deadline actually OCCUPIES: one of
+  // the caution days the user chose, or the due day itself. With a sparse set
+  // there is no window to compare against, so this is membership and never a
+  // range test — a `day >= dlStart(d)` anywhere would silently re-admit the
+  // gaps the user deliberately left out.
+  //
+  // `span` is the PROPOSED {cautionDates, date}, so an edit form can ask about
+  // a change it has not committed yet; each half falls back to the stored
+  // record, and a proposed `cautionDates` overrides the legacy `startDate`
+  // branch for the same reason dlCautionDays does.
   function dlBlockDayValid(d, day, span) {
-    const from = (span && span.startDate) || dlStart(d);
-    const to = (span && span.date) || (d && d.date);
-    return !!day && day >= from && day <= to;
+    if (!day) return false;
+    const probe = Object.assign({}, d);
+    if (span && Array.isArray(span.cautionDates)) probe.cautionDates = span.cautionDates;
+    if (span && span.date) probe.date = span.date;
+    return day === probe.date || dlCautionDays(probe).indexOf(day) !== -1;
   }
-  // Every block day a proposed span would leave outside that window, so an edit
+  // Every block day a proposed change would leave outside that set, so an edit
   // can be REFUSED rather than silently moving work the user placed by hand.
-  // ONE definition: both writers of `startDate`/`date` — the Progress popup's
-  // Edit form and documentations.html — call this instead of re-spelling the
-  // comparison, which is exactly the shape that cost this project the deadline
-  // caution predicate once already.
+  // ONE definition: the Progress popup's Edit form and its caution picker both
+  // call this instead of re-spelling the comparison, which is exactly the shape
+  // that cost this project the deadline caution predicate once already.
   function dlStrandedBlockDays(d, span) {
     if (!d || !blockOn(d)) return [];
-    const parts = itemParts(d);
-    const days = parts.length ? parts.map(p => partDay(p, d)) : [blockDay(d)];
+    // Block days are read off the PROPOSED record, not the stored one. An
+    // absent blockDate means the block follows the item's own `date`, so it
+    // MOVES WITH a due-day change and cannot be stranded by one; reading
+    // blockDay(d) here would report the old due day as orphaned and refuse
+    // every move of an un-anchored deadline. Only dlBlockDayValid's own probe
+    // decides membership — this probe decides which days to ask about.
+    const probe = Object.assign({}, d);
+    if (span && span.date) probe.date = span.date;
+    const parts = itemParts(probe);
+    const days = parts.length ? parts.map(p => partDay(p, probe)) : [blockDay(probe)];
     const out = [];
     days.forEach(day => {
       if (!dlBlockDayValid(d, day, span) && out.indexOf(day) === -1) out.push(day);
@@ -549,12 +636,12 @@
       calNotes: dayNotes,
       calNotesAll: dayNotes,
       deadlines: allDl.filter(d => d.date === ds && show(originKey(d, 'deadline'))).sort(dlByTime),
-      // the due day is already covered by `deadlines` — caution lists the run-up
-      // only, and a ticked deadline has no run-up left to warn about. Both tests
-      // belong HERE rather than at a call site: this predicate has one twin in
-      // progress.html and one in documentations.html, and the last time a rule
-      // was written per call site instead, the timeline was the one that missed it.
-      deadlinesCaution: allDl.filter(d => !dlDone(d) && d.date !== ds && dlInCaution(d, ds) && show(originKey(d, 'deadline'))).sort(dlByDate),
+      // the chosen days only, and a ticked deadline has no run-up left to warn
+      // about. The due day cannot appear here at all — dlCautionDays drops it,
+      // so the `d.date !== ds` clause this filter used to carry is now
+      // structurally impossible to forget. That clause was once spelled at
+      // three call sites, and the timeline was the one that missed it.
+      deadlinesCaution: allDl.filter(d => !dlDone(d) && dlInCaution(d, ds) && show(originKey(d, 'deadline'))).sort(dlByDate),
       mgs: mgIds.map(mmName),
       mgCarried: mgIds.length > 0 && !Object.prototype.hasOwnProperty.call(mgSchedule, ds)
     };
@@ -599,7 +686,14 @@
     CATS, FILTERS, MS_PALETTE, MS_MAX_LANES,
     SCHED_START_HOUR, SCHED_END_HOUR, SCHED_PX_PER_HOUR,
     flattenGoals, goalDuration, goalDone, mgsForDay, noteTimed,
-    dlStart, dlInCaution, dlByTime, dlByDate, dlDayCount, dlValid, dlDraftValid, dlDone, daysBetween,
+    daysBetween, dayShift,
+    // the ONE definition of the chosen-caution-day rules, and the one writer.
+    // dlCautionCount replaced dlDayCount rather than being renamed into it: the
+    // number changed meaning (span length including the due day → count of
+    // chosen days), and a changed meaning behind an unchanged name is worse
+    // than the churn.
+    dlCautionDays, dlCautionSet, dlCautionCount, dlWithCautionDays, dlToggleCautionDay,
+    dlStart, dlInCaution, dlByTime, dlByDate, dlValid, dlDraftValid, dlDone,
     // the ONE definition of the day-note / deadline block rules. progress.html
     // holds a second copy only because it does not load this file, the same
     // documented exception it relies on for noteTimed and dlDone; the two must

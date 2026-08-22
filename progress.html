@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%234f46e5%22/%3E%3Cpath d=%22M9 10h14M16 10v13%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=5"></script>
+  <script src="schema.js?v=6"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -267,8 +267,8 @@
     // dlBlockDuration / noteBlockSpan / dlBlockSpan / blockDay / partDay /
     // itemParts / partSpan / dlBlockDayValid / dlStrandedBlockDays in
     // calendar-core.js, which this page does NOT load — the same documented
-    // exception that twins noteTimed above and dlStart, dlDone, dlValid and
-    // dlDayCount inside SchedulePanel. The copies are now IDENTICAL in
+    // exception that twins noteTimed above and dlDone, dlValid and
+    // dlDraftValid inside SchedulePanel. The copies are now IDENTICAL in
     // behaviour: they used to differ on purpose (an unscheduled timed note was
     // a point marker here and a block there), and that divergence is gone
     // because a note now keeps its marker AND its block on every surface.
@@ -355,24 +355,155 @@
       const dur = blockMins(p && p.blockDuration);
       return { time, duration: dur !== null ? dur : fbDur };
     }
-    // A deadline's prep belongs INSIDE its caution period. `span` is the
-    // proposed {startDate, date}, so an edit form can ask about a period it has
-    // not committed yet — and refuse rather than silently moving placed work.
+    // ── chosen caution days ─────────────────────────────────────────────────
+    // A deadline warns on the days the user CHOSE — `cautionDates`, a plain
+    // list of days, not a span with a start. Copies of dlCautionDays /
+    // dlCautionSet / dlInCaution / dlCautionCount / dlStart /
+    // dlWithCautionDays / dlToggleCautionDay / dlBlockDayValid /
+    // dlStrandedBlockDays in calendar-core.js, which this page does NOT load —
+    // the same documented exception as the block helpers above. The two copies
+    // must AGREE, and tests/browser.test.js asserts the Progress surfaces
+    // separately from the Home and Documentations ones for exactly that reason.
+    //
+    // `cautionDates` is the stored choice, and an EMPTY LIST IS A REAL VALUE
+    // meaning "no caution days" — which is why Array.isArray decides the branch
+    // and why clearing writes `[]` rather than deleting the key. A deleted key
+    // falls through to the legacy branch and would resurrect the span the user
+    // just cleared. Deliberately the opposite of `time` and `blockTime`.
+    //
+    // The legacy branch expands a pre-choice `startDate` span and is NOT dead
+    // code: an old export imported later, a second device still on the previous
+    // version, and a migration write the quota refused all arrive un-migrated.
+    //
+    // The due day is dropped HERE and not at any call site, so it can be drawn
+    // red without ever also being drawn amber. That rule used to be spelled
+    // `d.date !== ds` at three call sites and one of them forgot it.
+    function dlCautionDays(d) {
+      if (!d || !BLOCK_DAY_RE.test(d.date || '')) return [];
+      const raw = Array.isArray(d.cautionDates)
+        ? d.cautionDates
+        : (BLOCK_DAY_RE.test(d.startDate || '') ? daysBetweenLocal(d.startDate, d.date) : []);
+      const seen = new Set(), out = [];
+      for (let i = 0; i < raw.length; i++) {
+        const ds = raw[i];
+        if (typeof ds !== 'string' || !BLOCK_DAY_RE.test(ds)) continue;
+        if (ds >= d.date || seen.has(ds)) continue;
+        seen.add(ds);
+        out.push(ds);
+      }
+      return out.sort();
+    }
+    const dlCautionSet = d => new Set(dlCautionDays(d));
+    const dlInCautionDay = (d, ds) => dlCautionDays(d).indexOf(ds) !== -1;
+    const dlCautionCount = d => dlCautionDays(d).length;
+    // The earliest day the deadline occupies: its first chosen day, or the due
+    // day when it has none. The `min` of a day picker, NOT a period boundary —
+    // membership is always tested through dlBlockDayValid, never by comparing
+    // against this, or the gaps the user left out would be silently re-admitted.
+    const dlStartDay = d => { const days = dlCautionDays(d); return days.length ? days[0] : (d && d.date); };
+
+    // THE writer. `startDate` is deleted in the same spread, so a record is
+    // migrated by the act of being edited — the bulk migration below is this
+    // function applied to every stored deadline. Everything else is spread
+    // through, so docPageId, createdAt, done and the block keys all survive.
+    function dlWithCautionDays(d, days) {
+      const next = Object.assign({}, d, { cautionDates: Array.isArray(days) ? days.slice() : [] });
+      delete next.startDate;
+      next.cautionDates = dlCautionDays(next);
+      return next;
+    }
+    const dlToggleCautionDay = (d, ds) => {
+      const days = dlCautionDays(d);
+      return dlWithCautionDays(d, days.indexOf(ds) === -1 ? days.concat([ds]) : days.filter(x => x !== ds));
+    };
+
+    // Every local calendar day from `from` through `to`, inclusive. Anchored at
+    // noon so a 23- or 25-hour DST day can neither skip nor repeat a date.
+    // Twin of TrackCalendar.daysBetween; the 4000 cap and the format guard are
+    // what stop a malformed `to` spinning forever.
+    function daysBetweenLocal(from, to) {
+      const out = [];
+      if (!BLOCK_DAY_RE.test(from || '') || !BLOCK_DAY_RE.test(to || '') || from > to) return out;
+      const d = new Date(from + 'T12:00:00');
+      while (out.length < 4000) {
+        const ds = toDateStr(d);
+        if (ds > to) break;
+        out.push(ds);
+        d.setDate(d.getDate() + 1);
+      }
+      return out;
+    }
+
+    // Whole local calendar days from `b` to `a`, signed. Both ends parsed at
+    // noon so a DST shift between them cannot round to the wrong day. Used to
+    // pick the NEAREST allowed day when a drag lands in a gap between two
+    // chosen ones; string comparison can order days but cannot measure them.
+    function dayGap(a, b) {
+      if (!BLOCK_DAY_RE.test(a || '') || !BLOCK_DAY_RE.test(b || '')) return Infinity;
+      return Math.round((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 86400000);
+    }
+
+    // A deadline's prep belongs on a day the deadline actually OCCUPIES: a
+    // chosen caution day, or the due day. Membership, never a range test — a
+    // `day >= dlStartDay(d)` here would silently re-admit the gaps. `span` is
+    // the proposed {cautionDates, date}, so an edit or an un-pick can ask about
+    // a change it has not committed yet, and refuse rather than move placed work.
     function dlBlockDayValid(d, day, span) {
-      const from = (span && span.startDate) || (d && (d.startDate || d.date));
-      const to = (span && span.date) || (d && d.date);
-      return !!day && day >= from && day <= to;
+      if (!day) return false;
+      const probe = Object.assign({}, d);
+      if (span && Array.isArray(span.cautionDates)) probe.cautionDates = span.cautionDates;
+      if (span && span.date) probe.date = span.date;
+      return day === probe.date || dlCautionDays(probe).indexOf(day) !== -1;
     }
     function dlStrandedBlockDays(d, span) {
       if (!d || !blockOn(d)) return [];
-      const parts = itemParts(d);
-      const days = parts.length ? parts.map(p => partDay(p, d)) : [blockDay(d)];
+      // Block days are read off the PROPOSED record, not the stored one. An
+      // absent blockDate means the block follows the item's own `date`, so it
+      // MOVES WITH a due-day change and cannot be stranded by one; reading
+      // blockDay(d) here would report the old due day as orphaned and refuse
+      // every move of an un-anchored deadline. Only dlBlockDayValid's own probe
+      // decides membership — this probe decides which days to ask about.
+      const probe = Object.assign({}, d);
+      if (span && span.date) probe.date = span.date;
+      const parts = itemParts(probe);
+      const days = parts.length ? parts.map(p => partDay(p, probe)) : [blockDay(probe)];
       const out = [];
       days.forEach(day => {
         if (!dlBlockDayValid(d, day, span) && out.indexOf(day) === -1) out.push(day);
       });
       return out.sort();
     }
+
+    // ── one-time migration: caution span → chosen caution days ──────────────
+    // A field-presence migration, exactly like migrateToLearn and its siblings
+    // above: the presence of `startDate` IS the guard, so this is idempotent by
+    // construction and needs no schemaVersion. It runs before React mounts, so
+    // no component snapshot can be stale, and it writes only `deadlines`, the
+    // key this page owns.
+    //
+    // A refused write — a blocked database, an exhausted quota — is harmless
+    // rather than data loss: dlCautionDays still expands the untouched
+    // `startDate` span, so the record keeps rendering its run-up and the
+    // migration simply retries on the next load.
+    (function migrateDeadlineCautionDays() {
+      const db = _getTrackDB();
+      if (!db.slots) return;
+      let dirty = false;
+      db.slots = db.slots.map(slot => {
+        if (!Array.isArray(slot.deadlines)) return slot;
+        let touched = false;
+        const next = slot.deadlines.map(d => {
+          if (!d || typeof d !== 'object' || Array.isArray(d)) return d;
+          if (d.startDate === undefined) return d;
+          touched = true;
+          return dlWithCautionDays(d, dlCautionDays(d));
+        });
+        if (!touched) return slot;
+        dirty = true;
+        return { ...slot, deadlines: next };
+      });
+      if (dirty) TrackStorage.saveDB(db);
+    })();
 
     function isMilestoneNode(node) {
       return node?.taskType === 'milestone';
@@ -4786,7 +4917,7 @@
       const [calNoteTimelineModal, setCalNoteTimelineModal] = useState(null);
       const [calNoteTimelineDraft, setCalNoteTimelineDraft] = useState({ title: '', detail: '', time: '' });
       const [dlOpenDay,   setDlOpenDay]   = useState(null);   // day number for the inline composer
-      const [dlDraft,     setDlDraft]     = useState({ title: '', detail: '', time: '', startDate: '', date: '' });
+      const [dlDraft,     setDlDraft]     = useState({ title: '', detail: '', time: '', date: '' });
       const [dlEditing,   setDlEditing]   = useState(null);   // deadline id being edited inline
       // deadline id — red-line / ! popup. Seeded from ?dl= so a deadline chip on
       // the Home calendar lands on the deadline itself. A lazy initializer, not
@@ -4796,7 +4927,11 @@
         initialDeadlineId && (deadlines || []).some(d => d.id === initialDeadlineId)
           ? initialDeadlineId : null);
       const [dlPopupEdit, setDlPopupEdit] = useState(false);  // popup view ⇄ edit toggle
-      const [dlPopupDraft,setDlPopupDraft]= useState({ title: '', detail: '', time: '', startDate: '', date: '' });
+      const [dlPopupDraft,setDlPopupDraft]= useState({ title: '', detail: '', time: '', date: '' });
+      // The month the popup's caution calendar is showing. Ephemeral: it never
+      // reaches track_db, and it is re-seeded to the due day's month each time
+      // a different deadline's popup opens.
+      const [dlCalMonth,  setDlCalMonth]  = useState(null);
       const [sirSessionPopup, setSirSessionPopup] = useState(null);
 
       const [timelineMode,  setTimelineMode]  = useState(() => linkedDay ? 'day' : 'week'); // 'week' | 'day'
@@ -4990,18 +5125,24 @@
           const relX   = clientX - rect.left + el.scrollLeft - TIME_COL_W;
           const colW   = (el.scrollWidth - TIME_COL_W) / currDays.length;
           const dayIdx = Math.max(0, Math.min(currDays.length - 1, Math.floor(relX / colW)));
-          // A deadline's prep belongs inside its caution period, so the column is
-          // CLAMPED to it rather than followed freely. Clamping rather than
-          // pinning is what lets a run-up be dragged onto an earlier caution
-          // day at all, and the ghost must promise exactly what
-          // handlePointerUp will commit — never a column that will be refused.
+          // A deadline's prep belongs on a day the deadline occupies, so the
+          // column SNAPS to the nearest allowed one rather than being followed
+          // freely. Snapping rather than pinning is what lets a run-up be
+          // dragged onto an earlier caution day at all, and the ghost must
+          // promise exactly what handlePointerUp will commit — never a column
+          // that will be refused. With a sparse set of chosen days the old
+          // two-sided clamp is not enough: the gaps between them are outside
+          // the set too, so the nearest allowed day is the only honest answer.
           let newDate = toDateStr(currDays[dayIdx]);
           if (dragRef.current.type === 'deadline') {
             const dl = (deadlines || []).find(x => x.id === (ghostRef.current ? ghostRef.current.itemId : null));
             if (dl) {
-              const from = dl.startDate || dl.date;
-              if (newDate < from) newDate = from;
-              if (newDate > dl.date) newDate = dl.date;
+              const allowed = dlCautionDays(dl).concat([dl.date]);
+              if (allowed.indexOf(newDate) === -1) {
+                const target = newDate;
+                newDate = allowed.reduce((best, ds) =>
+                  Math.abs(dayGap(ds, target)) < Math.abs(dayGap(best, target)) ? ds : best, allowed[0]);
+              }
             } else if (ghostRef.current) {
               newDate = ghostRef.current.srcDate;
             }
@@ -5092,11 +5233,11 @@
               //
               // That is load-bearing for a deadline: moving a due day stays the
               // sole business of the edit form, which is the one path that
-              // checks `startDate <= date`. Nothing validates that on a stored
-              // record, and an inverted span silently erases the run-up on all
-              // five surfaces and soft-locks the Documentations edit form. A
-              // note follows the same rule for a plainer reason — its date is
-              // where the note belongs, and its chip and marker stay there.
+              // refuses a move orphaning a chosen caution day or stranding
+              // placed prep. A drag that could rewrite `date` would slip past
+              // both refusals. A note follows the same rule for a plainer
+              // reason — its date is where the note belongs, and its chip and
+              // marker stay there.
               const setter = d.type === 'dayNote' ? setCalendarNotes : setDeadlines;
               if (g.partId) updatePart(d.type, g.itemId, g.partId, { date: g.date, time: g.time });
               else setter(prev => prev.map(x => x.id === g.itemId ? { ...x, blockDate: g.date, blockTime: g.time } : x));
@@ -5723,53 +5864,52 @@
       }
 
       // ── Deadlines ──────────────────────────────────────────────────────────
-      // A deadline is due on `date` at `time`; its caution period runs from
-      // `startDate` through `date` inclusive. 'YYYY-MM-DD' strings compare
-      // correctly lexicographically, so the range needs no Date arithmetic and
-      // cannot drift across DST, a month boundary, or a year boundary.
-      const dlStart   = d => d.startDate || d.date;
-      const inCaution = (d, ds) => ds >= dlStart(d) && ds <= d.date;
+      // A deadline is due on `date` at `time`, and it warns on the days the
+      // user CHOSE. The resolver, the writer and the block-day gate all live
+      // at the top of this file, twinned with calendar-core.js because this
+      // page does not load it; these are the thin local aliases the panel uses.
+      const dlStart   = dlStartDay;
+      const inCaution = dlInCautionDay;
       // Ticked: the user has handled it, so the run-up stops warning. Absence
       // is "not done", and `!!` reads an absent key, false and undefined alike,
       // so no existing deadline needs migrating. Identical to dlDone in
       // calendar-core.js — this page has its own copy because it does not load
-      // that file, the same reason dlStart, dlValid and dlDayCount are twinned.
-      // The tick suppresses the caution period without altering it, which is
+      // that file, the same reason dlCautionDays and dlValid are twinned.
+      // The tick suppresses the chosen days without altering them, which is
       // what makes unticking a restore rather than a guess.
       const dlDone    = d => !!d.done;
-      const dlValid   = (draft, dueDate) =>
-        !!draft.title.trim()
-        && /^\d{2}:\d{2}$/.test(draft.time)
-        && /^\d{4}-\d{2}-\d{2}$/.test(draft.startDate)
-        && draft.startDate <= dueDate;
-      // The popup's Edit form is the only place the due day is TYPED rather
-      // than taken from a calendar cell, so it is the only caller that has to
-      // format-check it — everyone else hands dlValid a value that is already
-      // a day string. The ordering rule itself is unchanged; this just feeds
-      // dlValid the draft's own date, so `startDate <= dueDate` now also
-      // refuses a due day dragged back past the caution start. Refusing here
-      // is what keeps an inverted span out of storage: nothing validates
-      // startDate <= date on a STORED record, and such a record soft-locks
-      // the Documentations edit form, whose Save is gated on dlValid.
+      // A title and a due time. There is no caution start left to order against
+      // the due day, so the whole inverted-span hazard class is gone with it.
+      const dlValid   = draft =>
+        !!String((draft && draft.title) || '').trim()
+        && /^\d{2}:\d{2}$/.test((draft && draft.time) || '');
+      // The compose paths TYPE their due day rather than taking it from the
+      // calendar cell the form was opened on, so they are the only callers that
+      // have to format-check it. Identical to dlDraftValid in calendar-core.js.
       const dlDraftValid = draft =>
-        /^\d{4}-\d{2}-\d{2}$/.test(draft.date) && dlValid(draft, draft.date);
-      // A deadline's prep lives inside its caution period, so shrinking that
-      // period past a block the user placed by hand would strand it. REFUSE the
-      // edit rather than moving or clamping the block: nothing may silently
-      // rewrite a day the user chose, which is the same rule that stops a tick
-      // rewriting `startDate` and a due-day move rewriting the caution start.
-      // The user moves the block themselves and comes back. `dlStrandedBlockDays`
-      // is the single definition — documentations.html calls the calendar-core
-      // twin of it rather than re-spelling the comparison.
+        /^\d{4}-\d{2}-\d{2}$/.test((draft && draft.date) || '') && dlValid(draft);
+      // A deadline's prep lives on a day the deadline occupies, so moving the
+      // due day past a block the user placed by hand — or un-picking the
+      // caution day under one — would strand it. REFUSE rather than moving or
+      // clamping the block: nothing may silently rewrite a day the user chose,
+      // the same rule that stops a tick rewriting the chosen days.
+      // `dlStrandedBlockDays` is the single definition; the popup's Edit form
+      // and the caution picker both call it rather than re-spelling it.
       const dlDraftStranded = (dl, draft) =>
-        (dl && dlDraftValid(draft)) ? dlStrandedBlockDays(dl, draft) : [];
+        (dl && dlDraftValid(draft)) ? dlStrandedBlockDays(dl, { date: draft.date }) : [];
+      // A due-day move must also not orphan a CHOSEN DAY. Silently dropping the
+      // days that no longer fit would be data loss, so they are named and the
+      // save is refused, exactly as stranded prep is.
+      const dlDraftOrphanedDays = (dl, draft) =>
+        (dl && dlDraftValid(draft)) ? dlCautionDays(dl).filter(ds => ds >= draft.date) : [];
       const dlDraftSavable = (dl, draft) =>
-        dlDraftValid(draft) && dlDraftStranded(dl, draft).length === 0;
-      // T12:00:00 keeps both parses on their local calendar day, so the span is
-      // whole days regardless of a DST shift in between.
-      const dlDayCount = d => Math.round(
-        (new Date(d.date + 'T12:00:00') - new Date(dlStart(d) + 'T12:00:00')) / 86400000
-      ) + 1;
+        dlDraftValid(draft)
+        && dlDraftStranded(dl, draft).length === 0
+        && dlDraftOrphanedDays(dl, draft).length === 0;
+      const dlCautionLabel = d => {
+        const n = dlCautionCount(d);
+        return n + (n === 1 ? ' caution day' : ' caution days');
+      };
       // `days` before or after a 'YYYY-MM-DD', on the LOCAL calendar. Same
       // T12:00:00 anchor, so a DST change inside the span cannot shift the
       // result onto the neighbouring day the way a UTC-midnight parse would.
@@ -5781,16 +5921,15 @@
       const byTime = (a, b) => String(a.time).localeCompare(String(b.time));
       const byDate = (a, b) => a.date.localeCompare(b.date) || byTime(a, b);
       const deadlinesDueOn    = ds => (deadlines || []).filter(d => d.date === ds).sort(byTime);
-      // The run-up only, and only while the deadline is still outstanding: the
-      // due day is already drawn as the red deadline, so repeating it as an
-      // amber "!" marks one deadline twice, and a ticked deadline has nothing
-      // left to warn about. BOTH tests belong here rather than at each call
-      // site — `d.date !== ds` used to be spelled out at two of the three, and
-      // the timeline was the one that forgot. This helper's three consumers
-      // (timeline strip, month cell, day panel) inherit both for free, and
-      // calendar-core's `deadlinesCaution` applies the same pair.
+      // The chosen days only, and only while the deadline is still outstanding.
+      // The due day cannot appear here at all: dlCautionDays drops it, so the
+      // `d.date !== ds` clause this used to carry is now structurally
+      // impossible to forget. It used to be spelled at two of three call sites
+      // and the timeline was the one that missed it. This helper's three
+      // consumers (timeline strip, month cell, day panel) inherit both tests
+      // for free, and calendar-core's `deadlinesCaution` applies the same pair.
       const deadlinesCautionOn = ds =>
-        (deadlines || []).filter(d => !dlDone(d) && d.date !== ds && inCaution(d, ds)).sort(byDate);
+        (deadlines || []).filter(d => !dlDone(d) && inCaution(d, ds)).sort(byDate);
 
       /* Day-note and deadline BLOCKS landing on `ds`. Deliberately not keyed on
          the item's own date: `blockDate` and a part's `date` move work to
@@ -5828,16 +5967,17 @@
         setDlOpenDay(day);
         setDlEditing(null);
         // The cell the composer was opened on is only the DEFAULT due day now;
-        // `date` is typed in the form, so both dates start on `ds` and the
-        // caution period is a zero-length one until the user widens it.
-        setDlDraft({ title: '', detail: '', time: '', startDate: ds, date: ds });
+        // `date` is typed in the form. A new deadline has no caution days at
+        // all — they are chosen afterwards, on the popup's calendar, which is
+        // the one place that can check the prep a day already holds.
+        setDlDraft({ title: '', detail: '', time: '', date: ds });
         setCalNoteOpenDay(null);
         setCalNoteEditing(null);
       }
       function closeDlComposer() {
         setDlOpenDay(null);
         setDlEditing(null);
-        setDlDraft({ title: '', detail: '', time: '', startDate: '', date: '' });
+        setDlDraft({ title: '', detail: '', time: '', date: '' });
       }
       // Move whichever schedule view is on screen onto `ds`. Used when an edit
       // re-homes a record to another day, so closing the popup does not leave
@@ -5863,39 +6003,64 @@
         closeDlComposer();
       }
       function openDlPopup(id) { setDlPopup(id); setDlPopupEdit(false); }
-      // The one write behind the popup's inline caution picker. It REFUSES a
-      // cleared or out-of-range value instead of writing it, so `startDate`
-      // never becomes '' and never lands after the due day; "reset" passes the
-      // due day explicitly, which is the documented default, so a caution
-      // period can always be undone. Spreading the stored record is what keeps
-      // docPageId, createdAt and any key a later version added.
-      function setDlCautionStart(dl, v) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || v > dl.date) return;
-        setDeadlines(prev => prev.map(x => x.id === dl.id ? { ...x, startDate: v } : x));
+      // The one write behind the popup's caution calendar. Toggling a day goes
+      // through dlToggleCautionDay, which is also the only thing that deletes
+      // `startDate` — so picking a day on a legacy record migrates it in the
+      // same write. Spreading the stored record is what keeps docPageId,
+      // createdAt, done, the block keys and any key a later version added.
+      //
+      // A day carrying this deadline's prep is REFUSED rather than un-picked:
+      // work the user placed by hand is never moved or dropped for them. The
+      // check is dlStrandedBlockDays against the PROPOSED set, the same single
+      // definition the Edit form uses, so it cannot drift from it.
+      function toggleDlCautionDay(dl, ds) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(ds) || ds >= dl.date) return;
+        const next = dlToggleCautionDay(dl, ds);
+        if (dlStrandedBlockDays(dl, { cautionDates: next.cautionDates }).length) return;
+        setDeadlines(prev => prev.map(x => x.id === dl.id ? dlToggleCautionDay(x, ds) : x));
+      }
+      // Bulk pick: the `n` days immediately before the due day, UNIONED with
+      // whatever is already chosen. Additive on purpose — it can only ever add
+      // a mark, so unlike "clear all" it needs no confirmation and can never
+      // strand prep.
+      function addDlCautionRunUp(dl, n) {
+        const from = dlShift(dl.date, -n);
+        const add = daysBetweenLocal(from, dl.date).filter(ds => ds < dl.date);
+        setDeadlines(prev => prev.map(x =>
+          x.id === dl.id ? dlWithCautionDays(x, dlCautionDays(x).concat(add)) : x));
+      }
+      // Clear all. Destructive, so it asks — the successor of the old `reset`.
+      // Prep sitting on a chosen day is still refused, for the same reason a
+      // single un-pick is.
+      function clearDlCautionDays(dl) {
+        if (!dlCautionCount(dl)) return;
+        if (dlStrandedBlockDays(dl, { cautionDates: [] }).length) return;
+        if (!window.confirm('Clear every caution day?\n\nThe deadline keeps its due day.')) return;
+        setDeadlines(prev => prev.map(x => x.id === dl.id ? dlWithCautionDays(x, []) : x));
       }
       // The one write behind every tick control on this page. It writes `done`
       // and nothing else, spreading the stored record so docPageId, createdAt,
-      // startDate and any key a later version added all survive — rebuilding a
-      // record from a field list is exactly the bug that cost day notes and
-      // deadlines before. The caution period is left alone, so unticking puts
-      // the same "!" days back rather than recomputing a guess at them.
+      // cautionDates and any key a later version added all survive — rebuilding
+      // a record from a field list is exactly the bug that cost day notes and
+      // deadlines before. The chosen days are left alone, so unticking puts the
+      // same "!" days back rather than recomputing a guess at them.
       function toggleDlDone(id) {
         setDeadlines(prev => prev.map(x => x.id === id ? { ...x, done: !x.done } : x));
       }
       // `panelDs` is the day the composer sits on, NOT the due day — the due
       // day comes from the draft. dlDraftValid is the gate rather than dlValid
-      // because the date is typed here, so its format has to be checked too;
-      // an inverted span is refused rather than repaired, exactly as in the
-      // popup's Edit form. A new deadline has no prep placed inside it yet, so
-      // there is nothing here that could be stranded.
+      // because the date is typed here, so its format has to be checked too. A
+      // new deadline is created with no caution days: they are chosen on the
+      // popup's calendar, which is the only surface that can check the prep a
+      // day already holds.
       function addDeadline(panelDs) {
         if (!dlDraftValid(dlDraft)) return;
         const date = dlDraft.date;
         setDeadlines(prev => [...prev, {
-          id: uid(), date, time: dlDraft.time, startDate: dlDraft.startDate,
+          id: uid(), date, time: dlDraft.time, cautionDates: [],
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim(), createdAt: Date.now()
         }]);
-        setDlDraft({ title: '', detail: '', time: '', startDate: date, date });
+        setDlDraft({ title: '', detail: '', time: '', date });
         // Filed on another day, the deadline would otherwise land out of sight
         // while the composer stayed open on a day it is not on. Same move the
         // popup's Edit form makes when it re-homes a deadline.
@@ -5903,17 +6068,17 @@
       }
       function updateDeadline(id) {
         const dl = (deadlines || []).find(d => d.id === id);
-        if (!dl || !dlValid(dlDraft, dl.date)) return;
+        if (!dl || !dlValid(dlDraft)) return;
         setDeadlines(prev => prev.map(d => d.id === id ? {
-          ...d, time: dlDraft.time, startDate: dlDraft.startDate,
+          ...d, time: dlDraft.time,
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim()
         } : d));
         setDlEditing(null);
-        setDlDraft({ title: '', detail: '', time: '', startDate: dl.date, date: dl.date });
+        setDlDraft({ title: '', detail: '', time: '', date: dl.date });
       }
       function deleteDeadline(id) {
         setDeadlines(prev => prev.filter(d => d.id !== id));
-        if (dlEditing === id) { setDlEditing(null); setDlDraft({ title: '', detail: '', time: '', startDate: '', date: '' }); }
+        if (dlEditing === id) { setDlEditing(null); setDlDraft({ title: '', detail: '', time: '', date: '' }); }
         if (dlPopup === id)   { setDlPopup(null); setDlPopupEdit(false); }
       }
 
@@ -6153,7 +6318,7 @@
                           <span className="flex-1 text-[10px] text-gray-300 truncate leading-tight">{note.title}</span>
                         </button>
                       ))}
-                      {/* caution period — every day from startDate through the due day */}
+                      {/* the caution days the user chose, this one among them */}
                       {deadlinesCautionOn(ds).map(d => (
                         <button key={d.id}
                           onClick={e => { e.stopPropagation(); openDlPopup(d.id); }}
@@ -7500,8 +7665,12 @@
                       const dkey = kind + ':' + item.id;
                       const dissecting = dlnDissect === dkey;
                       const onOpenedDay = item.date === openedOn;
-                      // A deadline's prep may only be placed inside its
-                      // caution period; a note's task may go anywhere.
+                      // A deadline's prep may only be placed on a day the
+                      // deadline OCCUPIES — a chosen caution day, or the due
+                      // day; a note's task may go anywhere. min/max only narrow
+                      // the native picker to the outer bounds; with a sparse set
+                      // they cannot express the gaps, so dlBlockDayValid below
+                      // is the actual gate and `Add` refuses outside the set.
                       const dayMin = isNote ? undefined : dlStart(item);
                       const dayMax = isNote ? undefined : item.date;
                       const draftDay = dlnPartDraft.date || blockDay(item);
@@ -7652,13 +7821,16 @@
                                 >Add</button>
                               </div>
                               {/* min/max only grey out the picker — a typed
-                                  date still reaches onChange, so dayOk is the
-                                  actual gate on a deadline's caution window. */}
+                                  date still reaches onChange, and with a sparse
+                                  set the gaps between chosen days are inside the
+                                  min/max range anyway, so dayOk is the actual
+                                  gate. The message names the days rather than a
+                                  range, because a range is no longer the rule. */}
                               {!dayOk && (
                                 <p className="text-[9px] text-amber-400 mt-1" data-dln-part-warn={dkey}>
                                   {isNote
                                     ? 'Pick a day for this task.'
-                                    : `Prep belongs between ${dlStart(item)} and ${item.date}.`}
+                                    : `Prep belongs on a caution day or the due day: ${dlCautionDays(item).concat([item.date]).join(', ')}.`}
                                 </p>
                               )}
                             </div>
@@ -8048,24 +8220,35 @@
             if (!d) { return null; }
             const close = () => { setDlPopup(null); setDlPopupEdit(false); };
             const startEdit = () => {
-              setDlPopupDraft({ title: d.title, detail: d.detail || '', time: d.time, startDate: dlStart(d), date: d.date });
+              setDlPopupDraft({ title: d.title, detail: d.detail || '', time: d.time, date: d.date });
               setDlPopupEdit(true);
             };
-            // The due day and the caution start are two independent stored
-            // dates with one ordering rule between them. Moving the due day
-            // must never rewrite startDate to make room — a caution period the
-            // user set deliberately is not ours to clamp or shift — so an
-            // out-of-order draft is REFUSED here rather than repaired.
+            // Moving the due day must never rewrite the chosen caution days to
+            // make room. A day the user picked deliberately is not ours to drop
+            // or shift, so a move that would orphan one — or strand prep — is
+            // REFUSED here rather than repaired. The user un-picks the day
+            // themselves, in the same popup, and comes back.
             const save = () => {
               if (!dlDraftSavable(d, dlPopupDraft)) return;
               const nextDate = dlPopupDraft.date;
-              // spreading `x` is what keeps id, createdAt, done and docPageId
+              // spreading `x` is what keeps id, createdAt, done, docPageId and
+              // above all cautionDates — the due day moves alone.
               setDeadlines(prev => prev.map(x => x.id === d.id ? {
-                ...x, date: nextDate, time: dlPopupDraft.time, startDate: dlPopupDraft.startDate,
+                ...x, date: nextDate, time: dlPopupDraft.time,
                 title: dlPopupDraft.title.trim(), detail: dlPopupDraft.detail.trim()
               } : x));
               if (nextDate !== d.date) focusScheduleDay(nextDate);
               setDlPopupEdit(false);
+            };
+            // The calendar shows the due day's month until the user navigates.
+            // Kept in state rather than derived so paging back a month survives
+            // the re-render each pick causes.
+            const calAnchor = dlCalMonth && dlCalMonth.dlId === d.id
+              ? dlCalMonth
+              : { dlId: d.id, year: Number(d.date.slice(0, 4)), month: Number(d.date.slice(5, 7)) - 1 };
+            const stepDlMonth = n => {
+              const t = new Date(calAnchor.year, calAnchor.month + n, 1);
+              setDlCalMonth({ dlId: d.id, year: t.getFullYear(), month: t.getMonth() });
             };
             return (
               <>
@@ -8083,15 +8266,16 @@
                   {dlPopupEdit ? (
                     <>
                       <div className="p-3 flex flex-col gap-2 flex-1 overflow-y-auto">
-                        {/* The due day is editable here and nowhere else. The
-                            two date fields cap each other from opposite sides —
-                            the deadline may not precede its caution start —
-                            and both read the DRAFT, so the pair can be moved in
-                            either order within one edit. min/max only grey out
-                            the picker; dlDraftValid is the actual gate. */}
+                        {/* The due day is editable here and nowhere else, and
+                            it moves ALONE: the chosen caution days are set on
+                            the calendar in the read view, and this form never
+                            rewrites them. `min` only greys out the picker;
+                            dlDraftSavable is the actual gate, and it refuses a
+                            move that would orphan a chosen day or strand prep
+                            rather than quietly dropping either. */}
                         <div className="flex items-center gap-2">
                           <label className="text-[10px] text-gray-500 w-20 flex-shrink-0" htmlFor="dl-due-date">Due date</label>
-                          <input id="dl-due-date" type="date" value={dlPopupDraft.date} min={dlPopupDraft.startDate}
+                          <input id="dl-due-date" type="date" value={dlPopupDraft.date} min={dlStart(d)}
                             onChange={e => setDlPopupDraft(p => ({ ...p, date: e.target.value }))}
                             onKeyDown={e => { if (e.key === 'Escape') close(); }}
                             className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-red-600" />
@@ -8102,13 +8286,6 @@
                             onChange={e => setDlPopupDraft(p => ({ ...p, time: e.target.value }))}
                             onKeyDown={e => { if (e.key === 'Escape') close(); }}
                             className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-red-600" />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <label className="text-[10px] text-gray-500 w-20 flex-shrink-0" htmlFor="dl-caution-start">Caution from</label>
-                          <input id="dl-caution-start" type="date" value={dlPopupDraft.startDate} max={dlPopupDraft.date}
-                            onChange={e => setDlPopupDraft(p => ({ ...p, startDate: e.target.value }))}
-                            onKeyDown={e => { if (e.key === 'Escape') close(); }}
-                            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-amber-600" />
                         </div>
                         <input value={dlPopupDraft.title}
                           onChange={e => setDlPopupDraft(p => ({ ...p, title: e.target.value }))}
@@ -8121,25 +8298,31 @@
                           onKeyDown={e => { if (e.key === 'Escape') close(); }}
                           placeholder="Details (optional)..." rows={5}
                           className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-red-600 resize-none" />
-                        {/* One fault, one message. The ordering line is gated
-                            on there BEING a due day: every non-empty string
-                            sorts above '', so a cleared field would otherwise
-                            also read as an out-of-order caution start. */}
+                        {/* One fault, one message. */}
                         {!dlPopupDraft.date && (
                           <p className="text-[10px] text-amber-400">Pick a due date.</p>
                         )}
-                        {!!dlPopupDraft.date && dlPopupDraft.startDate > dlPopupDraft.date && (
-                          <p className="text-[10px] text-amber-400">Caution start must be on or before the deadline.</p>
+                        {/* A chosen caution day is only a caution day while it
+                            falls BEFORE the deadline, so pulling the due day
+                            back over one would silently delete it. Name it and
+                            refuse; the user un-picks it themselves. */}
+                        {dlDraftOrphanedDays(d, dlPopupDraft).length > 0 && (
+                          <p className="text-[10px] text-amber-400" data-dl-orphaned>
+                            {dlDraftOrphanedDays(d, dlPopupDraft).join(', ')} {dlDraftOrphanedDays(d, dlPopupDraft).length === 1 ? 'is' : 'are'} marked
+                            as caution {dlDraftOrphanedDays(d, dlPopupDraft).length === 1 ? 'day' : 'days'} and would fall on or after this due
+                            date. Un-pick {dlDraftOrphanedDays(d, dlPopupDraft).length === 1 ? 'it' : 'them'} first — nothing here will drop
+                            {dlDraftOrphanedDays(d, dlPopupDraft).length === 1 ? ' it' : ' them'} for you.
+                          </p>
                         )}
-                        {/* Its own fault and its own message: the dates are
-                            well-formed and in order, but the period no longer
-                            covers work that has already been placed. Naming the
-                            days is the point — the user moves those blocks and
-                            comes back, because nothing here will move them. */}
+                        {/* Its own fault and its own message: the due day is
+                            well-formed, but the deadline would no longer occupy
+                            a day that already holds work. Naming the days is the
+                            point — the user moves those blocks and comes back,
+                            because nothing here will move them. */}
                         {dlDraftStranded(d, dlPopupDraft).length > 0 && (
                           <p className="text-[10px] text-amber-400" data-dl-stranded>
-                            Prep is scheduled on {dlDraftStranded(d, dlPopupDraft).join(', ')}, outside this
-                            caution period. Move it first — nothing here will move it for you.
+                            Prep is scheduled on {dlDraftStranded(d, dlPopupDraft).join(', ')}, which this deadline
+                            would no longer occupy. Move it first — nothing here will move it for you.
                           </p>
                         )}
                       </div>
@@ -8176,47 +8359,123 @@
                             {dlDone(d) ? 'Ticked — the "!" run-up is hidden' : 'Tick when this is handled'}
                           </span>
                         </button>
-                        {/* The caution start is set here, in the read view, not
-                            behind Edit. It is the whole point of the "!" chips
-                            on the run-up days, and as static text it read as a
-                            computed field nobody could change. It stays live
-                            while ticked — the period is still stored and still
+                        {/* The caution days are CHOSEN here, in the read view,
+                            not behind Edit. They are the whole point of the "!"
+                            marks, and as static text they read as a computed
+                            field nobody could change. The panel stays live while
+                            ticked — the days are still stored and still
                             editable — but says so, rather than promising marks
-                            that are not on screen. */}
+                            that are not on screen.
+
+                            Every cell is a real <button>, so the whole grid is
+                            reachable by keyboard, and each carries
+                            data-dl-caution-day for the browser suite. */}
                         {(() => {
-                          const span = dlDayCount(d);
+                          const chosen = dlCautionSet(d);
+                          // Which days already hold this deadline's prep. A pick
+                          // can never strand work, but an UN-pick can, so those
+                          // cells are marked and refuse rather than surprising
+                          // the user after the fact.
+                          const held = new Set();
+                          if (blockOn(d)) {
+                            const parts = itemParts(d);
+                            (parts.length ? parts.map(p => partDay(p, d)) : [blockDay(d)])
+                              .forEach(day => { if (day) held.add(day); });
+                          }
+                          const first = getFirstDay(calAnchor.year, calAnchor.month);
+                          const count = getDIM(calAnchor.year, calAnchor.month);
                           return (
-                            <div className={`flex flex-col gap-1 rounded border border-amber-800/40 bg-amber-950/20 px-2 py-1.5 ${dlDone(d)?'opacity-50':''}`}>
+                            <div className={`flex flex-col gap-1.5 rounded border border-amber-800/40 bg-amber-950/20 px-2 py-1.5 ${dlDone(d)?'opacity-50':''}`}>
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-bold text-amber-400 text-[11px] leading-none">!</span>
-                                <label className="text-[10px] text-amber-300/80" htmlFor="dl-caution-from">Caution from</label>
-                                <input id="dl-caution-from" type="date" value={dlStart(d)} max={d.date}
-                                  onChange={e => setDlCautionStart(d, e.target.value)}
-                                  className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-[11px] text-gray-200 outline-none focus:border-amber-600" />
-                                <span className="text-[10px] text-amber-400/70">
-                                  → {d.date} · {span} {span === 1 ? 'day' : 'days'}
+                                <span className="text-[10px] text-amber-300/80" data-dl-caution-count={dlCautionCount(d)}>
+                                  {dlCautionLabel(d)} · due {d.date}
                                   {dlDone(d) && ' · hidden while ticked'}
                                 </span>
                               </div>
+                              <div className="flex items-center justify-between gap-2">
+                                <button onClick={() => stepDlMonth(-1)} title="Previous month"
+                                  className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-[11px] text-gray-400 transition-colors">‹</button>
+                                <span className="text-[10px] text-gray-400 tracking-wide" data-dl-caution-month>
+                                  {MONTH_NAMES[calAnchor.month]} {calAnchor.year}
+                                </span>
+                                <button onClick={() => stepDlMonth(1)} title="Next month"
+                                  className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-[11px] text-gray-400 transition-colors">›</button>
+                              </div>
+                              <div className="grid grid-cols-7 gap-px" data-dl-caution-cal>
+                                {["Su","Mo","Tu","We","Th","Fr","Sa"].map(w => (
+                                  <div key={w} className="text-center text-[8px] text-gray-600 leading-none pb-0.5">{w}</div>
+                                ))}
+                                {Array(first).fill(null).map((_, i) => <div key={`b${i}`} />)}
+                                {Array(count).fill(null).map((_, i) => {
+                                  const ds = dStr(calAnchor.year, calAnchor.month, i + 1);
+                                  const isDue  = ds === d.date;
+                                  // Only the days BEFORE the due day are
+                                  // pickable. The due day is drawn red on every
+                                  // surface and must never also be amber.
+                                  const locked = ds >= d.date;
+                                  const on     = chosen.has(ds);
+                                  const prep   = held.has(ds);
+                                  const stuck  = on && prep;
+                                  return (
+                                    <button key={ds} type="button"
+                                      data-dl-caution-day={ds}
+                                      data-dl-caution-on={on ? '1' : '0'}
+                                      disabled={locked}
+                                      onClick={() => toggleDlCautionDay(d, ds)}
+                                      /* NOT starting with "Due " — the timeline
+                                         and month-grid cases select on that
+                                         prefix, and a popup cell sharing it
+                                         would be counted as a second deadline
+                                         mark on the day underneath. */
+                                      title={isDue ? `${ds} — the deadline itself`
+                                        : locked ? `${ds} is after the deadline`
+                                        : stuck ? `${ds} holds this deadline's prep — move it before un-picking`
+                                        : on ? `Un-pick ${ds}` : `Mark ${ds} as a caution day`}
+                                      className={`h-6 rounded text-[10px] leading-none transition-colors ${
+                                        isDue ? 'bg-red-900/60 text-red-200 cursor-default'
+                                        : locked ? 'text-gray-700 cursor-default'
+                                        : on ? 'bg-amber-600/70 text-white hover:bg-amber-600'
+                                        : 'text-gray-400 hover:bg-gray-800'}
+                                        ${ds === todayStr ? ' ring-1 ring-indigo-500/70' : ''}
+                                        ${prep ? ' underline decoration-cyan-400 underline-offset-2' : ''}`}>
+                                      {i + 1}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                               <div className="flex items-center gap-1 flex-wrap">
                                 <span className="text-[9px] text-gray-600 tracking-widest mr-0.5">QUICK</span>
+                                {/* Additive: these UNION the last n days into
+                                    whatever is already picked, so they can only
+                                    ever add a mark. That is why they need no
+                                    confirmation and can never strand prep. */}
                                 {[3, 7, 14].map(n => (
-                                  <button key={n} onClick={() => setDlCautionStart(d, dlShift(d.date, -n))}
-                                    title={`Start the caution period on ${dlShift(d.date, -n)}`}
-                                    className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-amber-900/50 text-[10px] text-amber-300/80 transition-colors">−{n}d</button>
+                                  <button key={n} onClick={() => addDlCautionRunUp(d, n)}
+                                    title={`Also mark the ${n} days before ${d.date}`}
+                                    className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-amber-900/50 text-[10px] text-amber-300/80 transition-colors">+{n}d</button>
                                 ))}
-                                {/* Call site — setDlCautionStart also serves the
-                                    −3d/−7d/−14d quick-sets above, which are not
-                                    destructive. Passing d.date restores the due
-                                    day as the start; it never touches d.date. */}
-                                <button onClick={() => {
-                                    if (!window.confirm('Remove the caution period?\n\nThe deadline keeps its due day.')) return;
-                                    setDlCautionStart(d, d.date);
-                                  }}
-                                  disabled={dlStart(d) === d.date}
-                                  title="No caution period — the due day only"
-                                  className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default text-[10px] text-gray-400 transition-colors">reset</button>
+                                {/* Destructive, so clearDlCautionDays asks. It
+                                    also refuses while prep sits on a chosen
+                                    day, which is why the button reports that
+                                    rather than opening a prompt it will ignore. */}
+                                <button id="dl-caution-clear" onClick={() => clearDlCautionDays(d)}
+                                  disabled={!dlCautionCount(d) || dlStrandedBlockDays(d, { cautionDates: [] }).length > 0}
+                                  title={dlStrandedBlockDays(d, { cautionDates: [] }).length > 0
+                                    ? 'Prep is scheduled on a caution day — move it first'
+                                    : 'No caution days — the due day only'}
+                                  className="px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-default text-[10px] text-gray-400 transition-colors">clear all</button>
                               </div>
+                              {/* The one place an un-pick explains itself. It is
+                                  refused rather than performed, and the day is
+                                  named, because nothing here moves work the
+                                  user placed by hand. */}
+                              {dlStrandedBlockDays(d, { cautionDates: [] }).length > 0 && (
+                                <p className="text-[9px] text-cyan-300/80" data-dl-caution-refused>
+                                  Prep sits on {dlStrandedBlockDays(d, { cautionDates: [] }).join(', ')} (underlined).
+                                  Move it before un-picking those days.
+                                </p>
+                              )}
                             </div>
                           );
                         })()}
@@ -8417,7 +8676,7 @@
                           {selDue.map(d=>(
                             <div key={d.id}
                               className={`flex items-start gap-2 rounded px-2 py-1.5 border cursor-pointer group/dl transition-colors ${dlEditing===d.id?'border-red-500/70 bg-red-900/20':'border-gray-700/60 hover:border-gray-600 bg-gray-900/50'}`}
-                              onDoubleClick={()=>{setCalNoteOpenDay(null);setCalNoteEditing(null);setDlOpenDay(selDay);setDlEditing(d.id);setDlDraft({title:d.title,detail:d.detail||'',time:d.time,startDate:dlStart(d),date:d.date});}}>
+                              onDoubleClick={()=>{setCalNoteOpenDay(null);setCalNoteEditing(null);setDlOpenDay(selDay);setDlEditing(d.id);setDlDraft({title:d.title,detail:d.detail||'',time:d.time,date:d.date});}}>
                               {/* stopPropagation on both: the row's dblclick opens the
                                   inline editor, and a double tap on the box would
                                   otherwise tick twice and open it as well */}
@@ -8432,9 +8691,9 @@
                                   {d.title}
                                 </p>
                                 {d.detail&&<p className="text-[10px] text-gray-500 mt-0.5 whitespace-pre-wrap line-clamp-3">{d.detail}</p>}
-                                {dlStart(d)!==d.date&&(
+                                {dlCautionCount(d)>0&&(
                                   <p className="text-[9px] text-amber-400/70 mt-0.5">
-                                    ! caution from {dlStart(d)} · {dlDayCount(d)} days{dlDone(d)&&' · hidden while ticked'}
+                                    ! {dlCautionLabel(d)}{dlDone(d)&&' · hidden while ticked'}
                                   </p>
                                 )}
                               </div>
@@ -8472,17 +8731,17 @@
                             {/* Composing, the due day is TYPED and starts on the
                                 cell this composer was opened on; editing, it
                                 still comes from the record, because moving an
-                                existing deadline has to check the prep placed
-                                inside its caution period and the popup's Edit
-                                form is the one writer that does. The two date
-                                fields cap each other from opposite sides, and
-                                both read the DRAFT so the pair can be moved in
-                                either order; min/max only grey out the picker,
-                                dlDraftValid is the actual gate. */}
+                                existing deadline has to refuse a move that
+                                orphans a chosen caution day or strands placed
+                                prep, and the popup's Edit form is the one writer
+                                that does. There is no caution field here at all:
+                                a new deadline starts with none, and they are
+                                chosen on the popup's calendar, which is the only
+                                surface that can see the prep a day holds. */}
                             {!dlEditing&&(
                               <div className="flex items-center gap-2 mb-2">
                                 <label className="text-[10px] text-gray-500 w-20 flex-shrink-0" htmlFor="dl-new-date">Due date</label>
-                                <input id="dl-new-date" type="date" value={dlDraft.date} min={dlDraft.startDate}
+                                <input id="dl-new-date" type="date" value={dlDraft.date}
                                   onChange={e=>setDlDraft(p=>({...p,date:e.target.value}))}
                                   className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none focus:border-red-600"/>
                               </div>
@@ -8492,12 +8751,6 @@
                               <input type="time" value={dlDraft.time}
                                 onChange={e=>setDlDraft(p=>({...p,time:e.target.value}))}
                                 className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none focus:border-red-600"/>
-                            </div>
-                            <div className="flex items-center gap-2 mb-2">
-                              <label className="text-[10px] text-gray-500 w-20 flex-shrink-0">Caution from</label>
-                              <input type="date" value={dlDraft.startDate} max={dueDs}
-                                onChange={e=>setDlDraft(p=>({...p,startDate:e.target.value}))}
-                                className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 outline-none focus:border-amber-600"/>
                             </div>
                             <input autoFocus value={dlDraft.title}
                               onChange={e=>setDlDraft(p=>({...p,title:e.target.value}))}
@@ -8509,18 +8762,11 @@
                               placeholder="Details… (optional)" rows={3}
                               className="w-full bg-transparent text-xs text-gray-400 outline-none placeholder-gray-600 resize-none"/>
                           </div>
-                          {/* One fault, one message. The ordering line is gated
-                              on there BEING a due day: every non-empty string
-                              sorts above '', so a cleared field would otherwise
-                              also read as an out-of-order caution start. */}
                           {!dueDs&&(
                             <div className="px-3 pb-1 text-[10px] text-amber-400">Pick a due date.</div>
                           )}
-                          {!!dueDs&&dlDraft.startDate>dueDs&&(
-                            <div className="px-3 pb-1 text-[10px] text-amber-400">Caution start must be on or before the deadline.</div>
-                          )}
                           <div className="flex justify-end px-3 pb-3">
-                            <button disabled={dlEditing?!dlValid(dlDraft, ds):!dlDraftValid(dlDraft)}
+                            <button disabled={dlEditing?!dlValid(dlDraft):!dlDraftValid(dlDraft)}
                               onClick={()=>{dlEditing?updateDeadline(dlEditing):addDeadline(ds);}}
                               className="text-[11px] px-3 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-default text-white rounded transition-colors">
                               {dlEditing?'Save':'Done'}</button>

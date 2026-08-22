@@ -7,8 +7,8 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%230d9488%22/%3E%3Cpath d=%22M10 9h12M10 15h12M10 21h8%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=5"></script>
-  <script src="calendar-core.js?v=5"></script>
+  <script src="schema.js?v=6"></script>
+  <script src="calendar-core.js?v=6"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -525,7 +525,7 @@
       const [composer, setComposer] = useState(null);            // null | 'note' | 'deadline'
       const [editing, setEditing] = useState(null);              // null | {kind, id}
       const [noteDraft, setNoteDraft] = useState({title:'', detail:''});
-      const [dlDraft, setDlDraft] = useState({title:'', detail:'', time:'', startDate:'', date:''});
+      const [dlDraft, setDlDraft] = useState({title:'', detail:'', time:'', date:''});
 
       const hidden = block.hidden || [];
       const hiddenKey = hidden.join(',');
@@ -543,11 +543,9 @@
 
       // Days carrying an item this calendar owns, for the cell highlight, in two
       // strengths. A day note and a deadline's due day get the solid mark; a
-      // deadline's caution run-up gets a softer one, because the Schedule already
-      // renders those days as amber "!" chips and a three-week run-up marked at
-      // full strength would read as twenty-one due dates.
-      // Expanded per day like buildMilestoneLanes does, and clipped to the month
-      // on show, so a long run-up costs nothing outside it.
+      // deadline's chosen caution days get a softer one, because the Schedule
+      // already renders those days as amber "!" chips and a three-week run-up
+      // marked at full strength would read as twenty-one due dates.
       const ownedDates = useMemo(() => {
         const due = new Set(), caution = new Set();
         const mine = x => x.docPageId && owned.has(x.docPageId);
@@ -561,10 +559,11 @@
           // progress.html and deadlinesCaution in calendar-core.js — so the
           // tick has to be applied here too or the amber cell bars would
           // outlive the "!" rows they belong to.
+          //
+          // The due day cannot leak in here: TC.dlCautionDays drops it, which
+          // is why this no longer carries a `ds !== d.date` test of its own.
           if (TC.dlDone(d)) return;
-          const start = TC.dlStart(d);
-          if (!start || start >= d.date) return;
-          for (const ds of TC.daysBetween(start, d.date)) if (ds !== d.date) caution.add(ds);
+          TC.dlCautionDays(d).forEach(ds => caution.add(ds));
         });
         return {due, caution};
       }, [slot, owned]);
@@ -603,7 +602,7 @@
       function closeForms() {
         setComposer(null); setEditing(null);
         setNoteDraft({title:'', detail:'', time:''});
-        setDlDraft({title:'', detail:'', time:'', startDate:'', date:''});
+        setDlDraft({title:'', detail:'', time:'', date:''});
       }
       const toggleFilter = key => onChange({...block,
         hidden: hidden.includes(key) ? hidden.filter(k => k !== key) : [...hidden, key]});
@@ -637,17 +636,17 @@
         closeForms();
       };
       // The due day comes from the DRAFT, not from the selected cell, so this
-      // is a second writer of `date` — and `dlDraftValid` is what makes that
-      // safe: nothing checks `startDate <= date` on a stored record, so every
-      // writer of `date` carries the ordering check itself, and the format
-      // check stops a blank field (which sorts below every startDate) reading
-      // as in-order. A deadline that does not exist yet has no placed prep, so
-      // nothing here can be stranded.
+      // is a second writer of `date`; `dlDraftValid` format-checks it, because
+      // a blank field would otherwise reach storage. A deadline is created with
+      // NO caution days — this page cannot set them at all any more. They are
+      // chosen on the Progress popup's calendar, which is the only surface that
+      // can see the prep a day already holds and refuse an un-pick that would
+      // strand it.
       const addDeadline = () => {
         if (!TC.dlDraftValid(dlDraft)) return;
         const date = dlDraft.date;
         onMutate('deadlines', prev => [...prev, {
-          id: genId(), date, time: dlDraft.time, startDate: dlDraft.startDate,
+          id: genId(), date, time: dlDraft.time, cautionDates: [],
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim(),
           createdAt: Date.now(), docPageId: page.id
         }]);
@@ -656,29 +655,22 @@
         // already make. goToDay closes the forms for us.
         if (date !== selDs) goToDay(date); else closeForms();
       };
-      // A deadline's prep lives inside its caution period, so shrinking that
-      // period past a block or task the user placed by hand would strand it.
-      // REFUSE rather than move or clamp: nothing may silently rewrite a day
-      // the user chose. This is the second writer of `startDate` — the Progress
-      // popup's Edit form is the other — and both go through the ONE definition
-      // in calendar-core rather than re-spelling the comparison, which is the
-      // shape that cost this project the deadline caution predicate once.
-      const dlStranded = (dl, dueDate) =>
-        (dl && TC.dlValid(dlDraft, dueDate))
-          ? TC.dlStrandedBlockDays(dl, { startDate: dlDraft.startDate, date: dueDate })
-          : [];
-      const dlSavable = (dl, dueDate) =>
-        TC.dlValid(dlDraft, dueDate) && dlStranded(dl, dueDate).length === 0;
-      const saveDeadline = (id, dueDate) => {
+      // The edit form changes the title, the detail and the due TIME only — not
+      // the due day, and no longer the caution days either. With neither, there
+      // is nothing this page can do that would strand placed prep, which is why
+      // the stranding refusal that used to live here is gone rather than
+      // forgotten. If a due-date field ever comes back to this form, it needs
+      // TC.dlStrandedBlockDays and the orphaned-day check in the same change.
+      const saveDeadline = id => {
         const dl = (slot.deadlines || []).find(d => d.id === id);
-        if (!dlSavable(dl, dueDate)) return;
+        if (!dl || !TC.dlValid(dlDraft)) return;
         onMutate('deadlines', prev => prev.map(d => d.id === id ? {...d,
-          time: dlDraft.time, startDate: dlDraft.startDate,
+          time: dlDraft.time,
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim()} : d));
         closeForms();
       };
       // Writes `done` and nothing else, spreading the stored record so
-      // docPageId, createdAt, startDate and any key a later version added
+      // docPageId, createdAt, cautionDates and any key a later version added
       // survive. No confirm: it is reversible by definition, unlike removeItem.
       const toggleDone = id => {
         onMutate('deadlines', prev => prev.map(d => d.id === id ? {...d, done: !d.done} : d));
@@ -707,54 +699,42 @@
           </div>
         </div>
       );
-      // `dl` is the stored record when editing, and absent when composing a new
-      // deadline — a deadline that does not exist yet has no prep to strand.
-      const dlForm = (onSave, label, dueDate, dl) => {
+      // `dl` is the stored record when editing, and absent when composing.
+      const dlForm = (onSave, label, dl) => {
         // Composing, the due day is TYPED and starts on the selected cell;
-        // editing, it still comes from the record. Moving an EXISTING deadline
-        // has to check the prep placed inside its caution period, and the
-        // Progress popup's Edit form is the one writer that does — so it stays
-        // the only place an existing due day moves.
+        // editing, there is no date field at all. Moving an EXISTING deadline
+        // has to refuse a move that orphans a chosen caution day or strands
+        // placed prep, and the Progress popup's Edit form is the one writer
+        // that does — so it stays the only place an existing due day moves.
+        //
+        // There is no caution field here either. This page authors deadlines
+        // and never chooses their caution days: that needs the prep-aware
+        // refusal, and duplicating it here is the shape this project keeps
+        // paying for.
         const composing = !dl;
-        const due = composing ? dlDraft.date : dueDate;
-        const valid = composing ? TC.dlDraftValid(dlDraft) : TC.dlValid(dlDraft, due);
-        const stranded = dlStranded(dl, due);
+        const valid = composing ? TC.dlDraftValid(dlDraft) : TC.dlValid(dlDraft);
         return (
         <div className="cal-doc-form doc-chrome">
           <input value={dlDraft.title} autoFocus placeholder="Deadline title"
             onChange={e=>setDlDraft(d=>({...d, title: e.target.value}))} />
           <div className="cal-doc-form-row">
-            {/* the two date fields cap each other from opposite sides, and both
-                read the DRAFT, so the pair can be moved in either order within
-                one edit; min/max only grey out the picker, `valid` is the gate */}
             {composing && (
-              <label>Due on<input type="date" value={dlDraft.date} min={dlDraft.startDate}
+              <label>Due on<input type="date" value={dlDraft.date}
                 onChange={e=>setDlDraft(d=>({...d, date: e.target.value}))} /></label>
             )}
             <label>Due at<input type="time" value={dlDraft.time}
               onChange={e=>setDlDraft(d=>({...d, time: e.target.value}))} /></label>
-            <label>Caution from<input type="date" value={dlDraft.startDate} max={due}
-              onChange={e=>setDlDraft(d=>({...d, startDate: e.target.value}))} /></label>
           </div>
           <textarea rows={2} value={dlDraft.detail} placeholder="Detail (optional)"
             onChange={e=>setDlDraft(d=>({...d, detail: e.target.value}))} />
           <div className="cal-doc-form-acts">
-            <button type="button" className="primary" disabled={!valid || stranded.length > 0} onClick={onSave}>{label}</button>
+            <button type="button" className="primary" disabled={!valid} onClick={onSave}>{label}</button>
             <button type="button" onClick={closeForms}>Cancel</button>
-            {/* One fault, one message: a blank due day is its own, because
-                every non-empty string sorts above '' and it would otherwise
-                also read as an out-of-order caution start. */}
             {!valid && dlDraft.title.trim() && (
               <span className="cal-doc-hint">
-                {composing && !due
-                  ? 'Needs a due date, a time, and a caution start on or before it.'
-                  : `Needs a time, and a caution start on or before ${due}.`}
-              </span>
-            )}
-            {stranded.length > 0 && (
-              <span className="cal-doc-hint" data-dl-stranded>
-                Prep is scheduled on {stranded.join(', ')}, outside this caution period.
-                Move it first — nothing here will move it for you.
+                {composing && !dlDraft.date
+                  ? 'Needs a due date and a time.'
+                  : 'Needs a time.'}
               </span>
             )}
           </div>
@@ -945,19 +925,19 @@
                     onClick={()=>{ closeForms(); setComposer('deadline');
                       /* the selected cell is only the DEFAULT due day now — the
                          form lets it be typed, so both dates start there */
-                      setDlDraft({title:'', detail:'', time:'', startDate: selDs, date: selDs}); }}>+ deadline</button>
+                      setDlDraft({title:'', detail:'', time:'', date: selDs}); }}>+ deadline</button>
                 </div>
                 {day.deadlines.map(dl => {
                   const o = originOf(dl);
                   if (editing && editing.kind === 'deadline' && editing.id === dl.id) {
-                    return <React.Fragment key={dl.id}>{dlForm(()=>saveDeadline(dl.id, dl.date), 'Save', dl.date, dl)}</React.Fragment>;
+                    return <React.Fragment key={dl.id}>{dlForm(()=>saveDeadline(dl.id), 'Save', dl)}</React.Fragment>;
                   }
                   const done = TC.dlDone(dl);
                   return (
                     <div key={dl.id} className={"cal-doc-row"+(o.kind==='own'?' cal-doc-own':'')+(done?' done':'')}>
                       <span className="cal-doc-row-main">
                         {done ? '✓' : '⏰'} {dl.time} {dl.title || 'Deadline'}
-                        <span className="cal-item-meta"> · {TC.dlDayCount(dl)}-day run-up{done && ', hidden while ticked'}</span>
+                        <span className="cal-item-meta"> · {TC.dlCautionCount(dl)} caution {TC.dlCautionCount(dl) === 1 ? 'day' : 'days'}{done && ', hidden while ticked'}</span>
                         {dl.detail && <span className="cal-item-meta"> · {dl.detail}</span>}
                       </span>
                       <CalOriginChip origin={o} onOpenPage={onOpenPage} />
@@ -970,8 +950,7 @@
                             onClick={()=>toggleDone(dl.id)}>{done ? '↺' : '✓'}</button>
                           <button type="button" title="Edit" onClick={()=>{
                             closeForms(); setEditing({kind:'deadline', id:dl.id});
-                            setDlDraft({title: dl.title||'', detail: dl.detail||'',
-                              time: dl.time||'', startDate: TC.dlStart(dl), date: dl.date});
+                            setDlDraft({title: dl.title||'', detail: dl.detail||'', time: dl.time||'', date: dl.date});
                           }}>✎</button>
                           <button type="button" title="Delete" className="danger"
                             onClick={()=>removeItem('deadlines', dl.id, 'deadline')}>✕</button>
@@ -980,7 +959,7 @@
                     </div>
                   );
                 })}
-                {composer === 'deadline' && dlForm(addDeadline, 'Add deadline', selDs)}
+                {composer === 'deadline' && dlForm(addDeadline, 'Add deadline')}
                 {/* Read-only here — the ownership rule still applies — but the
                     row leads to the deadline's own day, where the page that
                     authored it does get its edit controls. */}

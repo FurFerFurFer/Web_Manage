@@ -340,6 +340,37 @@
         if (!isDay(item.date)) {
           errors.push(validationError(key, at + ' needs a YYYY-MM-DD date, found ' + describe(item.date), false));
         }
+        // The days a deadline warns on, chosen one by one. Absent means the
+        // record predates the choice and its caution days come from the legacy
+        // `startDate` span instead — see dlCautionDays in calendar-core.js —
+        // so absence is NOT an error here, and neither is `null`.
+        //
+        // Non-fatal, and grouped with blockDate rather than with parts: these
+        // are strings, not records, and nothing traverses them as objects. A
+        // malformed entry reaches RENDERING — an amber "!" on a day that does
+        // not exist — which is the blockDate class of damage exactly, so it
+        // warns and leaves the database editable.
+        //
+        // `null` is REPORTED rather than read as absent, matching the three
+        // block warnings above and unlike `parts`. The difference is severity,
+        // not oversight: a warning can afford to point at a suspect value,
+        // while `parts` damage is fatal and fatal must be certain.
+        if (item.cautionDates !== undefined) {
+          if (!isList(item.cautionDates)) {
+            errors.push(validationError(key, at + '.cautionDates must be a list when present, found ' + describe(item.cautionDates), false));
+          } else {
+            item.cautionDates.forEach(function (ds, c) {
+              if (!isDay(ds)) {
+                errors.push(validationError(key, at + '.cautionDates[' + c + '] must be a YYYY-MM-DD day, found ' + describe(ds), false));
+              }
+            });
+          }
+        }
+        // Still checked, though nothing writes it any more. An un-migrated
+        // record — an old export imported later, or a second device still on
+        // the previous version — resolves its caution days through this key,
+        // and a malformed one silently yields none. Saying so beats letting a
+        // run-up vanish without explanation.
         if (item.startDate !== undefined && !isDay(item.startDate)) {
           errors.push(validationError(key, at + ' has an invalid startDate, found ' + describe(item.startDate), false));
         }

@@ -831,27 +831,43 @@ calendar dates. Home should remain read-only unless write ownership is explicitl
 Day-note and deadline schedule blocks are implemented — see README "Schedule blocks for day
 notes and deadlines". One piece is still deliberately **not** built:
 
-- **Folding `progress.html`'s copy of the block helpers back into `calendar-core.js`.** There
-  are now twelve twinned helpers (`blockOn`, `noteBlockStart`, `noteBlockDuration`,
+- **Folding `progress.html`'s copy of the block and caution helpers back into
+  `calendar-core.js`.** The twinned set grew again with the chosen-caution-day work and now
+  runs to roughly twenty helpers — `blockOn`, `noteBlockStart`, `noteBlockDuration`,
   `dlBlockDuration`, `noteBlockSpan`, `dlBlockSpan`, `blockDay`, `partDay`, `itemParts`,
-  `partSpan`, `dlBlockDayValid`, `dlStrandedBlockDays`) on top of the existing `noteTimed`,
-  `dlStart`, `dlDone`, `dlValid`, `dlDraftValid`, `dlDayCount` and `deadlinesCautionOn`, all duplicated for one
-  reason: `progress.html` does not load `calendar-core.js`. Making it load that file would
-  delete the whole duplication class, and the case is now stronger than it was — the copies no
-  longer differ on purpose anywhere, so there is nothing left that a consolidation would have
+  `partSpan`, `dlBlockDayValid`, `dlStrandedBlockDays`, `dlCautionDays`, `dlCautionSet`,
+  `dlCautionCount`, `dlWithCautionDays`, `dlToggleCautionDay`, `daysBetween`, plus `noteTimed`,
+  `dlStart`, `dlDone`, `dlValid`, `dlDraftValid` and `deadlinesCautionOn` — all duplicated for
+  one reason: `progress.html` does not load `calendar-core.js`. Making it load that file would
+  delete the whole duplication class, and the case is stronger every time the set grows: the
+  copies no longer differ on purpose anywhere, so there is nothing a consolidation would have
   to preserve. It is still a cross-page change (script tag plus a cache-bust bump on every
   page), and the two copies must be confirmed identical in behaviour before one is deleted:
   the per-surface browser cases are what would catch a silent difference.
-- **Moving an existing deadline is still the Progress popup's alone.** Both compose forms now
-  type a due date, but neither edit form does: moving a stored deadline has to refuse a caution
-  period that would strand placed prep (`dlStrandedBlockDays`), and repeating that check at a
-  third writer is the duplication shape this project keeps paying for. If the Documentations
-  edit form should ever move a due day, it needs the stranding refusal in the same change — not
-  the date field on its own.
+
+  Note that `dlWithCautionDays` is now a twinned **writer**, not just a reader, which raises
+  the cost of a silent divergence: the migration in `progress.html` runs through its copy.
+- **`documentations.html` can no longer set caution days at all.** It lost that field along
+  with its due-date field, because choosing a caution day needs the prep-aware refusal
+  (`dlStrandedBlockDays` against the proposed set) and a second writer of it is the duplication
+  shape this project keeps paying for. If that page should ever author caution days or move a
+  due day again, it needs BOTH refusals — the stranded-prep one and the orphaned-chosen-day one
+  — in the same change, not the fields on their own. A scope-guard browser case asserts its
+  edit form has no date field, so a change that adds one without the refusals trips a test.
 - **A note's block is unrestricted; a deadline's is not.** A note block may be dragged to any
-  day at all, which is deliberate — a note has no period to belong to. If notes ever grow one,
-  the deadline rule (`dlBlockDayValid` plus a refusal on the edit form) is the shape to copy,
-  not a clamp.
+  day at all, which is deliberate — a note has no days to belong to. If notes ever grow them,
+  the deadline rule (`dlBlockDayValid` membership plus a refusal at every writer) is the shape
+  to copy, not a clamp.
+- **The legacy `startDate` branch in `dlCautionDays` has no retirement date.** The one-time
+  migration in `progress.html` converts stored records, but the branch cannot be removed while
+  a pre-choice export can still be imported — which is forever, since exports are files the
+  user keeps. Removing it would silently drop the run-up on every such import. If it is ever
+  retired, the migration has to move into the importer first.
+- **The caution calendar is Tailwind-inline, not `styles.css`.** That was deliberate — it
+  avoided a five-page cache-bust and the Tailwind specificity trap — but it means the picker
+  cannot be restyled from the shared stylesheet, and it has no print rule of its own. If a
+  second surface ever needs the same picker, extract it to `styles.css` and bump `?v=` on all
+  five pages in the same change.
 
 ## Proposal 13: Memoize Documentation Day Aggregation if Needed
 

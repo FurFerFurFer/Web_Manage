@@ -213,7 +213,7 @@ test('browser suites', skipUnlessChrome, async t => {
     // documentation page that wrote them, and edits docPages too
     const note = { id: 'cn-doc', date: '2026-03-10', title: 'Written from a page', detail: '', docPageId: 'p-1' };
     const dl = { id: 'dl-doc', date: '2026-03-12', time: '09:00', title: 'Doc deadline',
-      detail: '', startDate: '2026-03-10', docPageId: 'p-1' };
+      detail: '', cautionDates: ['2026-03-08', '2026-03-09'], docPageId: 'p-1' };
     assert.notEqual(await docs.evaluate(WRITE_SLOT_KEY, 'calendarNotes', [note]), false);
     assert.notEqual(await docs.evaluate(WRITE_SLOT_KEY, 'deadlines', [dl]), false);
     assert.notEqual(await docs.evaluate(WRITE_SLOT_KEY, 'docPages',
@@ -244,7 +244,8 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(slot.calendarNotes[0].title, 'Written from a page');
     assert.equal(slot.deadlines.length, 1, 'the deadline survived');
     assert.equal(slot.deadlines[0].docPageId, 'p-1');
-    assert.equal(slot.deadlines[0].startDate, '2026-03-10', 'with its caution period intact');
+    assert.deepEqual(slot.deadlines[0].cautionDates, ['2026-03-08', '2026-03-09'],
+      'with its chosen caution days intact');
     assert.equal(slot.docPages[0].title, 'Renamed by the other tab', 'the docPages edit survived');
 
     assert.deepEqual(realErrors(ks02), []);
@@ -419,6 +420,22 @@ test('browser suites', skipUnlessChrome, async t => {
       '-' + String(d.getDate()).padStart(2, '0');
   };
 
+  /* Every day from `from` up to but NOT including `to`, for seeding a fixture
+     with the caution days a pre-choice run-up used to produce. Written out here
+     rather than imported so a fixture never depends on the code under test. */
+  const runUpDays = (from, to) => {
+    const out = [];
+    const d = new Date(from + 'T12:00:00');
+    for (let i = 0; i < 400; i++) {
+      const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+        '-' + String(d.getDate()).padStart(2, '0');
+      if (ds >= to) break;
+      out.push(ds);
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  };
+
   const addCalendarBlock = async page => {
     await page.evaluate(function () {
       Array.prototype.find.call(document.querySelectorAll('.docs-addmenu button'),
@@ -499,8 +516,10 @@ test('browser suites', skipUnlessChrome, async t => {
       docPages: [F.docPage('p-1'), F.docPage('p-other')],
       calendarNotes: [],
       deadlines: [
-        F.deadline('mine', thisMonthDay(22), { startDate: thisMonthDay(20), docPageId: 'p-1' }),
-        F.deadline('theirs', thisMonthDay(17), { startDate: thisMonthDay(16), docPageId: 'p-other' })
+        F.deadline('mine', thisMonthDay(22),
+          { cautionDates: [thisMonthDay(20), thisMonthDay(21)], docPageId: 'p-1' }),
+        F.deadline('theirs', thisMonthDay(17),
+          { cautionDates: [thisMonthDay(16)], docPageId: 'p-other' })
       ]
     });
     const page = await open('documentations.html', { db });
@@ -640,7 +659,8 @@ test('browser suites', skipUnlessChrome, async t => {
     const due = dayFromToday(0);
     const db = seedDb({
       calendarNotes: [],
-      deadlines: [F.deadline('dl-today', due, { startDate: dayFromToday(-2), title: 'Ship the thing' })]
+      deadlines: [F.deadline('dl-today', due,
+        { cautionDates: runUpDays(dayFromToday(-2), due), title: 'Ship the thing' })]
     });
     // ?date= opens the timeline in single-day mode, so the strip shows this day alone
     const page = await open('progress.html', { db, hash: '?date=' + due + '#schedule' });
@@ -670,7 +690,8 @@ test('browser suites', skipUnlessChrome, async t => {
     const due = dayFromToday(2);
     const db = seedDb({
       calendarNotes: [],
-      deadlines: [F.deadline('dl-soon', due, { startDate: dayFromToday(-1), title: 'Ship the thing' })]
+      deadlines: [F.deadline('dl-soon', due,
+        { cautionDates: runUpDays(dayFromToday(-1), due), title: 'Ship the thing' })]
     });
     const page = await open('progress.html', { db, hash: '?date=' + dayFromToday(0) + '#schedule' });
     await page.waitFor(function () {
@@ -690,137 +711,288 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  // ── 2c. the caution period is choosable, and its "!" leads back ─────────
+  // ── 2c. the caution days are CHOSEN on a calendar ───────────────────────
 
-  /* A doc-authored deadline with a one-day caution period: the default every
-     creation path produces, and the state in which the feature is invisible. */
-  const cautionDb = () => {
+  /* A doc-authored deadline with no caution days: what every creation path now
+     produces, and the state in which the feature is invisible. */
+  const cautionDb = (over = {}) => {
     const due = dayFromToday(3);
     return {
       due,
       db: seedDb({
         calendarNotes: [],
         docPages: [F.docPage('p-1')],
-        deadlines: [F.deadline('dl-pick', due,
-          { startDate: due, title: 'Ship the thing', docPageId: 'p-1', createdAt: 1771000000000 })]
+        deadlines: [F.deadline('dl-pick', due, Object.assign(
+          { cautionDates: [], title: 'Ship the thing', docPageId: 'p-1', createdAt: 1771000000000 },
+          over))]
       })
     };
   };
   const openDlPopup = async ({ db, due }) => {
     const page = await open('progress.html', { db, hash: '?date=' + due + '&dl=dl-pick#schedule' });
-    await page.waitFor(function () { return !!document.getElementById('dl-caution-from'); },
-      { message: 'the deadline popup, opened by ?dl=, showing the caution picker in its READ view' });
+    await page.waitFor(function () { return !!document.querySelector('[data-dl-caution-cal]'); },
+      { message: 'the deadline popup, opened by ?dl=, showing the caution CALENDAR in its READ view' });
     return page;
   };
   const storedDeadline = page => page.evaluate(function () {
     var db = JSON.parse(localStorage.getItem('track_db') || '{}');
     return (((db.slots || [])[0] || {}).deadlines || [])[0] || null;
   });
+  const clickCautionDay = (page, ds) => page.evaluate(function (v) {
+    var b = document.querySelector('[data-dl-caution-day="' + v + '"]');
+    if (!b) return false;
+    b.click();
+    return true;
+  }, ds);
 
-  await t.test('?dl= opens the deadline popup, and the caution start is set from the read view', async () => {
+  await t.test('?dl= opens the popup, and a calendar day is picked from the read view', async () => {
     const { db, due } = cautionDb();
     const page = await openDlPopup({ db, due });
 
     const shown = await page.evaluate(function () {
-      var pop = document.getElementById('dl-caution-from').closest('div.fixed');
+      var pop = document.querySelector('[data-dl-caution-cal]').closest('div.fixed');
       return {
         readView: Array.prototype.some.call(pop.querySelectorAll('button'),
           function (b) { return b.textContent.trim() === 'Edit'; }),
         title: /Ship the thing/.test(pop.textContent),
-        value: document.getElementById('dl-caution-from').value,
-        max: document.getElementById('dl-caution-from').getAttribute('max')
+        count: document.querySelector('[data-dl-caution-count]').getAttribute('data-dl-caution-count'),
+        cells: document.querySelectorAll('[data-dl-caution-day]').length
       };
     });
-    assert.equal(shown.readView, true, 'the picker is in the read view, not behind Edit');
+    assert.equal(shown.readView, true, 'the calendar is in the read view, not behind Edit');
     assert.equal(shown.title, true, '?dl= opened the deadline it names');
-    assert.equal(shown.value, due, 'and starts on the documented default, the due day');
-    assert.equal(shown.max, due, 'the input cannot be dragged past the due day');
+    assert.equal(shown.count, '0', 'a fresh deadline warns on no day at all');
+    assert.ok(shown.cells >= 28, 'the whole month is drawn, one button per day');
 
-    const start = dayFromToday(-1);
-    await page.evaluate(function (setterSrc, v) {
-      var set = new Function('return ' + setterSrc)();
-      set(document.getElementById('dl-caution-from'), v);
-      return true;
-    }, SET_REACT_INPUT, start);
-
-    const saved = await page.waitFor(function (v) {
+    // Two NON-ADJACENT days: a contiguous span could not express this, which is
+    // the entire point of the change.
+    const first = dayFromToday(-4), second = dayFromToday(-1);
+    assert.equal(await clickCautionDay(page, first), true, 'the first day is clickable');
+    await page.waitFor(function (v) {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return d && d.startDate === v ? d : false;
-    }, { args: [start], message: 'the new caution start reaching track_db' });
+      return d && (d.cautionDates || []).indexOf(v) >= 0;
+    }, { args: [first], message: 'the first pick reaching track_db' });
+    await clickCautionDay(page, second);
 
-    assert.equal(saved.startDate, start);
+    const saved = await page.waitFor(function (a, b) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      var c = (d || {}).cautionDates || [];
+      return c.length === 2 && c.indexOf(a) >= 0 && c.indexOf(b) >= 0 ? d : false;
+    }, { args: [first, second], message: 'both picks reaching track_db' });
+
+    assert.deepEqual(saved.cautionDates, [first, second], 'stored sorted');
+    assert.ok(!('startDate' in saved), 'and no caution START is written any more');
     assert.equal(saved.docPageId, 'p-1', 'the doc page that authored it is untouched');
     assert.equal(saved.createdAt, 1771000000000, 'and so is createdAt');
     assert.equal(saved.date, due, 'the due day itself did not move');
     assert.equal(saved.time, '17:00');
+    assert.equal(saved.title, 'Ship the thing');
+
+    // the day BETWEEN the two picks is not marked — a span would have marked it
+    const gapMarked = await page.evaluate(function (v) {
+      var b = document.querySelector('[data-dl-caution-day="' + v + '"]');
+      return b ? b.getAttribute('data-dl-caution-on') : null;
+    }, dayFromToday(-2));
+    assert.equal(gapMarked, '0', 'the gap between two chosen days stays unchosen');
 
     const readout = await page.waitFor(function () {
-      var pop = document.getElementById('dl-caution-from').closest('div.fixed');
-      return /5 days/.test(pop.textContent) ? pop.textContent : false;
-    }, { message: 'the popup readout updating to the new span' });
-    assert.match(readout, /5 days/, 'the span readout reflects the pick immediately');
+      var el = document.querySelector('[data-dl-caution-count]');
+      return el && el.getAttribute('data-dl-caution-count') === '2' ? el.textContent : false;
+    }, { message: 'the popup readout updating to the new count' });
+    assert.match(readout, /2 caution days/, 'the count reflects the picks immediately');
+
+    // clicking the same day again un-picks it
+    await clickCautionDay(page, first);
+    const after = await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      var c = (d || {}).cautionDates || [];
+      return c.length === 1 && c[0] === v ? d : false;
+    }, { args: [second], message: 'the un-pick reaching track_db' });
+    assert.deepEqual(after.cautionDates, [second]);
+
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('the caution picker refuses a cleared or out-of-range value instead of writing it', async () => {
+  await t.test('the due day and every day after it are not pickable', async () => {
     const { db, due } = cautionDb();
     const page = await openDlPopup({ db, due });
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
 
-    for (const bad of ['', dayFromToday(9), 'nonsense']) {
-      await page.evaluate(function (setterSrc, v) {
-        var set = new Function('return ' + setterSrc)();
-        set(document.getElementById('dl-caution-from'), v);
-        return true;
-      }, SET_REACT_INPUT, bad);
-      await sleep(120);
-      assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
-        'a caution start of "' + bad + '" leaves the stored bytes byte-identical');
-    }
+    const state = await page.evaluate(function (a, b) {
+      var one = document.querySelector('[data-dl-caution-day="' + a + '"]');
+      var two = document.querySelector('[data-dl-caution-day="' + b + '"]');
+      return { dueDisabled: !!one && one.disabled, afterDisabled: !!two && two.disabled };
+    }, due, dayFromToday(4));
+    assert.equal(state.dueDisabled, true, 'the due day is drawn red, never amber');
+    assert.equal(state.afterDisabled, true, 'and a day after the deadline is not a run-up');
 
-    const still = await storedDeadline(page);
-    assert.equal(still.startDate, due, 'startDate is never blanked and never lands after the due day');
+    // Cancel path: clicking anyway must leave the stored bytes untouched.
+    await clickCautionDay(page, due);
+    await clickCautionDay(page, dayFromToday(4));
+    await sleep(150);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'clicking a locked cell leaves track_db byte-identical');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('a quick-set picks a caution start, and reset undoes it', async () => {
-    const { db, due } = cautionDb();
+  await t.test('a quick-set UNIONS the last n days into the picks it already has', async () => {
+    const keep = dayFromToday(-9);
+    const { db, due } = cautionDb({ cautionDates: [keep] });
     const page = await openDlPopup({ db, due });
-
-    const clicked = await page.evaluate(function () {
-      var b = Array.prototype.find.call(document.querySelectorAll('button'),
-        function (x) { return /^Start the caution period on /.test(x.getAttribute('title') || ''); });
-      if (!b) return null;
-      b.click();
-      return b.getAttribute('title').replace('Start the caution period on ', '');
-    });
-    assert.ok(clicked, 'the quick-set buttons are present');
-
-    const set = await page.waitFor(function (v) {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return d && d.startDate === v ? d : false;
-    }, { args: [clicked], message: 'the quick-set caution start reaching track_db' });
-    assert.equal(set.startDate, clicked);
-    assert.notEqual(set.startDate, due, 'which is a real run-up, not the due day again');
 
     await page.evaluate(function () {
       Array.prototype.find.call(document.querySelectorAll('button'),
-        function (x) { return x.textContent.trim() === 'reset'; }).click();
+        function (x) { return /^Also mark the 3 days before /.test(x.getAttribute('title') || ''); }).click();
       return true;
     });
-    const undone = await page.waitFor(function (v) {
+
+    const set = await page.waitFor(function () {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return d && d.startDate === v ? d : false;
-    }, { args: [due], message: 'reset returning the caution start to the due day' });
-    assert.equal(undone.startDate, due, 'a caution period can always be undone');
-    assert.equal(undone.docPageId, 'p-1');
+      return d && (d.cautionDates || []).length === 4 ? d : false;
+    }, { message: 'the quick-set reaching track_db' });
+
+    assert.deepEqual(set.cautionDates,
+      [keep, dayFromToday(0), dayFromToday(1), dayFromToday(2)],
+      'the 3 days before the due day are ADDED, and the existing pick survives');
+    assert.ok(set.cautionDates.indexOf(due) < 0, 'the due day is never included');
     assert.deepEqual(realErrors(page), []);
     await page.close();
+  });
+
+  /* The successor of the old `reset`. Destructive, so it asks — and the case
+     that matters is CANCEL: a prompt that displays and then clears anyway is
+     worse than no prompt. */
+  await t.test('clear all asks, and Cancel keeps every chosen day', async () => {
+    const picks = [dayFromToday(-4), dayFromToday(-1)];
+    const { db, due } = cautionDb({ cautionDates: picks });
+    const page = await openDlPopup({ db, due });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    const dialogsBefore = page.dialogs.length;
+
+    page.rejectDialogs = true;
+    await page.evaluate(function () { document.getElementById('dl-caution-clear').click(); return true; });
+    await sleep(400);
+    page.rejectDialogs = false;
+
+    assert.ok(page.dialogs.length > dialogsBefore, 'the control asked before writing');
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'and Cancel left track_db byte-identical');
+
+    // now accept, and the days go
+    await page.evaluate(function () { document.getElementById('dl-caution-clear').click(); return true; });
+    const cleared = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return d && (d.cautionDates || []).length === 0 ? d : false;
+    }, { message: 'accepting the prompt clearing every day' });
+    assert.deepEqual(cleared.cautionDates, [],
+      'cleared as a STORED empty list, not a deleted key');
+    assert.equal(cleared.date, due, 'and the deadline keeps its due day');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* Un-picking the day work already sits on would strand it. Refuse, name the
+     day, and move nothing — the same rule that stops a due-day move rewriting
+     the picks. */
+  await t.test('un-picking a day that holds prep is refused, and nothing is written', async () => {
+    const prepDay = dayFromToday(-1);
+    const { db, due } = cautionDb({ cautionDates: [dayFromToday(-4), prepDay], blockDate: prepDay });
+    const page = await openDlPopup({ db, due });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    const warn = await page.waitFor(function () {
+      var el = document.querySelector('[data-dl-caution-refused]');
+      return el ? el.textContent : false;
+    }, { message: 'the popup naming the day that holds prep' });
+    assert.ok(warn.indexOf(prepDay) >= 0, 'the offending day is named, not merely counted');
+
+    await clickCautionDay(page, prepDay);
+    await sleep(200);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'the un-pick is refused and track_db stays byte-identical');
+
+    // clear all is refused for the same reason, and says so instead of prompting
+    const clearState = await page.evaluate(function () {
+      var b = document.getElementById('dl-caution-clear');
+      return { disabled: b.disabled, title: b.getAttribute('title') };
+    });
+    assert.equal(clearState.disabled, true, 'clear all is disabled rather than opening a prompt it would ignore');
+    assert.match(clearState.title, /Prep is scheduled/);
+
+    // ...but a day that holds NOTHING still un-picks normally
+    await clickCautionDay(page, dayFromToday(-4));
+    const after = await page.waitFor(function (v) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      var c = (d || {}).cautionDates || [];
+      return c.length === 1 && c[0] === v ? d : false;
+    }, { args: [prepDay], message: 'the harmless un-pick still going through' });
+    assert.deepEqual(after.cautionDates, [prepDay], 'so the refusal narrows the set, it does not freeze it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* The one-time migration. Its guard is the PRESENCE of `startDate`, so it is
+     idempotent by construction and needs no schemaVersion. */
+  await t.test('a legacy caution span is migrated once, on load, and never again', async () => {
+    const due = thisMonthDay(22);
+    const start = thisMonthDay(20);
+    const db = seedDb({
+      calendarNotes: [],
+      deadlines: [
+        F.legacyDeadline('dl-old', due, start, { title: 'Legacy', createdAt: 1771000000000, done: true }),
+        F.deadline('dl-new', due, { cautionDates: [thisMonthDay(19)], title: 'Already chosen' })
+      ]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await page.waitFor(function () {
+      var el = document.querySelector('#root'); return !!el && el.children.length > 0;
+    }, { message: 'progress.html mounting' });
+
+    const migrated = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var ds = ((db.slots || [])[0] || {}).deadlines || [];
+      var old = ds.filter(function (d) { return d.id === 'dl-old'; })[0];
+      return old && Array.isArray(old.cautionDates) ? ds : false;
+    }, { message: 'the migration converting the legacy record' });
+
+    const old = migrated.filter(d => d.id === 'dl-old')[0];
+    assert.deepEqual(old.cautionDates, [start, thisMonthDay(21)],
+      'the span became its days, minus the due day');
+    assert.ok(!('startDate' in old), 'and the legacy key is gone');
+    assert.equal(old.date, due, 'the due day is untouched');
+    assert.equal(old.done, true, 'and so is the tick');
+    assert.equal(old.createdAt, 1771000000000);
+    assert.equal(old.title, 'Legacy');
+
+    const fresh = migrated.filter(d => d.id === 'dl-new')[0];
+    assert.deepEqual(fresh.cautionDates, [thisMonthDay(19)],
+      'a record that already chose its days is left exactly as it was');
+
+    // IDEMPOTENT: a second load writes nothing, because startDate is the guard
+    const afterFirst = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    await page.close();
+
+    // `raw:`, not `db:` — afterFirst is ALREADY the serialised track_db string,
+    // and `db:` stringifies its argument, which would seed a double-encoded
+    // blob and make the comparison fail for a reason that has nothing to do
+    // with the migration.
+    const again = await open('progress.html', { raw: afterFirst, hash: '#schedule' });
+    await again.waitFor(function () {
+      var el = document.querySelector('#root'); return !!el && el.children.length > 0;
+    }, { message: 'progress.html mounting a second time' });
+    await sleep(400);
+    assert.equal(await again.evaluate(function () { return localStorage.getItem('track_db'); }), afterFirst,
+      'the second load leaves track_db byte-identical — the migration is a no-op');
+    assert.deepEqual(realErrors(again), []);
+    await again.close();
   });
 
   await t.test('a ?dl= that names nothing opens nothing, without an error', async () => {
@@ -830,7 +1002,7 @@ test('browser suites', skipUnlessChrome, async t => {
       var el = document.querySelector('#root'); return !!el && el.children.length > 0;
     }, { message: 'progress.html mounting' });
     await sleep(300);
-    assert.equal(await page.evaluate(function () { return !!document.getElementById('dl-caution-from'); }),
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-dl-caution-cal]'); }),
       false, 'a stale or hand-typed link opens no popup');
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -840,7 +1012,8 @@ test('browser suites', skipUnlessChrome, async t => {
     const due = thisMonthDay(22);
     const db = seedDb({
       calendarNotes: [],
-      deadlines: [F.deadline('dl-home', due, { startDate: thisMonthDay(20), title: 'Ship the thing' })]
+      deadlines: [F.deadline('dl-home', due,
+        { cautionDates: [thisMonthDay(20), thisMonthDay(21)], title: 'Ship the thing' })]
     });
     const page = await open('index.html', { db });
     await page.waitFor(function () { return !!document.querySelector('#cal-grid .cal-cell'); },
@@ -888,7 +1061,7 @@ test('browser suites', skipUnlessChrome, async t => {
       calendarNotes: [],
       docPages: [F.docPage('p-1')],
       deadlines: [F.deadline('dl-doc-jump', thisMonthDay(22),
-        { startDate: thisMonthDay(20), title: 'Ship the thing', docPageId: 'p-1' })]
+        { cautionDates: [thisMonthDay(20), thisMonthDay(21)], title: 'Ship the thing', docPageId: 'p-1' })]
     });
     const page = await open('documentations.html', { db });
     await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
@@ -943,11 +1116,12 @@ test('browser suites', skipUnlessChrome, async t => {
     return {
       due,
       start: thisMonthDay(20),
+      days: [thisMonthDay(20), thisMonthDay(21)],
       db: seedDb({
         calendarNotes: [],
         docPages: [F.docPage('p-1')],
         deadlines: [F.deadline('dl-tick', due, Object.assign({
-          startDate: thisMonthDay(20), title: 'Ship the thing',
+          cautionDates: [thisMonthDay(20), thisMonthDay(21)], title: 'Ship the thing',
           docPageId: 'p-1', createdAt: 1771000000000
         }, dlOver))]
       })
@@ -971,7 +1145,7 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('the popup tick persists and keeps every other field', async () => {
-    const { db, due, start } = tickDb();
+    const { db, due, days } = tickDb();
     const page = await openTickPopup({ db, due });
 
     const before = await storedTick(page);
@@ -988,7 +1162,8 @@ test('browser suites', skipUnlessChrome, async t => {
     // list is the bug that cost day notes and deadlines before
     assert.equal(ticked.docPageId, 'p-1', 'ticking keeps the authoring page');
     assert.equal(ticked.createdAt, 1771000000000, 'and createdAt');
-    assert.equal(ticked.startDate, start, 'and the caution start, so unticking restores the same run-up');
+    assert.deepEqual(ticked.cautionDates, days,
+      'and the chosen days, so unticking restores exactly the same "!" marks');
     assert.equal(ticked.time, before.time);
     assert.equal(ticked.title, 'Ship the thing');
 
@@ -998,7 +1173,7 @@ test('browser suites', skipUnlessChrome, async t => {
       var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
       return d && !d.done ? d : false;
     }, { message: 'the tick being cleared again' });
-    assert.equal(unticked.startDate, start, 'and the round trip leaves the span untouched');
+    assert.deepEqual(unticked.cautionDates, days, 'and the round trip leaves the chosen days untouched');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -1044,11 +1219,11 @@ test('browser suites', skipUnlessChrome, async t => {
       return true;
     });
     await page.waitFor(function () {
-      return document.querySelectorAll('#root .grid.grid-cols-7').length > 0;
+      return document.querySelectorAll('#root .grid.grid-cols-7:not([data-dl-caution-cal])').length > 0;
     }, { message: 'the month grid' });
     // select the run-up day so the day panel lists it too
     await page.evaluate(function () {
-      var cells = document.querySelectorAll('#root .grid.grid-cols-7 > div');
+      var cells = document.querySelectorAll('#root .grid.grid-cols-7:not([data-dl-caution-cal]) > div');
       Array.prototype.filter.call(cells, function (c) { return c.className.indexOf('min-h-') >= 0; })[20].click();
       return true;
     });
@@ -1093,10 +1268,10 @@ test('browser suites', skipUnlessChrome, async t => {
       return true;
     });
     await page.waitFor(function () {
-      return document.querySelectorAll('#root .grid.grid-cols-7').length > 0;
+      return document.querySelectorAll('#root .grid.grid-cols-7:not([data-dl-caution-cal])').length > 0;
     }, { message: 'the month grid' });
     await page.evaluate(function () {
-      var cells = document.querySelectorAll('#root .grid.grid-cols-7 > div');
+      var cells = document.querySelectorAll('#root .grid.grid-cols-7:not([data-dl-caution-cal]) > div');
       Array.prototype.filter.call(cells, function (c) { return c.className.indexOf('min-h-') >= 0; })[21].click();
       return true;
     });
@@ -1109,7 +1284,8 @@ test('browser suites', skipUnlessChrome, async t => {
       var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
       return d && d.done === true ? d : false;
     }, { message: 'the day-panel tick reaching track_db' });
-    assert.equal(ticked.startDate, thisMonthDay(20), 'writing done alone, through the same spread');
+    assert.deepEqual(ticked.cautionDates, [thisMonthDay(20), thisMonthDay(21)],
+      'writing done alone, through the same spread');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -1188,20 +1364,18 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  // ── 2e. the due day is movable, and the caution start does not follow ───
+  // ── 2e. the due day is movable, and the chosen days do not follow ──────
 
   /* Moving a deadline used to mean deleting and re-creating it, which threw
      away createdAt, docPageId, and the id every ?dl= link points at. The
-     popup's Edit form now carries the due day too, under one rule: it may not
-     land before the caution start, and the caution start is never rewritten to
-     make room.
+     popup's Edit form carries the due day, under one rule: it may not land on
+     or before a day the user chose as a caution day, and those days are never
+     rewritten to make room.
 
-     That rule is load-bearing, not cosmetic. Nothing validates
-     startDate <= date on a STORED record — schema.js checks each date's format
-     independently — and an inverted span soft-locks the documentations.html
-     edit form, whose Save is gated on dlValid against the stored startDate.
-     The popup is the only writer that could reach that state, so refusing at
-     the source is what keeps the invariant true everywhere else. */
+     Refusing is the point. A chosen day is only a caution day while it falls
+     BEFORE the deadline, so a due day pulled back over one would silently
+     delete it — and silently deleting a day the user picked by hand is exactly
+     the class of loss this project refuses everywhere else. */
 
   const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'];
@@ -1219,12 +1393,13 @@ test('browser suites', skipUnlessChrome, async t => {
     return {
       due,
       start: thisMonthDay(15),
+      days: [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17)],
       db: seedDb({
         calendarNotes: [],
         docPages: [F.docPage('p-1')],
         deadlines: [F.deadline('dl-move', due, Object.assign({
-          startDate: thisMonthDay(15), title: 'Ship the thing',
-          docPageId: 'p-1', createdAt: 1771000000000
+          cautionDates: [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17)],
+          title: 'Ship the thing', docPageId: 'p-1', createdAt: 1771000000000
         }, dlOver))]
       })
     };
@@ -1236,14 +1411,14 @@ test('browser suites', skipUnlessChrome, async t => {
   const openMovePopup = async ({ db, due }, dateParam) => {
     const page = await open('progress.html',
       { db, hash: '?date=' + (dateParam || due) + '&dl=dl-move#schedule' });
-    await page.waitFor(function () { return !!document.getElementById('dl-caution-from'); },
+    await page.waitFor(function () { return !!document.querySelector('[data-dl-caution-cal]'); },
       { message: 'the deadline popup in its READ view' });
     return page;
   };
   // the due-date row lives behind Edit, beside the time it has always shown
   const openMoveEdit = async page => {
     await page.evaluate(function () {
-      var pop = document.getElementById('dl-caution-from').closest('div.fixed');
+      var pop = document.querySelector('[data-dl-caution-cal]').closest('div.fixed');
       Array.prototype.find.call(pop.querySelectorAll('button'),
         function (b) { return b.textContent.trim() === 'Edit'; }).click();
       return true;
@@ -1269,8 +1444,8 @@ test('browser suites', skipUnlessChrome, async t => {
     return true;
   });
 
-  await t.test('the popup Edit form moves the due day and leaves the caution start where it was', async () => {
-    const { db, due, start } = moveDb({ done: true });
+  await t.test('the popup Edit form moves the due day and leaves the chosen days where they were', async () => {
+    const { db, due, start, days } = moveDb({ done: true });
     const page = await openMovePopup({ db, due });
     await openMoveEdit(page);
 
@@ -1281,7 +1456,7 @@ test('browser suites', skipUnlessChrome, async t => {
       };
     });
     assert.equal(seeded.date, due, 'the row is seeded from the stored due day');
-    assert.equal(seeded.min, start, 'and cannot be dragged before the caution start');
+    assert.equal(seeded.min, start, 'and cannot be dragged before the earliest chosen day');
 
     const moved = thisMonthDay(22);
     await setDue(page, moved);
@@ -1294,7 +1469,8 @@ test('browser suites', skipUnlessChrome, async t => {
     }, { args: [moved], message: 'the new due day reaching track_db' });
 
     assert.equal(saved.date, moved, 'the due day moved');
-    assert.equal(saved.startDate, start, 'and the caution start did NOT follow it');
+    assert.deepEqual(saved.cautionDates, days, 'and the chosen days did NOT follow it');
+    assert.ok(!('startDate' in saved), 'nor did a legacy key come back');
     // the spread is what protects the rest — rebuilding the record from a
     // field list is the bug that cost day notes and deadlines before
     assert.equal(saved.id, 'dl-move', 'the id survives, so every ?dl= link still resolves');
@@ -1307,23 +1483,29 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('a due day before the caution start is refused, leaving track_db byte-identical', async () => {
-    const { db, due, start } = moveDb();
+  await t.test('a due day that would orphan a chosen caution day is refused, byte-identical', async () => {
+    const { db, due, days } = moveDb();
     const page = await openMovePopup({ db, due });
     await openMoveEdit(page);
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
 
-    // one day before the caution start: the whole point of the constraint
-    await setDue(page, thisMonthDay(14));
+    // day 16 is chosen, so a due day of 16 would silently drop it — and so
+    // would 15. Refuse and NAME them rather than dropping either.
+    await setDue(page, thisMonthDay(16));
     const blocked = await page.waitFor(function () {
       var pop = document.getElementById('dl-due-date').closest('div.fixed');
       var save = Array.prototype.find.call(pop.querySelectorAll('button'),
         function (b) { return b.textContent.trim() === 'Save'; });
       return save.disabled ? { disabled: true, text: pop.textContent } : false;
-    }, { message: 'Save going disabled on an inverted span' });
+    }, { message: 'Save going disabled on a move that would orphan a chosen day' });
     assert.equal(blocked.disabled, true, 'Save is disabled');
-    assert.match(blocked.text, /Caution start must be on or before the deadline/,
-      'and the form says why');
+    const named = await page.evaluate(function () {
+      var el = document.querySelector('[data-dl-orphaned]');
+      return el ? el.textContent : null;
+    });
+    assert.ok(named, 'the form says why');
+    assert.ok(named.indexOf(thisMonthDay(16)) >= 0, 'and names the day that would be lost');
+    assert.ok(named.indexOf(thisMonthDay(17)) >= 0, 'including every one of them');
 
     await clickMoveSave(page);
     await sleep(250);
@@ -1331,7 +1513,17 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(after, before, 'a refused move writes nothing at all');
     const stored = await storedMove(page);
     assert.equal(stored.date, due, 'the due day did not move');
-    assert.equal(stored.startDate, start, 'and neither did the caution start');
+    assert.deepEqual(stored.cautionDates, days, 'and no chosen day was dropped');
+
+    // a move FORWARD is fine — no chosen day is orphaned by it
+    await setDue(page, thisMonthDay(22));
+    const okState = await page.waitFor(function () {
+      var pop = document.getElementById('dl-due-date').closest('div.fixed');
+      var save = Array.prototype.find.call(pop.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Save'; });
+      return save.disabled ? false : true;
+    }, { message: 'Save re-enabling for a move that orphans nothing' });
+    assert.equal(okState, true, 'so the refusal narrows the moves, it does not freeze the form');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -1350,9 +1542,11 @@ test('browser suites', skipUnlessChrome, async t => {
       return save.disabled ? { disabled: true, text: pop.textContent } : false;
     }, { message: 'Save going disabled on a cleared due day' });
     assert.match(blocked.text, /Pick a due date/, 'the form asks for one');
-    // a blank date must not ALSO raise the ordering warning — one fault, one message
-    assert.doesNotMatch(blocked.text, /Caution start must be on or before/,
-      'and does not also claim the caution start is out of order');
+    // one fault, one message: a blank date must not ALSO claim chosen days are
+    // orphaned. dlDraftValid gates the orphan check, so it cannot fire here.
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-dl-orphaned]');
+    }), false, 'and does not also claim a chosen day would be orphaned');
 
     await clickMoveSave(page);
     await sleep(250);
@@ -1363,8 +1557,9 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('the run-up re-homes with the due day, keeping its stored length', async () => {
-    // start 15, due 18 → after moving to 22 the "!" days are 15..21
+  await t.test('the chosen days stay put when the due day moves past them', async () => {
+    // chosen 15,16,17 with due 18 → after moving to 22 the "!" days are STILL
+    // 15,16,17. A span would have stretched to 15..21; a chosen set does not.
     const { db, due } = moveDb();
     const page = await openMovePopup({ db, due }, thisMonthDay(20));
 
@@ -1402,8 +1597,8 @@ test('browser suites', skipUnlessChrome, async t => {
     }, { message: 'the month grid redrawing the run-up' });
 
     const asNums = list => list.map(s => Number(String(s).replace(/\D/g, ''))).sort((a, b) => a - b);
-    assert.deepEqual(asNums(marks.caution), [15, 16, 17, 18, 19, 20, 21],
-      'the "!" days are startDate..the day before the NEW due day — the old due day is now just a run-up day');
+    assert.deepEqual(asNums(marks.caution), [15, 16, 17],
+      'exactly the days the user chose — the move did not stretch them, and 18-21 stay unmarked');
     assert.deepEqual(asNums(marks.due), [22], 'and the deadline itself is drawn once, on its new day');
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -1441,7 +1636,7 @@ test('browser suites', skipUnlessChrome, async t => {
       return true;
     });
     const month = await page.waitFor(function () {
-      var el = document.querySelector('#root .grid.grid-cols-7');
+      var el = document.querySelector('#root .grid.grid-cols-7:not([data-dl-caution-cal])');
       return el ? el.parentElement.querySelector('span.font-bold').textContent.trim() : false;
     }, { message: 'the month grid header' });
     assert.equal(month, MONTHS_SHORT[nextMonth.getMonth()] + ' ' + nextMonth.getFullYear(),
@@ -1454,17 +1649,15 @@ test('browser suites', skipUnlessChrome, async t => {
 
   /* A new deadline used to inherit the calendar cell its composer was opened
      on, so filing one for next week meant navigating there first. Both add
-     forms now carry a due-date field of their own, which makes each of them a
-     WRITER of `date` — and nothing validates `startDate <= date` on a stored
-     record, so each has to carry the ordering check itself. That is what
-     `dlDraftValid` is, and these cases assert it at BOTH surfaces separately:
-     progress.html holds its own copy because it does not load calendar-core.js,
-     which is the same duplication that cost this project the caution predicate
-     once.
+     forms carry a due-date field of their own, which makes each of them a
+     WRITER of `date`; `dlDraftValid` format-checks it so a blank field cannot
+     reach storage, and these cases assert it at BOTH surfaces separately,
+     because progress.html holds its own copy of that helper.
 
-     The caution start must NOT follow the typed due day. It is an independent
-     stored date, exactly as in the popup's Edit form; a composer that quietly
-     re-homed it would be rewriting a day the user chose. */
+     NEITHER form has a caution field any more, and that is asserted rather
+     than assumed. Choosing caution days needs the prep-aware refusal, which
+     only the Progress popup can make; a compose form that set them would be a
+     second writer that cannot check what it is about to strand. */
 
   const composeSeed = () => seedDb({
     calendarNotes: [], deadlines: [], docPages: [F.docPage('p-1')]
@@ -1485,7 +1678,7 @@ test('browser suites', skipUnlessChrome, async t => {
       return true;
     });
     await page.waitFor(function () {
-      return document.querySelectorAll('#root .grid.grid-cols-7').length > 0;
+      return document.querySelectorAll('#root .grid.grid-cols-7:not([data-dl-caution-cal])').length > 0;
     }, { message: 'the month grid' });
     // one ⏰ per real day cell, so the nth is day n — the leading blanks carry none
     await page.evaluate(function (n) {
@@ -1521,13 +1714,12 @@ test('browser suites', skipUnlessChrome, async t => {
       var box = document.getElementById('dl-new-date').closest('div.bg-gray-950');
       return {
         date: document.getElementById('dl-new-date').value,
-        min: document.getElementById('dl-new-date').getAttribute('min'),
-        start: box.querySelector('input[type="date"][max]').value
+        dateInputs: box.querySelectorAll('input[type="date"]').length
       };
     });
     assert.equal(seeded.date, thisMonthDay(15), 'the field opens on the cell it was launched from');
-    assert.equal(seeded.start, thisMonthDay(15), 'and so does the caution start');
-    assert.equal(seeded.min, thisMonthDay(15), 'which caps the picker from below');
+    assert.equal(seeded.dateInputs, 1,
+      'and it is the ONLY date field — the composer cannot set caution days');
 
     const due = thisMonthDay(22);
     await fillDlComposer(page, { date: due, time: '17:00', title: 'Filed ahead' });
@@ -1540,37 +1732,37 @@ test('browser suites', skipUnlessChrome, async t => {
       return d ? d : false;
     }, { message: 'the new deadline reaching track_db' });
     assert.equal(saved.date, due, 'the deadline lands on the typed day, not the cell');
-    assert.equal(saved.startDate, thisMonthDay(15),
-      'and the caution start stays where it was — it does not follow the due day');
+    assert.deepEqual(saved.cautionDates, [],
+      'and it is created with NO caution days — they are chosen in the popup');
+    assert.ok(!('startDate' in saved), 'no legacy key is written');
     assert.equal(saved.time, '17:00');
     assert.equal(saved.title, 'Filed ahead');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('the Schedule composer refuses a due day before the caution start', async () => {
+  await t.test('the Schedule composer refuses a blank due day and writes nothing', async () => {
     const page = await open('progress.html', { db: composeSeed(), hash: '#schedule' });
     await openDlComposerOn(page, 18);
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
 
-    // fill everything else first, so the ONLY fault is the ordering
-    await fillDlComposer(page, { time: '09:00', title: 'Backwards' });
-    await fillDlComposer(page, { date: thisMonthDay(14) });
+    // fill everything else first, so the ONLY fault is the missing due day
+    await fillDlComposer(page, { time: '09:00', title: 'Dateless' });
+    await fillDlComposer(page, { date: '' });
     const blocked = await page.waitFor(function () {
       var box = document.getElementById('dl-new-date').closest('div.bg-gray-950');
       var btn = Array.prototype.find.call(box.querySelectorAll('button'),
         function (b) { return b.textContent.trim() === 'Done'; });
       return btn.disabled ? { text: box.textContent } : false;
-    }, { message: 'Done going disabled on an inverted span' });
-    assert.match(blocked.text, /Caution start must be on or before the deadline/,
-      'and the composer says why');
+    }, { message: 'Done going disabled on a blank due day' });
+    assert.match(blocked.text, /Pick a due date/, 'and the composer says why');
 
     // the Cancel path is the one that matters: a refusal must write nothing
     await dlComposerDone(page);
     await sleep(250);
     assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
       before, 'clicking Done anyway writes nothing at all');
-    assert.deepEqual(await storedDl(page), [], 'and no inverted deadline reaches storage');
+    assert.deepEqual(await storedDl(page), [], 'and no dateless deadline reaches storage');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -1589,10 +1781,17 @@ test('browser suites', skipUnlessChrome, async t => {
       return !!document.querySelector('.cal-doc-form input[type="date"]');
     }, { message: 'the deadline composer showing a Due on row' });
   };
+  // The edit form now has NO date field, so `dates[0]` can legitimately be
+  // absent. Reading `.value` off it unconditionally threw and the scope-guard
+  // case failed on a TypeError rather than on what it asserts.
   const docDlFields = page => page.evaluate(function () {
     var form = document.querySelector('.cal-doc-form');
     var dates = form.querySelectorAll('input[type="date"]');
-    return { count: dates.length, due: dates[0].value, start: dates[1] ? dates[1].value : null };
+    return {
+      count: dates.length,
+      due: dates[0] ? dates[0].value : null,
+      start: dates[1] ? dates[1].value : null
+    };
   });
   const fillDocDl = (page, { date, time, title }) =>
     page.evaluate(function (setterSrc, v) {
@@ -1616,9 +1815,9 @@ test('browser suites', skipUnlessChrome, async t => {
     await openDocDlForm(page, 15);
 
     const seeded = await docDlFields(page);
-    assert.equal(seeded.count, 2, 'composing shows a due date beside the caution start');
+    assert.equal(seeded.count, 1,
+      'composing shows a due date and nothing else — no caution field on this page');
     assert.equal(seeded.due, thisMonthDay(15), 'seeded from the selected cell');
-    assert.equal(seeded.start, thisMonthDay(15), 'and so is the caution start');
 
     const due = thisMonthDay(22);
     await fillDocDl(page, { date: due, time: '17:00', title: 'Filed ahead' });
@@ -1631,40 +1830,42 @@ test('browser suites', skipUnlessChrome, async t => {
       return d ? d : false;
     }, { message: 'the new deadline reaching track_db' });
     assert.equal(saved.date, due, 'the deadline lands on the typed day, not the selected cell');
-    assert.equal(saved.startDate, thisMonthDay(15), 'and the caution start does not follow it');
+    assert.deepEqual(saved.cautionDates, [], 'and it is created with no caution days');
+    assert.ok(!('startDate' in saved), 'no legacy key is written');
     assert.equal(saved.docPageId, 'p-1', 'the page that authored it is still named');
     assert.equal(saved.time, '17:00');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('a Documentations block refuses a due day before the caution start', async () => {
+  await t.test('a Documentations block refuses a blank due day and writes nothing', async () => {
     const page = await open('documentations.html', { db: composeSeed() });
     await openDocDlForm(page, 18);
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
 
-    await fillDocDl(page, { time: '09:00', title: 'Backwards' });
-    await fillDocDl(page, { date: thisMonthDay(14) });
+    await fillDocDl(page, { time: '09:00', title: 'Dateless' });
+    await fillDocDl(page, { date: '' });
     const blocked = await page.waitFor(function () {
       var form = document.querySelector('.cal-doc-form');
       return form.querySelector('button.primary').disabled ? { text: form.textContent } : false;
-    }, { message: 'Add deadline going disabled on an inverted span' });
-    assert.match(blocked.text, /caution start on or before/, 'and the form says why');
+    }, { message: 'Add deadline going disabled on a blank due day' });
+    assert.match(blocked.text, /Needs a due date and a time/, 'and the form says why');
 
     await docDlSave(page);
     await sleep(250);
     assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
       before, 'clicking Add anyway writes nothing at all');
-    assert.deepEqual(await storedDl(page), [], 'and no inverted deadline reaches storage');
+    assert.deepEqual(await storedDl(page), [], 'and no dateless deadline reaches storage');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('editing an existing deadline still takes its day from the record', async () => {
+  await t.test('SCOPE GUARD: the Documentations edit form sets neither the day nor the caution days', async () => {
     // The due day of a STORED deadline moves from the Progress popup alone —
-    // it is the one writer that checks the prep placed inside the caution
-    // period. A second mover would have to repeat that check, which is exactly
-    // the shape that cost this project the caution predicate.
+    // it is the one writer that refuses a move orphaning a chosen day or
+    // stranding placed prep — and the caution days are chosen only there, for
+    // the same reason. A second writer would have to repeat both checks, which
+    // is exactly the shape that cost this project the caution predicate.
     const { db, due } = moveDb();
     const page = await open('documentations.html', { db });
     await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
@@ -1679,9 +1880,11 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.waitFor(function () { return !!document.querySelector('.cal-doc-form'); },
       { message: 'the deadline edit form' });
     const fields = await docDlFields(page);
-    assert.equal(fields.count, 1, 'the edit form carries the caution start alone');
-    assert.equal(fields.due, thisMonthDay(15), 'and that one field is the caution start');
-    assert.equal((await storedDl(page))[0].date, due, 'the stored due day is untouched');
+    assert.equal(fields.count, 0, 'the edit form carries NO date field at all');
+    const stored = (await storedDl(page))[0];
+    assert.equal(stored.date, due, 'the stored due day is untouched');
+    assert.deepEqual(stored.cautionDates, [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17)],
+      'and so are the chosen days');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -2482,11 +2685,16 @@ test('browser suites', skipUnlessChrome, async t => {
         ],
         deadlines: [
           F.deadline('dl-sched', '2026-03-10', {
-            startDate: '2026-03-08', blockDuration: 45, blockTime: '08:00', blockDate: '2026-03-09',
+            cautionDates: ['2026-03-08', '2026-03-09'],
+            blockDuration: 45, blockTime: '08:00', blockDate: '2026-03-09',
             parts: [{ id: 'pt-1', title: 'Outline', date: '2026-03-08', time: '08:00', blockDuration: 45, done: false }]
           }),
           F.deadline('dl-doc', '2026-03-10',
-            { startDate: '2026-03-09', docPageId: 'p-1', time: '10:00', done: true })
+            { cautionDates: ['2026-03-09'], docPageId: 'p-1', time: '10:00', done: true }),
+          // Un-migrated on purpose: an export taken before caution days became a
+          // list must import intact, keys and all. index.html never runs the
+          // migration, so this record arrives here exactly as it left.
+          F.legacyDeadline('dl-legacy', '2026-03-10', '2026-03-07', { title: 'From an old export' })
         ]
       })
     });
@@ -2530,8 +2738,15 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(note.docPageId, 'p-1', 'with its docPageId');
     const dl = imported.deadlines.find(d => d.id === 'dl-doc');
     assert.equal(dl.docPageId, 'p-1', 'the doc-authored deadline kept its docPageId');
-    assert.equal(dl.startDate, '2026-03-09', 'and its caution period');
-    assert.equal(dl.done, true, 'and its tick, which no allow-list in the importer names');
+    assert.deepEqual(dl.cautionDates, ['2026-03-09'],
+      'and its chosen caution days, which no allow-list in the importer names');
+    assert.equal(dl.done, true, 'and its tick, which no allow-list names either');
+
+    const legacy = imported.deadlines.find(d => d.id === 'dl-legacy');
+    assert.equal(legacy.startDate, '2026-03-07',
+      'and a pre-choice record keeps its startDate through the round trip, unconverted');
+    assert.ok(!('cautionDates' in legacy),
+      'the importer neither migrates it nor invents a list beside it');
 
     // the schedule-block keys, which no allow-list names either
     const sched = imported.deadlines.find(d => d.id === 'dl-sched');
@@ -3233,33 +3448,22 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('resetting a caution period asks, and Cancel keeps the run-up', async () => {
-    const { db, due } = cautionDb();
+  await t.test('clearing every caution day asks, and Cancel keeps them', async () => {
+    const picks = [dayFromToday(-4), dayFromToday(-1)];
+    const { db, due } = cautionDb({ cautionDates: picks });
     const page = await openDlPopup({ db, due });
 
-    const start = await page.evaluate(function () {
-      var b = Array.prototype.find.call(document.querySelectorAll('button'),
-        function (x) { return /^Start the caution period on /.test(x.getAttribute('title') || ''); });
-      b.click();
-      return b.getAttribute('title').replace('Start the caution period on ', '');
-    });
-    await page.waitFor(function (v) {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return d && d.startDate === v;
-    }, { args: [start], message: 'a real run-up to reset' });
-
-    await answering(page, false, CLICK_SOON_TEXT, ['reset']);
+    await answering(page, false, CLICK_SOON_TEXT, ['clear all']);
     const kept = await storedDeadline(page);
-    assert.equal(kept.startDate, start, 'Cancel left the caution period the user chose');
-    assert.equal(kept.date, due, 'and reset never touches the due day either way');
+    assert.deepEqual(kept.cautionDates, picks, 'Cancel left every day the user chose');
+    assert.equal(kept.date, due, 'and clearing never touches the due day either way');
 
-    await answering(page, true, CLICK_SOON_TEXT, ['reset']);
-    assert.equal((await page.waitFor(function (v) {
+    await answering(page, true, CLICK_SOON_TEXT, ['clear all']);
+    assert.deepEqual((await page.waitFor(function () {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return d && d.startDate === v ? d : false;
-    }, { args: [due], message: 'confirming still resets' })).startDate, due);
+      return d && (d.cautionDates || []).length === 0 ? d : false;
+    }, { message: 'confirming still clears' })).cautionDates, []);
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -3424,7 +3628,7 @@ test('browser suites', skipUnlessChrome, async t => {
         F.calNote('n-timed', TODAY, { title: 'Timed marker note', time: '14:30' }),
         F.calNote('n-bare', TODAY, { title: 'Untimed note' })
       ],
-      deadlines: [F.deadline('d-bare', TODAY, { startDate: TODAY, time: '17:00', title: 'Bare deadline' })]
+      deadlines: [F.deadline('d-bare', TODAY, { cautionDates: [],  time: '17:00', title: 'Bare deadline' })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
@@ -3457,7 +3661,7 @@ test('browser suites', skipUnlessChrome, async t => {
   await t.test('a deadline block ends at the due time and a note block starts at its time', async () => {
     const db = seedDb({
       calendarNotes: [F.calNote('n-s', TODAY, { title: 'Scheduled note', time: '09:00', blockDuration: 90 })],
-      deadlines: [F.deadline('d-p', TODAY, { startDate: TODAY, time: '20:00', title: 'Prep', blockDuration: 60 })]
+      deadlines: [F.deadline('d-p', TODAY, { cautionDates: [],  time: '20:00', title: 'Prep', blockDuration: 60 })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
@@ -3485,7 +3689,7 @@ test('browser suites', skipUnlessChrome, async t => {
 
   await t.test('a midnight-clipped run-up keeps its end on the due time', async () => {
     const db = seedDb({
-      deadlines: [F.deadline('d-e', TODAY, { startDate: TODAY, time: '00:30', title: 'Early', blockDuration: 60 })]
+      deadlines: [F.deadline('d-e', TODAY, { cautionDates: [],  time: '00:30', title: 'Early', blockDuration: 60 })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
@@ -3505,8 +3709,8 @@ test('browser suites', skipUnlessChrome, async t => {
         F.calNote('n-far', '2026-01-05', { title: 'Note far away', time: '10:00' })
       ],
       deadlines: [
-        F.deadline('d-far', '2026-02-09', { startDate: '2026-02-09', time: '17:00', title: 'Deadline far away' }),
-        F.deadline('d-early', '2026-01-05', { startDate: '2026-01-05', time: '08:00', title: 'Deadline same day, earlier' })
+        F.deadline('d-far', '2026-02-09', { cautionDates: [],  time: '17:00', title: 'Deadline far away' }),
+        F.deadline('d-early', '2026-01-05', { cautionDates: [],  time: '08:00', title: 'Deadline same day, earlier' })
       ]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
@@ -3545,7 +3749,7 @@ test('browser suites', skipUnlessChrome, async t => {
     // item's own surfaces — chip, marker, due line, run-up — all stay.
     const db = seedDb({
       deadlines: [F.deadline('d-1', TODAY, {
-        startDate: '2026-08-01', time: '17:00', title: 'Essay', detail: 'body',
+        cautionDates: ['2026-08-01', '2026-08-02'], time: '17:00', title: 'Essay', detail: 'body',
         done: true, docPageId: 'p-1', blockDuration: 45, blockTime: '08:00'
       })]
     });
@@ -3564,7 +3768,7 @@ test('browser suites', skipUnlessChrome, async t => {
 
     assert.equal(after.blockDuration, 45, 'the remembered length is NOT deleted');
     assert.equal(after.blockTime, '08:00', 'nor the anchor');
-    for (const k of ['id', 'date', 'time', 'startDate', 'title', 'detail', 'done', 'docPageId', 'createdAt']) {
+    for (const k of ['id', 'date', 'time', 'cautionDates', 'title', 'detail', 'done', 'docPageId', 'createdAt']) {
       assert.deepEqual(after[k], before[k], k + ' survived the write');
     }
 
@@ -3584,7 +3788,7 @@ test('browser suites', skipUnlessChrome, async t => {
   await t.test('a removed block leaves the strip chip and the due line drawn', async () => {
     const db = seedDb({
       calendarNotes: [F.calNote('n-off', TODAY, { title: 'Off-grid note', time: '14:30', blockOff: true })],
-      deadlines: [F.deadline('d-off', TODAY, { startDate: TODAY, time: '17:00', title: 'Off-grid deadline', blockOff: true })]
+      deadlines: [F.deadline('d-off', TODAY, { cautionDates: [],  time: '17:00', title: 'Off-grid deadline', blockOff: true })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
@@ -3625,7 +3829,7 @@ test('browser suites', skipUnlessChrome, async t => {
 
   await t.test('dissecting replaces the parent block with its parts, and emptying restores it', async () => {
     const db = seedDb({
-      deadlines: [F.deadline('d-1', TODAY, { startDate: TODAY, time: '17:00', title: 'Essay', blockDuration: 60 })]
+      deadlines: [F.deadline('d-1', TODAY, { cautionDates: [],  time: '17:00', title: 'Essay', blockDuration: 60 })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
@@ -3747,7 +3951,7 @@ test('browser suites', skipUnlessChrome, async t => {
     // calendar-core.js, Progress reads its own copy of the same rules.
     const db = seedDb({
       calendarNotes: [F.calNote('n-s', TODAY, { title: 'Scheduled note', time: '09:00', blockDuration: 90 })],
-      deadlines: [F.deadline('d-p', TODAY, { startDate: TODAY, time: '20:00', title: 'Prep block', blockDuration: 60 })]
+      deadlines: [F.deadline('d-p', TODAY, { cautionDates: [],  time: '20:00', title: 'Prep block', blockDuration: 60 })]
     });
     // index.html is static markup with no React #root — its calendar is a
     // plain DOM build, and the day preview only exists once a day is selected.
@@ -3783,7 +3987,7 @@ test('browser suites', skipUnlessChrome, async t => {
     // drift from the shape the page actually writes.
     const db = seedDb({
       docPages: [F.docPage('p-1', { title: 'Test Page' })],
-      deadlines: [F.deadline('d-p', TODAY, { startDate: TODAY, time: '20:00', title: 'Prep block', blockDuration: 60 })],
+      deadlines: [F.deadline('d-p', TODAY, { cautionDates: [],  time: '20:00', title: 'Prep block', blockDuration: 60 })],
       calendarNotes: []
     });
     const page = await open('documentations.html', { db });
@@ -3820,7 +4024,7 @@ test('browser suites', skipUnlessChrome, async t => {
 
   await t.test('changing a block writes no key progress.html does not own', async () => {
     const db = seedDb({
-      deadlines: [F.deadline('d-1', TODAY, { startDate: TODAY, time: '17:00', title: 'Essay' })]
+      deadlines: [F.deadline('d-1', TODAY, { cautionDates: [],  time: '17:00', title: 'Essay' })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
@@ -3876,7 +4080,7 @@ test('browser suites', skipUnlessChrome, async t => {
     const db = seedDb({
       calendarNotes: [F.calNote('n-m', due, { title: 'Moved note', time: '15:00', blockDate: moved })],
       deadlines: [F.deadline('d-m', due, {
-        startDate: WEEK(0), time: '17:00', title: 'Moved prep', blockDate: moved
+        cautionDates: [WEEK(0), WEEK(1), WEEK(2)], time: '17:00', title: 'Moved prep', blockDate: moved
       })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
@@ -3906,7 +4110,7 @@ test('browser suites', skipUnlessChrome, async t => {
     // calendar-core.js, Progress reads its own copy of the same rules.
     const db = seedDb({
       deadlines: [F.deadline('d-m', MDAY(13), {
-        startDate: MDAY(10), time: '20:00', title: 'Moved prep', blockDate: MDAY(11)
+        cautionDates: [MDAY(10), MDAY(11), MDAY(12)], time: '20:00', title: 'Moved prep', blockDate: MDAY(11)
       })]
     });
     const page = await open('index.html', { db });
@@ -3942,7 +4146,7 @@ test('browser suites', skipUnlessChrome, async t => {
     const db = seedDb({
       docPages: [F.docPage('p-cal', { title: 'Calendar page' })],
       deadlines: [F.deadline('d-s', MDAY(13), {
-        startDate: MDAY(10), time: '20:00', title: 'Split prep',
+        cautionDates: [MDAY(10), MDAY(11), MDAY(12)], time: '20:00', title: 'Split prep',
         parts: [{ id: 'pt-1', title: 'Early step', date: MDAY(11), time: '09:00' }]
       })],
       calendarNotes: []
@@ -3971,7 +4175,7 @@ test('browser suites', skipUnlessChrome, async t => {
     const TOMORROW = dayFromToday(1), YESTERDAY = dayFromToday(-1);
     const db = seedDb({
       deadlines: [F.deadline('d-1', TODAY, {
-        startDate: YESTERDAY, time: '17:00', title: 'Essay'
+        cautionDates: [YESTERDAY], time: '17:00', title: 'Essay'
       })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
@@ -4002,7 +4206,7 @@ test('browser suites', skipUnlessChrome, async t => {
     }, { message: 'the task reaching track_db' });
     assert.equal(withPart.parts[0].date, YESTERDAY, 'the task carries the chosen day');
     assert.equal(withPart.date, TODAY, 'and the deadline itself did NOT move');
-    assert.equal(withPart.startDate, YESTERDAY, 'nor its caution start');
+    assert.deepEqual(withPart.cautionDates, [YESTERDAY], 'nor its chosen caution days');
 
     // a day outside the window is refused rather than written
     await page.evaluate(function (setterSrc, day) {
@@ -4026,34 +4230,37 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('PROGRESS refuses a caution period that would strand placed prep', async () => {
+  await t.test('PROGRESS refuses a due-day move that would strand placed prep', async () => {
     // Cancel path: the stored bytes must be untouched. Nothing here may move or
     // clamp a day the user chose — it refuses and names the day instead.
-    const due = dayFromToday(0), placed = dayFromToday(-2);
+    // (Un-picking a caution day that holds prep is the other half of this rule,
+    // asserted separately in "un-picking a day that holds prep is refused".)
+    const due = dayFromToday(2), placed = dayFromToday(-2);
     const db = seedDb({
       deadlines: [F.deadline('dl-move', due, {
-        startDate: dayFromToday(-3), time: '17:00', title: 'Essay', blockDate: placed
+        cautionDates: [placed], time: '17:00', title: 'Essay', blockDate: placed
       })]
     });
     const page = await open('progress.html', { db, hash: '?date=' + due + '&dl=dl-move#schedule' });
-    await page.waitFor(function () { return !!document.getElementById('dl-caution-from'); },
+    await page.waitFor(function () { return !!document.querySelector('[data-dl-caution-cal]'); },
       { message: 'the deadline popup in its READ view' });
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
     await page.evaluate(function () {
-      var pop = document.getElementById('dl-caution-from').closest('div.fixed');
+      var pop = document.querySelector('[data-dl-caution-cal]').closest('div.fixed');
       Array.prototype.find.call(pop.querySelectorAll('button'),
         function (b) { return b.textContent.trim() === 'Edit'; }).click();
       return true;
     });
-    await page.waitFor(function () { return !!document.getElementById('dl-caution-start'); },
+    await page.waitFor(function () { return !!document.getElementById('dl-due-date'); },
       { message: 'the deadline Edit form' });
 
-    // shrink the caution start past the day the block sits on
+    // pull the due day back onto the day BEFORE the block: the block's day is
+    // then neither the due day nor a chosen day, so it is stranded
     await page.evaluate(function (setterSrc, day) {
       var set = new Function('return ' + setterSrc)();
-      set(document.getElementById('dl-caution-start'), day);
+      set(document.getElementById('dl-due-date'), day);
       return true;
-    }, SET_REACT_INPUT, dayFromToday(-1));
+    }, SET_REACT_INPUT, dayFromToday(-3));
 
     const warned = await page.waitFor(function () {
       var e = document.querySelector('[data-dl-stranded]');
@@ -4081,59 +4288,106 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('DOCUMENTATIONS refuses the same edit, on its own form', async () => {
-    // The other writer of startDate. Asserted separately because a rule
-    // forgotten at one of several surfaces is this repository's recurring bug.
+  /* A GAP between two chosen days is the one thing a contiguous span could
+     never express, so it is the sharpest test that a surface reads the chosen
+     list rather than a range. Asserted SEPARATELY on all three surfaces:
+     progress.html carries its own copy of the resolver, and a rule forgotten
+     at one of several surfaces is this repository's recurring bug. A doctored
+     calendar-core.js must fail the Home and Documentations cases while
+     Progress passes, and a doctored progress.html the mirror. */
+
+  await t.test('PROGRESS draws the chosen days and skips the gap between them', async () => {
+    const due = thisMonthDay(22);
     const db = seedDb({
-      docPages: [F.docPage('p-cal', { title: 'Calendar page' })],
-      deadlines: [F.deadline('d-1', MDAY(13), {
-        startDate: MDAY(10), time: '17:00', title: 'Essay',
-        blockDate: MDAY(11), docPageId: 'p-cal'
-      })],
-      calendarNotes: []
+      calendarNotes: [],
+      deadlines: [F.deadline('d-gap', due,
+        { cautionDates: [thisMonthDay(16), thisMonthDay(20)], title: 'Gapped' })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('#root button'),
+        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      return true;
+    });
+    const marks = await page.waitFor(function () {
+      var caution = Array.prototype.map.call(
+        document.querySelectorAll('#root [title^="Caution period · due"]'),
+        function (e) { return e.closest('[class*="min-h-"]').textContent.trim().slice(0, 2); });
+      return caution.length ? caution : false;
+    }, { message: 'the month grid drawing the chosen days' });
+    const nums = marks.map(x => Number(String(x).replace(/\D/g, ''))).sort((a, b) => a - b);
+    assert.deepEqual(nums, [16, 20],
+      'exactly the two chosen days — 17, 18 and 19 carry no "!" at all');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME draws the chosen days and skips the gap between them', async () => {
+    const due = thisMonthDay(22);
+    const db = seedDb({
+      calendarNotes: [],
+      deadlines: [F.deadline('d-gap', due,
+        { cautionDates: [thisMonthDay(16), thisMonthDay(20)], title: 'Gapped' })]
+    });
+    const page = await open('index.html', { db });
+    await page.waitFor(function () {
+      var g = document.querySelector('#cal-grid'); return !!g && g.children.length > 0;
+    }, { message: 'the Home calendar grid' });
+    const readDay = async n => {
+      await page.evaluate(function (day) {
+        Array.prototype.filter.call(document.querySelectorAll('.cal-cell'),
+          function (c) { return !c.classList.contains('empty'); })[day - 1].click();
+      }, n);
+      return await page.waitFor(function () {
+        var d = document.querySelector('#cal-detail');
+        return d ? Array.prototype.map.call(d.querySelectorAll('.cal-sched-dl.caution'),
+          function (a) { return a.textContent.trim(); }) : false;
+      }, { message: 'the Home day detail' });
+    };
+    assert.equal((await readDay(16)).length, 1, 'the first chosen day carries the "!" chip');
+    assert.equal((await readDay(17)).length, 0, 'the gap does NOT');
+    assert.equal((await readDay(19)).length, 0, 'nor any other day between them');
+    assert.equal((await readDay(20)).length, 1, 'and the second chosen day does');
+    assert.equal((await readDay(22)).length, 0, 'the due day is never also a caution');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS draws the chosen days and skips the gap between them', async () => {
+    const due = thisMonthDay(22);
+    const db = seedDb({
+      calendarNotes: [],
+      docPages: [F.docPage('p-1')],
+      deadlines: [F.deadline('d-gap', due,
+        { cautionDates: [thisMonthDay(16), thisMonthDay(20)], title: 'Gapped', docPageId: 'p-1' })]
     });
     const page = await open('documentations.html', { db });
     await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
       { message: 'documentations editor' });
     await addCalendarBlock(page);
-    await selectDay(page, 13);
-    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
 
-    await page.waitFor(function () {
-      return Array.prototype.some.call(document.querySelectorAll('.doc-cal button'),
-        function (b) { return b.textContent.indexOf('✎') >= 0; });
-    }, { message: 'the page-owned deadline row' });
-    await page.evaluate(function () {
-      Array.prototype.filter.call(document.querySelectorAll('.doc-cal button'),
-        function (x) { return x.textContent.indexOf('✎') >= 0; })[0].click();
-      return true;
-    });
-    await page.waitFor(function () { return !!document.querySelector('.cal-doc-form input[type="date"]'); },
-      { message: 'the Documentations deadline edit form' });
+    // the amber cell bar, which ownedDates.caution drives
+    const barred = await page.waitFor(function () {
+      var cells = Array.prototype.filter.call(document.querySelectorAll('.doc-cal .cal-cell'),
+        function (c) { return !c.classList.contains('empty'); });
+      if (!cells.length) return false;
+      return cells.map(function (c, i) {
+        return c.classList.contains('cal-doc-caution-day') ? i + 1 : 0;
+      }).filter(Boolean);
+    }, { message: 'the month grid cell bars' });
+    assert.deepEqual(barred, [16, 20], 'only the chosen days get the amber bar');
 
-    await page.evaluate(function (setterSrc, day) {
-      var set = new Function('return ' + setterSrc)();
-      set(document.querySelector('.cal-doc-form input[type="date"]'), day);
-      return true;
-    }, SET_REACT_INPUT, MDAY(12));
-
-    const warned = await page.waitFor(function () {
-      var e = document.querySelector('[data-dl-stranded]');
-      return e ? e.textContent.replace(/\s+/g, ' ') : false;
-    }, { message: 'the stranded-prep warning in Documentations' });
-    assert.match(warned, new RegExp(MDAY(11)), 'the offending day is named here too');
-    assert.equal(await page.evaluate(function () {
-      var b = document.querySelector('.cal-doc-form button.primary');
-      return !!b && !!b.disabled;
-    }), true, 'Save is refused');
-    await page.evaluate(function () {
-      var b = document.querySelector('.cal-doc-form button.primary');
-      if (b) b.click();
-      return true;
-    });
-    await sleep(400);
-    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
-      'and track_db is byte-identical');
+    // and the "!" row in the day panel, on a chosen day but not on a gap day
+    const rowsOn = async n => {
+      await selectDay(page, n);
+      return await page.evaluate(function () {
+        return document.querySelectorAll('.doc-cal .cal-doc-row.caution').length;
+      });
+    };
+    assert.equal(await rowsOn(16), 1, 'the first chosen day lists a caution row');
+    assert.equal(await rowsOn(18), 0, 'the gap lists none');
+    assert.equal(await rowsOn(20), 1, 'the second chosen day lists one');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
