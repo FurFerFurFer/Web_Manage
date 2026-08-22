@@ -68,10 +68,11 @@ Active files:
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `true-storage-core.js` | The one definition of the storage↔source-dump relationship (`window.TrackTrueStorage`): the pair matcher, the pure tag writers, and the parent/child tree |
 | `graph-layout.js` | The one radial canvas layout (`window.TrackGraphLayout`): `computeLayerLayout`, `applyRepulsion`, and the cycle guards that keep a parent cycle from blowing the stack on either canvas page |
+| `doc-table-core.js` | The one definition of a documentation table's shape (`window.TrackDocTable`): `mergeMap`, the pure merge writers, and the `::: track-table` paste format in both directions |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js` and `graph-layout.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js` and `doc-table-core.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -85,7 +86,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=6`, `schema.js?v=6`, `calendar-core.js?v=6`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=6`, `schema.js?v=6`, `calendar-core.js?v=6`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`, `doc-table-core.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
 
 A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
 than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,
@@ -215,7 +216,17 @@ A `deadlines` item may also carry an optional `done` (boolean). Ticked means the
 
 A deadline's `date` is written by exactly three forms, and every one of them goes through `dlDraftValid`: the popup's Edit form in `progress.html`, and the two **compose** forms — the day-cell composer in `progress.html` and the `+ deadline` form in `documentations.html` — which each carry a due-date field seeded to the cell they were opened on. `dlDraftValid` has one definition per side, `TrackCalendar.dlDraftValid` in `calendar-core.js` and the documented copy in `progress.html`. It is now a **format** gate only: with `startDate` gone there is no second stored date to order `date` against, and the whole inverted-span hazard class went with it. The format test still matters — a blank date must never reach storage.
 
-**Neither compose form sets caution days, and `documentations.html` cannot set them at all.** Choosing a caution day needs the prep-aware refusal below, and a writer that cannot see the prep it would strand has no business choosing. A new deadline is created with `cautionDates: []` and the days are picked in the Progress popup's calendar. A browser scope-guard case asserts the Documentations edit form has no date field, so re-adding one without the refusals trips a test.
+**Choosing a caution day requires holding the prep-aware refusal — by CALLING it, never by repeating it.** `TrackCalendar.dlStrandedBlockDays` is that refusal and it has one definition, so a surface qualifies by loading `calendar-core.js` and asking it, not by re-spelling the comparison. Three surfaces author caution days and they are deliberately not uniform:
+
+- The **Progress popup's picker** writes on every click, because it has no Cancel to honour. `clear all` is destructive the moment it is pressed, so it asks.
+- **Both Documentations deadline forms** — the `+ deadline` composer and the `✎` edit form — share one picker that holds picks in the DRAFT and writes them on Save. That is why its `clear all` does *not* ask: it reaches no `track_db`, and Cancel puts every day back. A browser case asserts the Cancel path is byte-identical, which is the only thing making that exemption safe.
+- The **Progress composer** still sets none; a new deadline there is created with `cautionDates: []` and the days are picked in the popup a click later. That asymmetry with the Documentations composer is deliberate, not an oversight.
+
+The refusal itself is the same everywhere and belongs at the click, not at the call site: an un-pick that would leave this deadline's prep on a day it no longer occupies is REFUSED and the day is NAMED — never moved, never dropped. `documentations.html` gates its Save on it as well, so a stranding set cannot be written even if a future edit breaks the click path.
+
+A form that holds picks in a draft has one extra obligation: the **due day can move under an already-chosen list**, which only the composer allows. Nothing may filter that by hand — ask `dlWithCautionDays` what it would store and render that, so the readout and the stored value cannot disagree.
+
+**Moving an existing due day is still the Progress popup's alone**, because that writer must also refuse an ORPHANED chosen day. A browser scope-guard case asserts the Documentations edit form has no date field, so adding one without that second refusal trips a test.
 
 Moving an **existing** deadline stays the popup's alone, because that writer also has to refuse an orphaned chosen day and stranded prep; a deadline being composed has neither. Two rules follow, and they are the mirror of the tick rules above:
 
@@ -231,6 +242,16 @@ A `calendarNotes` or `deadlines` item has a real **schedule block** on the hour 
 - A drag writes `blockDate`/`blockTime`, or a part's own `date`/`time`, and **never** the item's `date` or `time`. This is load-bearing for a deadline: it keeps `date` editable only from the form that refuses an orphaned chosen day and stranded prep, so a drag can never slip past either refusal. A note follows the same rule for a plainer reason — its date is where the note belongs.
 - A **deadline's** block and every one of its parts must sit on a day the deadline OCCUPIES: one of its chosen caution days, or the due day. That is set **membership**, not a range — a day merely falling between two chosen ones is outside it, and any `day >= dlStart(d)` comparison silently re-admits the gaps the user deliberately left out. The drag ghost SNAPS to the nearest allowed day — never pinned, or prep could not be moved onto another caution day at all — the task-day picker refuses anything outside the set, and an un-pick or a due-day move that would strand placed prep is **REFUSED** with the day named, never moved and never clamped. `dlBlockDayValid` / `dlStrandedBlockDays` are the one definition; the popup's caution calendar and its Edit form both call them rather than re-spelling the comparison, and `span` is the proposed `{cautionDates, date}`. A day note has no such restriction.
 - Emptying `parts` deletes `parts`; a part's `date`, `time` and `blockDuration` are written only when they differ from what it would inherit. Never write `0`, `''` or `[]`. `blockDuration`, `blockTime` and `blockDate` are validated in `schema.js` as **warnings** because they reach geometry (`height: NaNpx`) and placement (a day that does not exist), unlike `done` and `blockOff` which are safe under `!!`; `parts` is validated **fatally** like a goal's `children`, because it holds records and is traversed.
+
+A `docPages` block of type `table` holds a rectangular `rows: [[string]]` and may carry an optional `merges: [{r, c, rs, cs}]`, each entry naming a top-left cell and how far it spans. Five rules follow, and the first two are the load-bearing ones:
+
+- The geometry has exactly **one** definition, `TrackDocTable.mergeMap` in `doc-table-core.js`, which returns `{rs, cs}` for a cell that is drawn and `null` for one covered by a merge. Never spell a `merges.find(…)` at a call site. Only `documentations.html` renders tables, so unlike the deadline predicates there is no second copy to keep in step — and there must not become one. The editor and the paste dialog's preview both go through this, which is what stops a preview from disagreeing with what gets inserted.
+- **Absence is the default, and clearing deletes the key.** No legacy fallback sits behind `merges`, so this is the `time` / `link` rule and deliberately NOT the `cautionDates: []` rule. `withMerges` is the one writer and it does the delete. Two existing browser cases `assert.deepEqual` a whole table block, and every table stored before the field existed has no such key, so writing `merges: []` would break both for nothing.
+- **Merging hides covered text; it never clears it.** `rows` stays rectangular and a covered cell keeps whatever was typed in it, so unmerging is a **restore, not a recomputed guess** — the same reasoning as `blockOff`. That is also why merge and unmerge take no `window.confirm`: nothing is deleted or cleared, so they sit outside the destructive-control rule, while `− row` and `− col` still prompt because those do drop text.
+- Every row/column change goes through `withRows`, which re-normalises against the new bounds. A region that lost a row is **CLAMPED**, not dropped; one clamped down to a single cell is dropped, because a 1x1 merge is not a merge. `normalizeMerges` also drops out-of-bounds origins and overlaps, first-wins, so the result never depends on iteration luck.
+- `merges` is deliberately **not** validated in `schema.js`, which checks `docPages: 'list'` and no block shape at all. Gating one block field and not the others would invent an inconsistent rule; `doc-table-core.js` pays for that instead, reading every nested value through a helper that cannot throw — a throw here escapes a React render and empties the whole page.
+
+The `::: track-table` paste format is the other half of that file. Markers occupy **real cells** — `<<` for a cell merged leftward, `^^` for one merged upward — so the text stays rectangular and a row with the wrong cell count is **detected and refused against its line number**, never guessed at. That is the whole argument for the format, and `parseTableText` returns nothing half-parsed: `ok === false` means insert nothing. It is also lenient where leniency is free — the fence and the outer pipes are optional and a markdown separator row is skipped — so an ordinary markdown table pastes with no extra code.
 
 A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may carry `tags` — each one naming a **pair**: a source-dump leaf (`dumpId`) and one MM linked inside it (`mmId`). Four rules follow, and the first is the load-bearing one:
 
@@ -317,6 +338,7 @@ firebase-sync.js
 notes-widget.js
 true-storage-core.js
 graph-layout.js
+doc-table-core.js
 ```
 
 Inspect every applicable:
@@ -577,6 +599,7 @@ node --check firebase-sync.js
 node --check notes-widget.js
 node --check true-storage-core.js
 node --check graph-layout.js
+node --check doc-table-core.js
 ```
 
 Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
@@ -1207,6 +1230,125 @@ UI.
   alone, and that is the largest gap here. Also not covered: real touch hardware, the live
   Firebase project, print output of the picker, and the multi-device window where one device has
   migrated and another has not (reasoned through the resolver's legacy branch, not tested).
+
+### Caution days chosen from Documentations (2026-08-22)
+
+- The slot stays at **23** fields — nothing here is a new key, only a second authoring path for
+  `cautionDates` — so the hand-written CONTRACT lists in `tests/schema.test.js`,
+  `tests/browser.test.js` and `tests/lib/fixture.js` needed no change. Offline cases go 140 →
+  **142** (calendar-core 86 → 88), identical under all five timezones, and all 13 suites pass
+  offline. This task adds **six** browser cases and rewrites one existing scope guard; no
+  absolute browser total is quoted, because `tests/browser.test.js` gained seven further cases
+  from separate in-flight work while this task was running and the two deltas are not this
+  task's to conflate. No JS module changed, so no `?v=` was bumped and `styles.css` was not
+  touched at all.
+- **Both new offline cases are GUARDS and pass on both sides by design.** One pins that
+  `dlStrandedBlockDays` short-circuits on a falsy record — that is what lets ONE picker serve the
+  compose and the edit form with no branch, since a deadline being composed has no prep. The
+  other pins `dlWithCautionDays({date}, days)` used as a draft sanitiser. If either fails, the
+  picker has stopped being able to share its code between the two forms.
+- **Fail-first: two doctored baselines, and their failure sets are exactly DISJOINT — zero
+  overlap.** Each `TRACK_TEST_ROOT` scratch directory held symlinks to the repository, a REAL
+  copy of `tests/`, and **one** doctored file with the `dlStrandedBlockDays` gate deleted:
+  - doctored **`documentations.html`** → the Documentations un-pick refusal failed; every
+    Progress caution check passed.
+  - doctored **`progress.html`** → two Progress checks failed (the refused un-pick, and the
+    follow-on that un-picking a harmless day narrows the set rather than emptying it); every
+    Documentations check passed, in both themes.
+
+  Never place either doctored copy in the repository.
+- **A false pass caught before it was believed, and worth carrying forward.** The first run
+  against the doctored tree reported all-green. The `sed` that was supposed to make the harness
+  read `TRACK_TEST_ROOT` had failed on an unescaped `|` in its replacement, so the script served
+  the *repository* and the doctored file was never loaded. The fix was not just to repair the
+  substitution but to make the script **print the root it is serving** on every run, so a
+  mis-set environment variable can never again read as evidence. Generalise it: when a check is
+  supposed to run against a doctored tree, have it *state which tree*, because "all passed" looks
+  identical whether the bug was absent or the bug was never loaded.
+- Behaviour deliberately **differs** from `progress.html` and is asserted that way: this picker
+  holds its picks in the DRAFT and writes on Save, because this form has a Cancel to honour.
+  A browser case asserts the Cancel path leaves `track_db` byte-identical, and that is the only
+  thing making its unconfirmed `clear all` safe — a draft-level clear destroys nothing. The
+  Progress picker still writes per click and still asks before clearing. Do not "make it
+  uniform" without re-deciding both on purpose.
+- The picker is styled with inline `var(--color-*)` theme tokens rather than Tailwind's palette,
+  because this page has a light theme and `progress.html` does not. Verified from a task-owned
+  script in both themes: a picked day reads at luminance contrast 179 (dark, amber on near-black)
+  and 164 (light, brown on near-white), and the due day is coloured distinctly from a picked day
+  in both. That script cannot be re-run from `node tests/run.js`.
+- No new print rule was needed: the picker sits inside `.cal-doc-form`, which
+  `body.docs-page .cal-doc-form { display: none !important }` already hides under print.
+- **Environment note, and it dominated this task.** The machine carried 20-41 foreign headless
+  Chrome processes and up to 14 concurrent `browser.test.js` runs from other sessions throughout.
+  A filtered suite run stalled at case 41 for minutes and was killed rather than trusted; the
+  offline sweep and the small task-owned scripts were run instead, since each is one short-lived
+  page load. Also learned: `node --test --test-name-pattern=<subtest>` **silently runs nothing**
+  unless the pattern also matches the parent `browser suites` test — it reports `1..0` and
+  `# pass 1`, which reads as a pass. Check the plan count, never the summary line.
+- **Not covered, and weaker than the rest.** Drag was not re-verified, so the interaction between
+  a dragged block and a newly un-picked day rests on `dlStrandedBlockDays` plus code reading.
+  Also not covered: real touch hardware, the live Firebase project, and print output.
+
+### Merged table cells, and a table pasted as text (2026-08-22)
+
+- The slot stays at **23** fields — `merges` is an item-level key inside a block inside the
+  existing `docPages` list — so the hand-written CONTRACT lists in `tests/schema.test.js`,
+  `tests/browser.test.js` and `tests/lib/fixture.js` needed no change. One new offline suite,
+  `tests/doc-table-core.test.js` (**42** cases), registered in `tests/run.js` and run **once**
+  rather than swept: `doc-table-core.js` holds no date code, matching `true-storage-core.test.js`
+  and `graph-layout.test.js`. Suites go 14 → **15**. This task adds **five** browser cases. No
+  absolute browser total is quoted on purpose: another session was adding cases to
+  `tests/browser.test.js` throughout this task, the file grew by 8 subtests *between* two of the
+  runs below, and the two deltas are not this task's to conflate. `styles.css` was not touched —
+  `colSpan`/`rowSpan` are HTML attributes and the existing `body.docs-page .doc-table td` print
+  rule applies to a spanning cell unchanged — so no `?v=` was bumped except the new
+  `doc-table-core.js?v=1`.
+- **Fail-first, offline: two doctored baselines, and their failure sets are exactly DISJOINT —
+  zero overlap.** Each scratch directory held a REAL copy of `tests/` (never a symlink — `require`
+  and `__dirname` resolve through the realpath and would quietly load the repository's own module,
+  which this file already records as having cost one run a false pass) plus **one** doctored
+  `doc-table-core.js`:
+  - `mergeMap` ignoring `merges` → **5** failed: the `mergeMap` span case, both `canMerge`
+    refusals, `mergeCells` composing, and "mergeCells NEVER touches rows". 36 passed.
+  - the rectangular-grid check dropped, short rows padded instead → **2** failed: the wrong-cell-
+    count refusal and the line-number case. 39 passed.
+- **Fail-first, browser: two more doctored baselines, also exactly DISJOINT.** Each
+  `TRACK_TEST_ROOT` root held symlinks to the repository, a REAL copy of `tests/`, and one
+  doctored `doc-table-core.js`:
+  - `mergeMap` ignoring `merges` → `a pasted table reaches track_db with its merges, and the grid
+    draws the spans` and `merging hides the covered cell, and unmerging restores it exactly`
+    failed. The other three passed, correctly: the no-merges case has nothing to span, the
+    wrong-cell-count case is pure parser, and the clamp case goes through `normalizeMerges`.
+  - `normalizeMerges` dropping an out-of-bounds region instead of **clamping** it → only
+    `dropping a row still asks, and clamps a merge that spanned it` failed.
+
+  Refer to these cases by **name**, not by index: the numbering shifted between the two runs
+  (102/105 became 112) purely because the other session's cases landed in between. Never place
+  any of the four doctored copies in the repository.
+- **A real defect found by reading the diff, which no test would have caught.** `rowsOf` filtered
+  non-array rows OUT. The editor writes a cell back by the index it **rendered** at, so a single
+  malformed stored row would have shifted every row after it and sent the next keystroke into the
+  wrong cell — silent data loss wearing defensiveness as a hat. It now maps a bad row to an empty
+  one, preserving indices, and an offline case pins it. **Generalise this:** a defensive reader
+  that feeds a render whose indices are used for WRITES may normalise values but must never change
+  the length or order of what it returns.
+- What the browser cases assert beyond the reversals: a pasted table with nothing merged is stored
+  with `Object.keys` exactly `['id','type','rows']` — no `merges` key at all, which is what keeps
+  the two pre-existing whole-block `deepEqual` cases passing; a markdown separator row is skipped
+  rather than stored as data; a malformed paste shows the error with its **line number**, previews
+  nothing, and leaves `track_db` **byte-identical** after clicking Insert anyway; merging asserts
+  `page.dialogs.length === 0` in both directions, because nothing is deleted or cleared; and the
+  `− row` case asserts the **Cancel path** is byte-identical before confirming.
+- Every worked example in `TABLE-PASTE.md` and the in-page `TABLE_AI_BRIEF` was fed through
+  `parseTableText` from a task-owned script — all 7 parse. A spec that ships an example the parser
+  rejects is worse than no example. That script cannot be re-run from `node tests/run.js`; if the
+  examples change, re-check them by hand.
+- **Not covered, and weaker than the rest.** No image is ever read: the recognition step happens in
+  whatever AI the user hands the picture to, so the accuracy of that transcription is outside this
+  repository entirely and outside every test here. Print output of a merged cell was reasoned about
+  and **not** looked at. Also not covered, as ever: real touch hardware and the live Firebase
+  project. The merge chrome was exercised only through `.click()` from a task-owned smoke script
+  and the committed cases, never by hand on a real pointer.
 
 ### Confirmation on every destructive control (2026-08-18)
 

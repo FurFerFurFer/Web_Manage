@@ -847,13 +847,13 @@ notes and deadlines". One piece is still deliberately **not** built:
 
   Note that `dlWithCautionDays` is now a twinned **writer**, not just a reader, which raises
   the cost of a silent divergence: the migration in `progress.html` runs through its copy.
-- **`documentations.html` can no longer set caution days at all.** It lost that field along
-  with its due-date field, because choosing a caution day needs the prep-aware refusal
-  (`dlStrandedBlockDays` against the proposed set) and a second writer of it is the duplication
-  shape this project keeps paying for. If that page should ever author caution days or move a
-  due day again, it needs BOTH refusals — the stranded-prep one and the orphaned-chosen-day one
-  — in the same change, not the fields on their own. A scope-guard browser case asserts its
-  edit form has no date field, so a change that adds one without the refusals trips a test.
+- **`documentations.html` still cannot move an existing due day.** It now chooses caution days
+  in both its deadline forms — see README "Choosing the caution days" — because that needed only
+  the stranded-prep refusal, and holding that meant *calling* `dlStrandedBlockDays` rather than
+  repeating it. Moving a due day additionally needs the ORPHANED-chosen-day refusal, which has
+  no shared definition to call: it lives inline in the Progress popup's Edit form. Extracting it
+  is the prerequisite for a due-date field here, not the field itself. A scope-guard browser
+  case asserts this edit form has no date field, so adding one without that refusal trips a test.
 - **A note's block is unrestricted; a deadline's is not.** A note block may be dragged to any
   day at all, which is deliberate — a note has no days to belong to. If notes ever grow them,
   the deadline rule (`dlBlockDayValid` membership plus a refusal at every writer) is the shape
@@ -863,11 +863,20 @@ notes and deadlines". One piece is still deliberately **not** built:
   a pre-choice export can still be imported — which is forever, since exports are files the
   user keeps. Removing it would silently drop the run-up on every such import. If it is ever
   retired, the migration has to move into the importer first.
-- **The caution calendar is Tailwind-inline, not `styles.css`.** That was deliberate — it
-  avoided a five-page cache-bust and the Tailwind specificity trap — but it means the picker
-  cannot be restyled from the shared stylesheet, and it has no print rule of its own. If a
-  second surface ever needs the same picker, extract it to `styles.css` and bump `?v=` on all
-  five pages in the same change.
+- **The caution calendar is now inline on TWO pages, and the case for extracting it has grown
+  rather than closed.** `progress.html` styles its picker with Tailwind utilities;
+  `documentations.html` styles its own with inline `var(--color-*)` theme tokens, because that
+  page has a light theme and Tailwind's hard-coded greys are unreadable in it. So the two copies
+  are not even the same technique, and a visual change now has to be made twice, differently.
+
+  The extraction was deliberately NOT done when the second surface arrived: it would have meant
+  rewriting the Progress popup's markup — a daily-use surface — plus a `styles.css` `?v=` bump on
+  all five pages, in a change whose point was elsewhere. That trade is worth revisiting on its
+  own. Note what is NOT a reason to hurry: the picker sits inside `.cal-doc-form` on
+  Documentations, which print already hides, so neither copy is missing a print rule. The rules
+  behind the picker were never duplicated — `dlToggleCautionDay`, `dlWithCautionDays` and
+  `dlStrandedBlockDays` have one definition each and both pickers call them. This is a styling
+  duplication only, which is why it is a cleanup and not a correctness risk.
 
 ## Proposal 13: Memoize Documentation Day Aggregation if Needed
 
@@ -948,6 +957,41 @@ application, so it needs the full Cancel-path browser coverage re-run against th
 mechanism. `tests/lib/cdp.js`'s `page.rejectDialogs` only answers **native** dialogs — a
 DOM-modal implementation makes every existing destructive-control case unable to see the
 prompt at all, so those cases must be rewritten in the same change rather than after it.
+
+## Proposal 16: Finish the Flexible Documentation Table
+
+Documentation tables can now merge cells and be pasted in from the `::: track-table` format
+(see README, "Documentations"). Three capabilities were scoped out of that change on purpose,
+and none of them is started.
+
+**Column widths.** Every column is currently equal-width with a `min-w-[90px]` floor
+hard-coded in `TableBlock`. A width per column — `2fr`, `30%`, `120px`, `auto` — would be the
+biggest remaining difference between a Track table and the picture it was copied from. The
+data shape is the easy part: an optional `cols: [string]` on the block, absent meaning today's
+behaviour. The format already has a natural place for it, a `cols:` line above the grid, which
+the parser would have to start accepting; the current parser deliberately rejects any line
+that is not a row, so this is an additive change to a refusal rather than a new tolerance.
+
+**Per-cell alignment.** Left/centre/right and top/middle/bottom. Cheap once cells can carry
+attributes, but they cannot today — `rows` is a grid of plain strings, and keeping it that way
+is what makes the existing data forward-compatible. Adding alignment means either a parallel
+list keyed by coordinate, like `merges`, or promoting cells to objects, which would break the
+`rows: [[string]]` contract and every stored table with it. Prefer the parallel list.
+
+**Configurable header rows.** Row 0 is styled as a header by index, in `TableBlock` and in the
+paste preview. Real tables have two-row headers, no header at all, or a header column instead.
+An optional `head: n` (and `headCol: n`) would cover it. Note the interaction with merges: a
+header cell spanning two columns is the common case that motivates this, and it already works
+geometrically — only the styling is index-based.
+
+Do these together or not at all. Each one alone changes the format and the block shape, and
+three separate rounds of "the paste format grew a field" would cost three migrations of the
+AI-facing spec in `TABLE-PASTE.md` and three re-reads by anyone who had memorised it.
+
+Not proposed: pasting a table by dropping an image on the page and doing the recognition
+locally. That needs an OCR dependency and a model, both of which are out of scope for a
+repository with no build step and no package manifest. Handing the picture to an AI the user
+already has open is the deliberate alternative.
 
 ## Additional Small Ideas
 

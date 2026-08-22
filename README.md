@@ -231,9 +231,10 @@ Deadlines are created in Schedule → CALENDAR, next to date notes: a `⏰` hove
 day cell, and a `+` on the DEADLINES header of the selected-day panel. Both open an inline composer
 carrying a `Due date` row of its own, seeded to the cell it was opened on, so a deadline can be filed
 for any day without navigating there first. Save is blocked until the title, the due time and a
-well-formed due date are all present. **Neither composer sets caution days** — a new deadline has
-none, and they are chosen afterwards in the popup, which is the only surface that can see the prep a
-day already holds. Filing one on another day moves the Schedule to that day, so the new deadline is
+well-formed due date are all present. **This composer sets no caution days** — a new deadline filed
+here has none, and they are chosen afterwards in the popup, a click away. The Documentations composer
+*does* offer them, because that form holds its picks in a draft and can ask the shared refusal about
+them before anything is written. Filing one on another day moves the Schedule to that day, so the new deadline is
 never written out of sight. In the month grid a due day shows a red `⏰ HH:MM Title` line and every
 chosen caution day shows an amber `! Title` line. The selected-day panel lists deadlines due that day
 as editable rows (double-click to edit, `×` to delete) and caution-day deadlines as read-only amber
@@ -261,7 +262,8 @@ is `dlStrandedBlockDays` against the proposed set — the same single definition
 the two cannot drift.
 
 `Edit` still exists for changing the due date, time, title and description together, and carries no
-caution field of its own.
+caution field of its own — the picker above it is already live, so a second copy inside the form
+would be two controls writing one field.
 
 **Moving the due day.** `Edit` carries a `Due date` row, above `Due time`. It is the only place an
 **existing** deadline's date can change: moving one has to refuse a move that orphans a chosen caution
@@ -390,7 +392,9 @@ still cleaned up without requiring a slot write.
 - **A `⛶` button at the top of the sidebar expands it to fill the viewport**, with 16px rows, 44px controls and a wider indent. Picking a page selects it *and* exits, so it is one tap in, one tap to a page, out; `✕` and `Escape` also exit. It is `position: fixed` at `z-index: 50`, which covers the page header and the theme toggle while staying under the notes widget and the storage/sync banners, and its bottom padding clears the notes-widget button so the last row stays tappable.
 - A Favorites sidebar section toggled per page from either of two star buttons that share the same `favorite` field: the small one revealed on hover in the sidebar page row, and a large touch-sized one at the right end of the page's toolbar row.
 - A per-page emoji icon chosen from a picker grid or typed freely.
-- Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
+- Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, merged cells, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
+- **Tables can merge cells.** Click a cell, then `⇥ merge right` or `⇩ merge down` in the block's hover chrome; `⤫ unmerge` splits it back. A button is disabled with an explanatory tooltip when the operation would run off the grid or absorb a region that is already merged. Merging **hides** the covered cells and never clears them, so unmerging restores what was typed — which is why neither control asks for confirmation, while `− row` and `− col` still do. Removing a row or column a merged cell reached into **clamps** that cell to fit rather than deleting it.
+- **A table can be pasted in as text**, through `▦ Paste table` in the block menu. It accepts the `::: track-table` pipe-grid format, in which `<<` marks a cell merged with the one to its left and `^^` one merged with the cell above; the fence and the outer pipes are optional and a markdown separator row is skipped, so an ordinary markdown table pastes correctly too. The dialog previews the parse through the same renderer the page uses and **refuses** a table whose rows disagree on cell count, whose markers point off the grid, or whose merged region is not a rectangle, naming the offending line. Nothing is inserted while an error is showing. The dialog also carries the instructions to hand an AI along with a photo of a table, with a copy button; `TABLE-PASTE.md` is the longer version with worked examples.
 - A **Reference source dump** popup that shows the active slot's source-dump tree fully expanded — every nesting level and every leaf `{label, url}` link visible at once — and inserts a picked link as a link block carrying `dumpRef: {dumpId, linkId, urlId}` provenance. The block shows a "from: <dump title>" badge that degrades to "source removed" if the source is later deleted.
 - Images chosen from disk are downscaled (max dimension 1000px) and stored as compressed JPEG data-URIs inside the page, so they export, import, and cloud-sync with the slot. There is no size gate on inserting one: cloud sync gzips and chunks the workspace, so images no longer threaten it. The header instead shows a plain workspace-size readout plus a cloud sync state (`✓ synced`, `↻ syncing…`, `⚠ sync failed`, `⚠ conflict`, or `· local only`), read from `window.TrackSync`. The size turns amber only past ~4 MB, which tracks the browser's own `localStorage` quota rather than any cloud limit.
 - **Calendar blocks** — see below.
@@ -406,7 +410,13 @@ Pages are stored in the per-slot `docPages` field, and day notes and deadlines a
 
 A calendar shows the same aggregation as the Universal calendar on Home — month grid, today highlight, milestone period bars, category dots, and a click-to-open day detail with the read-only day timeline — plus the two things a documentation page can author itself: **day notes** and **deadlines**. Both are written into the shared slot arrays, so they appear on the Progress Schedule and the Home calendar like any others.
 
-**Authoring.** `+ note` and `+ deadline` on the selected day's panel open an inline composer. The deadline composer carries a `Due on` date of its own, seeded to the selected cell, so a deadline can be filed for any day from any page; filing one on another day moves the calendar to that day. Its **edit** form has no date field at all — an existing deadline's due day still moves only from the Progress popup, the one writer that refuses an orphaned caution day and stranded prep. This page also **cannot choose caution days**: that needs the same prep-aware refusal, and a second writer of it is the duplication this project keeps paying for. Save is gated on `TrackCalendar.dlDraftValid` while composing and on `dlValid` while editing, and a blank date is refused with the reason shown rather than repaired.
+**Authoring.** `+ note` and `+ deadline` on the selected day's panel open an inline composer. The deadline composer carries a `Due on` date of its own, seeded to the selected cell, so a deadline can be filed for any day from any page; filing one on another day moves the calendar to that day. Its **edit** form has no date field at all — an existing deadline's due day still moves only from the Progress popup, the one writer that refuses an orphaned caution day. Save is gated on `TrackCalendar.dlDraftValid` while composing and on `dlValid` while editing, and a blank date is refused with the reason shown rather than repaired.
+
+**Choosing the caution days.** Both deadline forms carry the same month picker, below the description. A cell toggles a day; `+3d` / `+7d` / `+14d` union the last *n* days into whatever is already picked; `clear all` empties the list. The due day and every day after it are drawn locked, because the due day is red on every surface and must never also be amber.
+
+Unlike the Progress popup's picker, this one holds its picks in the **draft** and writes them on Save, because this form has a Cancel to honour — nothing reaches `track_db` until Save, and Cancel restores every day. That is also why `clear all` here asks no confirmation while the Progress one does: it destroys nothing yet.
+
+**Un-picking a day that holds prep is refused here too**, with the day named and underlined, through the same single `TrackCalendar.dlStrandedBlockDays` the Progress picker calls — this page holds the refusal by asking for it, not by repeating it. Save is gated on the same check, so a stranding set cannot be written even if the click path is later changed. While composing there is nothing to refuse: a deadline that does not exist yet has no prep, which is what lets one picker serve both forms. If the typed due day moves *before* a day already picked, that day simply stops counting — the readout is what `dlWithCautionDays` says it would store, so what is shown and what is saved cannot disagree.
 
 **Filtering.** A new calendar shows everything. The filter bar switches any of thirteen categories off: Kolb / MG change, LIN record, Floating note, Source dump, Milestones, Goal tasks & routines, Supporting actions, MM sessions, SIR sessions, MG focus, Day notes, Deadlines, and **Documentation**. Everything added from Documentations — notes *and* deadlines, from any page — answers to that single Documentation key, and correspondingly the Day notes and Deadlines keys cover only items authored in the Schedule. The block stores the switched-**off** keys (`hidden: []` means show all), so a category added later is on by default for calendars that already exist. "Show all" clears the set. Filters are per block; Home and the Schedule are unaffected.
 
@@ -435,7 +445,9 @@ Each `docPages` entry is:
   blocks: [
     { id, type: 'h1'|'h2'|'h3'|'p', text },
     { id, type: 'image', src /* jpeg data-URI */, alt },
-    { id, type: 'table', rows: [[string]] },
+    { id, type: 'table',
+      rows: [[string]],              // rectangular; a covered cell KEEPS its text
+      merges: [{r, c, rs, cs}] },    // OPTIONAL — absent means nothing spans
     { id, type: 'link', label, url, dumpRef: {dumpId, linkId, urlId}|null, addedAt },
     { id, type: 'divider' },
     { id, type: 'calendar',
@@ -444,6 +456,15 @@ Each `docPages` entry is:
   ]
 }
 ```
+
+A table block's `merges` is **absent** when nothing spans, and clearing the last one
+deletes the key rather than storing `[]` — there is no legacy fallback behind it, so
+absence is the only spelling of "none". `rows` stays rectangular and a covered cell keeps
+its text, which is what makes unmerging a restore rather than a recomputed guess.
+`doc-table-core.js` (`window.TrackDocTable`) holds the one definition of that geometry:
+`mergeMap` decides which cells are drawn and how far they span, `withRows` re-normalises
+after a row or column changes, and `parseTableText` / `formatTableText` are the paste
+format in both directions.
 
 A **storage** (`trueStorages`) is:
 
@@ -730,6 +751,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `notes-widget.js` | Floating per-slot notes widget |
 | `true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
+| `doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
 | `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |

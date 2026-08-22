@@ -254,6 +254,16 @@ class Page {
       { timeout: 20000, message: 'firebase overlay removal' });
   }
 
+  /* Pin the viewport for a case whose subject is layout at a given width.
+     Chrome's headless default happens to be 800x600, which is narrow enough to
+     reproduce most of them — but a case that only tests what it means to test
+     because of a default nobody chose is one harness upgrade away from silently
+     testing nothing, so a width-dependent case states its width. */
+  async setViewport(width, height) {
+    await this.session.send('Emulation.setDeviceMetricsOverride',
+      { width, height, deviceScaleFactor: 1, mobile: false });
+  }
+
   async close() {
     try { await this.browser.closeTarget(this.targetId); } catch { /* already gone */ }
     try { this.session.ws.close(); } catch { /* already closed */ }

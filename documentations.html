@@ -9,6 +9,7 @@
   <script src="storage-guard.js?v=2"></script>
   <script src="schema.js?v=6"></script>
   <script src="calendar-core.js?v=6"></script>
+  <script src="doc-table-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -339,41 +340,210 @@
       );
     }
 
+    /* Read-only render of a table's cells, shared by the editor below and the
+       paste modal's preview. Both go through TrackDocTable.mergeMap — the ONE
+       definition of which cells are drawn and how far they span — so the
+       preview cannot disagree with what lands on the page. */
+    function TableGrid({block, cell}) {
+      const DT = window.TrackDocTable;
+      const rows = DT.rowsOf(block);
+      const map = DT.mergeMap(block);
+      return (
+        <table className="doc-table w-full border-collapse text-sm">
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={ri}>
+                {row.map((text, ci) => {
+                  const span = map[ri] && map[ri][ci];
+                  if (!span) return null;   // covered by a merge — draw nothing
+                  return (
+                    <td key={ci} className="border border-gray-700 p-0 align-top"
+                      colSpan={span.cs} rowSpan={span.rs}
+                      data-cell={ri + ',' + ci}
+                      data-span={span.rs + 'x' + span.cs}>
+                      {cell(text, ri, ci, span)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
+
     function TableBlock({block, onChange, onFocus}) {
+      const DT = window.TrackDocTable;
+      // Which cell the merge buttons act on. Nothing is persisted — it is the
+      // caret, not data.
+      const [sel, setSel] = useState(null);
+
       const setCell = (ri, ci, v) =>
         onChange({...block, rows: block.rows.map((r,i)=>i===ri?r.map((c,j)=>j===ci?v:c):r)});
+
+      const size = DT.gridSize(block);
+      const selValid = sel && sel.r < size.rows && sel.c < size.cols;
+      const canRight = selValid ? DT.canMerge(block, sel.r, sel.c, 'right') : {ok:false, reason:'Click a cell first.'};
+      const canDown  = selValid ? DT.canMerge(block, sel.r, sel.c, 'down')  : {ok:false, reason:'Click a cell first.'};
+      const merged   = selValid ? DT.mergeAt(block, sel.r, sel.c) : null;
+
+      // Merging hides the covered text, it never clears it, so unmerge is a
+      // restore rather than a guess — which is exactly why neither of these
+      // asks first. The row/column removals below still do: those DO drop text.
+      const mergeBtn = (label, title, enabled, onClick) => (
+        <button onClick={onClick} disabled={!enabled} title={title}
+          className={"rounded px-1.5 py-0.5 " + (enabled
+            ? "bg-gray-800 text-gray-400 hover:text-white"
+            : "bg-gray-900 text-gray-700 cursor-not-allowed")}>{label}</button>
+      );
+
       return (
         <div onFocus={onFocus}>
           <div className="overflow-x-auto">
-            <table className="doc-table w-full border-collapse text-sm">
-              <tbody>
-                {block.rows.map((row, ri) => (
-                  <tr key={ri}>
-                    {row.map((cell, ci) => (
-                      <td key={ci} className="border border-gray-700 p-0">
-                        <input value={cell} onChange={e=>setCell(ri,ci,e.target.value)}
-                          className={"w-full min-w-[90px] bg-transparent px-2 py-1 outline-none "+(ri===0?'font-bold text-gray-100 bg-gray-800/60':'text-gray-300')} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <TableGrid block={block} cell={(text, ri, ci) => (
+              <input value={text}
+                onChange={e=>setCell(ri,ci,e.target.value)}
+                // Click as well as focus: tabbing into a cell selects it, and so
+                // does clicking one that already had the caret.
+                onClick={()=>setSel({r:ri, c:ci})}
+                onFocus={()=>setSel({r:ri, c:ci})}
+                className={"w-full min-w-[90px] bg-transparent px-2 py-1 outline-none "+(ri===0?'font-bold text-gray-100 bg-gray-800/60':'text-gray-300')} />
+            )} />
           </div>
-          <div className="doc-chrome mt-1 flex gap-1 text-[10px] opacity-0 transition-opacity group-hover:opacity-100">
-            <button onClick={()=>onChange({...block, rows:[...block.rows, block.rows[0].map(()=> '')]})} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ row</button>
+          <div className="doc-chrome mt-1 flex flex-wrap gap-1 text-[10px] opacity-0 transition-opacity group-hover:opacity-100">
+            <button onClick={()=>onChange(DT.withRows(block, [...block.rows, block.rows[0].map(()=> '')]))} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ row</button>
             <button onClick={()=>{
               // After the length guard, never before it — a no-op must not ask.
               if(block.rows.length<=1) return;
               if(!window.confirm('Delete the last row?\n\nAny text in its cells goes with it.')) return;
-              onChange({...block, rows: block.rows.slice(0,-1)});
+              onChange(DT.withRows(block, block.rows.slice(0,-1)));
             }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− row</button>
-            <button onClick={()=>onChange({...block, rows: block.rows.map(r=>[...r,''])})} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ col</button>
+            <button onClick={()=>onChange(DT.withRows(block, block.rows.map(r=>[...r,''])))} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ col</button>
             <button onClick={()=>{
               if(block.rows[0].length<=1) return;
               if(!window.confirm('Delete the last column?\n\nAny text in its cells goes with it.')) return;
-              onChange({...block, rows: block.rows.map(r=>r.slice(0,-1))});
+              onChange(DT.withRows(block, block.rows.map(r=>r.slice(0,-1))));
             }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− col</button>
+            <span className="mx-1 w-px bg-gray-800" />
+            {mergeBtn('⇥ merge right', canRight.ok ? 'Merge the selected cell with the one to its right' : canRight.reason,
+              canRight.ok, ()=>onChange(DT.mergeCells(block, sel.r, sel.c, 'right')))}
+            {mergeBtn('⇩ merge down', canDown.ok ? 'Merge the selected cell with the one below it' : canDown.reason,
+              canDown.ok, ()=>onChange(DT.mergeCells(block, sel.r, sel.c, 'down')))}
+            {mergeBtn('⤫ unmerge', merged ? 'Split this cell back apart — the hidden text comes back' : 'The selected cell is not merged.',
+              !!merged, ()=>onChange(DT.unmergeCell(block, sel.r, sel.c)))}
+          </div>
+        </div>
+      );
+    }
+
+    /* The short brief a person hands to an AI along with the picture. The full
+       version, with worked examples, is TABLE-PASTE.md at the repository root
+       — this is the copy that has to be reachable without leaving the page. */
+    const TABLE_AI_BRIEF = [
+      'Read the table in this image and reproduce it EXACTLY in this format:',
+      '',
+      '::: track-table',
+      '| Region     | Q1  | Q2  |',
+      '| North      | 50  | 60  |',
+      '| South      | 45  | ^^  |',
+      '| Total: 155 | <<  | <<  |',
+      ':::',
+      '',
+      'Rules:',
+      '- One line per row. Separate cells with | pipes.',
+      '- EVERY row must have the same number of cells.',
+      '- For a cell merged with the one to its LEFT, write <<',
+      '- For a cell merged with the one ABOVE it, write ^^',
+      '- A merged cell must fill a whole rectangle of rows and columns.',
+      '- Write \\<< or \\^^ if a cell really contains those characters, and \\| for a pipe.',
+      '- Output only the block. No explanation, no extra text.'
+    ].join('\n');
+
+    /* Paste a table in as text. A dedicated modal rather than a page-level
+       paste handler, so there is no sniffing and no guessing about when a
+       paste was meant to become a table — this textarea only ever holds one.
+
+       The preview is rendered by TableGrid, the same component the editor
+       uses, so what is shown here cannot drift from what gets inserted. */
+    function PasteTableModal({onInsert, onClose}) {
+      const DT = window.TrackDocTable;
+      const [text, setText] = useState('');
+      const [copied, setCopied] = useState(false);
+
+      useEffect(() => {
+        const onKey = e => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, []);
+
+      const parsed = useMemo(() => DT.parseTableText(text), [text]);
+      const touched = text.trim().length > 0;
+
+      const copyBrief = () => {
+        const done = () => { setCopied(true); setTimeout(()=>setCopied(false), 1500); };
+        if (navigator.clipboard && navigator.clipboard.writeText)
+          navigator.clipboard.writeText(TABLE_AI_BRIEF).then(done, ()=>{});
+      };
+
+      return (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60" onClick={onClose}>
+          <div data-paste-table className="max-h-[86vh] w-[680px] max-w-[94vw] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-4"
+            onClick={e=>e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-bold tracking-widest text-gray-300">PASTE A TABLE</span>
+              <button onClick={onClose} className="text-gray-500 hover:text-gray-200">✕</button>
+            </div>
+
+            <details className="mb-3 rounded border border-gray-800 bg-gray-950/60 p-2">
+              <summary className="cursor-pointer text-[11px] text-gray-400">
+                Show a picture of a table to an AI — here is what to ask it for
+              </summary>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[10px] leading-relaxed text-gray-400">{TABLE_AI_BRIEF}</pre>
+              <button onClick={copyBrief}
+                className="mt-2 rounded bg-gray-800 px-2 py-1 text-[10px] text-gray-300 hover:text-white">
+                {copied ? '✓ copied' : 'Copy these instructions'}
+              </button>
+            </details>
+
+            <textarea value={text} onChange={e=>setText(e.target.value)} rows={8}
+              data-paste-table-input
+              placeholder={'Paste the block here, fence and all — or a plain markdown table.\n\n| Region | Q1 | Q2 |\n| North  | 50 | 60 |'}
+              className="w-full rounded border border-gray-800 bg-gray-950 px-2 py-1 font-mono text-xs text-gray-200 outline-none focus:border-gray-600" />
+
+            {touched && !parsed.ok && (
+              <div data-paste-table-errors className="mt-2 rounded border border-red-900/70 bg-red-950/30 p-2 text-[11px] text-red-300">
+                {parsed.errors.map((e, i) => (
+                  <div key={i}>{e.line ? 'Line ' + e.line + ': ' : ''}{e.message}</div>
+                ))}
+              </div>
+            )}
+
+            {parsed.ok && (
+              <div className="mt-3">
+                <div className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">
+                  Preview · {parsed.rows.length} rows × {parsed.rows[0].length} columns
+                  {parsed.merges.length ? ' · ' + parsed.merges.length + ' merged' : ''}
+                </div>
+                <div data-paste-table-preview className="overflow-x-auto rounded border border-gray-800 p-1">
+                  <TableGrid block={{rows: parsed.rows, merges: parsed.merges}}
+                    cell={(t, ri) => (
+                      <div className={"px-2 py-1 " + (ri===0 ? 'font-bold text-gray-100 bg-gray-800/60' : 'text-gray-300')}>{t}</div>
+                    )} />
+                </div>
+              </div>
+            )}
+
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={onClose} className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:text-white">Cancel</button>
+              <button onClick={()=>parsed.ok && onInsert(parsed.rows, parsed.merges)}
+                disabled={!parsed.ok}
+                title={parsed.ok ? 'Insert this table' : 'Fix the errors above first'}
+                className={"rounded px-3 py-1 text-xs " + (parsed.ok
+                  ? "bg-cyan-700 text-white hover:bg-cyan-600"
+                  : "bg-gray-900 text-gray-700 cursor-not-allowed")}>
+                Insert table
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -525,7 +695,16 @@
       const [composer, setComposer] = useState(null);            // null | 'note' | 'deadline'
       const [editing, setEditing] = useState(null);              // null | {kind, id}
       const [noteDraft, setNoteDraft] = useState({title:'', detail:''});
-      const [dlDraft, setDlDraft] = useState({title:'', detail:'', time:'', date:''});
+      // `cautionDates` is held in the DRAFT and written on Save, unlike
+      // progress.html's picker which writes on every click. This form has a
+      // Cancel, so a pick must be undoable by pressing it; and holding the
+      // choice in the draft is what lets the composer and the edit form share
+      // one picker — TC.dlStrandedBlockDays already takes a PROPOSED set.
+      const [dlDraft, setDlDraft] = useState({title:'', detail:'', time:'', date:'', cautionDates:[]});
+      // The caution picker's month, null meaning "follow the due day". Kept in
+      // state rather than derived so paging back a month survives the re-render
+      // each pick causes.
+      const [cauMonth, setCauMonth] = useState(null);            // null | {y, m}
 
       const hidden = block.hidden || [];
       const hiddenKey = hidden.join(',');
@@ -602,7 +781,8 @@
       function closeForms() {
         setComposer(null); setEditing(null);
         setNoteDraft({title:'', detail:'', time:''});
-        setDlDraft({title:'', detail:'', time:'', date:''});
+        setDlDraft({title:'', detail:'', time:'', date:'', cautionDates:[]});
+        setCauMonth(null);
       }
       const toggleFilter = key => onChange({...block,
         hidden: hidden.includes(key) ? hidden.filter(k => k !== key) : [...hidden, key]});
@@ -637,36 +817,50 @@
       };
       // The due day comes from the DRAFT, not from the selected cell, so this
       // is a second writer of `date`; `dlDraftValid` format-checks it, because
-      // a blank field would otherwise reach storage. A deadline is created with
-      // NO caution days — this page cannot set them at all any more. They are
-      // chosen on the Progress popup's calendar, which is the only surface that
-      // can see the prep a day already holds and refuse an un-pick that would
-      // strand it.
+      // a blank field would otherwise reach storage. The caution days come from
+      // the draft too, and go in through TC.dlWithCautionDays — THE writer, so
+      // the list is sanitised against `date` (no duplicate, no malformed day,
+      // nothing on or after the due day) and `startDate` is deleted in the same
+      // spread. A deadline being composed holds no prep, so no pick here can
+      // strand anything; that is why the composer needs no refusal and the edit
+      // form does.
       const addDeadline = () => {
         if (!TC.dlDraftValid(dlDraft)) return;
         const date = dlDraft.date;
-        onMutate('deadlines', prev => [...prev, {
-          id: genId(), date, time: dlDraft.time, cautionDates: [],
+        onMutate('deadlines', prev => [...prev, TC.dlWithCautionDays({
+          id: genId(), date, time: dlDraft.time,
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim(),
           createdAt: Date.now(), docPageId: page.id
-        }]);
+        }, dlDraft.cautionDates)]);
         // Filed on another day it would land outside the open day panel, so
         // follow it there — the same move the origin chip and the caution rows
         // already make. goToDay closes the forms for us.
         if (date !== selDs) goToDay(date); else closeForms();
       };
-      // The edit form changes the title, the detail and the due TIME only — not
-      // the due day, and no longer the caution days either. With neither, there
-      // is nothing this page can do that would strand placed prep, which is why
-      // the stranding refusal that used to live here is gone rather than
-      // forgotten. If a due-date field ever comes back to this form, it needs
-      // TC.dlStrandedBlockDays and the orphaned-day check in the same change.
+      // The edit form changes the title, the detail, the due TIME and the
+      // caution days — but NOT the due day. Moving an existing due day has to
+      // refuse a move that orphans a chosen caution day, and that refusal lives
+      // in the Progress popup's Edit form alone; if a due-date field ever comes
+      // back to this form it needs that check in the same change.
+      //
+      // Un-picking a day CAN strand prep, so this refuses it — through
+      // TC.dlStrandedBlockDays, the one definition, never a re-spelled
+      // comparison. The picker below refuses at the click too; this is the gate
+      // that makes it impossible to write a stranding set even so.
+      //
+      // TC.dlWithCautionDays spreads the STORED record first, so docPageId,
+      // createdAt, done, date, id and every block key survive — and a legacy
+      // `startDate` record is migrated by the act of being saved here, exactly
+      // as progress.html's bulk migration does, through the same function.
       const saveDeadline = id => {
         const dl = (slot.deadlines || []).find(d => d.id === id);
         if (!dl || !TC.dlValid(dlDraft)) return;
-        onMutate('deadlines', prev => prev.map(d => d.id === id ? {...d,
-          time: dlDraft.time,
-          title: dlDraft.title.trim(), detail: dlDraft.detail.trim()} : d));
+        if (TC.dlStrandedBlockDays(dl, {cautionDates: dlDraft.cautionDates}).length) return;
+        onMutate('deadlines', prev => prev.map(d => d.id === id
+          ? {...TC.dlWithCautionDays(d, dlDraft.cautionDates),
+             time: dlDraft.time,
+             title: dlDraft.title.trim(), detail: dlDraft.detail.trim()}
+          : d));
         closeForms();
       };
       // Writes `done` and nothing else, spreading the stored record so
@@ -703,16 +897,82 @@
       const dlForm = (onSave, label, dl) => {
         // Composing, the due day is TYPED and starts on the selected cell;
         // editing, there is no date field at all. Moving an EXISTING deadline
-        // has to refuse a move that orphans a chosen caution day or strands
-        // placed prep, and the Progress popup's Edit form is the one writer
-        // that does — so it stays the only place an existing due day moves.
+        // has to refuse a move that ORPHANS a chosen caution day, and the
+        // Progress popup's Edit form is the one writer that does — so it stays
+        // the only place an existing due day moves.
         //
-        // There is no caution field here either. This page authors deadlines
-        // and never chooses their caution days: that needs the prep-aware
-        // refusal, and duplicating it here is the shape this project keeps
-        // paying for.
+        // The caution days ARE chosen here, in both modes. Every rule behind
+        // them stays in calendar-core.js and is CALLED, never re-spelled:
+        // dlWithCautionDays sanitises and writes, dlToggleCautionDay toggles,
+        // and dlStrandedBlockDays decides what an un-pick would strand. That
+        // last one is why this was once impossible here — holding the refusal
+        // is one call, not a second copy of the rule.
         const composing = !dl;
-        const valid = composing ? TC.dlDraftValid(dlDraft) : TC.dlValid(dlDraft);
+        const due = composing ? dlDraft.date : dl.date;
+        // THE resolver doubles as the draft sanitiser: a due day typed earlier
+        // drops picks that are no longer before it, with no second rule saying
+        // so, and the readout always matches what Save would store.
+        const days = TC.dlWithCautionDays({date: due}, dlDraft.cautionDates).cautionDates;
+        const chosen = new Set(days);
+        // Days already holding this deadline's prep. A pick can never strand
+        // work, but an UN-pick can, so those cells are marked and refuse.
+        const held = new Set();
+        if (dl && TC.blockOn(dl)) {
+          const parts = TC.itemParts(dl);
+          (parts.length ? parts.map(p => TC.partDay(p, dl)) : [TC.blockDay(dl)])
+            .forEach(day => { if (day) held.add(day); });
+        }
+        // What un-picking EVERYTHING would strand — the same quantity the
+        // Progress picker reports, and the gate on `clear all`. `stranded` is
+        // the draft's own and is the backstop on Save: the click handler
+        // already refuses, so it should never be non-empty. Both are [] while
+        // composing, because dlStrandedBlockDays short-circuits on a falsy
+        // record — a deadline that does not exist yet has no prep to strand,
+        // which is what lets one picker serve both modes with no branch.
+        const protectedDays = TC.dlStrandedBlockDays(dl, {cautionDates: []});
+        const stranded = TC.dlStrandedBlockDays(dl, {cautionDates: days});
+        const valid = (composing ? TC.dlDraftValid(dlDraft) : TC.dlValid(dlDraft)) && !stranded.length;
+        const dueOk = /^\d{4}-\d{2}-\d{2}$/.test(due || '');
+        const cauAnchor = cauMonth || (dueOk
+          ? {y: Number(due.slice(0, 4)), m: Number(due.slice(5, 7)) - 1}
+          : {y: cur.y, m: cur.m});
+        const stepCau = n => {
+          const t = new Date(cauAnchor.y, cauAnchor.m + n, 1);
+          setCauMonth({y: t.getFullYear(), m: t.getMonth()});
+        };
+        const setCau = next => setDlDraft(d => ({...d, cautionDates: next}));
+        const toggleCau = ds => {
+          const next = TC.dlToggleCautionDay({date: due, cautionDates: days}, ds).cautionDates;
+          // An un-pick that would strand placed prep is REFUSED, never
+          // performed. Work the user put on the grid by hand is not ours to
+          // drop or move, so the cell simply does not change and the line
+          // below names the day.
+          if (dl && TC.dlStrandedBlockDays(dl, {cautionDates: next}).length) return;
+          setCau(next);
+        };
+        // Additive: UNIONS the n days before the due day into whatever is
+        // already picked, so it can only ever add a mark and can never strand.
+        const addRunUp = n => setCau(TC.dlWithCautionDays({date: due},
+          days.concat(TC.daysBetween(TC.dayShift(due, -n), due))).cautionDates);
+        // No window.confirm, unlike progress.html's clear: this writes nothing
+        // to track_db, and Cancel puts every day back. The prep refusal still
+        // applies, which is why the button reports it rather than asking a
+        // question it would then ignore.
+        const clearCau = () => { if (days.length && !protectedDays.length) setCau([]); };
+        // Colour comes from the theme tokens, not from Tailwind's palette:
+        // this page has a light theme and progress.html does not, so the
+        // hard-coded greys its picker uses would be unreadable here.
+        const cellStyle = (isDue, locked, on, prep) => Object.assign({
+          height: '1.4rem', fontSize: '0.625rem', lineHeight: 1,
+          borderRadius: 'var(--radius-sm)', border: 0, cursor: locked ? 'default' : 'pointer',
+          background: 'transparent', color: 'var(--color-text-muted)'
+        },
+          isDue ? {background: 'var(--color-danger-soft)', color: 'var(--color-danger)'}
+            : locked ? {opacity: 0.35}
+            : on ? {background: 'var(--color-warning)', color: 'var(--color-app-bg)', fontWeight: 700}
+            : {},
+          prep ? {textDecoration: 'underline', textDecorationColor: 'var(--color-primary-text)',
+                  textUnderlineOffset: '2px'} : {});
         return (
         <div className="cal-doc-form doc-chrome">
           <input value={dlDraft.title} autoFocus placeholder="Deadline title"
@@ -727,12 +987,109 @@
           </div>
           <textarea rows={2} value={dlDraft.detail} placeholder="Detail (optional)"
             onChange={e=>setDlDraft(d=>({...d, detail: e.target.value}))} />
+          {/* The caution days. Every cell is a real <button>, so the grid is
+              reachable by keyboard, and each carries data-dl-caution-day for
+              the browser suite — the same hooks progress.html's picker uses,
+              because this is the same feature on a second surface.
+
+              Deliberately NOT .cal-cell / .cal-grid / .cal-doc-row: existing
+              Documentations cases select those broadly across .doc-cal, and a
+              picker reusing one would be counted as a month cell. For the same
+              reason no tooltip here may begin "Due " — three cases count the
+              "!" marks by that prefix. */}
+          <div className="flex flex-col gap-1" style={{
+            border: '1px solid var(--color-border-subtle)',
+            borderRadius: 'var(--radius-sm)', padding: '0.35rem 0.4rem'}}>
+            <div className="flex items-center justify-between gap-2">
+              <span style={{fontSize: '0.625rem', color: 'var(--color-warning)'}}
+                data-dl-caution-count={days.length}>
+                ! {days.length} caution {days.length === 1 ? 'day' : 'days'}
+                {dueOk ? ' · due ' + due : ' · pick a due date first'}
+              </span>
+              <span className="flex items-center gap-1">
+                <button type="button" onClick={()=>stepCau(-1)} title="Previous month"
+                  style={{fontSize: '0.6875rem', color: 'var(--color-text-muted)',
+                    background: 'transparent', border: 0, cursor: 'pointer', padding: '0 0.25rem'}}>‹</button>
+                <span data-dl-caution-month
+                  style={{fontSize: '0.625rem', color: 'var(--color-text-muted)'}}>
+                  {TC.MONTHS[cauAnchor.m]} {cauAnchor.y}
+                </span>
+                <button type="button" onClick={()=>stepCau(1)} title="Next month"
+                  style={{fontSize: '0.6875rem', color: 'var(--color-text-muted)',
+                    background: 'transparent', border: 0, cursor: 'pointer', padding: '0 0.25rem'}}>›</button>
+              </span>
+            </div>
+            <div className="grid grid-cols-7 gap-px" data-dl-caution-cal>
+              {TC.DOWS.map(w => (
+                <div key={w} style={{fontSize: '0.5rem', lineHeight: 1, textAlign: 'center',
+                  paddingBottom: '0.125rem', color: 'var(--color-text-muted)', opacity: 0.7}}>
+                  {w.slice(0, 2)}
+                </div>
+              ))}
+              {Array(TC.firstDay(cauAnchor.y, cauAnchor.m)).fill(null).map((_, i) => <div key={'b'+i} />)}
+              {Array(TC.dim(cauAnchor.y, cauAnchor.m)).fill(null).map((_, i) => {
+                const ds = TC.dStr(cauAnchor.y, cauAnchor.m, i + 1);
+                const isDue = dueOk && ds === due;
+                // Only the days BEFORE the due day are pickable. The due day is
+                // drawn red on every surface and must never also be amber.
+                const locked = !dueOk || ds >= due;
+                const on = chosen.has(ds);
+                const prep = held.has(ds);
+                return (
+                  <button key={ds} type="button"
+                    data-dl-caution-day={ds}
+                    data-dl-caution-on={on ? '1' : '0'}
+                    disabled={locked}
+                    onClick={()=>toggleCau(ds)}
+                    title={isDue ? `${ds} — the deadline itself`
+                      : !dueOk ? 'Pick a due date first'
+                      : locked ? `${ds} is after the deadline`
+                      : on && prep ? `${ds} holds this deadline's prep — move it before un-picking`
+                      : on ? `Un-pick ${ds}` : `Mark ${ds} as a caution day`}
+                    style={cellStyle(isDue, locked, on, prep)}>
+                    {i + 1}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              {[3, 7, 14].map(n => (
+                <button key={n} type="button" disabled={!dueOk} onClick={()=>addRunUp(n)}
+                  title={`Also mark the ${n} days before the deadline`}
+                  style={{fontSize: '0.625rem', padding: '0.1rem 0.3rem', cursor: dueOk ? 'pointer' : 'default',
+                    borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-subtle)',
+                    background: 'transparent', color: 'var(--color-warning)', opacity: dueOk ? 1 : 0.4}}>+{n}d</button>
+              ))}
+              <button type="button" data-dl-caution-clear onClick={clearCau}
+                disabled={!days.length || protectedDays.length > 0}
+                title={protectedDays.length > 0
+                  ? 'Prep is scheduled on a caution day — move it first'
+                  : 'No caution days — the due day only'}
+                style={{fontSize: '0.625rem', padding: '0.1rem 0.3rem',
+                  borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-subtle)',
+                  background: 'transparent', color: 'var(--color-text-muted)',
+                  cursor: (!days.length || protectedDays.length) ? 'default' : 'pointer',
+                  opacity: (!days.length || protectedDays.length) ? 0.4 : 1}}>clear all</button>
+            </div>
+            {/* The one place an un-pick explains itself. It is refused rather
+                than performed, and the day is named, because nothing here moves
+                work the user placed by hand. */}
+            {protectedDays.length > 0 && (
+              <p data-dl-caution-refused
+                style={{fontSize: '0.5625rem', color: 'var(--color-primary-text)', margin: 0}}>
+                Prep sits on {protectedDays.join(', ')} (underlined).
+                Move it before un-picking those days.
+              </p>
+            )}
+          </div>
           <div className="cal-doc-form-acts">
             <button type="button" className="primary" disabled={!valid} onClick={onSave}>{label}</button>
             <button type="button" onClick={closeForms}>Cancel</button>
             {!valid && dlDraft.title.trim() && (
               <span className="cal-doc-hint">
-                {composing && !dlDraft.date
+                {stranded.length
+                  ? `Prep sits on ${stranded.join(', ')} — move it first.`
+                  : composing && !dlDraft.date
                   ? 'Needs a due date and a time.'
                   : 'Needs a time.'}
               </span>
@@ -925,7 +1282,7 @@
                     onClick={()=>{ closeForms(); setComposer('deadline');
                       /* the selected cell is only the DEFAULT due day now — the
                          form lets it be typed, so both dates start there */
-                      setDlDraft({title:'', detail:'', time:'', date: selDs}); }}>+ deadline</button>
+                      setDlDraft({title:'', detail:'', time:'', date: selDs, cautionDates: []}); }}>+ deadline</button>
                 </div>
                 {day.deadlines.map(dl => {
                   const o = originOf(dl);
@@ -950,7 +1307,11 @@
                             onClick={()=>toggleDone(dl.id)}>{done ? '↺' : '✓'}</button>
                           <button type="button" title="Edit" onClick={()=>{
                             closeForms(); setEditing({kind:'deadline', id:dl.id});
-                            setDlDraft({title: dl.title||'', detail: dl.detail||'', time: dl.time||'', date: dl.date});
+                            /* seeded THROUGH the resolver, so a legacy startDate
+                               record arrives as the explicit list it expands to
+                               and saving migrates it */
+                            setDlDraft({title: dl.title||'', detail: dl.detail||'', time: dl.time||'',
+                              date: dl.date, cautionDates: TC.dlCautionDays(dl)});
                           }}>✎</button>
                           <button type="button" title="Delete" className="danger"
                             onClick={()=>removeItem('deadlines', dl.id, 'deadline')}>✕</button>
@@ -1104,6 +1465,7 @@
       const [slot, setSlot] = useState(() => _activeSlot() || {});
       const [collapsed, setCollapsed] = useState({});
       const [showDumpModal, setShowDumpModal] = useState(false);
+      const [showPasteTable, setShowPasteTable] = useState(false);
       const [rootDragOver, setRootDragOver] = useState(false);
       // the sidebar filling the viewport. Ephemeral: never written to track_db.
       const [sidebarFull, setSidebarFull] = useState(false);
@@ -1689,8 +2051,10 @@
 
                   {/* add-block menu */}
                   <div className="docs-addmenu mt-4 flex flex-wrap gap-1 border-t border-gray-800/70 pt-3 text-[11px]">
-                    {[['h1','H1'],['h2','H2'],['h3','H3'],['p','Text'],['dump','⛁ Reference source dump'],['link','🔗 Link'],['table','▦ Table'],['image','🖼 Image'],['divider','― Divider'],['calendar','🗓 Calendar']].map(([t,l]) => (
-                      <button key={t} onClick={()=> t==='dump' ? openDumpModal() : addBlock(t)}
+                    {/* 'dump' and 'tablepaste' are pseudo-types: neither is a block
+                        kind, each opens a modal that ends in an ordinary addBlock. */}
+                    {[['h1','H1'],['h2','H2'],['h3','H3'],['p','Text'],['dump','⛁ Reference source dump'],['link','🔗 Link'],['table','▦ Table'],['tablepaste','▦ Paste table'],['image','🖼 Image'],['divider','― Divider'],['calendar','🗓 Calendar']].map(([t,l]) => (
+                      <button key={t} onClick={()=> t==='dump' ? openDumpModal() : t==='tablepaste' ? setShowPasteTable(true) : addBlock(t)}
                         className="rounded border border-gray-800 bg-gray-900 px-2 py-1 text-gray-400 hover:border-gray-600 hover:text-gray-200">
                         {l}
                       </button>
@@ -1708,6 +2072,18 @@
                 setShowDumpModal(false);
               }}
               onClose={()=>setShowDumpModal(false)} />
+          )}
+
+          {showPasteTable && (
+            <PasteTableModal
+              onInsert={(rows, merges) => {
+                // withMerges, not a literal — it is what deletes the key when
+                // the pasted table has no merged cells, so an ordinary table
+                // is stored in exactly the shape it always was.
+                addBlock('table', window.TrackDocTable.withMerges({rows}, merges));
+                setShowPasteTable(false);
+              }}
+              onClose={()=>setShowPasteTable(false)} />
           )}
         </div>
       );

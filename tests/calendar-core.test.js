@@ -1337,3 +1337,41 @@ test('collectors never mutate the slot they are given', () => {
   TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['doc'] });
   assert.equal(JSON.stringify(slot), before, 'calendar-core.js is read-only by contract');
 });
+
+/* ── what the Documentations caution picker leans on ───────────────────────
+   Both cases below are GUARDS: they pass before and after that picker exists,
+   and they are here so the two properties it depends on cannot be tidied away
+   without something failing. Neither is fail-first evidence; the browser cases
+   are. */
+
+test('GUARD: dlStrandedBlockDays short-circuits on a record that does not exist yet', () => {
+  // This is what lets ONE picker serve both the compose and the edit form with
+  // no branch: a deadline being composed has no prep, so there is nothing a
+  // pick could strand. Remove the `!d` half of the guard and the compose form
+  // throws on its first render instead.
+  for (const missing of [undefined, null, false, 0, '']) {
+    assert.deepEqual(TC.dlStrandedBlockDays(missing, { cautionDates: [] }), [],
+      String(missing) + ' has no prep to strand');
+    assert.deepEqual(TC.dlStrandedBlockDays(missing, null), []);
+  }
+});
+
+test('GUARD: dlWithCautionDays doubles as the draft sanitiser for a typed due day', () => {
+  // The compose form holds picks in a draft while the due day is still being
+  // typed, so the due day can move BELOW an already-chosen day. Nothing filters
+  // that by hand — THE writer is asked what it would store, and the readout and
+  // the stored value therefore cannot disagree.
+  const draft = ['2026-03-16', '2026-03-14', '2026-03-16', 'nonsense', '2026-03-20'];
+  assert.deepEqual(TC.dlWithCautionDays({ date: '2026-03-18' }, draft).cautionDates,
+    ['2026-03-14', '2026-03-16'],
+    'sorted, de-duplicated, malformed dropped, and nothing on or after the due day');
+  assert.deepEqual(TC.dlWithCautionDays({ date: '2026-03-15' }, draft).cautionDates,
+    ['2026-03-14'],
+    'pulling the due day back drops the days no longer before it');
+  assert.deepEqual(TC.dlWithCautionDays({ date: '' }, draft).cautionDates, [],
+    'and a due day not typed yet yields nothing rather than throwing');
+  // the empty list is a REAL value, never an absent key — a deleted key falls
+  // through to the legacy startDate branch and resurrects a cleared span
+  assert.equal(Object.prototype.hasOwnProperty.call(
+    TC.dlWithCautionDays({ date: '2026-03-18' }, []), 'cautionDates'), true);
+});

@@ -1816,7 +1816,8 @@ test('browser suites', skipUnlessChrome, async t => {
 
     const seeded = await docDlFields(page);
     assert.equal(seeded.count, 1,
-      'composing shows a due date and nothing else — no caution field on this page');
+      'composing shows exactly ONE date field — the due day. The caution days are '
+      + 'chosen on the picker below it, which is a grid of buttons, not a date input');
     assert.equal(seeded.due, thisMonthDay(15), 'seeded from the selected cell');
 
     const due = thisMonthDay(22);
@@ -1860,12 +1861,16 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('SCOPE GUARD: the Documentations edit form sets neither the day nor the caution days', async () => {
-    // The due day of a STORED deadline moves from the Progress popup alone —
-    // it is the one writer that refuses a move orphaning a chosen day or
-    // stranding placed prep — and the caution days are chosen only there, for
-    // the same reason. A second writer would have to repeat both checks, which
-    // is exactly the shape that cost this project the caution predicate.
+  await t.test('SCOPE GUARD: the Documentations edit form still moves no due DAY', async () => {
+    // The due day of a STORED deadline moves from the Progress popup alone: it
+    // is the one writer that refuses a move ORPHANING a chosen caution day, and
+    // a second writer would have to repeat that check — exactly the shape that
+    // cost this project the caution predicate once already.
+    //
+    // The caution days themselves ARE editable here now, and the cases below
+    // cover them. What this guard pins is that the STRANDING refusal came with
+    // them and the ORPHANING one did not have to: with no date field there is
+    // no move to orphan anything. Adding one without that refusal trips here.
     const { db, due } = moveDb();
     const page = await open('documentations.html', { db });
     await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
@@ -1885,6 +1890,269 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(stored.date, due, 'the stored due day is untouched');
     assert.deepEqual(stored.cautionDates, [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17)],
       'and so are the chosen days');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* ── the Documentations caution picker ────────────────────────────────────
+     The same feature as the Progress popup's picker, on a second surface, so
+     every case below is asserted HERE as well as there. That is this project's
+     standing rule and it is written from the caution predicate itself: it was
+     spelled at three call sites, one dropped half of it, and a single shared
+     assertion would have let the broken site hide behind a passing sibling.
+
+     What differs from Progress on purpose: picks are held in the DRAFT and
+     written on Save, because this form has a Cancel. Case 2 is what pins it. */
+
+  const openDocDlEdit = async page => {
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal .cal-doc-row-acts button'),
+        function (b) { return b.getAttribute('title') === 'Edit'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!document.querySelector('.cal-doc-form [data-dl-caution-cal]');
+    }, { message: 'the deadline edit form with its caution picker' });
+  };
+  const docCau = (page, ds) => page.evaluate(function (v) {
+    var b = document.querySelector('.cal-doc-form [data-dl-caution-day="' + v + '"]');
+    return b ? { on: b.getAttribute('data-dl-caution-on'), disabled: b.disabled } : null;
+  }, ds);
+  const clickDocCau = (page, ds) => page.evaluate(function (v) {
+    var b = document.querySelector('.cal-doc-form [data-dl-caution-day="' + v + '"]');
+    if (!b) return false;
+    b.click();
+    return true;
+  }, ds);
+  const docRawDb = page => page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+  await t.test('DOCUMENTATIONS: the edit form picks a caution day, and Save writes it', async () => {
+    const { db, due } = moveDb();
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 18);
+    await openDocDlEdit(page);
+
+    // seeded from the record, through the resolver
+    assert.equal((await docCau(page, thisMonthDay(15))).on, '1', 'a stored day starts picked');
+    assert.equal((await docCau(page, thisMonthDay(14))).on, '0', 'an unchosen day starts unpicked');
+    assert.equal((await docCau(page, due)).disabled, true, 'the due day itself is not pickable');
+    assert.equal((await docCau(page, thisMonthDay(19))).disabled, true,
+      'nor is a day after it — the due day is red everywhere and must never also be amber');
+
+    await clickDocCau(page, thisMonthDay(14));
+    assert.equal((await docCau(page, thisMonthDay(14))).on, '1', 'the pick shows immediately');
+    assert.equal((await docDlSave(page)).disabled, false, 'Save was enabled');
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing after Save' });
+
+    const stored = (await storedDl(page))[0];
+    assert.deepEqual(stored.cautionDates,
+      [thisMonthDay(14), thisMonthDay(15), thisMonthDay(16), thisMonthDay(17)],
+      'the new day is stored, sorted, alongside the three that were there');
+    assert.equal(stored.startDate, undefined,
+      'and dlWithCautionDays deleted startDate in the same spread');
+    // the whole point of spreading the stored record rather than rebuilding it
+    assert.equal(stored.id, 'dl-move');
+    assert.equal(stored.date, due, 'the due day did not move');
+    assert.equal(stored.docPageId, 'p-1');
+    assert.equal(stored.createdAt, 1771000000000);
+    assert.equal(stored.title, 'Ship the thing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: Cancel after picking leaves track_db byte-identical', async () => {
+    // The reason picks are held in the draft at all. progress.html writes on
+    // every click because its picker has no Cancel to honour; this one does.
+    const { db } = moveDb();
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 18);
+    await openDocDlEdit(page);
+    const before = await docRawDb(page);
+
+    await clickDocCau(page, thisMonthDay(14));
+    await clickDocCau(page, thisMonthDay(13));
+    await clickDocCau(page, thisMonthDay(15));          // an un-pick too
+    assert.equal((await docCau(page, thisMonthDay(13))).on, '1', 'the draft did change on screen');
+    assert.equal(await docRawDb(page), before, 'but nothing reached track_db while picking');
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.cal-doc-form-acts button'),
+        function (b) { return b.textContent.trim() === 'Cancel'; }).click();
+      return true;
+    });
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing on Cancel' });
+    assert.equal(await docRawDb(page), before, 'and Cancel left track_db byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS refuses an un-pick that would strand placed prep', async () => {
+    // blockDate anchors this deadline's prep on day 16, one of its chosen days.
+    // Un-picking 16 would leave that block on a day the deadline no longer
+    // occupies, so it is REFUSED and the day is named — never moved, never
+    // dropped. Day 15 holds nothing and must still un-pick, or the refusal has
+    // frozen the whole picker instead of protecting one day.
+    const { db } = moveDb({ blockDate: thisMonthDay(16) });
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 18);
+    await openDocDlEdit(page);
+
+    const named = await page.evaluate(function () {
+      var el = document.querySelector('.cal-doc-form [data-dl-caution-refused]');
+      return el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+    });
+    assert.ok(named && named.indexOf(thisMonthDay(16)) >= 0,
+      'the day holding prep is named: ' + named);
+
+    const before = await docRawDb(page);
+    await clickDocCau(page, thisMonthDay(16));
+    assert.equal((await docCau(page, thisMonthDay(16))).on, '1',
+      'the un-pick was refused — the day is still picked');
+    assert.equal(await docRawDb(page), before, 'and the refused click wrote nothing');
+
+    await clickDocCau(page, thisMonthDay(15));
+    assert.equal((await docCau(page, thisMonthDay(15))).on, '0',
+      'a day with no prep on it still un-picks — the refusal is narrow');
+
+    const clearOff = await page.evaluate(function () {
+      var b = document.querySelector('.cal-doc-form [data-dl-caution-clear]');
+      return b ? b.disabled : null;
+    });
+    assert.equal(clearOff, true, '"clear all" is disabled while prep sits on a chosen day');
+
+    await docDlSave(page);
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing after Save' });
+    const stored = (await storedDl(page))[0];
+    assert.ok(stored.cautionDates.indexOf(thisMonthDay(16)) >= 0,
+      'the protected day survived the save');
+    assert.equal(stored.blockDate, thisMonthDay(16), 'and its prep never moved');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: the composer files a deadline with its chosen caution days', async () => {
+    const page = await open('documentations.html', { db: seedDb({ deadlines: [], calendarNotes: [] }) });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 18);
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal .doc-cal-add'),
+        function (b) { return /deadline/.test(b.textContent); }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!document.querySelector('.cal-doc-form [data-dl-caution-cal]');
+    }, { message: 'the deadline compose form with its caution picker' });
+
+    await fillDocDl(page, { time: '09:30', title: 'Composed with a run-up' });
+    await clickDocCau(page, thisMonthDay(16));
+    await clickDocCau(page, thisMonthDay(17));
+    assert.equal((await docDlSave(page)).disabled, false, 'Add was enabled');
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the composer closing' });
+
+    const stored = (await storedDl(page)).find(d => d.title === 'Composed with a run-up');
+    assert.ok(stored, 'the deadline was filed');
+    assert.equal(stored.date, thisMonthDay(18), 'on the cell it was composed from');
+    assert.deepEqual(stored.cautionDates, [thisMonthDay(16), thisMonthDay(17)],
+      'carrying the days chosen before it existed');
+    assert.equal(stored.docPageId != null, true, 'and still pointing back at its page');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: saving the edit form migrates a legacy startDate span', async () => {
+    // dlWithCautionDays is THE writer and deletes startDate in the same spread,
+    // so a pre-choice record migrates by the act of being edited here — the
+    // same thing progress.html's bulk migration does, through the same
+    // function. The run-up must survive the conversion unchanged.
+    const due = thisMonthDay(18);
+    const db = seedDb({
+      calendarNotes: [],
+      docPages: [F.docPage('p-1')],
+      deadlines: [F.legacyDeadline('dl-legacy', due, thisMonthDay(15),
+        { title: 'From the old world', docPageId: 'p-1' })]
+    });
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 18);
+    await openDocDlEdit(page);
+
+    // seeded THROUGH the resolver, so the span arrives already expanded
+    for (const n of [15, 16, 17]) {
+      assert.equal((await docCau(page, thisMonthDay(n))).on, '1',
+        'day ' + n + ' of the legacy span is picked in the form');
+    }
+    await docDlSave(page);
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing after Save' });
+
+    const stored = (await storedDl(page))[0];
+    assert.deepEqual(stored.cautionDates, [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17)],
+      'the span became the explicit list it always meant');
+    assert.equal(stored.startDate, undefined, 'and the legacy key is gone');
+    assert.equal(stored.date, due, 'the due day is untouched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: a due day typed before a pick drops it, through the one resolver', async () => {
+    // The composer is the only form where the due day can move under an
+    // already-chosen list. Nothing filters that by hand: dlWithCautionDays
+    // sanitises against `date`, so the readout and the stored value agree
+    // without a second rule saying so.
+    const page = await open('documentations.html', { db: seedDb({ deadlines: [], calendarNotes: [] }) });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 18);
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal .doc-cal-add'),
+        function (b) { return /deadline/.test(b.textContent); }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !!document.querySelector('.cal-doc-form [data-dl-caution-cal]');
+    }, { message: 'the deadline compose form with its caution picker' });
+
+    await fillDocDl(page, { time: '09:30', title: 'Pulled forward' });
+    await clickDocCau(page, thisMonthDay(14));
+    await clickDocCau(page, thisMonthDay(16));
+    // a FUNCTION, not a stored promise: a promise resolves once, so re-awaiting
+    // it would hand back the first reading and the case would pass either way
+    const count = () => page.evaluate(function () {
+      return document.querySelector('.cal-doc-form [data-dl-caution-count]')
+        .getAttribute('data-dl-caution-count');
+    });
+    assert.equal(await count(), '2', 'both days count while the due day is the 18th');
+
+    await fillDocDl(page, { date: thisMonthDay(15) });        // pull the due day back
+    assert.equal(await count(), '1',
+      'the 16th stops counting the moment the due day moves before it');
+    assert.equal((await docCau(page, thisMonthDay(16))).disabled, true,
+      'and its cell is locked, not silently still on');
+
+    await docDlSave(page);
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the composer closing' });
+    const stored = (await storedDl(page)).find(d => d.title === 'Pulled forward');
+    assert.deepEqual(stored.cautionDates, [thisMonthDay(14)],
+      'and only the day still before the due day was stored');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -3313,6 +3581,222 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* ── paste-a-table, and merged cells ──────────────────────────────────────
+     A `table` block gained an optional `merges` list. The rules being pinned
+     here, and why each one is a separate case:
+
+     - `merges` is ABSENT when nothing spans. The two cases above deepEqual a
+       whole table block, and every table stored before this feature has no
+       such key, so an empty stored list would be a second spelling of "none".
+     - Merging never touches `rows`. Covered text is hidden, not cleared, which
+       is the only reason unmerge is a restore and the only reason neither
+       control asks first.
+     - `− row` CLAMPS a region that spanned the removed row instead of dropping
+       it, and still asks first, because that removal does drop text.
+
+     There is only one surface here — documentations.html renders tables and
+     nothing else does — so this needs no per-surface duplication. The offline
+     cover is tests/doc-table-core.test.js; these cases exist to prove the page
+     is wired to it. */
+
+  const rawDb = page => page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+  const openPasteModal = async (page, text) => {
+    await page.waitFor(function () { return !!document.querySelector('.docs-addmenu'); },
+      { message: 'the block add menu' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.docs-addmenu button'),
+        function (b) { return /Paste table/.test(b.textContent); }).click();
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-table-input]'); },
+      { message: 'the paste-table textarea' });
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-paste-table-input]'), value);
+    }, SET_REACT_INPUT, text);
+  };
+  const clickInsert = page => page.evaluate(function () {
+    Array.prototype.find.call(document.querySelectorAll('[data-paste-table] button'),
+      function (b) { return /Insert table/.test(b.textContent); }).click();
+  });
+
+  await t.test('a pasted table reaches track_db with its merges, and the grid draws the spans', async () => {
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [] })] }), hash: '?page=p-1' });
+
+    await openPasteModal(page, [
+      '::: track-table',
+      '| Region     | Q1 | Q2 |',
+      '| North      | 50 | 60 |',
+      '| South      | 45 | ^^ |',
+      '| Total: 155 | << | << |',
+      ':::'
+    ].join('\n'));
+
+    // The preview and the editor render through the same mergeMap, so asserting
+    // the preview's geometry is asserting the block's.
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-table-preview]'); },
+      { message: 'the parsed preview' });
+    assert.deepEqual(await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-paste-table-preview] td'),
+        function (td) { return td.getAttribute('data-cell') + ':' + td.getAttribute('data-span'); });
+    }), ['0,0:1x1', '0,1:1x1', '0,2:1x1', '1,0:1x1', '1,1:1x1', '1,2:2x1', '2,0:1x1', '2,1:1x1', '3,0:1x3'],
+      'covered cells are not drawn at all, and each owner carries its own span');
+
+    await clickInsert(page);
+    const blocks = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var p = (((db.slots || [])[0] || {}).docPages || [])[0];
+      return (p && p.blocks.length) ? p.blocks : false;
+    }, { message: 'the table reaching track_db' });
+
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, 'table');
+    assert.deepEqual(blocks[0].merges, [{ r: 1, c: 2, rs: 2, cs: 1 }, { r: 3, c: 0, rs: 1, cs: 3 }]);
+    assert.deepEqual(blocks[0].rows, [
+      ['Region', 'Q1', 'Q2'], ['North', '50', '60'], ['South', '45', ''], ['Total: 155', '', '']
+    ], 'the owner keeps its text and the covered cells come in empty');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a pasted table with nothing merged is stored with NO merges key', async () => {
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [] })] }), hash: '?page=p-1' });
+
+    // A plain markdown table, separator row and all — what an AI emits when the
+    // picture has no merged cells.
+    await openPasteModal(page, '| Name | Score |\n|------|-------|\n| Ada  | 9     |');
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-table-preview]'); },
+      { message: 'the parsed preview' });
+    await clickInsert(page);
+
+    const blocks = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var p = (((db.slots || [])[0] || {}).docPages || [])[0];
+      return (p && p.blocks.length) ? p.blocks : false;
+    }, { message: 'the table reaching track_db' });
+
+    assert.equal('merges' in blocks[0], false, 'absence is the default — no empty list is written');
+    assert.deepEqual(Object.keys(blocks[0]), ['id', 'type', 'rows'],
+      'the stored shape is exactly what it was before this feature existed');
+    assert.deepEqual(blocks[0].rows, [['Name', 'Score'], ['Ada', '9']],
+      'and the markdown separator row was skipped, not stored as data');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a pasted row with the wrong cell count is refused, and Insert writes nothing', async () => {
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [] })] }), hash: '?page=p-1' });
+    const before = await rawDb(page);
+
+    await openPasteModal(page, '| a | b | c |\n| d | e |');
+    const msg = await page.waitFor(function () {
+      var el = document.querySelector('[data-paste-table-errors]');
+      return el ? el.textContent : false;
+    }, { message: 'the parse error' });
+    assert.match(msg, /Line 2/, 'the error names the line of the pasted text');
+    assert.match(msg, /2 cells.*first row has 3/, 'and says what is actually wrong');
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-paste-table-preview]');
+    }), false, 'nothing is previewed — there is no half-parsed table');
+
+    // The path that matters: clicking the disabled button anyway must not write.
+    await clickInsert(page);
+    await sleep(400);
+    assert.equal(await rawDb(page), before, 'track_db is byte-identical');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('merging hides the covered cell, and unmerging restores it exactly', async () => {
+    const page = await open('documentations.html', { db: docBlockDb(), hash: '?page=p-1' });
+    await page.waitFor(function () { return !!document.querySelector('.doc-table td input'); },
+      { message: 'the table' });
+
+    const clickCell = () => page.evaluate(function () { document.querySelector('.doc-table td input').click(); });
+    const clickChrome = label => page.evaluate(function (l) {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.indexOf(l) >= 0 && !b.disabled; }).click();
+    }, label);
+
+    await clickCell();
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return /merge right/.test(b.textContent) && !b.disabled; });
+    }, { message: 'merge right becoming available on the selected cell' });
+    await clickChrome('merge right');
+
+    const merged = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = (((db.slots || [])[0] || {}).docPages || [])[0].blocks[0];
+      return b.merges ? b : false;
+    }, { message: 'the merge reaching track_db' });
+    assert.deepEqual(merged.merges, [{ r: 0, c: 0, rs: 1, cs: 2 }]);
+    assert.deepEqual(merged.rows, [['keep me', 'and me'], ['row two', 'cell']],
+      'rows are untouched — the covered text is HIDDEN, never cleared');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('.doc-table tr')[0].children.length;
+    }), 1, 'but the first row now draws a single spanning cell');
+
+    // No dialog for either direction: nothing was deleted or cleared, so this
+    // sits outside the destructive-control rule (AGENTS.md).
+    assert.equal(page.dialogs.length, 0, 'merging did not ask, and did not need to');
+
+    await clickCell();
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return /unmerge/.test(b.textContent) && !b.disabled; });
+    }, { message: 'unmerge becoming available' });
+    await clickChrome('unmerge');
+
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = (((db.slots || [])[0] || {}).docPages || [])[0].blocks[0];
+      return !b.merges ? b : false;
+    }, { message: 'the unmerge reaching track_db' }),
+      { id: 'b-1', type: 'table', rows: [['keep me', 'and me'], ['row two', 'cell']] },
+      'unmerge is a RESTORE — the block is back to its original shape, merges key and all');
+    assert.equal(page.dialogs.length, 0);
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('dropping a row still asks, and clamps a merge that spanned it', async () => {
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [{
+        id: 'b-1', type: 'table',
+        rows: [['tall', 'a'], ['', 'b'], ['', 'c']],
+        merges: [{ r: 0, c: 0, rs: 3, cs: 1 }]
+      }] })] }), hash: '?page=p-1' });
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '− row'; });
+    }, { message: 'the table row/column chrome' });
+
+    const before = await rawDb(page);
+    await answering(page, false, CLICK_SOON_TEXT, ['− row']);
+    assert.equal(await rawDb(page), before, 'Cancel left track_db byte-identical, merge included');
+
+    await answering(page, true, CLICK_SOON_TEXT, ['− row']);
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = (((db.slots || [])[0] || {}).docPages || [])[0].blocks[0];
+      return b.rows.length === 2 ? b : false;
+    }, { message: 'the row removal reaching track_db' });
+    assert.deepEqual(after.merges, [{ r: 0, c: 0, rs: 2, cs: 1 }],
+      'the region was CLAMPED to the shorter grid, not dropped along with its text');
+    assert.equal(after.rows[0][0], 'tall', 'and it kept the text it was holding');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('removing a storage tag asks, and Cancel keeps the pair', async () => {
     const page = await open('true-storage.html', { db: tagSeed(), hash: '?storage=ts-1' });
     await page.waitFor(function () { return !!document.querySelector('[data-tag-remove="tg-1"]'); },
@@ -4625,6 +5109,127 @@ test('browser suites', skipUnlessChrome, async t => {
       return ids.indexOf('p-b:p-a') >= 0 ? ids : false;
     }, { message: 'the mouse nest being saved' }),
       ['p-a:-', 'p-a2:p-a', 'p-a1:p-a', 'p-b:p-a'], 'mouse nest still works');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* ── the day-header buttons are REACHABLE, not merely present ────────────
+     Every other case in this file clicks through `el.click()`, which ignores
+     hit testing entirely and so cannot see a control that is painted under
+     something else. That is exactly the shape of the bug these two cases
+     exist for: in WEEK mode the day column is pinned to its minimum, the
+     centre section gets what the two side strips leave it, and the four-button
+     row is wider than that. Flex items paint as atomic units in document
+     order, so the row spilling LEFT stays on top of the SIR strip and keeps
+     working, while the same row spilling RIGHT goes under the notes strip —
+     visible, because that strip has no background, and completely dead to a
+     tap. Only the fourth button, `☰`, is lost.
+
+     Each button is therefore asserted SEPARATELY through elementFromPoint. A
+     single "all four are fine" assertion would let the one forgotten surface
+     hide behind three passing siblings, which is this repository's recurring
+     bug. */
+  const HEADER_BUTTONS = function (ds) {
+    var last = document.querySelector('[data-dln-open="' + ds + '"]');
+    if (!last) return null;
+    var row  = last.parentElement;
+    var cell = row.closest('.relative');
+    var scroller = row.closest('.overflow-auto');
+    var cr = cell.getBoundingClientRect();
+    var rr = row.getBoundingClientRect();
+    return {
+      pinned: !!scroller && scroller.scrollWidth > scroller.clientWidth,
+      cell: { left: Math.round(cr.left), right: Math.round(cr.right), width: Math.round(cr.width) },
+      row:  { left: Math.round(rr.left), right: Math.round(rr.right), width: Math.round(rr.width) },
+      buttons: Array.prototype.map.call(row.children, function (b) {
+        var r  = b.getBoundingClientRect();
+        var el = document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                           Math.round(r.top + r.height / 2));
+        return {
+          label: (b.textContent || '').trim(),
+          width: Math.round(r.width),
+          left: Math.round(r.left), right: Math.round(r.right),
+          hit: !el ? 'nothing'
+             : (el === b || b.contains(el)) ? 'self'
+             : el.tagName.toLowerCase() +
+               (el.className ? '.' + String(el.className).trim().split(/\s+/).slice(0, 3).join('.') : '')
+        };
+      })
+    };
+  };
+
+  // `anchor` starts at today, so today is the FIRST week column and sits at
+  // scrollLeft 0 — no horizontal scrolling is needed to bring it into view,
+  // and elementFromPoint would return null for a point outside the viewport.
+  const measureHeader = async db => {
+    const p = await open('progress.html', { db, hash: '#schedule' });
+    await p.setViewport(820, 1180);          // an iPad, the device this was reported on
+    await mountSchedule(p);
+    const m = await p.waitFor(HEADER_BUTTONS, { args: [TODAY], message: "today's day-header buttons" });
+    return { page: p, m, byLabel: Object.fromEntries(m.buttons.map(b => [b.label, b])) };
+  };
+
+  await t.test('PROGRESS: every day-header button is hit-testable at the week column width', async () => {
+    const { page, m, byLabel } = await measureHeader(seedDb());
+
+    assert.equal(m.pinned, true,
+      'the week columns are at their minimum width — the precondition this case is about');
+    assert.deepEqual(m.buttons.map(b => b.label), ['+', '◎', '⊕', '☰'],
+      'all four buttons render on a day that is not past');
+
+    // separately, one per button: the whole point is that three of them pass
+    assert.equal(byLabel['+'].hit, 'self', 'the + task picker takes its own tap');
+    assert.equal(byLabel['◎'].hit, 'self', 'the ◎ MM picker takes its own tap');
+    assert.equal(byLabel['⊕'].hit, 'self', 'the ⊕ MG picker takes its own tap');
+    assert.equal(byLabel['☰'].hit, 'self',
+      'the ☰ day-notes browser takes its own tap (hit ' + byLabel['☰'].hit + ')');
+
+    assert.ok(byLabel['☰'].width >= 24,
+      'and is not squashed down to its glyph (' + byLabel['☰'].width + 'px)');
+    assert.ok(m.row.left >= m.cell.left && m.row.right <= m.cell.right,
+      'the button row stays inside its own day column (row ' + m.row.left + '–' + m.row.right +
+      ', column ' + m.cell.left + '–' + m.cell.right + ')');
+
+    // and the user's actual action: tap where the ☰ is drawn, not the element
+    await page.evaluate(function (ds) {
+      var b = document.querySelector('[data-dln-open="' + ds + '"]');
+      var r = b.getBoundingClientRect();
+      var el = document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                         Math.round(r.top + r.height / 2));
+      if (el) el.click();
+      return true;
+    }, TODAY);
+    await page.waitFor(function () { return !!document.querySelector('[data-dln-panel]'); },
+      { message: 'the day-notes panel opening from a tap at the ☰ position' });
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROGRESS: a long note title cannot push a day-header button out of reach', async () => {
+    /* The notes strip sizes to its content up to 110px, so a long title takes
+       back the width the widened column just gave the centre. This is the case
+       the row's flex-wrap exists for: it must break INSIDE its column rather
+       than spill under the strip again. */
+    const db = seedDb({
+      calendarNotes: [F.calNote('n-long', TODAY,
+        { title: 'A deliberately long untimed note title that stretches the strip' })],
+      deadlines: [F.deadline('d-long', dayFromToday(2),
+        { cautionDates: [TODAY], time: '17:00', title: 'A long deadline title for the caution row' })]
+    });
+    const { page, m, byLabel } = await measureHeader(db);
+
+    assert.ok(m.cell.width - byLabel['☰'].right >= 0,
+      'the strip really did claim width back (column ' + m.cell.width + 'px)');
+    assert.equal(byLabel['+'].hit, 'self', 'the + task picker still takes its own tap');
+    assert.equal(byLabel['◎'].hit, 'self', 'the ◎ MM picker still takes its own tap');
+    assert.equal(byLabel['⊕'].hit, 'self', 'the ⊕ MG picker still takes its own tap');
+    assert.equal(byLabel['☰'].hit, 'self',
+      'the ☰ day-notes browser still takes its own tap (hit ' + byLabel['☰'].hit + ')');
+    assert.ok(m.row.right <= m.cell.right,
+      'the row wrapped inside the column instead of spilling under the strip (row right ' +
+      m.row.right + ', column right ' + m.cell.right + ')');
+
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
