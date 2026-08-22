@@ -796,14 +796,15 @@ Everything in this section that is not `node tests/run.js` was run once and cann
 node tests/run.js
 ```
 
-131 offline cases per timezone (79 calendar and 52 schema) under five timezones (UTC,
-UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu), plus 126 headless-Chrome
-subtests, across 13 suites. On 2026-08-22 the twelve offline suites passed and 119
-of the 126 browser subtests passed; the seven failures are the TOUCH sidebar
-drag-to-nest cases (browser 120-126), which are the test half of a feature
-`documentations.html` does not implement yet — they time out on a `data-doc-row`
-hook that does not exist. That is the repository's usual test-first order, not a
-regression. The original two
+132 offline cases per timezone (80 calendar and 52 schema) under five timezones (UTC,
+UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu), plus 131 headless-Chrome
+subtests, across 13 suites. On 2026-08-22 a full run on an idle machine passed all
+13 suites, the TOUCH sidebar cases (browser 125-131) included — they were the test
+half of a feature written before its implementation, and both halves are now in the
+working tree. A run overlapping another session's suite on the same machine lost
+cases 123-131 to `CDP connection closed`; they passed on the idle re-run, so treat
+a browser-layer failure as a resource symptom until the machine is confirmed quiet.
+The original two
 `sir-ks02.html` regression cases were confirmed to **fail** against the pre-fix page
 served through `TRACK_TEST_ROOT`. The cross-tab active-slot, ambiguous-slot-identity,
 malformed recursive-goal, and dangling-writer cases added on 2026-08-10 were also
@@ -1084,6 +1085,14 @@ applies; its behavioural claims do not. See the next section.
   still at the edge fires no further move events, so scrolling from the move handler alone stalls
   after one nudge. The drop target is recomputed on each frame because rows slide under a
   stationary finger.
+- **Reverted on request, and deliberately not to be "fixed" back.** The narrow sidebar's row
+  cluster was first given 44px targets under `@media (hover: none)`, which forced the row to
+  `flex-wrap` and put the buttons on a second line — five 44px targets need 220px in a 240px
+  column. That doubled the height of every page row on a phone, and the user asked for the
+  original one-line layout back. The cluster is therefore **visible but not enlarged** there;
+  `⛶` and the "Pages" `＋` keep 44px because each is alone on its row. The 44px row targets live
+  only in `.docs-sidebar-full`, whose rule is a separate block *outside* the media query — check
+  that separation before touching either, since they look like one concern and are not.
 - **Not covered, and weaker than the rest.** The cases synthesise `TouchEvent`s from inside the
   page, exactly as the true-storage case synthesises a `DataTransfer`. That exercises the handler
   logic and **not** real hardware: browser gesture arbitration, scroll interception, momentum,
@@ -1101,6 +1110,48 @@ applies; its behavioural claims do not. See the next section.
 Not covered by the suite, and still requiring manual checks: touch and drag interaction on real
 hardware, the signed-in Firebase path, real multi-device behaviour, print output, and most of the
 UI.
+
+### A typed due date on both compose forms (2026-08-22)
+
+- The slot stays at **23** fields — nothing here is a new key, only a new authoring path for
+  `date` — so the hand-written CONTRACT lists in `tests/schema.test.js`, `tests/browser.test.js`
+  and `tests/lib/fixture.js` needed no change. Offline cases go from 131 to **132** (calendar-core
+  79 → 80, swept under all five timezones with identical results); browser subtests go from 126 to
+  **131**. `node tests/run.js`: all 13 suites pass.
+- **Fail-first, offline.** `TC.dlDraftValid` is new, so the case was run against a scratch
+  directory holding a pre-change `calendar-core.js` and a REAL copy of `tests/` — a symlinked
+  `tests/` is useless here, because `require`/`__dirname` resolve through the realpath and quietly
+  load the repository's own module instead. That cost one wasted run reporting a false pass, and
+  `--preserve-symlinks` did not fix it. Against the true baseline: **2 of 80 failed** — the new
+  case (`TC.dlDraftValid is not a function`) and `module surface`, which is what the hand-written
+  export list is for.
+- **Fail-first, browser: two doctored baselines, and their failure sets are DISJOINT.** Each
+  `TRACK_TEST_ROOT` held symlinks to the repository plus **one** file with the feature reversed:
+  - doctored **`progress.html`** → cases 36 and 37 (`the Schedule composer files a deadline on a
+    TYPED due day`, `… refuses a due day before the caution start`) failed; **129 passed**,
+    including both Documentations cases.
+  - doctored **`documentations.html`** → cases 38 and 39 failed, the mirror pair; **129 passed**,
+    including both Progress cases.
+
+  Neither set contains the other. `progress.html` does not load `calendar-core.js` and carries its
+  own `dlDraftValid`, so one assertion per surface is the only thing that catches a forgotten copy.
+  Never place either doctored file in the repository.
+- Case 40, `editing an existing deadline still takes its day from the record`, is a **scope guard**
+  and passed against both baselines by design: it pins that the Documentations edit form shows one
+  date field, not two, so a later change that adds a due date there without the stranding refusal
+  trips this case instead of shipping.
+- What the cases assert beyond that: the composer's due field is seeded from the cell it was
+  launched from and `min`-capped at the caution start; a typed day reaches `track_db` while
+  `startDate` stays where it was; and an inverted span disables the button, shows the reason, and
+  leaves `track_db` **byte-identical** after clicking it anyway — the Cancel path, which is the one
+  that matters.
+- **Environment note, and it repeated the 2026-08-18 lesson exactly.** One full run reported nine
+  failures — cases 123 to 131, all `CDP connection closed` or a 30s `waitFor` timeout — while
+  another Claude session was running the whole suite on the same machine. Every one passed on an
+  idle re-run. Before trusting a browser-layer failure, check
+  `ps -eo cmd | grep browser.test.js` and `pgrep -fc "user-data-dir=/tmp/track-cdp-"`.
+- Not covered, as ever: real touch hardware, the live Firebase project, and print output. The
+  composer's date field was not exercised by hand.
 
 ### Confirmation on every destructive control (2026-08-18)
 

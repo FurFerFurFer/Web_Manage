@@ -2506,25 +2506,21 @@ button.cal-doc-origin:hover {
 
 /* A finger raises no :hover, so the hover-revealed row actions were invisible
    on a phone and iPad — the second, independent half of why reordering did not
-   work there. Fixing the drag alone would have left them unreachable.
-   The cluster takes its own line: five 44px targets need 220px, and the column
-   is 240px. Denser rows are what the full-screen mode above is for. */
+   work there. Fixing the drag alone would have left them unreachable, so
+   `display: flex` below is load-bearing and must not be removed.
+
+   The cluster is made VISIBLE here but deliberately NOT enlarged. Five 44px
+   targets need 220px in a 240px column, so sizing them up forced the row to
+   wrap and doubled the height of every page row — which was tried, and
+   reverted on request. The row therefore keeps its original one-line desktop
+   layout, and the full-screen mode above is where 44px row targets live. Only
+   ⛶ and ＋ are enlarged, because each sits alone on its own row with nothing
+   to crowd. */
 @media (hover: none) {
   .docs-sidebar .doc-row-acts {
     display: flex;
   }
 
-  .docs-sidebar:not(.docs-sidebar-full) [data-doc-row] {
-    flex-wrap: wrap;
-  }
-
-  .docs-sidebar:not(.docs-sidebar-full) .doc-row-acts {
-    width: 100%;
-    justify-content: flex-end;
-    gap: 0.25rem;
-  }
-
-  .docs-sidebar .doc-row-acts > *,
   .docs-sidebar .doc-side-full,
   .docs-sidebar .doc-side-add {
     display: inline-flex;
@@ -2534,8 +2530,9 @@ button.cal-doc-origin:hover {
     min-height: 2.75rem;
   }
 
-  /* the ★ badge and the action cluster are both permanent now, so the badge
-     would otherwise double up beside its own ☆ button */
+  /* the ★ badge and the action cluster are both permanent now, and the ☆
+     button already shows ★ when a page is favourited, so the separate badge
+     would put two stars in one row */
   .docs-sidebar .doc-fav-badge {
     display: none;
   }
