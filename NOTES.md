@@ -824,24 +824,23 @@ calendar dates. Home should remain read-only unless write ownership is explicitl
 ### Left undone by the schedule-block work
 
 Day-note and deadline schedule blocks are implemented — see README "Schedule blocks for day
-notes and deadlines". That settled the "do timed notes have a duration" question (yes, opt-in
-and stored as `blockDuration`) and delivered dragging them on the hour grid. Two pieces were
-deliberately **not** built:
+notes and deadlines". One piece is still deliberately **not** built:
 
-- **A deadline's run-up block on an earlier caution-period day.** The block is currently pinned
-  to the due day, and a horizontal drag is ignored. Putting prep on a run-up day needs a
-  `blockDate` (or a date on each part), plus a decision about what happens when the caution
-  period is later shortened past it. Do not reuse `blockTime` for this — it is an `HH:MM` and
-  its absence already means "anchored to the due time".
 - **Folding `progress.html`'s copy of the block helpers back into `calendar-core.js`.** There
-  are now six twinned helpers (`noteBlockDuration`, `dlBlockDuration`, `dlBlockSpan`,
-  `dlBlockTime`, `itemParts`, `partSpan`) on top of the existing `noteTimed`, `dlStart`,
-  `dlDone`, `dlValid`, `dlDayCount` and `deadlinesCautionOn`, all duplicated for one reason:
-  `progress.html` does not load `calendar-core.js`. Making it load that file would delete the
-  whole duplication class, but it is a cross-page change (script tag plus a cache-bust bump on
-  every page) and the two copies differ on purpose in one place — an unscheduled timed note is
-  a marker on Progress and a block on the read-only surfaces. Any such consolidation has to
-  preserve that difference, not "tidy" it away.
+  are now twelve twinned helpers (`blockOn`, `noteBlockStart`, `noteBlockDuration`,
+  `dlBlockDuration`, `noteBlockSpan`, `dlBlockSpan`, `blockDay`, `partDay`, `itemParts`,
+  `partSpan`, `dlBlockDayValid`, `dlStrandedBlockDays`) on top of the existing `noteTimed`,
+  `dlStart`, `dlDone`, `dlValid`, `dlDayCount` and `deadlinesCautionOn`, all duplicated for one
+  reason: `progress.html` does not load `calendar-core.js`. Making it load that file would
+  delete the whole duplication class, and the case is now stronger than it was — the copies no
+  longer differ on purpose anywhere, so there is nothing left that a consolidation would have
+  to preserve. It is still a cross-page change (script tag plus a cache-bust bump on every
+  page), and the two copies must be confirmed identical in behaviour before one is deleted:
+  the per-surface browser cases are what would catch a silent difference.
+- **A note's block is unrestricted; a deadline's is not.** A note block may be dragged to any
+  day at all, which is deliberate — a note has no period to belong to. If notes ever grow one,
+  the deadline rule (`dlBlockDayValid` plus a refusal on the edit form) is the shape to copy,
+  not a clamp.
 
 ## Proposal 13: Memoize Documentation Day Aggregation if Needed
 

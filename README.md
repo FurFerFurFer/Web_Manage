@@ -190,7 +190,7 @@ description:
 
 ```js
 { id, date: 'YYYY-MM-DD', time: 'HH:MM', startDate: 'YYYY-MM-DD', title, detail, createdAt, done,
-  blockDuration, blockTime, parts }   // all three optional — see "Schedule blocks" below
+  blockOff, blockDuration, blockTime, blockDate, parts }  // all optional — see "Schedule blocks" below
 ```
 
 The caution period runs `startDate` through `date` **inclusive**; `startDate` defaults to the due day,
@@ -264,46 +264,60 @@ The popup can also be opened straight from a link: `progress.html?date=<due day>
 selects the Schedule, anchors the timeline on the due day, and opens that deadline. The id has to match
 a stored deadline, so a stale link opens nothing instead of erroring.
 
-**Schedule blocks for day notes and deadlines.** Either item can be given a real block on the hour
-grid, auto-placed relative to the time it already has: a **deadline's block ends at its due time**
-(it is the run-up to the deadline, not the deadline itself) and a **day note's block starts at its
-time**. A block is a first-class block — it takes part in the side-by-side overlap layout with goal,
-supporting-action and MM blocks, and it drags and resizes by mouse and by touch — unlike the
+**Schedule blocks for day notes and deadlines.** Every day note and every deadline has a real block
+on the hour grid, and it has one **automatically**: 60 minutes, auto-placed relative to the time it
+already has. A **deadline's block ends at its due time** (it is the run-up to the deadline, not the
+deadline itself) and a **day note's block starts at its time**; a note with no time of its own sits
+at `08:00`. A block is a first-class block — it takes part in the side-by-side overlap layout with
+goal, supporting-action and MM blocks, and it drags and resizes by mouse and by touch — unlike the
 zero-height note marker and deadline hairline, which are deliberately excluded from that layout.
 
-`blockDuration` is the single switch for being on the grid, so nothing changes for an item that has
-not been scheduled. On this page that means a timed note is a **point marker until it is scheduled
-and a block afterwards**, never both, exactly as the day-strip chip and the hour grid are already
-mutually exclusive for `time`. A deadline keeps its red due-time hairline painted over its own
-run-up block, which is the pairing that makes the run-up readable. An **untimed** note can never
-have a block, because a note's block starts at its time and there is nothing to anchor to; that is
-enforced in the reader, so clearing a note's time from Documentations — which drops the key and
-knows nothing about blocks — cannot strand one.
+Nothing is written to make that happen. `blockOff` is the single switch for being on the grid and
+its **absence** means the item has a block, so items stored long before any of these keys existed
+are simply drawn — there is nothing to migrate because nothing needs writing. `blockDuration` is
+only a remembered length, `blockTime` only a remembered start and `blockDate` only a remembered day;
+each falls back to the automatic default when absent.
 
-The two kinds commit a drag **differently**, and the asymmetry is load-bearing. A note block writes
-`time` and `date`, because re-dating a note is ordinary. A deadline block writes `blockTime` only
-and never `date` or `time`: a horizontal drag is ignored and the ghost stays in its own column,
-because moving a deadline's *due* day remains the sole business of the popup's Edit form, which is
-the one path that checks `startDate <= date`. A run-up that would begin before `00:00` is clipped at
-the top of the grid and shortened, so it still ends on its due time rather than being pushed past it.
+An item's block and its own identity are separate. **Both surfaces are always drawn**: a note keeps
+its day-strip chip and its point marker whatever its block is doing, and a deadline keeps its red
+due-time hairline and its amber caution run-up. Scheduling something never takes away the way it was
+already visible, and taking a block off the grid never makes the item disappear.
+
+**Work can be scheduled on any day.** `blockDate` puts an item's block on a day that is not its own,
+and a `date` on a part puts that one step somewhere else again — so a deadline's prep can live on an
+earlier caution day, or be split across several. The item's chip, marker, due line and caution
+run-up all stay on the item's own `date` regardless. A deadline's block and every one of its parts
+must sit **inside its caution period** (`startDate` through `date`): a horizontal drag is clamped to
+that window, the task-day picker is capped to it, and an edit to `startDate` or `date` that would
+strand already-placed prep is **refused** with the offending day named — in both the Progress popup
+and the Documentations form. Nothing here moves or clamps a day the user chose; the user moves the
+block and comes back. A day note's block has no such restriction and may go anywhere.
+
+A drag therefore writes `blockDate`/`blockTime` — or a part's own `date`/`time` — and **never** the
+item's `date` or `time`. That is load-bearing for a deadline: moving a *due* day remains the sole
+business of its edit form, which is the one path that checks `startDate <= date`. A run-up that
+would begin before `00:00` is clipped at the top of the grid and shortened, so it still ends on its
+due time rather than being pushed past it.
 
 **The `☰` button** sits beside `+ ◎ ⊕` in each timeline day header and opens a browser over **every**
-day note and deadline in the slot — not only that day's — grouped by date, with the day it was opened
-on expanded and listed first. `All` / `Notes` / `Deadlines` tabs and a text filter narrow it. Each row
-links to that item's existing popup, and carries:
+day note and deadline in the slot — not only that day's — as **one flat list in chronological order**
+by each item's own date and time. The rows belonging to the day the panel was opened on are tinted
+and scrolled into view. `All` / `Notes` / `Deadlines` tabs and a text filter narrow it. Each row
+links to that item's existing popup, shows its **own date and time as a read-out** (they are changed
+from the item and nowhere else), and carries:
 
-- `＋ add block to schedule`, which writes a default 60-minute block. For an untimed note the row
-  first reveals a time input and the button stays disabled until a well-formed `HH:MM` is picked, so
-  the time and the block are written in one go and `time` is never stored as `''`.
-- `remove from schedule`, which deletes `blockDuration` and `blockTime` and **keeps the item** — its
-  marker, hairline and caution run-up are untouched.
-- `reset to due time` on a deadline whose block has been dragged off the anchor.
-- `✂`, which dissects the item into `parts`, mirroring what `✂` already does to a scheduled goal
-  task. A new part inherits the parent block's start and length, so the parts stack where the parent
-  block was and can then be moved apart one at a time. While an item has parts, **the parts replace
-  the parent block** on the grid, exactly as a goal task whose child sits on the same day is
-  represented by the child. Each part gets its own checkbox, and removing the last one deletes the
-  key so the parent block returns.
+- `＋`, which opens a task composer: a name, a **day** and an optional time, then `Add`. Tasks are
+  stored in `parts`, mirroring what `✂` already does to a scheduled goal task. A task inherits the
+  parent block's start and length unless given its own, and its day is written only when it differs
+  from the parent block's. On a deadline the day picker is capped to the caution period and `Add` is
+  refused outside it. While an item has tasks, **the tasks replace the parent block** on the grid,
+  exactly as a goal task whose child sits on the same day is represented by the child. Each task
+  gets its own checkbox, and removing the last one deletes the key so the parent block returns.
+- `remove from schedule`, which sets `blockOff` and **deletes nothing** — the length, day and anchor
+  are all remembered, so `＋ add block back` is a restore rather than a recomputed guess. The item
+  itself is untouched: its marker, chip, hairline and caution run-up all stay.
+- `reset to due time` on a deadline whose block has been moved off its anchor, which deletes both
+  `blockTime` and `blockDate` so the block goes back to ending at the due time on the due day.
 
 ### Floating notes
 
@@ -845,11 +859,11 @@ their **absence carries meaning**:
 - `docPageId` names the `docPages` entry that authored the item. Absent means the
   Schedule authored it. Preserve it by spreading (`{...item, …}`), never by
   rebuilding an item from a field list.
-- `time` (`calendarNotes` only) places a day note on the hour grid. Absent means
-  the note is a chip in the day strip, which is how every day note behaved before
-  the field existed — so a writer must **omit the key** rather than store `''`,
-  and clearing the field in the UI deletes the key. `deadlines` have always had a
-  required `time`; this is the note-only addition.
+- `time` (`calendarNotes` only) is the hour a day note belongs to. Absent means
+  the note has no time of its own — it still gets a block, at `08:00` — so a
+  writer must **omit the key** rather than store `''`, and clearing the field in
+  the UI deletes the key. `deadlines` have always had a required `time`; this is
+  the note-only addition.
 - `done` (`deadlines` only) marks the deadline as handled and suppresses its
   caution `!` run-up everywhere. Absent means not done, and every reader goes
   through `dlDone`'s `!!`, so an absent key, `false` and `undefined` are
@@ -857,30 +871,45 @@ their **absence carries meaning**:
   writes `false` rather than deleting the key, and no stored deadline needed a
   migration. It is not validated in `schema.js`: a malformed value cannot break a
   render the way a malformed date can.
-- `blockDuration` (both) is the length in minutes of the item's **schedule
-  block**, and its presence is what puts the item on the hour grid at all.
-  Absent means not scheduled, and the item renders exactly as it did before the
-  field existed — which is what made the feature additive, with nothing to
-  migrate. Taking a block off the schedule therefore **deletes the key** rather
-  than writing `0`, or an item could never go back to being unscheduled.
-- `blockTime` (`deadlines` only) is the block's own start. Absent is a
-  meaningful **third** state — "still anchored to the due time" — so it is
-  written only when the block is dragged off that anchor, and `reset to due
-  time` deletes the key rather than storing the value it would have computed.
-  That is what makes reset a restore rather than a recomputed guess, the same
-  reasoning that keeps a tick from rewriting `startDate`.
-- `parts` (both) holds the steps an item was dissected into. Absent means not
-  dissected, and removing the last part deletes the key so the parent block
-  comes back rather than the item being left "dissected into nothing".
+- `blockOff` (both) takes the item's **schedule block** off the hour grid. This
+  is the one on-grid switch. Absent means the item **has** a block, which is what
+  puts one on every item stored before these keys existed with nothing written to
+  it — the feature needs no migration because it needs no writes. Removing a
+  block therefore **deletes nothing**: the length, day and anchor stay stored so
+  putting it back is a restore, not a recomputed guess. Re-adding writes `false`
+  rather than deleting the key — every reader goes through `blockOn`'s `!!`, so
+  there is no third state to protect, exactly as for `done`.
+- `blockDuration` (both) is the length in minutes of the block. Absent means the
+  automatic 60, so it is only a remembered length and never a switch.
+- `blockTime` (both) is the block's own start. Absent is a meaningful **third**
+  state — "still anchored", i.e. a deadline's block ends at its due time and a
+  note's starts at its own — so it is written only when the block is moved off
+  that anchor, and `reset to due time` deletes the key rather than storing the
+  value it would have computed. That is what makes reset a restore rather than a
+  recomputed guess, the same reasoning that keeps a tick from rewriting
+  `startDate`.
+- `blockDate` (both) is the day the block is **drawn** on, which need not be the
+  day the item belongs to. Absent means the item's own `date`. It is what lets a
+  deadline's prep sit on an earlier caution day; the item's chip, marker, due
+  line and caution run-up all stay on `date` regardless. On a deadline it must
+  fall inside the caution period, enforced at every authoring path and by
+  refusing an edit that would strand it.
+- `parts` (both) holds the tasks an item was dissected into. Absent means not
+  dissected, and removing the last one deletes the key so the parent block comes
+  back rather than the item being left "dissected into nothing". A part may carry
+  its own `date`, `time` and `blockDuration`; each is written only when it
+  differs from what the part would inherit from its parent block.
 
-`blockDuration` and `blockTime` **are** validated in `schema.js`, and the split
-from `done` above is deliberate: `done` is safe by construction because every
-reader goes through `!!`, while these two reach block geometry, where a string
-or a `NaN` renders `height: NaNpx`. They are the same class of risk as a
-malformed `time`, so they get the same treatment — a warning that leaves the
-database editable. `parts` is checked more strictly and **fatally**, like a
-goal's `children`: it holds records and is traversed, so a stray `null` in it
-imports cleanly under a field-only check and then throws out of the next render.
+`blockDuration`, `blockTime` and `blockDate` **are** validated in `schema.js`,
+and the split from `done` and `blockOff` above is deliberate: those two are safe
+by construction because every reader goes through `!!`, while these three reach
+block geometry and placement — a string or a `NaN` renders `height: NaNpx`, and a
+malformed day would draw the block on a day that does not exist. They are the
+same class of risk as a malformed `time`, so they get the same treatment — a
+warning that leaves the database editable. `parts` is checked more strictly and
+**fatally**, like a goal's `children`: it holds records and is traversed, so a
+stray `null` in it imports cleanly under a field-only check and then throws out
+of the next render.
 
 Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`
 (timestamp + random, e.g. `mshajngq-ehhoj`), which `progress.html`'s `uid()`,
@@ -1217,10 +1246,13 @@ The committed suite is the part of this baseline a reader can reproduce:
 node tests/run.js
 ```
 
-As of 2026-08-15 that is 104 offline cases (56 in `calendar-core.test.js`, 48 in
+As of 2026-08-22 that is 131 offline cases (79 in `calendar-core.test.js`, 52 in
 `schema.test.js`, several hundred assertions) executed under five timezones from
-UTC+14 to UTC-11, plus 17 cases in `true-storage-core.test.js` run once — it holds
-no date code — plus 84 browser subtests in headless Chrome, all passing.
+UTC+14 to UTC-11, plus 17 cases in `true-storage-core.test.js` and 21 in
+`graph-layout.test.js` run once — neither holds date code — plus 126 browser
+subtests in headless Chrome. Every offline suite passes, as do 119 of the 126
+browser subtests; the seven that do not are the TOUCH sidebar drag-to-nest cases,
+written ahead of the feature they describe.
 
 Several sets of regression cases were confirmed to **fail** before their fix,
 which is what makes them evidence rather than decoration:
@@ -1254,6 +1286,19 @@ the leaf S&C case (`d-2:10` returned `['ts-1']` instead of `[]`), and the
 non-leaf/descendant case. The two sets overlap but neither contains the other,
 which is exactly why the negative assertions are spread across every surface
 rather than made once.
+
+The 2026-08-21 block-by-default work was proved the same way, and there the two
+sets are **disjoint**. Each baseline was the repository plus one file whose
+`blockDay` ignored `blockDate`: doctoring `calendar-core.js` failed the Home
+placement case and the Documentations refuse-to-strand case, and doctoring
+`progress.html` failed the Progress placement case and the Progress
+refuse-to-strand case — neither baseline failing anything the other did. That
+second run also caught a defect in a case of its own: the Progress placement
+case originally asserted only block ids and hours, and **passed** against the
+doctored file, because the week view holds all seven columns in the DOM at once
+and a block drawn on the wrong day still has the right id and the right hour.
+`data-block-day` was added to the rendered block so the case can name the
+column. A case that cannot fail against the bug it names proves nothing.
 
 The older entries below record one-off audits kept for their detail:
 

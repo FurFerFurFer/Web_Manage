@@ -370,11 +370,39 @@ test('validateSlot warns about a malformed schedule-block value but stays editab
   assert.match(bt.errors[0].message, /invalid blockTime/);
   assert.ok(bt.errors.every(e => e.fatal !== true), 'also a warning');
 
-  // and a well-formed pair passes cleanly
+  // blockDate is the third of the same class: it reaches PLACEMENT, and a
+  // malformed one draws the block on a day that does not exist — the block
+  // simply vanishes from every surface while the item still looks fine.
+  for (const v of ['2026-3-1', 'nonsense', 42, true, null, '']) {
+    const r = S.validateSlot(F.emptySlot({
+      deadlines: [F.deadline('dl-1', '2026-03-10', { time: '17:00', blockDate: v })]
+    }));
+    assert.equal(r.ok, false, JSON.stringify(v) + ' is reported');
+    assert.match(r.errors.map(e => e.message).join('\n'), /invalid blockDate/);
+    assert.ok(r.errors.every(e => e.fatal !== true), JSON.stringify(v) + ' is a warning, not damage');
+  }
+
+  // and a well-formed set passes cleanly
   assert.equal(S.validateSlot(F.emptySlot({
-    calendarNotes: [F.calNote('cn-1', '2026-03-10', { time: '09:00', blockDuration: 90 })],
+    calendarNotes: [F.calNote('cn-1', '2026-03-10', { time: '09:00', blockDuration: 90, blockDate: '2026-03-12' })],
     deadlines: [F.deadline('dl-1', '2026-03-10', { time: '17:00', blockDuration: 60, blockTime: '08:00' })]
   })).ok, true);
+});
+
+test('blockOff is never a validation error, whatever it holds', () => {
+  // The same reasoning that keeps `done` out of schema.js: every reader goes
+  // through blockOn's `!!`, so an absent key, false, undefined and 'yes' are one
+  // of two states by construction. A check here could only invent a way to
+  // block a database over a field that cannot be malformed.
+  for (const v of [true, false, undefined, null, 'yes', 0, 1, {}, []]) {
+    for (const key of ['calendarNotes', 'deadlines']) {
+      const item = key === 'calendarNotes'
+        ? F.calNote('cn-1', '2026-03-10', { time: '09:00', blockOff: v })
+        : F.deadline('dl-1', '2026-03-10', { time: '17:00', blockOff: v });
+      assert.equal(S.validateSlot(F.emptySlot({ [key]: [item] })).ok, true,
+        key + ' blockOff=' + JSON.stringify(v) + ' is accepted');
+    }
+  }
 });
 
 test('validateSlot treats a damaged `parts` list as structural, not semantic', () => {
@@ -409,7 +437,7 @@ test('validateSlot treats a damaged `parts` list as structural, not semantic', (
 test('the schedule-block keys survive normalizeSlot untouched', () => {
   // They are item-level keys inside two known list fields, so they ride the
   // list through verbatim — no SLOT_FIELDS row, and nothing to migrate.
-  const note = { id: 'n', date: '2026-03-10', time: '09:00', blockDuration: 90, parts: [{ id: 'p', title: 'step' }] };
+  const note = { id: 'n', date: '2026-03-10', time: '09:00', blockDuration: 90, blockDate: '2026-03-12', blockOff: true, parts: [{ id: 'p', title: 'step', date: '2026-03-11' }] };
   const dl = { id: 'd', date: '2026-03-10', time: '17:00', startDate: '2026-03-08', blockDuration: 60, blockTime: '08:00' };
   const out = S.normalizeSlot({ calendarNotes: [note], deadlines: [dl] });
   assert.deepEqual(out.calendarNotes[0], note);

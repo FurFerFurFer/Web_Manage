@@ -7,8 +7,8 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%230d9488%22/%3E%3Cpath d=%22M10 9h12M10 15h12M10 21h8%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
   <script src="theme.js"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=4"></script>
-  <script src="calendar-core.js?v=3"></script>
+  <script src="schema.js?v=5"></script>
+  <script src="calendar-core.js?v=4"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -609,10 +609,12 @@
         hidden: hidden.includes(key) ? hidden.filter(k => k !== key) : [...hidden, key]});
 
       // ── authoring ──
-      // `time` is optional. Blank means "no time", which is the pre-existing
-      // behaviour: the note stays a chip in the day strip instead of taking a
-      // position on the hour grid. The key is written only when it has a value,
-      // so a note that never had one keeps exactly the shape it always had.
+      // `time` is optional and blank means "no time". The key is written only
+      // when it has a value, so a note that never had one keeps exactly the
+      // shape it always had. Clearing it is safe for blocks: an untimed note's
+      // block simply falls back to TrackCalendar.DEFAULT_NOTE_TIME, so there is
+      // nothing here that can strand one — this page still writes no block key
+      // at all.
       const noteTime = () => TC.noteTimed(noteDraft) ? {time: noteDraft.time} : {};
       const addNote = () => {
         if (!noteDraft.title.trim() || !selDs) return;
@@ -643,8 +645,22 @@
         }]);
         closeForms();
       };
+      // A deadline's prep lives inside its caution period, so shrinking that
+      // period past a block or task the user placed by hand would strand it.
+      // REFUSE rather than move or clamp: nothing may silently rewrite a day
+      // the user chose. This is the second writer of `startDate` — the Progress
+      // popup's Edit form is the other — and both go through the ONE definition
+      // in calendar-core rather than re-spelling the comparison, which is the
+      // shape that cost this project the deadline caution predicate once.
+      const dlStranded = (dl, dueDate) =>
+        (dl && TC.dlValid(dlDraft, dueDate))
+          ? TC.dlStrandedBlockDays(dl, { startDate: dlDraft.startDate, date: dueDate })
+          : [];
+      const dlSavable = (dl, dueDate) =>
+        TC.dlValid(dlDraft, dueDate) && dlStranded(dl, dueDate).length === 0;
       const saveDeadline = (id, dueDate) => {
-        if (!TC.dlValid(dlDraft, dueDate)) return;
+        const dl = (slot.deadlines || []).find(d => d.id === id);
+        if (!dlSavable(dl, dueDate)) return;
         onMutate('deadlines', prev => prev.map(d => d.id === id ? {...d,
           time: dlDraft.time, startDate: dlDraft.startDate,
           title: dlDraft.title.trim(), detail: dlDraft.detail.trim()} : d));
@@ -680,7 +696,9 @@
           </div>
         </div>
       );
-      const dlForm = (onSave, label, dueDate) => (
+      // `dl` is the stored record when editing, and absent when composing a new
+      // deadline — a deadline that does not exist yet has no prep to strand.
+      const dlForm = (onSave, label, dueDate, dl) => (
         <div className="cal-doc-form doc-chrome">
           <input value={dlDraft.title} autoFocus placeholder="Deadline title"
             onChange={e=>setDlDraft(d=>({...d, title: e.target.value}))} />
@@ -693,10 +711,16 @@
           <textarea rows={2} value={dlDraft.detail} placeholder="Detail (optional)"
             onChange={e=>setDlDraft(d=>({...d, detail: e.target.value}))} />
           <div className="cal-doc-form-acts">
-            <button type="button" className="primary" disabled={!TC.dlValid(dlDraft, dueDate)} onClick={onSave}>{label}</button>
+            <button type="button" className="primary" disabled={!dlSavable(dl, dueDate)} onClick={onSave}>{label}</button>
             <button type="button" onClick={closeForms}>Cancel</button>
             {!TC.dlValid(dlDraft, dueDate) && dlDraft.title.trim() && (
               <span className="cal-doc-hint">Needs a time, and a caution start on or before {dueDate}.</span>
+            )}
+            {dlStranded(dl, dueDate).length > 0 && (
+              <span className="cal-doc-hint" data-dl-stranded>
+                Prep is scheduled on {dlStranded(dl, dueDate).join(', ')}, outside this caution period.
+                Move it first — nothing here will move it for you.
+              </span>
             )}
           </div>
         </div>
@@ -888,7 +912,7 @@
                 {day.deadlines.map(dl => {
                   const o = originOf(dl);
                   if (editing && editing.kind === 'deadline' && editing.id === dl.id) {
-                    return <React.Fragment key={dl.id}>{dlForm(()=>saveDeadline(dl.id, dl.date), 'Save', dl.date)}</React.Fragment>;
+                    return <React.Fragment key={dl.id}>{dlForm(()=>saveDeadline(dl.id, dl.date), 'Save', dl.date, dl)}</React.Fragment>;
                   }
                   const done = TC.dlDone(dl);
                   return (
@@ -979,6 +1003,7 @@
               +(nestDragOver?' ring-1 ring-indigo-500 bg-indigo-950/30':'')
               +(arrangeDragOver==='before'?' border-t-2 border-green-500':arrangeDragOver==='after'?' border-b-2 border-green-500':'')}
             style={{paddingLeft: 4 + depth*14}}
+            data-doc-row={page.id}
             onClick={()=>onSelect(page.id)}
             onDragOver={e=>{
               // the payload is unreadable during dragover, so sniff types, never getData.
@@ -1011,15 +1036,15 @@
             </button>
             <span>{page.icon || '📄'}</span>
             <span className="flex-1 truncate">{page.title || 'Untitled'}</span>
-            <span className="hidden shrink-0 gap-0.5 group-hover:flex">
-              <span draggable onClick={e=>e.stopPropagation()}
+            <span className="doc-row-acts hidden shrink-0 gap-0.5 group-hover:flex">
+              <span draggable onClick={e=>e.stopPropagation()} data-doc-handle="nest"
                 onDragStart={e=>{e.dataTransfer.setData('application/docpage-nest-id', page.id); e.dataTransfer.effectAllowed='move'; e.stopPropagation();}}
                 title="Drag to nest into another page"
-                className="cursor-grab select-none rounded px-1 text-gray-500 hover:text-indigo-400">⠿</span>
-              <span draggable onClick={e=>e.stopPropagation()}
+                className="doc-row-handle cursor-grab select-none rounded px-1 text-gray-500 hover:text-indigo-400">⠿</span>
+              <span draggable onClick={e=>e.stopPropagation()} data-doc-handle="arrange"
                 onDragStart={e=>{e.dataTransfer.setData('application/docpage-arrange-id', page.id); e.dataTransfer.effectAllowed='move'; e.stopPropagation();}}
                 title="Drag to arrange among pages"
-                className="cursor-grab select-none rounded px-1 text-gray-500 hover:text-green-400">⇅</span>
+                className="doc-row-handle cursor-grab select-none rounded px-1 text-gray-500 hover:text-green-400">⇅</span>
               <button title="Add sub-page" onClick={e=>{e.stopPropagation(); onAddChild(page.id);}} className="rounded px-1 text-gray-500 hover:text-white">+</button>
               <button title={page.favorite?'Unfavorite':'Favorite'} onClick={e=>{e.stopPropagation(); onToggleFav(page.id);}} className="rounded px-1 text-gray-500 hover:text-amber-300">{page.favorite?'★':'☆'}</button>
               <button title="Delete page" onClick={e=>{e.stopPropagation(); onDelete(page.id);}} className="rounded px-1 text-gray-500 hover:text-red-400">✕</button>
@@ -1340,6 +1365,7 @@
                 </div>
               )}
               <div className={"mb-1 flex items-center justify-between rounded border px-1 "+(rootDragOver?'border-violet-500 bg-violet-950/20':'border-transparent')}
+                data-doc-root-drop
                 onDragOver={e=>{ if (e.dataTransfer.types.includes('application/docpage-nest-id')) { e.preventDefault(); setRootDragOver(true); } }}
                 onDragLeave={e=>{ if (!e.currentTarget.contains(e.relatedTarget)) setRootDragOver(false); }}
                 onDrop={e=>{

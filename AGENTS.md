@@ -187,7 +187,7 @@ nonempty legacy slot lists, before their first unified save.
 
 Items inside `calendarNotes` and `deadlines` may carry an optional `docPageId` naming the `docPages` entry that authored them; its absence means the item was authored in the Schedule. Preserve it: edit these items by spreading (`{...item, …}`), never by rebuilding them from a field list, and never delete such an item as a side effect of deleting its documentation page.
 
-A `calendarNotes` item may also carry an optional `time` (`HH:MM`). **Absence is meaningful and is the default**: without it the note renders as a chip in the day strip, which is how every day note behaved before the field existed; with it the note is positioned on the hour grid and must not also appear in the strip. Two rules follow: write the key only when there is a value — never `''` — and make clearing the field delete the key, or a note can never go back to being untimed. `TrackCalendar.noteTimed` is the single test for this; `progress.html` has its own copy because it does not load `calendar-core.js`, and the two must agree.
+A `calendarNotes` item may also carry an optional `time` (`HH:MM`). **Absence is meaningful and is the default**: without it the note has no hour of its own, so its chip carries no time and its block falls back to `TrackCalendar.DEFAULT_NOTE_TIME`. The note appears in the day strip either way — see "show both, always" below. Two rules follow: write the key only when there is a value — never `''` — and make clearing the field delete the key, or a note can never go back to being untimed. `TrackCalendar.noteTimed` is the single test for this; `progress.html` has its own copy because it does not load `calendar-core.js`, and the two must agree.
 
 A `deadlines` item may also carry an optional `done` (boolean). Ticked means the user has handled it, and the deadline's caution `!` run-up stops rendering everywhere while the deadline itself stays on its due day. Absence is "not done", and every reader goes through `dlDone`'s `!!`, so an absent key, `false` and `undefined` are one state — unlike `time` there is no third state to protect, so untick writes `false` rather than deleting the key, and no stored deadline needs a migration. Three rules follow:
 
@@ -200,13 +200,15 @@ A deadline's `date` is editable from exactly one place: the popup's Edit form in
 - Moving the due day must **never rewrite `startDate`**. The two are independent stored dates with one ordering rule between them, and a writer that clamps or shifts the caution start to make room has destroyed a period the user chose. Refuse the edit instead; the user moves the caution start themselves, in the same form.
 - `startDate <= date` is enforced **only at authoring time** and never on a stored record. `schema.js` checks each date's format independently and has no cross-field rule, so nothing downstream will catch an inverted span — and it does not fail loudly. `dlInCaution` goes false for every day, so the run-up silently vanishes on all five surfaces; `dlDayCount` returns a negative number that `documentations.html` renders verbatim; and worst, that page's edit form gates Save on `dlValid` against the stored `startDate`, so an inverted deadline can never be edited from Documentations again. A new writer of `date` therefore has to carry the check itself. `tests/calendar-core.test.js` pins this behaviour in an offline guard case so the cost of losing the check stays visible.
 
-A `calendarNotes` or `deadlines` item may also carry an optional `blockDuration` (minutes), a `deadlines` item an optional `blockTime` (`HH:MM`), and either an optional `parts` list. Together these give the item a real **schedule block** on the hour grid: a deadline's block **ends** at its due time (it is the run-up), a day note's **starts** at its time. `blockDuration` is the single switch for being on the grid, and its absence means the item renders exactly as it did before the field existed — which is what makes the feature additive with nothing to migrate. Five rules follow:
+A `calendarNotes` or `deadlines` item has a real **schedule block** on the hour grid, **automatically**: a deadline's block **ends** at its due time (it is the run-up), a day note's **starts** at its time, or at `08:00` when it has none. It may carry an optional `blockOff` (boolean), `blockDuration` (minutes), `blockTime` (`HH:MM`), `blockDate` (`YYYY-MM-DD`) and `parts` list, and **every absence is the automatic default** — which is what put blocks on every stored item without writing a byte to one, so there is nothing to migrate. Seven rules follow:
 
-- The block geometry has exactly **one** definition, `noteBlockDuration` / `dlBlockDuration` / `dlBlockSpan` / `dlBlockTime` / `itemParts` / `partSpan` in `calendar-core.js`, with a second copy in `progress.html` for the documented reason that it does not load that file. Never re-spell `d.time - d.blockDuration` at a call site. Three surfaces render these blocks — the Progress grid, the Home calendar and a Documentations calendar block — and `tests/browser.test.js` asserts each one **separately**, because a rule forgotten at one of several surfaces is this repository's recurring bug and a single assertion lets the forgotten one hide behind a passing sibling.
-- The two copies differ **on purpose** in exactly one place, and it must be preserved: an unscheduled *timed* note is a point marker on Progress and a block on the read-only surfaces. Progress had a marker before this feature and the others did not, so each keeps its own pre-existing behaviour. Do not "align" them.
-- Removing a block **deletes** `blockDuration` and `blockTime`; emptying `parts` deletes `parts`. Never write `0`, `''` or `[]`, or the item can never go back to being unscheduled or undissected. Absence of `blockTime` while `blockDuration` is present is a meaningful **third** state — "still anchored to the due time" — so `reset` deletes the key rather than storing the value it would have computed, exactly as a tick never rewrites `startDate`.
-- A **deadline** block writes `blockTime` only, and never `date` or `time`. A note block may write both, because re-dating a note is ordinary. This asymmetry is load-bearing: it keeps `date` editable from the single place that checks `startDate <= date`, so a drag can never produce the inverted span described above. A horizontal drag of a deadline block is ignored, and the ghost is pinned to its own column so it does not promise a move that will be refused.
-- An **untimed** note can never carry a block, and that is enforced in the *reader* rather than by cleaning up on write. `documentations.html` clears a note's time by dropping the key and knows nothing about blocks, so the reader rule is what stops it stranding one — and re-adding a time restores the block at the duration the user chose. `blockDuration` and `blockTime` are validated in `schema.js` as **warnings** because they reach geometry (`height: NaNpx`), unlike `done` which is safe under `!!`; `parts` is validated **fatally** like a goal's `children`, because it holds records and is traversed.
+- `blockOff` is the **single on-grid switch**, not `blockDuration`. Its absence means the item HAS a block. `blockDuration` is only a remembered length, `blockTime` only a remembered start, `blockDate` only a remembered day. Removing a block writes `blockOff: true` and **deletes nothing**, so putting it back RESTORES what the user chose rather than recomputing a guess — the same reasoning that already makes `reset` a restore. Re-adding writes `false` rather than deleting the key, matching `done`: every reader goes through `blockOn`'s `!!`, so there is no third state to protect.
+- The block geometry has exactly **one** definition, `blockOn` / `noteBlockStart` / `noteBlockDuration` / `dlBlockDuration` / `noteBlockSpan` / `dlBlockSpan` / `blockDay` / `partDay` / `itemParts` / `partSpan` in `calendar-core.js`, with a second copy in `progress.html` for the documented reason that it does not load that file. Never re-spell `d.time - d.blockDuration` or `!item.blockOff` at a call site. Three surfaces render these blocks — the Progress grid, the Home calendar and a Documentations calendar block — and `tests/browser.test.js` asserts each one **separately**, because a rule forgotten at one of several surfaces is this repository's recurring bug and a single assertion lets the forgotten one hide behind a passing sibling. The two copies used to diverge on purpose; they no longer do, and the comment claiming a divergence was deleted along with it.
+- **Show both, always.** A block never replaces the way an item was already visible: a note keeps its day-strip chip and its Progress point marker whatever its block is doing, and a deadline keeps its due-time hairline and its caution run-up. Scheduling something must not take a surface away, and `blockOff` must not remove the item.
+- The item's own `date` and `time` are **not** block geometry. `blockDate` on the item and `date` on a part say where the block is drawn; the chip, marker, due line and caution run-up all stay on `date`. Blocks are therefore collected by `blockDay`/`partDay` over the whole array, while the strip and due lists still filter on `date` — that split is the feature.
+- A drag writes `blockDate`/`blockTime`, or a part's own `date`/`time`, and **never** the item's `date` or `time`. This is load-bearing for a deadline: it keeps `date` editable only from the form that checks `startDate <= date`, so a drag can never produce the inverted span described above. A note follows the same rule for a plainer reason — its date is where the note belongs.
+- A **deadline's** block and every one of its parts must sit inside its caution period, `dlStart(d) <= day <= d.date`. The drag ghost is CLAMPED to that window — never pinned, or a run-up could not be moved onto a caution day at all — the task-day picker is capped to it, and an edit to `startDate`/`date` that would strand placed prep is **REFUSED** with the day named, never moved and never clamped. `dlBlockDayValid` / `dlStrandedBlockDays` are the one definition, and both writers of those two dates — the Progress popup's Edit form and `documentations.html` — call it rather than re-spelling the comparison. A day note has no such restriction.
+- Emptying `parts` deletes `parts`; a part's `date`, `time` and `blockDuration` are written only when they differ from what it would inherit. Never write `0`, `''` or `[]`. `blockDuration`, `blockTime` and `blockDate` are validated in `schema.js` as **warnings** because they reach geometry (`height: NaNpx`) and placement (a day that does not exist), unlike `done` and `blockOff` which are safe under `!!`; `parts` is validated **fatally** like a goal's `children`, because it holds records and is traversed.
 
 A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may carry `tags` — each one naming a **pair**: a source-dump leaf (`dumpId`) and one MM linked inside it (`mmId`). Four rules follow, and the first is the load-bearing one:
 
@@ -780,9 +782,14 @@ Everything in this section that is not `node tests/run.js` was run once and cann
 node tests/run.js
 ```
 
-104 offline cases per timezone (56 calendar and 48 schema) under five timezones (UTC,
-UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu), plus 73 headless-Chrome
-subtests — 11 suites, all passing on 2026-08-10. The original two
+131 offline cases per timezone (79 calendar and 52 schema) under five timezones (UTC,
+UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu), plus 126 headless-Chrome
+subtests, across 13 suites. On 2026-08-22 the twelve offline suites passed and 119
+of the 126 browser subtests passed; the seven failures are the TOUCH sidebar
+drag-to-nest cases (browser 120-126), which are the test half of a feature
+`documentations.html` does not implement yet — they time out on a `data-doc-row`
+hook that does not exist. That is the repository's usual test-first order, not a
+regression. The original two
 `sir-ks02.html` regression cases were confirmed to **fail** against the pre-fix page
 served through `TRACK_TEST_ROOT`. The cross-tab active-slot, ambiguous-slot-identity,
 malformed recursive-goal, and dangling-writer cases added on 2026-08-10 were also
@@ -943,6 +950,68 @@ recorded failing first.
 - Not covered: real touch hardware (the long-press-to-resize path on the new blocks was
   written to match the existing three kinds but exercised only through synthetic events),
   the live Firebase project, and print output of the new blocks and panel.
+
+**Superseded on 2026-08-21** — blocks became automatic, the popup became one flat list, and
+work became schedulable on any day. The entry above is kept because its *method* still
+applies; its behavioural claims do not. See the next section.
+
+### Blocks by default, on any day, from a flat popup (2026-08-22)
+
+- The slot stays at **23** fields — `blockOff`, `blockDate` and a part's `date` are item-level
+  keys inside two existing list fields — so the hand-written CONTRACT lists in
+  `tests/schema.test.js`, `tests/browser.test.js` and `tests/lib/fixture.js` needed no change,
+  which the normalize case asserts. Offline cases go from 120 to **131** (swept under all five
+  timezones, identical results); the browser cases this task owns go from 113 to **119**, all
+  passing. (The file also gained seven TOUCH sidebar cases from separate, in-flight work while
+  this task was running; they fail because their feature is not built yet — see the repeatable
+  baseline above.)
+- **Fail-first evidence, part one: the eight reversed cases.** The working tree *was* the
+  pre-change file, so no scratch directory was needed. The new offline semantics were written
+  first and run against the untouched implementation: `tests/calendar-core.test.js` reported
+  **13 of 79 failing** and `tests/schema.test.js` **1 of 52**, and the browser suite **8 of
+  113**. Every guard case passed on both sides, as it must — the blockTime anchor, the midnight
+  clip, `itemParts` tolerance, overlap layout, origin filtering, and the due-list/caution-run-up
+  invariance case (extended here to cover `blockDate` and `blockOff` as well).
+- **Fail-first evidence, part two: two doctored baselines, and their failure sets are
+  DISJOINT.** Each `TRACK_TEST_ROOT` scratch directory held symlinks to the repository plus
+  **one** doctored file whose `blockDay` ignored `blockDate` (`item => item.date`):
+  - doctored **`calendar-core.js`** → `HOME: a block moved to another day` and
+    `DOCUMENTATIONS refuses the same edit` failed; both PROGRESS cases passed.
+  - doctored **`progress.html`** → `PROGRESS: blockDate draws the run-up on a caution day` and
+    `PROGRESS refuses a caution period that would strand placed prep` failed; both read-only
+    surfaces passed.
+
+  Neither set contains the other, which is the whole argument for asserting each surface
+  separately rather than once. Never place either doctored copy in the repository.
+- **A defect in this task's own test, caught by that second baseline and worth carrying
+  forward.** `PROGRESS: blockDate draws the run-up on a caution day` first asserted only the
+  block **ids**, times and heights — and it **passed against the doctored file**. The week view
+  has all seven columns in the DOM at once, so a block drawn on the wrong day is still in the
+  list with the right id and the right hour; only the *column* distinguishes a moved block from
+  an unmoved one. `data-block-day` was added to the rendered block and the case now asserts it.
+  The lesson generalises and is the same one the 2026-08-19 entry records in a different shape:
+  a case that cannot fail against the bug it names proves nothing, and the only reliable way to
+  find that out is to run it against the bug.
+- What the new browser cases assert, beyond the reversals: an item with **no block keys at all**
+  is on the grid at 60 minutes on each of the three surfaces, with nothing written to storage;
+  an untimed note blocks at **08:00** and never gains a `time` key; a timed note keeps its
+  marker **and** its block, and a `blockOff` item keeps its marker and its due line while
+  leaving the grid; `remove from schedule` writes `blockOff: true` and **deletes nothing**, so
+  `＋ add block back` restores the stored length and anchor; the popup has **no**
+  `data-dln-group` and lists rows flat in date-then-time order with each row showing its own
+  date; a task added with a chosen day lands on that day, and a day outside a deadline's caution
+  window disables `Add`, shows the reason and writes nothing when clicked anyway; and both
+  refuse-to-strand cases assert the **Cancel path** — Save disabled, the offending day named,
+  `track_db` byte-identical after clicking Save regardless.
+- Export → import carries `blockOff`, `blockDate` and a part's own `date` on `normalizeSlot`'s
+  unknown-key path, with neither side naming them.
+- **Not covered, and weaker than the rest.** Drag was *not* re-verified for this change: the
+  committed suite still simulates no drag, and the 2026-08-19 task-owned script that did cannot
+  be re-run. So the new drag behaviour — a note block writing `blockDate`/`blockTime` instead of
+  `date`/`time`, a part writing its own `date`, and a deadline ghost **clamped** to the caution
+  window rather than pinned to its column — rests on code reading alone. That is the largest
+  gap in this entry and it is a real one. Also not covered: real touch hardware, the live
+  Firebase project, and print output.
 
 Not covered by the suite, and still requiring manual checks: touch and drag interaction, the signed-in Firebase path, real multi-device behaviour, print output, and most of the UI.
 
