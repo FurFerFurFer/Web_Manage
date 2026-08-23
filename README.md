@@ -177,7 +177,7 @@ Current scheduling behavior includes:
 - Deadlines with hand-picked caution days.
 - Source pins connected to scheduled work.
 - Drag, touch, expansion, and near-edge interaction behavior.
-- A locally stored priority matrix.
+- A locally stored priority matrix, draggable by mouse and by finger.
 
 The timeline grid covers the whole local day, `00:00`–`24:00`, at a default 64px per hour (day mode
 zooms between 32px and 256px). Dragging or top-edge resizing snaps to five minutes and clamps a block
@@ -340,6 +340,29 @@ An item's block and its own identity are separate. **Both surfaces are always dr
 its day-strip chip and its point marker whatever its block is doing, and a deadline keeps its red
 due-time hairline and its amber caution run-up. Scheduling something never takes away the way it was
 already visible, and taking a block off the grid never makes the item disappear.
+
+**The Task Priority matrix, by finger.** The Eisenhower panel beside the day timeline files each of
+the day's tasks, supporting-action entries and MM entries into one of four quadrants, and its chips
+move **by finger as well as by mouse**. The mouse path is the HTML5 drag-and-drop API, which never
+fires on touch; a second, parallel touch path drives the *same* mutator (`handleMatrixDrop`), so the
+insert-before ordering and the `trackPriorityMatrix` write have one definition and cannot drift
+between pointer kinds.
+
+The gesture is the **schedule timeline's two-stage model**, deliberately, and not the Documentations
+sidebar's one-stage one: **tap a chip to arm it** (it takes the same cyan ring a schedule block
+does), then **swipe the armed chip** to move it. Tapping an armed chip un-arms it. The reason for
+the extra stage is that the sidebar drags from a *handle*, which is an unambiguous grab affordance,
+while here the whole chip is the target — so an unarmed chip has to go on letting the finger scroll
+its quadrant list. Nothing declares `touch-action: none`; the touch path calls `preventDefault` only
+once a drag has actually begun, from a listener it registers non-passive itself.
+
+Dropping **on a chip** inserts before it and dropping anywhere else in a quadrant appends, exactly as
+under a mouse; releasing a chip back on itself is not a move. A ghost label follows the finger, the
+quadrant under it outlines (a finger covers the chip it is over, so an append needs a target that is
+still visible), the quadrant list auto-scrolls when the finger nears its top or bottom edge, and
+`touchcancel` — which iPadOS fires instead of `touchend` when the system takes a gesture over —
+abandons the drag without re-filing anything. Arming and un-arming are selection, not edits: neither
+writes a byte. A dropped chip stays armed, so it can be moved again straight away.
 
 **Work can be scheduled on any day.** `blockDate` puts an item's block on a day that is not its own,
 and a `date` on a part puts that one step somewhere else again — so a deadline's prep can live on an

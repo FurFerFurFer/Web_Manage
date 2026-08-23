@@ -4227,6 +4227,70 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  await t.test('PROGRESS: the panel lists nothing from a day BEFORE the one it was opened on', async () => {
+    /* The panel is opened FROM a day in order to put work on it, so it looks
+       forward from that day and never back. Two things are asserted that a
+       plausible-looking list would not distinguish:
+
+       - the cut is applied to BOTH kinds. Notes and deadlines are collected
+         on separate lines, so a rule spelled beside one and forgotten beside
+         the other still yields a shorter, sensible-looking list.
+       - the cut is relative to the day CLICKED, not to today. Step 2 is the
+         only thing that tells those apart: an implementation cutting against
+         todayStr passes step 1 completely unchanged.                      */
+    const PAST2 = dayFromToday(-2), PAST1 = dayFromToday(-1), SOON = dayFromToday(3);
+    const db = seedDb({
+      calendarNotes: [
+        F.calNote('n-past', PAST2, { title: 'Note two days ago', time: '09:00' }),
+        F.calNote('n-today', TODAY, { title: 'Note today', time: '09:00' })
+      ],
+      deadlines: [
+        F.deadline('d-past', PAST1, { cautionDates: [], time: '17:00', title: 'Deadline yesterday' }),
+        F.deadline('d-future', SOON, { cautionDates: [], time: '17:00', title: 'Deadline soon' })
+      ]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    const bytes = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    const DLN_IDS = function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-dln-date]'),
+        function (e) { return e.getAttribute('data-dln-date'); });
+    };
+
+    // 1 — opened on TODAY: the clicked day's own item stays, earlier ones go
+    await openDlnPanel(page, TODAY);
+    assert.deepEqual(await page.evaluate(DLN_IDS), ['n-today', 'd-future'],
+      'both earlier items are gone and the clicked day\'s own item is kept');
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-dln-date="n-past"]');
+    }), false, 'the earlier NOTE is absent');
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-dln-date="d-past"]');
+    }), false, 'the earlier DEADLINE is absent');
+
+    // the tabs narrow the restricted set rather than reopening it
+    await page.evaluate(CLICK_SEL, '[data-dln-tab="deadlines"]');
+    await page.waitFor(function () {
+      return document.querySelectorAll('[data-dln-date]').length === 1;
+    }, { message: 'the Deadlines tab filtering' });
+    assert.deepEqual(await page.evaluate(DLN_IDS), ['d-future'],
+      'the Deadlines tab still cannot reach the earlier deadline');
+
+    // 2 — the cut moves with the day CLICKED, not with today
+    await page.evaluate(CLICK_SEL, '[data-dln-open="' + TODAY + '"]');
+    await page.waitFor(function () { return !document.querySelector('[data-dln-panel]'); },
+      { message: 'the panel closing' });
+    await openDlnPanel(page, SOON);
+    assert.deepEqual(await page.evaluate(DLN_IDS), ['d-future'],
+      'opened three days out, TODAY\'s own note is behind the cut too');
+
+    // it is a view filter: it writes nothing
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
+      bytes, 'track_db is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('remove from schedule writes blockOff and keeps everything else', async () => {
     // It must DELETE nothing: putting the block back has to restore the length,
     // day and anchor the user chose rather than guess at them again. And the
@@ -5113,6 +5177,257 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* ── the Task Priority matrix, by finger ─────────────────────────────────
+     The same failure as the Documentations sidebar tree above, in a second
+     place: the matrix chips drive the HTML5 drag-and-drop API, which never
+     fires from a touch, so on a phone a task can be SEEN in its quadrant and
+     never moved out of it.
+
+     The touch path drives the SAME mutator the mouse does, handleMatrixDrop,
+     so the insert-before ordering and the trackPriorityMatrix write have one
+     definition and cannot drift between pointer kinds. That is why there is no
+     doctored baseline here and no per-surface argument to make — unlike the
+     deadline caution predicate, which needed one assertion per surface
+     precisely BECAUSE it was spelled at three sites.
+
+     The interaction model is the SCHEDULE's, deliberately, not the sidebar's:
+     tap to arm, then swipe the armed chip. A handle is an unambiguous grab
+     affordance and can start a drag at once; a whole chip is not, and an
+     unarmed one has to keep letting the finger scroll its quadrant list. The
+     UNARMED guard below is what pins that half.
+
+     These synthesise TouchEvents from inside the page, exactly as the doc-tree
+     cases above do. That covers handler logic and NOT real hardware: gesture
+     arbitration, scroll interception, momentum and iOS Safari's own behaviour
+     are all still uncovered. */
+
+  const matrixDay = dayFromToday(0);
+
+  const matrixDb = () => seedDb({
+    goals: [
+      F.task('g-p1', { title: 'Priority one',   scheduledDate: matrixDay, scheduledTime: '09:00', duration: 60 }),
+      F.task('g-p2', { title: 'Priority two',   scheduledDate: matrixDay, scheduledTime: '10:00', duration: 60 }),
+      F.task('g-p3', { title: 'Priority three', scheduledDate: matrixDay, scheduledTime: '11:00', duration: 60 })
+    ],
+    // the matrix collects tasks, SA entries and MM entries for the focused day;
+    // emptying the other two keeps matrixDayIds exactly these three
+    saEntries: [], mmEntries: [], calendarNotes: [], deadlines: []
+  });
+
+  /* Seeded rather than left to the page's own first-run effect, which stamps
+     `order` from Date.now() — an assertion about ORDER would otherwise depend
+     on the millisecond the page happened to mount. */
+  const MATRIX_SEED = JSON.stringify({
+    'g-p1': { quadrant: 'ui',  order: 0 },
+    'g-p2': { quadrant: 'ui',  order: 100 },
+    'g-p3': { quadrant: 'niu', order: 0 }
+  });
+
+  /* `?date=` is what puts the timeline in DAY mode (it is week mode otherwise),
+     and the matrix panel exists in day mode only. The viewport is pinned
+     because every case here drops by coordinate through elementFromPoint: at
+     Chrome's headless 800x600 default the four quadrants are small enough that
+     a chip and a quadrant body start competing for the same few pixels. */
+  const openMatrix = async () => {
+    const page = await browser.newPage();
+    await page.clearStorage(server.origin);
+    await page.seed(matrixDb(), { trackPriorityMatrix: MATRIX_SEED });
+    await page.setViewport(1280, 900);
+    await page.goto(server.url('progress.html') + '?date=' + matrixDay + '#schedule');
+    await page.skipFirebase();
+    await page.waitFor(function () { return !!document.querySelector('[data-matrix-row="g-p1"]'); },
+      { message: 'the Task Priority chips (with data-matrix-row hooks)' });
+    return page;
+  };
+
+  /* All of a touch's events go to the element the touch STARTED on, so every
+     one is dispatched on the chip and left to bubble — dispatching the move on
+     whatever is under the finger would simulate something a browser never does
+     and would pass against a listener bound to the wrong node. */
+  const MATRIX_TOUCH = function (chipId, targetSel, kind) {
+    function fire(el, x, y, type) {
+      var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
+      var live = (type === 'touchend' || type === 'touchcancel') ? [] : [t];
+      el.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live, targetTouches: live, changedTouches: [t]
+      }));
+    }
+    var chip = document.querySelector('[data-matrix-row="' + chipId + '"]');
+    if (!chip) return 'no chip ' + chipId;
+    var cr = chip.getBoundingClientRect();
+    var sx = cr.left + cr.width / 2, sy = cr.top + cr.height / 2;
+    if (kind === 'tap') {
+      fire(chip, sx, sy, 'touchstart');
+      fire(chip, sx, sy, 'touchend');
+      return 'ok';
+    }
+    var target = document.querySelector(targetSel);
+    if (!target) return 'no target ' + targetSel;
+    var r = target.getBoundingClientRect();
+    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+    fire(chip, sx, sy, 'touchstart');
+    fire(chip, x, y, 'touchmove');
+    fire(chip, x, y, kind === 'cancel' ? 'touchcancel' : 'touchend');
+    return 'ok';
+  };
+
+  const MATRIX_ARMED = function (id) {
+    var c = document.querySelector('[data-matrix-row="' + id + '"]');
+    return !!c && c.className.indexOf('ring-cyan-400') >= 0;
+  };
+
+  const MATRIX_RAW = function () { return localStorage.getItem('trackPriorityMatrix'); };
+
+  /* Quadrant plus the order the chips are actually DRAWN in. An `order` number
+     alone can be read two ways; what a reorder has to change is the sequence
+     on screen. */
+  const MATRIX_ROWS = function () {
+    return Array.prototype.map.call(
+      document.querySelectorAll('[data-matrix-quadrant]'),
+      function (q) {
+        return q.getAttribute('data-matrix-quadrant') + ':' +
+          Array.prototype.map.call(q.querySelectorAll('[data-matrix-row]'), function (r) {
+            return r.getAttribute('data-matrix-row');
+          }).join(',');
+      }).join(' | ');
+  };
+
+  const armMatrixChip = async (page, id) => {
+    assert.equal(await page.evaluate(MATRIX_TOUCH, id, null, 'tap'), 'ok');
+    await page.waitFor(MATRIX_ARMED, { args: [id], message: 'chip ' + id + ' showing the armed ring' });
+  };
+
+  await t.test('TOUCH: a tap arms a priority chip, and tapping it again un-arms it', async () => {
+    const page = await openMatrix();
+    const before = await page.evaluate(MATRIX_RAW);
+    assert.equal(await page.evaluate(MATRIX_ARMED, 'g-p1'), false, 'it does not start armed');
+
+    await armMatrixChip(page, 'g-p1');
+
+    assert.equal(await page.evaluate(MATRIX_TOUCH, 'g-p1', null, 'tap'), 'ok');
+    await page.waitFor(function (id) {
+      var c = document.querySelector('[data-matrix-row="' + id + '"]');
+      return !!c && c.className.indexOf('ring-cyan-400') < 0;
+    }, { args: ['g-p1'], message: 'a second tap clearing the armed ring' });
+
+    // arming is a selection, not an edit
+    assert.equal(await page.evaluate(MATRIX_RAW), before,
+      'arming and un-arming wrote nothing — trackPriorityMatrix is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('TOUCH: an armed chip swiped into another quadrant is filed there', async () => {
+    const page = await openMatrix();
+    await armMatrixChip(page, 'g-p1');
+    assert.equal(await page.evaluate(MATRIX_TOUCH, 'g-p1',
+      '[data-matrix-quadrant="nuni"] [data-matrix-list]', 'drag'), 'ok');
+
+    const after = await page.waitFor(function () {
+      var m; try { m = JSON.parse(localStorage.getItem('trackPriorityMatrix') || '{}'); } catch (e) { return false; }
+      return (m['g-p1'] || {}).quadrant === 'nuni' ? m : false;
+    }, { message: 'the touch drop reaching trackPriorityMatrix' });
+
+    assert.equal(after['g-p2'].quadrant, 'ui',   'the chip left behind kept its quadrant');
+    assert.equal(after['g-p3'].quadrant, 'niu',  'and an untouched quadrant is untouched');
+    assert.match(await page.evaluate(MATRIX_ROWS), /nuni:g-p1/,
+      'the chip is drawn in the quadrant it was dropped on');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('TOUCH: an armed chip dropped on a row lands before it', async () => {
+    /* The one case that proves the touch path goes THROUGH handleMatrixDrop's
+       insert-before rule rather than appending on its own. g-p3 sits alone in
+       `niu`, so landing before it is unambiguous. */
+    const page = await openMatrix();
+    await armMatrixChip(page, 'g-p1');
+    assert.equal(await page.evaluate(MATRIX_TOUCH, 'g-p1', '[data-matrix-row="g-p3"]', 'drag'), 'ok');
+
+    await page.waitFor(function () {
+      var m; try { m = JSON.parse(localStorage.getItem('trackPriorityMatrix') || '{}'); } catch (e) { return false; }
+      return (m['g-p1'] || {}).quadrant === 'niu';
+    }, { message: 'the touch drop onto a row reaching trackPriorityMatrix' });
+
+    assert.match(await page.evaluate(MATRIX_ROWS), /niu:g-p1,g-p3/,
+      'the dropped chip landed BEFORE the row it was dropped on, not after it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: an UNARMED chip swiped writes nothing', async () => {
+    /* Stage one of the two-stage model is the entire reason a finger can still
+       scroll a quadrant list. This is trivially true while touch does nothing
+       at all, and only becomes meaningful once the drag works — it is here to
+       catch a later "simplification" into drag-immediately, which would take
+       the scroll gesture away with nothing else in the suite noticing. */
+    const page = await openMatrix();
+    const before = await page.evaluate(MATRIX_RAW);
+    assert.equal(await page.evaluate(MATRIX_TOUCH, 'g-p1',
+      '[data-matrix-quadrant="nuni"] [data-matrix-list]', 'drag'), 'ok');
+    await sleep(400);
+    assert.equal(await page.evaluate(MATRIX_RAW), before,
+      'an unarmed chip does not move, and trackPriorityMatrix is byte-identical');
+    assert.match(await page.evaluate(MATRIX_ROWS), /ui:g-p1,g-p2/, 'and it is still drawn where it was');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: touchcancel abandons a matrix drag and writes nothing', async () => {
+    /* iPadOS fires touchcancel instead of touchend whenever the system takes
+       the gesture over — an edge swipe, a notification. Committing there would
+       re-file a task the finger was only passing across. Also trivially true
+       until the drag works. */
+    const page = await openMatrix();
+    await armMatrixChip(page, 'g-p1');
+    const before = await page.evaluate(MATRIX_RAW);
+    assert.equal(await page.evaluate(MATRIX_TOUCH, 'g-p1',
+      '[data-matrix-quadrant="nuni"] [data-matrix-list]', 'cancel'), 'ok');
+    await sleep(400);
+    assert.equal(await page.evaluate(MATRIX_RAW), before,
+      'an interrupted drag leaves trackPriorityMatrix byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: the desktop mouse drag still files a priority chip', async () => {
+    /* Must pass on BOTH sides of this change. The touch path is additive; if
+       this ever fails, adding touch has cost the laptop its drag.
+
+       dragstart and drop are dispatched in SEPARATE evaluates on purpose:
+       dragstart only calls setMatrixDragId, and a drop fired in the same
+       synchronous block would read the pre-render value and bail. A real
+       pointer puts many frames between the two. */
+    const page = await openMatrix();
+    assert.equal(await page.evaluate(function (id) {
+      var chip = document.querySelector('[data-matrix-row="' + id + '"]');
+      if (!chip) return 'no chip';
+      window.__mdt = new DataTransfer();
+      chip.dispatchEvent(new DragEvent('dragstart',
+        { bubbles: true, cancelable: true, dataTransfer: window.__mdt }));
+      return 'ok';
+    }, 'g-p1'), 'ok');
+    await sleep(150);
+    assert.equal(await page.evaluate(function (sel) {
+      var target = document.querySelector(sel);
+      if (!target) return 'no target';
+      ['dragover', 'drop'].forEach(function (type) {
+        target.dispatchEvent(new DragEvent(type,
+          { bubbles: true, cancelable: true, dataTransfer: window.__mdt }));
+      });
+      return 'ok';
+    }, '[data-matrix-quadrant="uni"]'), 'ok');
+
+    await page.waitFor(function () {
+      var m; try { m = JSON.parse(localStorage.getItem('trackPriorityMatrix') || '{}'); } catch (e) { return false; }
+      return (m['g-p1'] || {}).quadrant === 'uni';
+    }, { message: 'the mouse drop reaching trackPriorityMatrix' });
+    assert.match(await page.evaluate(MATRIX_ROWS), /uni:g-p1/, 'mouse drag still files a chip');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   /* ── the day-header buttons are REACHABLE, not merely present ────────────
      Every other case in this file clicks through `el.click()`, which ignores
      hit testing entirely and so cannot see a control that is painted under
@@ -5135,9 +5450,13 @@ test('browser suites', skipUnlessChrome, async t => {
     var row  = last.parentElement;
     var cell = row.closest('.relative');
     var scroller = row.closest('.overflow-auto');
-    // row → centre section → the three-part strip row; its last child is the
-    // notes-and-caution strip, the sibling painted OVER the centre's overflow.
-    var strip = row.parentElement.parentElement.lastElementChild;
+    // The notes-and-caution strip, by its own hook rather than by a structural
+    // walk. It used to be reached as row → centre → strip row → lastElementChild,
+    // which stops meaning anything the moment the button row moves out of the
+    // centre: it would resolve to the last DAY COLUMN, whose width is always
+    // >60px, and the long-title precondition below would pass for the wrong
+    // reason. A case that cannot fail against the bug it names proves nothing.
+    var strip = cell.querySelector('[data-day-strip]');
     var cr = cell.getBoundingClientRect();
     var rr = row.getBoundingClientRect();
     var sr = strip.getBoundingClientRect();
@@ -5154,6 +5473,7 @@ test('browser suites', skipUnlessChrome, async t => {
           label: (b.textContent || '').trim(),
           width: Math.round(r.width),
           left: Math.round(r.left), right: Math.round(r.right),
+          top: Math.round(r.top),
           hit: !el ? 'nothing'
              : (el === b || b.contains(el)) ? 'self'
              : el.tagName.toLowerCase() +
@@ -5235,6 +5555,49 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.ok(m.row.right <= m.cell.right,
       'the row wrapped inside the column instead of spilling under the strip (row right ' +
       m.row.right + ', column right ' + m.cell.right + ')');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROGRESS: the day-header buttons stack two to a row at the week column width', async () => {
+    /* The reachability fix above was arithmetic — widen the column until the
+       one-line row fits. This is the structural replacement: the block spans
+       the whole day column instead of sharing a flex row with the two side
+       strips, so nothing can squeeze it and the column goes back to 140px.
+
+       Grouping by `top` rather than counting children is the point. Four
+       buttons in one container is true of BOTH layouts; only the number of
+       lines they are drawn on distinguishes a 2×2 block from a row of four,
+       exactly as `data-block-day` had to be added once before because the
+       right ids at the right times were true on the wrong day. */
+    const { page, m, byLabel } = await measureHeader(seedDb());
+
+    assert.equal(m.pinned, true,
+      'the week columns are still at their minimum — the precondition this case is about');
+    assert.ok(m.cell.width <= 145,
+      'the day column is back at its 140px minimum (' + m.cell.width + 'px)');
+
+    const rows = [];
+    m.buttons.forEach(b => {
+      const row = rows.find(r => Math.abs(r.top - b.top) <= 4);
+      if (row) row.labels.push(b.label);
+      else rows.push({ top: b.top, labels: [b.label] });
+    });
+    rows.sort((a, b) => a.top - b.top);
+
+    assert.equal(rows.length, 2,
+      'the four buttons are drawn on TWO lines, not one (' +
+      rows.map(r => r.labels.join('')).join(' / ') + ')');
+    assert.deepEqual(rows[0].labels, ['+', '◎'], 'task add and MM add share the first row');
+    assert.deepEqual(rows[1].labels, ['⊕', '☰'], 'MG add and the day-notes browser are the second row');
+
+    // stacking REPLACES the widening; it must not trade one dead button for another
+    assert.equal(byLabel['+'].hit, 'self', 'the + task picker takes its own tap');
+    assert.equal(byLabel['◎'].hit, 'self', 'the ◎ MM picker takes its own tap');
+    assert.equal(byLabel['⊕'].hit, 'self', 'the ⊕ MG picker takes its own tap');
+    assert.equal(byLabel['☰'].hit, 'self',
+      'the ☰ day-notes browser takes its own tap (hit ' + byLabel['☰'].hit + ')');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();

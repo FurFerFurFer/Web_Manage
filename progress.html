@@ -4961,6 +4961,23 @@
       });
       const [matrixDragId,   setMatrixDragId]   = useState(null);
       const [matrixDragOver, setMatrixDragOver] = useState(null);
+      /* Touch is a SECOND, parallel event family. HTML5 drag-and-drop never
+         fires from a finger, so without this the chips are visible and
+         completely immovable on a phone — a task could be seen in its quadrant
+         and never moved out of it. It drives the same handleMatrixDrop the
+         mouse does, so the insert-before ordering and the trackPriorityMatrix
+         write keep ONE definition and cannot drift between pointer kinds.
+
+         The model is the SCHEDULE's, not the Documentations sidebar's: tap to
+         arm, then swipe the armed chip. A handle is an unambiguous grab
+         affordance and can start a drag at once; a whole chip is not, and an
+         unarmed one has to go on letting the finger scroll its quadrant list. */
+      const [matrixArmedId, setMatrixArmedId] = useState(null);
+      const [matrixGhost,   setMatrixGhost]   = useState(null);
+      const matrixTouchRef   = useRef(null);
+      const matrixGhostRef   = useRef(null);
+      const matrixArmedIdRef = useRef(null);
+      matrixArmedIdRef.current = matrixArmedId;
       const [dissectModal, setDissectModal] = useState(null); // null | { goalId }
       const [dissectInput, setDissectInput] = useState('');
 
@@ -5808,14 +5825,21 @@
 
       const handleMatrixDragStart = (id) => setMatrixDragId(id);
 
-      const handleMatrixDrop = (quadrant, targetId) => {
-        if (!matrixDragId) return;
+      /* `dragId` is passed EXPLICITLY by the touch path and omitted by the
+         mouse one. The touch listeners are bound imperatively at touchstart
+         (see startMatrixTouch), so they close over the render where
+         matrixDragId is still null — reading it here would bail on every
+         finger drop. The mouse path has many frames between dragstart and
+         drop, so its state has long since landed. */
+      const handleMatrixDrop = (quadrant, targetId, dragId) => {
+        const moving = dragId || matrixDragId;
+        if (!moving) return;
         setPriorityMatrix(prev => {
           const next = { ...prev };
-          const inQ = (matrixByQuadrant[quadrant] || []).filter(x => x.id !== matrixDragId);
+          const inQ = (matrixByQuadrant[quadrant] || []).filter(x => x.id !== moving);
           let insertIdx = targetId ? inQ.findIndex(x => x.id === targetId) : inQ.length;
           if (insertIdx === -1) insertIdx = inQ.length;
-          const final = [...inQ.slice(0, insertIdx), { id: matrixDragId }, ...inQ.slice(insertIdx)];
+          const final = [...inQ.slice(0, insertIdx), { id: moving }, ...inQ.slice(insertIdx)];
           final.forEach((item, idx) => {
             next[item.id] = { ...(next[item.id] || {}), quadrant, order: idx * 100 };
           });
@@ -5825,6 +5849,151 @@
         setMatrixDragId(null);
         setMatrixDragOver(null);
       };
+
+      /* ── the same drop, by finger ──────────────────────────────────────────
+         Listeners are bound imperatively inside touchstart rather than from a
+         useEffect on the drag state: an effect does not run until React has
+         re-rendered, so a fast flick — and any synchronous test — would lose
+         every touchmove that arrived first. Binding here also leaves the
+         schedule's own drag effect completely untouched, which matters because
+         its touchRef belongs to the timeline blocks and must not be shared. */
+
+      const MATRIX_TOUCH_SLOP = 10;   // fingers wobble more than a mouse
+      const MATRIX_EDGE_ZONE  = 24;
+
+      function sameMatrixDrop(a, b) {
+        if (!a || !b) return a === b;
+        return a.quadrant === b.quadrant && a.targetId === b.targetId;
+      }
+
+      // `el` is whatever is under the finger. Dropping ON a chip inserts BEFORE
+      // it, exactly as the mouse path does; anywhere else in a quadrant appends.
+      function matrixDropFrom(el) {
+        if (!el) return null;
+        const d = matrixTouchRef.current;
+        const row = el.closest('[data-matrix-row]');
+        if (row) {
+          const rid = row.getAttribute('data-matrix-row');
+          if (d && rid === d.id) return null;      // onto itself is not a move
+          const rq = row.closest('[data-matrix-quadrant]');
+          if (rq) return { quadrant: rq.getAttribute('data-matrix-quadrant'), targetId: rid };
+        }
+        const q = el.closest('[data-matrix-quadrant]');
+        return q ? { quadrant: q.getAttribute('data-matrix-quadrant'), targetId: null } : null;
+      }
+
+      function startMatrixTouch(e, id) {
+        const t = e.touches[0];
+        if (!t) return;
+        /* No preventDefault here, deliberately: React 18 registers touchstart
+           at its root as PASSIVE, so the call would be ignored and only log an
+           intervention warning. The touchmove listener below IS registered
+           non-passive by hand, so preventDefault genuinely works there — and
+           calling it only once a drag has actually started is what leaves an
+           UNARMED chip free to scroll its quadrant list. That is also why there
+           is no `touch-action: none` here: the sidebar's handles can afford one
+           because a handle is not the whole row, and a chip is. */
+        e.stopPropagation();
+
+        const applyHit = hit => {
+          if (!matrixTouchRef.current) return;
+          matrixTouchRef.current.drop = hit;
+          setMatrixDragOver(prev => sameMatrixDrop(prev, hit) ? prev : hit);
+        };
+
+        const onMove = ev => {
+          const d = matrixTouchRef.current;
+          const p = ev.touches[0];
+          if (!d || !p) return;
+          // pinch / two-finger scroll is never a tap
+          if (ev.touches.length > 1) d.moved = true;
+          d.x = p.clientX; d.y = p.clientY;
+          if (!d.moved &&
+              (Math.abs(p.clientX - d.startX) > MATRIX_TOUCH_SLOP ||
+               Math.abs(p.clientY - d.startY) > MATRIX_TOUCH_SLOP)) {
+            d.moved = true;
+            // Stage two: only an ARMED chip is draggable. An unarmed one has
+            // just been recognised as a scroll and is left entirely alone.
+            if (matrixArmedIdRef.current === d.id) {
+              d.dragging = true;
+              setMatrixDragId(d.id);
+              const meta = blockMetaMap[d.id];
+              setMatrixGhost({ label: meta ? meta.title : '',
+                               color: meta ? meta.color : '#6366f1',
+                               x: p.clientX, y: p.clientY });
+            }
+          }
+          if (!d.dragging) return;
+          ev.preventDefault();                      // and never pan the page
+          if (matrixGhostRef.current) {
+            matrixGhostRef.current.style.transform =
+              'translate(' + (p.clientX + 14) + 'px,' + (p.clientY + 14) + 'px)';
+          }
+          const el = document.elementFromPoint(p.clientX, p.clientY);
+          // near-edge auto-scroll is armed here but STEPPED by rAF below: a
+          // finger held still at the edge fires no further touchmove, so
+          // scrolling from this handler alone would stall after one nudge
+          const scroller = el && el.closest('[data-matrix-list]');
+          d.scroller = scroller || null;
+          if (scroller) {
+            const r = scroller.getBoundingClientRect();
+            d.edge = p.clientY < r.top + MATRIX_EDGE_ZONE ? -1
+                   : p.clientY > r.bottom - MATRIX_EDGE_ZONE ? 1 : 0;
+          } else d.edge = 0;
+          applyHit(matrixDropFrom(el));
+        };
+
+        const step = () => {
+          const d = matrixTouchRef.current;
+          if (!d) return;
+          if (d.dragging && d.edge && d.scroller) {
+            d.scroller.scrollTop += d.edge * 8;
+            // chips slid under a stationary finger, so the target may differ
+            applyHit(matrixDropFrom(document.elementFromPoint(d.x, d.y)));
+          }
+          d.raf = requestAnimationFrame(step);
+        };
+
+        const detach = () => {
+          const d = matrixTouchRef.current;
+          if (d && d.raf) cancelAnimationFrame(d.raf);
+          matrixTouchRef.current = null;
+          document.removeEventListener('touchmove', onMove);
+          document.removeEventListener('touchend', onEnd);
+          document.removeEventListener('touchcancel', onCancel);
+          setMatrixDragId(null);
+          setMatrixDragOver(null);
+          setMatrixGhost(null);
+        };
+
+        const onEnd = () => {
+          const d = matrixTouchRef.current;
+          if (!d) return;
+          const movedId = d.id, wasMoved = d.moved, wasDragging = d.dragging, drop = d.drop;
+          detach();
+          if (wasDragging) {
+            // the id goes in EXPLICITLY — see handleMatrixDrop's note
+            if (drop) handleMatrixDrop(drop.quadrant, drop.targetId, movedId);
+            return;   // the chip stays armed, exactly as a schedule block does
+          }
+          if (!wasMoved) setMatrixArmedId(prev => prev === movedId ? null : movedId);
+          // moved but never armed: the finger was scrolling. Write nothing.
+        };
+
+        /* iPadOS fires touchcancel instead of touchend whenever the system
+           takes the gesture over — an edge swipe, a notification. Committing
+           there would re-file a task the finger was only passing across. */
+        const onCancel = () => { detach(); };
+
+        matrixTouchRef.current = { id, startX: t.clientX, startY: t.clientY,
+          x: t.clientX, y: t.clientY, moved: false, dragging: false,
+          drop: null, edge: 0, scroller: null, raf: 0 };
+
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onEnd);
+        document.addEventListener('touchcancel', onCancel);
+        matrixTouchRef.current.raf = requestAnimationFrame(step);
+      }
 
       // A day note or deadline added from a documentation page carries that
       // page's id; absence means it was added here. Show where it came from and
@@ -6320,7 +6489,8 @@
                     </div>
 
                     {/* RIGHT STRIP — calendar notes + deadline caution markers */}
-                    <div className="flex flex-col gap-0.5 pt-2 pr-1 pl-0.5 flex-shrink-0" style={{ minWidth: '60px', maxWidth: '110px' }}>
+                    <div data-day-strip={ds}
+                      className="flex flex-col gap-0.5 pt-2 pr-1 pl-0.5 flex-shrink-0" style={{ minWidth: '60px', maxWidth: '110px' }}>
                       {/* untimed notes only — a note with a time is drawn on the
                           hour grid instead, so it is never in both places */}
                       {(calendarNotes || []).filter(n => n.date === ds && !noteTimed(n)).map(note => (
@@ -7575,28 +7745,40 @@
                       { key: 'niu',  label: 'SCHEDULE',  sub: 'Not Urgent · Important',  hdr: '#1e3a5f', color: '#3b82f6' },
                       { key: 'uni',  label: 'DELEGATE',  sub: 'Urgent · Not Important',  hdr: '#451a03', color: '#f59e0b' },
                       { key: 'nuni', label: 'ELIMINATE', sub: 'Not Urgent · Not Imp.',   hdr: '#1f2937', color: '#6b7280' },
-                    ].map(({ key, label, sub, hdr, color }) => (
+                    ].map(({ key, label, sub, hdr, color }) => {
+                      // A finger covers the chip it is over, so an append needs
+                      // a target the user can still see. Shared with the mouse.
+                      const isQuadOver = !!matrixDragId
+                        && matrixDragOver?.quadrant === key && matrixDragOver?.targetId == null;
+                      return (
                       <div key={key}
-                        className={`flex flex-col overflow-hidden border-gray-800 ${key === 'niu' || key === 'nuni' ? 'border-l' : ''} ${key === 'uni' || key === 'nuni' ? 'border-t' : ''}`}
+                        data-matrix-quadrant={key}
+                        className={`flex flex-col overflow-hidden border-gray-800 ${key === 'niu' || key === 'nuni' ? 'border-l' : ''} ${key === 'uni' || key === 'nuni' ? 'border-t' : ''} ${isQuadOver ? 'bg-white/5 outline outline-1 outline-dashed outline-white/30 -outline-offset-1' : ''}`}
                         onDragOver={e => { e.preventDefault(); if (matrixDragOver?.targetId !== null || matrixDragOver?.quadrant !== key) setMatrixDragOver({ quadrant: key, targetId: null }); }}
                         onDrop={e => { e.stopPropagation(); handleMatrixDrop(key, null); }}>
                         <div className="flex-shrink-0 px-2 py-1" style={{ backgroundColor: hdr }}>
                           <div className="text-[10px] font-bold text-white tracking-widest">{label}</div>
                           <div className="text-[9px] text-gray-400 leading-tight">{sub}</div>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-1 flex flex-col gap-0.5">
+                        <div data-matrix-list className="flex-1 overflow-y-auto p-1 flex flex-col gap-0.5">
                           {(matrixByQuadrant[key] || []).map(({ id }) => {
                             const meta = blockMetaMap[id];
                             if (!meta) return null;
                             const isOver = matrixDragOver?.quadrant === key && matrixDragOver?.targetId === id;
+                            // same two tokens a schedule block uses, so armed
+                            // and dragged read identically on both panels
+                            const isArmed   = matrixArmedId === id;
+                            const isDragged = matrixDragId === id;
                             return (
                               <div key={id}
                                 draggable
+                                data-matrix-row={id}
                                 onDragStart={e => { e.stopPropagation(); handleMatrixDragStart(id); }}
                                 onDragOver={e => { e.preventDefault(); e.stopPropagation(); setMatrixDragOver({ quadrant: key, targetId: id }); }}
                                 onDrop={e => { e.stopPropagation(); handleMatrixDrop(key, id); }}
                                 onDragEnd={() => { setMatrixDragId(null); setMatrixDragOver(null); }}
-                                className={`flex items-center gap-1.5 px-1.5 py-1 rounded text-[11px] cursor-grab select-none transition-all ${isOver ? 'bg-white/10 outline outline-1 outline-dashed outline-white/40' : 'bg-gray-900/60 hover:bg-gray-800/60'}`}
+                                onTouchStart={e => startMatrixTouch(e, id)}
+                                className={`flex items-center gap-1.5 px-1.5 py-1 rounded text-[11px] cursor-grab select-none transition-all ${isOver ? 'bg-white/10 outline outline-1 outline-dashed outline-white/40' : 'bg-gray-900/60 hover:bg-gray-800/60'} ${isArmed ? 'ring-2 ring-cyan-400/70' : ''} ${isDragged ? 'opacity-20' : ''}`}
                                 style={{ borderLeft: `3px solid ${meta.color}` }}>
                                 <span className="truncate text-gray-200 flex-1 leading-tight">{meta.title}</span>
                               </div>
@@ -7609,8 +7791,24 @@
                           )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                  {/* Follows the finger, moved imperatively so a drag costs no
+                      render. `pointer-events-none` is load-bearing rather than
+                      cosmetic: matrixDropFrom reads elementFromPoint, and a
+                      ghost sitting under the finger would be the only thing it
+                      ever found. */}
+                  {matrixGhost && (
+                    <div ref={matrixGhostRef}
+                      className="fixed top-0 left-0 pointer-events-none rounded px-2 py-1 text-[11px] text-gray-100 shadow-lg max-w-[180px] truncate"
+                      style={{ zIndex: 60,
+                               transform: `translate(${matrixGhost.x + 14}px, ${matrixGhost.y + 14}px)`,
+                               backgroundColor: 'var(--color-app-bg)',
+                               border: `1px solid ${matrixGhost.color}` }}>
+                      {matrixGhost.label}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -7636,9 +7834,27 @@
             const q = search.trim().toLowerCase();
             const hit = it => !q || String(it.title || '').toLowerCase().includes(q)
               || String(it.detail || '').toLowerCase().includes(q);
-            const rows = [];
-            if (dlnTab !== 'deadlines') (calendarNotes || []).filter(hit).forEach(n => rows.push({ kind: 'dayNote', item: n }));
-            if (dlnTab !== 'notes') (deadlines || []).filter(hit).forEach(d => rows.push({ kind: 'deadline', item: d }));
+            const all = [];
+            if (dlnTab !== 'deadlines') (calendarNotes || []).forEach(n => all.push({ kind: 'dayNote', item: n }));
+            if (dlnTab !== 'notes') (deadlines || []).forEach(d => all.push({ kind: 'deadline', item: d }));
+            // The panel looks FORWARD from the day it was opened on and never
+            // back: an item belonging to an earlier day is not listed at all.
+            // Two things about the cut are load-bearing. It is on the item's
+            // OWN date — the date the row reads out — and never on blockDay(),
+            // so moving a block can never move an item in or out of this list.
+            // And it is relative to the day CLICKED, not to today, so a column
+            // further out lists strictly less than an earlier one.
+            //
+            // Gating here, once, rather than beside each of the two pushes
+            // above: a rule spelled at several call sites and dropped at one is
+            // this repository's recurring bug, and notes and deadlines are
+            // collected on separate lines. An item whose date is not a real day
+            // belongs to NO day, so it cannot belong to an earlier one — it
+            // stays listed rather than becoming unreachable, this panel being
+            // the only surface such a record appears on.
+            const onOrAfter = r => !BLOCK_DAY_RE.test(String(r.item.date || ''))
+              || String(r.item.date) >= openedOn;
+            const rows = all.filter(r => onOrAfter(r) && hit(r.item));
             // Chronological by the item's OWN date and time — the same date the
             // row displays — so a row never moves because its block did. An
             // untimed note sorts at the hour its block defaults to.

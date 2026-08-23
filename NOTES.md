@@ -618,13 +618,14 @@ beyond calendar aggregation and the currently covered browser regressions.
 
 ### Interaction matrix still needed
 
-- Mouse and touch drag. The Documentations sidebar tree is now covered by
-  synthetic-TouchEvent cases; the Progress goal tree, the priority matrix, the
-  KS02 and True Storage trees and both canvases are still mouse-only in the
-  product as well as untested, and are the obvious next candidates for the same
-  parallel touch path.
-- Near-edge auto-scroll — implemented for the Documentations sidebar drag only,
-  and there it is exercised by hand rather than by the suite.
+- Mouse and touch drag. The Documentations sidebar tree and the Progress Task
+  Priority matrix are now covered by synthetic-TouchEvent cases; the Progress
+  goal tree, the KS02 and True Storage trees and both canvases are still
+  mouse-only in the product as well as untested, and are the obvious next
+  candidates for the same parallel touch path.
+- Near-edge auto-scroll — implemented for the Documentations sidebar drag and
+  the Task Priority quadrant lists, and in both places it rests on code reading
+  rather than on the suite or on a hand check.
 - Context menus.
 - Schedule block expansion and resizing.
 - Milestone reordering.
