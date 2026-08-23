@@ -21,7 +21,7 @@ Status reviewed: 2026-08-06
 - The standalone scripts `theme.js`, `schema.js`, `storage-guard.js`, `calendar-core.js`, `firebase-sync.js`, `notes-widget.js`, `true-storage-core.js`, and `graph-layout.js` pass `node --check`.
 - React pages currently compile JSX in the browser through Babel.
 - Data is stored locally first and can optionally be synchronized through Firebase.
-- Every page provides persistent light and dark themes with a shared accessible switch.
+- Every page provides two persistent appearances — **Grit** and **Night** — with a shared accessible switch.
 
 The code is operational. Verification is syntax checking, the committed suite, and manual interaction checks for touch and drag behaviour the suite does not reach.
 
@@ -53,6 +53,15 @@ When a proposed change is implemented:
 - Per-slot JSON import.
 - Source-dump-only export and import.
 - Basic workspace metadata counts.
+- A read-only **growth-ring section** in the hero, drawn from the active workspace's
+  own history: one ring per month since the slot was created, innermost first, thick
+  and bright where days were recorded and thin and faint where they were not. The
+  pith is the slot's `createdAt`. It reads `track_db` through the same
+  `TrackStorage.loadDB()` delegate as everything else on the page, writes nothing,
+  and hides itself entirely rather than throwing — on a damaged or write-blocked
+  database, on a slot with no history, and when there is no slot at all. Ring
+  density comes from `TrackCalendar.buildBuckets`, which is month-scoped, so it is
+  called once per month of the workspace's life on each render.
 - A read-only **Universal calendar** aggregating the active slot's dated data by day.
 
 Each slot is intended to isolate a different subject, course, project, or learning area.
@@ -75,12 +84,32 @@ The detail appears **beside the grid above 720px** as a scrollable column, so th
 
 ### Appearance and accessibility
 
+The interface has two appearances, and they are two views of one place rather than
+two skins. **Grit** is the day section of a wood — weathered stone, pale sapwood, and
+a deep evergreen that carries every primary action. **Night** is the same forest after
+dark: a bark-black ground with a green cast, moss, lichen and ember. Grit replaced the
+previous light theme; Night is the previous dark theme retuned to match it.
+
+The organising image is the growth ring, because it is the same idea this app is
+built on. A tree records every season it survived — thin bands for the hard years,
+and it keeps them. Structural devices follow from that rather than decorating it:
+rings, grain and bark, never leaves.
+
 The shared interface currently provides:
 
-- Coordinated light and dark palettes across Home, Progress, KS02, Firebase states, and floating notes.
-- An accessible switch that follows the operating-system theme until the user makes a choice.
+- Coordinated Grit and Night palettes across Home, Progress, KS02, Documentations,
+  True Storage, Firebase states, and floating notes.
+- An accessible switch that follows the operating-system appearance until the user
+  makes a choice.
 - Persistence of the selected appearance across pages and browser tabs through `track_theme`.
-- Visible keyboard focus, reduced-motion handling, stronger text contrast, and 44px primary touch targets.
+- A growth-ring texture on Home and a fine vertical grain on every application page,
+  both pure CSS — this repository ships no image assets.
+- A slower motion curve (`--motion-slow`, `--ease-growth`) reserved for signature
+  moments. Anything a user is waiting on stays on `--motion-fast`.
+- Measured text contrast: every text role clears 4.5:1 against the app background,
+  surface and muted surface **in both appearances**, and `tests/browser.test.js`
+  asserts it per appearance rather than leaving it as a claim.
+- Visible keyboard focus, reduced-motion handling, and 44px primary touch targets.
 - Responsive Home cards and horizontally scrollable app navigation on narrow screens.
 - A full-screen Universal calendar on every device, with its day detail as a side column above 720px and a bottom sheet at or below it.
 
@@ -803,7 +832,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, PDF export |
 | `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, explanation, and source-dump tags |
 | `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry and deadline rules (`window.TrackCalendar`) |
-| `theme.js` | Initial theme selection, appearance switching, persistence, and cross-tab updates |
+| `theme.js` | Initial appearance selection, the Grit/Night switch, persistence, and cross-tab updates. Holds the one normaliser that aliases the superseded `light` and maps an appearance to a `color-scheme` keyword |
 | `schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
 | `storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
 | `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
@@ -811,7 +840,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
 | `doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
-| `styles.css` | Shared design tokens, light/dark palettes, responsive styling, and component states |
+| `styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
 | `README.md` | Current project and workflow documentation |
@@ -1059,7 +1088,7 @@ no stored id is ever rewritten.
 
 The project also currently uses:
 
-- `track_theme` for the explicit light/dark appearance preference.
+- `track_theme` for the explicit appearance preference. It holds `grit` or `dark`; the superseded `light` is still accepted on read and resolves to `grit`, and is never written back.
 - `track_db_ts` for the local Firebase comparison timestamp. It records when this device's data was last **confirmed** in the cloud, not when the device last edited, so it is written only after the server accepts a write.
 - `track_db_pending` while this device holds edits the cloud has not accepted yet. Set synchronously on every `track_db` write and removed on confirmation, so a tab closed mid-upload still records that edits are unsent.
 - `trackPriorityMatrix` for schedule priority-matrix state.

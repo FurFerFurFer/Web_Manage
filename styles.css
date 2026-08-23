@@ -1,76 +1,97 @@
 /* ── design tokens ────────────────────────────────────────── */
+/* Two appearances, one world. GRIT is the day section of the wood — weathered
+   stone and living evergreen; NIGHT is the same forest after dark. `dark` is
+   still the stored name for Night (see theme.js), and `light` is the
+   superseded name for Grit, kept as an alias selector so a page reached with
+   an older cached script still lands on the right palette instead of falling
+   through to these defaults with the wrong color-scheme. */
 :root,
 html[data-theme="dark"] {
   color-scheme: dark;
-  --color-app-bg: #080d18;
-  --color-app-bg-rgb: 8, 13, 24;
-  --color-surface: #111b2e;
-  --color-surface-rgb: 17, 27, 46;
-  --color-surface-muted: #18243a;
-  --color-surface-strong: #24334c;
-  --color-surface-hover: #293a56;
-  --color-text: #f8fafc;
-  --color-text-secondary: #cbd5e1;
-  --color-text-muted: #94a3b8;
-  --color-text-subtle: #8290a5;
-  --color-border: #33445f;
-  --color-border-subtle: #26354c;
-  --color-border-strong: #52627a;
-  --color-primary: #818cf8;
-  --color-primary-hover: #a5b4fc;
-  --color-primary-solid: #4f46e5;
-  --color-primary-soft: rgba(99, 102, 241, 0.16);
-  --color-primary-border: rgba(129, 140, 248, 0.42);
-  --color-primary-text: #a5b4fc;
-  --color-success: #34d399;
-  --color-success-soft: rgba(16, 185, 129, 0.15);
-  --color-danger: #f87171;
-  --color-danger-soft: rgba(239, 68, 68, 0.14);
-  --color-warning: #fbbf24;
-  --color-focus: #a5b4fc;
-  --color-scrim: rgba(2, 6, 23, 0.72);
-  --shadow-card: 0 18px 48px rgba(0, 0, 0, 0.28);
-  --shadow-float: 0 18px 50px rgba(0, 0, 0, 0.42);
+  --color-app-bg: #0e1210;
+  --color-app-bg-rgb: 14, 18, 16;
+  --color-surface: #171d19;
+  --color-surface-rgb: 23, 29, 25;
+  --color-surface-muted: #1f2721;
+  --color-surface-strong: #2b352c;
+  --color-surface-hover: #35402f;
+  --color-text: #eef2ea;
+  --color-text-secondary: #c3cdbf;
+  --color-text-muted: #8e9a89;
+  --color-text-subtle: #8a9681;
+  --color-border: #3a463a;
+  --color-border-subtle: #2a342b;
+  --color-border-strong: #566153;
+  --color-primary: #7fb98f;
+  --color-primary-hover: #a3d3af;
+  --color-primary-solid: #2e6349;
+  --color-primary-soft: rgba(127, 185, 143, 0.15);
+  --color-primary-border: rgba(127, 185, 143, 0.42);
+  --color-primary-text: #a3d3af;
+  --color-success: #7fb98f;
+  --color-success-soft: rgba(127, 185, 143, 0.15);
+  --color-danger: #e08472;
+  --color-danger-soft: rgba(224, 132, 114, 0.14);
+  --color-warning: #d9b45c;
+  --color-focus: #a3d3af;
+  --color-scrim: rgba(6, 10, 8, 0.72);
+  --shadow-card: 0 18px 48px rgba(0, 0, 0, 0.34);
+  --shadow-float: 0 18px 50px rgba(0, 0, 0, 0.48);
   --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Display and data faces are system stacks on purpose: this app is
+     local-first and must not gain a font fetch. A webfont would also make text
+     metrics change asynchronously after first paint, which the geometry cases
+     in tests/browser.test.js measure. Applied narrowly — never on :root, html,
+     body or a bare element selector, or they would inherit into the React
+     pages and move those measurements. */
+  --font-display: ui-serif, Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
+  --font-data: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
   --radius-lg: 1rem;
   --motion-fast: 160ms;
   --motion-base: 220ms;
+  /* Slow growth, but only where a user is not waiting: signature moments use
+     --motion-slow, everything reactive stays on --motion-fast. */
+  --motion-slow: 620ms;
   --ease-ui: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-growth: cubic-bezier(0.22, 0.61, 0.24, 1);
+  --grain: repeating-linear-gradient(90deg, rgba(120, 134, 116, 0.05) 0 1px, transparent 1px 3px);
 }
 
+html[data-theme="grit"],
 html[data-theme="light"] {
   color-scheme: light;
-  --color-app-bg: #f4f7fb;
-  --color-app-bg-rgb: 244, 247, 251;
-  --color-surface: #ffffff;
-  --color-surface-rgb: 255, 255, 255;
-  --color-surface-muted: #e9eff7;
-  --color-surface-strong: #dce5f0;
-  --color-surface-hover: #d2deeb;
-  --color-text: #172033;
-  --color-text-secondary: #334155;
-  --color-text-muted: #5b6b82;
-  --color-text-subtle: #5b6b82;
-  --color-border: #c5d0df;
-  --color-border-subtle: #dbe3ee;
-  --color-border-strong: #94a3b8;
-  --color-primary: #4338ca;
-  --color-primary-hover: #3730a3;
-  --color-primary-solid: #4f46e5;
-  --color-primary-soft: #eef2ff;
-  --color-primary-border: #a5b4fc;
-  --color-primary-text: #4338ca;
-  --color-success: #047857;
-  --color-success-soft: #dff7ec;
-  --color-danger: #b91c1c;
-  --color-danger-soft: #fee8e8;
-  --color-warning: #92400e;
-  --color-focus: #4338ca;
-  --color-scrim: rgba(15, 23, 42, 0.56);
-  --shadow-card: 0 20px 55px rgba(30, 64, 175, 0.10);
-  --shadow-float: 0 18px 48px rgba(15, 23, 42, 0.18);
+  --color-app-bg: #e3e6e0;
+  --color-app-bg-rgb: 227, 230, 224;
+  --color-surface: #f1f3ee;
+  --color-surface-rgb: 241, 243, 238;
+  --color-surface-muted: #dce0d7;
+  --color-surface-strong: #d5dace;
+  --color-surface-hover: #cbd2c4;
+  --color-text: #171c18;
+  --color-text-secondary: #333b33;
+  --color-text-muted: #535c52;
+  --color-text-subtle: #5a6356;
+  --color-border: #b6bdb0;
+  --color-border-subtle: #cfd5c9;
+  --color-border-strong: #8a9384;
+  --color-primary: #24503a;
+  --color-primary-hover: #1a3d2c;
+  --color-primary-solid: #2e6349;
+  --color-primary-soft: #dde7df;
+  --color-primary-border: #8fae9b;
+  --color-primary-text: #1e4531;
+  --color-success: #2f6b3f;
+  --color-success-soft: #dcebdf;
+  --color-danger: #8e3b2f;
+  --color-danger-soft: #f4e2de;
+  --color-warning: #755a12;
+  --color-focus: #24503a;
+  --color-scrim: rgba(23, 28, 24, 0.56);
+  --shadow-card: 0 20px 55px rgba(36, 48, 38, 0.10);
+  --shadow-float: 0 18px 48px rgba(23, 28, 24, 0.18);
+  --grain: repeating-linear-gradient(90deg, rgba(36, 48, 38, 0.045) 0 1px, transparent 1px 3px);
 }
 
 /* ── reset and shared interaction states ──────────────────── */
@@ -178,14 +199,14 @@ html[data-theme] :where(a, button, input, select, textarea, [role="button"], [ta
 }
 
 .theme-toggle__icon,
-.theme-toggle__sun,
+.theme-toggle__rings,
 .theme-toggle__moon {
   width: 1rem;
   height: 1rem;
   flex: 0 0 auto;
 }
 
-.theme-toggle__sun,
+.theme-toggle__rings,
 .theme-toggle__moon {
   display: block;
   stroke-linecap: round;
@@ -193,7 +214,13 @@ html[data-theme] :where(a, button, input, select, textarea, [role="button"], [ta
   stroke-width: 1.8;
 }
 
-html[data-theme="dark"] .theme-toggle__sun,
+/* five rings in a 16px box: at the shared 1.8 they merge into a disc */
+.theme-toggle__rings {
+  stroke-width: 1.1;
+}
+
+html[data-theme="dark"] .theme-toggle__rings,
+html[data-theme="grit"] .theme-toggle__moon,
 html[data-theme="light"] .theme-toggle__moon {
   display: none;
 }
@@ -217,7 +244,7 @@ html[data-theme="light"] .theme-toggle__moon {
   height: 0.875rem;
   border-radius: 50%;
   background: var(--color-text-muted);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.3);
+  box-shadow: 0 1px 3px rgba(10, 14, 11, 0.3);
   transform: translateX(0);
   transition:
     transform var(--motion-base) var(--ease-ui),
@@ -260,23 +287,34 @@ body.home {
   overflow-x: hidden;
   font-family: var(--font-ui);
   background:
-    radial-gradient(circle at 16% 12%, rgba(99, 102, 241, 0.16), transparent 30rem),
-    radial-gradient(circle at 88% 88%, rgba(14, 165, 233, 0.10), transparent 28rem),
+    radial-gradient(circle at 14% 10%, color-mix(in srgb, var(--color-primary) 15%, transparent), transparent 32rem),
+    radial-gradient(circle at 90% 86%, color-mix(in srgb, var(--color-border-strong) 16%, transparent), transparent 28rem),
     var(--color-app-bg);
 }
 
+/* Growth rings, not a grid. The centre sits off-canvas so what crosses the
+   page is an ARC of a much larger section rather than a bullseye, and the
+   bands are deliberately UNEVEN — narrow rings are the hard years, which is
+   the whole reason this app's subject and this texture are the same idea.
+   Pure CSS: this repository ships no image assets and must not start. */
 body.home::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.28;
+  opacity: 0.5;
   background-image:
-    linear-gradient(var(--color-border-subtle) 1px, transparent 1px),
-    linear-gradient(90deg, var(--color-border-subtle) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: linear-gradient(to bottom, black, transparent 78%);
+    repeating-radial-gradient(circle at 8% 112%,
+      transparent 0 46px,
+      var(--color-border-subtle) 46px 47px,
+      transparent 47px 92px,
+      var(--color-border-subtle) 92px 93px,
+      transparent 93px 160px,
+      var(--color-border-subtle) 160px 161px,
+      transparent 161px 244px),
+    var(--grain);
+  mask-image: radial-gradient(circle at 8% 112%, black, transparent 92%);
 }
 
 .home-shell {
@@ -301,19 +339,31 @@ body.home::before {
   border-radius: 999px;
   background: var(--color-primary-soft);
   color: var(--color-primary-text);
+  font-family: var(--font-data);
   font-size: 0.6875rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
+.home-kicker::before {
+  content: "◎";
+  margin-right: 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
 body.home h1 {
-  margin: 0.875rem 0 0.5rem;
+  margin: 0.75rem 0 0.5rem;
   color: var(--color-text);
+  /* the display face is named here and on .home-kicker only. It must never
+     reach :root, html, body or a bare element selector, or it inherits into
+     the React pages and moves the geometry those tests measure. */
+  font-family: var(--font-display);
   font-size: clamp(3rem, 10vw, 5.25rem);
-  font-weight: 800;
-  letter-spacing: -0.065em;
-  line-height: 0.95;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 0.92;
 }
 
 .home-subtitle {
@@ -321,6 +371,55 @@ body.home h1 {
   color: var(--color-text-muted);
   font-size: clamp(0.9375rem, 2vw, 1.0625rem);
   line-height: 1.65;
+}
+
+/* ── the growth-ring section ──────────────────────────────── */
+/* The one place this design spends its boldness. Everything around it stays
+   quiet on purpose. */
+.home-rings {
+  margin: 1.25rem auto 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.home-rings[hidden] {
+  display: none;
+}
+
+.home-rings-svg {
+  width: min(100%, 15rem);
+  height: auto;
+  color: var(--color-primary);
+  overflow: visible;
+}
+
+.home-rings-cap {
+  color: var(--color-text-muted);
+  font-family: var(--font-data);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* Rings arrive from the pith outward, each a little after the one inside it —
+   slow, and in the order they were actually laid down. The global
+   prefers-reduced-motion block flattens transitions but not a keyframed
+   animation on a fresh element, so this needs its own guard below. */
+@media (prefers-reduced-motion: no-preference) {
+  .home-rings-svg circle {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ring-grow var(--motion-slow) var(--ease-growth) backwards;
+    animation-delay: calc(var(--i, 0) * 34ms);
+  }
+
+  @keyframes ring-grow {
+    from { opacity: 0; transform: scale(0.94); }
+  }
 }
 
 /* ── primary navigation cards ─────────────────────────────── */
@@ -346,14 +445,40 @@ body.home h1 {
   cursor: pointer;
   text-align: left;
   text-decoration: none;
+  position: relative;
+  overflow: hidden;
   transition:
-    border-color var(--motion-fast) var(--ease-ui),
-    background var(--motion-fast) var(--ease-ui),
-    box-shadow var(--motion-fast) var(--ease-ui);
+    border-color var(--motion-slow) var(--ease-growth),
+    background var(--motion-slow) var(--ease-growth),
+    box-shadow var(--motion-slow) var(--ease-growth);
+}
+
+/* A ring arc rather than an arrow: the card is a section of the same trunk.
+   It thickens on hover instead of sliding, because the whole motion idea here
+   is accretion rather than travel. */
+.nav-btn::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -4.75rem;
+  width: 8.5rem;
+  height: 8.5rem;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background-image: repeating-radial-gradient(circle at center,
+    var(--color-border-strong) 0 1px, transparent 1px 11px);
+  /* Kept quiet on purpose. The hero section is where this design spends its
+     boldness; a card that competes with it costs both. */
+  opacity: 0.28;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-slow) var(--ease-growth),
+    transform var(--motion-slow) var(--ease-growth);
 }
 
 .nav-btn::after {
   content: "→";
+  position: relative;
   color: var(--color-primary);
   font-size: 1.25rem;
   line-height: 1;
@@ -363,6 +488,11 @@ body.home h1 {
   border-color: var(--color-primary-border);
   background: var(--color-surface-muted);
   box-shadow: var(--shadow-float);
+}
+
+.nav-btn:hover::before {
+  opacity: 0.55;
+  transform: translateY(-50%) scale(1.07);
 }
 
 .nav-btn-title {
@@ -385,7 +515,8 @@ body.home h1 {
   padding: clamp(1rem, 3vw, 1.375rem);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background: rgba(var(--color-surface-rgb), 0.9);
+  background-color: rgba(var(--color-surface-rgb), 0.9);
+  background-image: var(--grain);
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(16px);
 }
@@ -401,8 +532,9 @@ body.home h1 {
 .slot-panel-label {
   display: block;
   color: var(--color-text);
+  font-family: var(--font-data);
   font-size: 0.8125rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -743,12 +875,26 @@ body.home h1 {
 }
 
 /* ── React app foundation and navigation polish ───────────── */
+/* .app-page is the class all four React pages share, so one rule gives
+   Progress, KS02, Documentations and True Storage the same material as Home
+   without touching a line of their Tailwind markup. The grain is fixed rather
+   than scrolling, so it reads as the surface the app sits ON. */
 body.app-page {
   min-height: 100vh;
   min-height: 100dvh;
   overflow-x: hidden;
   background: var(--color-app-bg);
   color: var(--color-text-secondary);
+}
+
+body.app-page::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.6;
+  background-image: var(--grain);
 }
 
 .app-page #root {
@@ -764,7 +910,7 @@ body.app-page {
 
 .progress-page #root > div > header,
 .ks02-page #root > div > div:first-child {
-  box-shadow: 0 1px 0 var(--color-border-subtle), 0 8px 30px rgba(2, 6, 23, 0.08);
+  box-shadow: 0 1px 0 var(--color-border-subtle), 0 8px 30px rgba(10, 14, 11, 0.08);
 }
 
 .progress-page #root > div > header {
@@ -808,7 +954,7 @@ body.app-page {
 }
 
 /* ── dark-palette readability corrections ─────────────────── */
-html[data-theme="dark"] :is(.bg-gray-950, [class~="bg-gray-950/95"], [class~="bg-gray-950/70"], [class~="bg-gray-950/30"]) {
+html[data-theme="dark"] :is(.bg-gray-950, [class~="bg-gray-950/95"], [class~="bg-gray-950/70"], [class~="bg-gray-950/60"], [class~="bg-gray-950/30"]) {
   background-color: var(--color-app-bg);
 }
 
@@ -845,56 +991,56 @@ html[data-theme="dark"] :is(.border-gray-700, [class~="border-gray-700/60"], [cl
   border-color: var(--color-border);
 }
 
-/* ── light-theme Tailwind utility mapping ─────────────────── */
-html[data-theme="light"] :is(.bg-gray-950, [class~="bg-gray-950/95"], [class~="bg-gray-950/70"], [class~="bg-gray-950/30"]) {
+/* ── grit-theme Tailwind utility mapping ─────────────────── */
+html[data-theme="grit"] :is(.bg-gray-950, [class~="bg-gray-950/95"], [class~="bg-gray-950/70"], [class~="bg-gray-950/60"], [class~="bg-gray-950/30"]) {
   background-color: var(--color-app-bg);
 }
 
-html[data-theme="light"] :is(.bg-gray-900, [class~="bg-gray-900/90"], [class~="bg-gray-900/70"], [class~="bg-gray-900/60"], [class~="bg-gray-900/50"], [class~="bg-gray-900/40"], [class~="bg-gray-900/30"]) {
+html[data-theme="grit"] :is(.bg-gray-900, [class~="bg-gray-900/90"], [class~="bg-gray-900/70"], [class~="bg-gray-900/60"], [class~="bg-gray-900/50"], [class~="bg-gray-900/40"], [class~="bg-gray-900/30"]) {
   background-color: var(--color-surface);
 }
 
-html[data-theme="light"] :is(.bg-gray-800, [class~="bg-gray-800/90"], [class~="bg-gray-800/80"], [class~="bg-gray-800/70"], [class~="bg-gray-800/60"], [class~="bg-gray-800/50"], [class~="bg-gray-800/40"], [class~="bg-gray-800/20"]) {
+html[data-theme="grit"] :is(.bg-gray-800, [class~="bg-gray-800/90"], [class~="bg-gray-800/80"], [class~="bg-gray-800/70"], [class~="bg-gray-800/60"], [class~="bg-gray-800/50"], [class~="bg-gray-800/40"], [class~="bg-gray-800/20"]) {
   background-color: var(--color-surface-muted);
 }
 
-html[data-theme="light"] :is(.bg-gray-700, [class~="bg-gray-700/60"], [class~="bg-gray-700/50"]) {
+html[data-theme="grit"] :is(.bg-gray-700, [class~="bg-gray-700/60"], [class~="bg-gray-700/50"]) {
   background-color: var(--color-surface-strong);
 }
 
-html[data-theme="light"] :is(.bg-gray-600, .bg-gray-400) {
+html[data-theme="grit"] :is(.bg-gray-600, .bg-gray-400) {
   background-color: var(--color-border-strong);
 }
 
-html[data-theme="light"] .bg-white {
+html[data-theme="grit"] .bg-white {
   background-color: var(--color-primary-solid);
 }
 
-html[data-theme="light"] :is([class~="bg-white/30"], [class~="bg-white/10"], [class~="hover:bg-white/60"]:hover, [class~="hover:bg-white/5"]:hover) {
+html[data-theme="grit"] :is([class~="bg-white/30"], [class~="bg-white/10"], [class~="bg-white/5"], [class~="hover:bg-white/60"]:hover, [class~="hover:bg-white/5"]:hover) {
   background-color: var(--color-primary-soft);
 }
 
-html[data-theme="light"] :is(.text-white, .text-gray-100, .text-gray-200, .text-gray-300) {
+html[data-theme="grit"] :is(.text-white, .text-gray-100, .text-gray-200, .text-gray-300) {
   color: var(--color-text);
 }
 
-html[data-theme="light"] [class~="text-white/70"] {
+html[data-theme="grit"] [class~="text-white/70"] {
   color: var(--color-text-secondary);
 }
 
-html[data-theme="light"] .text-gray-950 {
+html[data-theme="grit"] .text-gray-950 {
   color: #ffffff;
 }
 
-html[data-theme="light"] .text-gray-400 {
+html[data-theme="grit"] .text-gray-400 {
   color: var(--color-text-secondary);
 }
 
-html[data-theme="light"] :is(.text-gray-500, .text-gray-600, .text-gray-700) {
+html[data-theme="grit"] :is(.text-gray-500, .text-gray-600, .text-gray-700) {
   color: var(--color-text-muted);
 }
 
-html[data-theme="light"] :is(
+html[data-theme="grit"] :is(
   [class~="text-white"][class*="bg-indigo-"],
   [class~="text-white"][class*="bg-violet-"],
   [class~="text-white"][class*="bg-purple-"],
@@ -911,149 +1057,166 @@ html[data-theme="light"] :is(
   color: #ffffff;
 }
 
-html[data-theme="light"] :is([class~="hover:text-white"]:hover, [class~="group-hover:text-white"]) {
+html[data-theme="grit"] :is([class~="hover:text-white"]:hover, [class~="group-hover:text-white"]) {
   color: var(--color-text);
 }
 
-html[data-theme="light"] :is([class~="hover:text-gray-300"]:hover, [class~="hover:text-gray-400"]:hover, [class~="hover:text-gray-500"]:hover) {
+html[data-theme="grit"] :is([class~="hover:text-gray-200"]:hover, [class~="hover:text-gray-300"]:hover, [class~="hover:text-gray-400"]:hover, [class~="hover:text-gray-500"]:hover, [class~="group-hover:text-gray-400"]) {
   color: var(--color-text-secondary);
 }
 
-html[data-theme="light"] :is([class~="hover:bg-gray-900/40"]:hover, [class~="hover:bg-gray-800"]:hover, [class~="hover:bg-gray-800/70"]:hover, [class~="hover:bg-gray-800/60"]:hover, [class~="hover:bg-gray-800/40"]:hover, [class~="hover:bg-gray-700"]:hover, [class~="hover:bg-gray-700/60"]:hover, [class~="hover:bg-gray-600"]:hover, [class~="hover:bg-gray-200"]:hover) {
+html[data-theme="grit"] :is([class~="hover:bg-gray-900/60"]:hover, [class~="hover:bg-gray-900/40"]:hover, [class~="hover:bg-gray-800"]:hover, [class~="hover:bg-gray-800/70"]:hover, [class~="hover:bg-gray-800/60"]:hover, [class~="hover:bg-gray-800/40"]:hover, [class~="hover:bg-gray-700"]:hover, [class~="hover:bg-gray-700/60"]:hover, [class~="hover:bg-gray-600"]:hover, [class~="hover:bg-gray-200"]:hover) {
   background-color: var(--color-surface-hover);
 }
 
-html[data-theme="light"] :is(.border-gray-900, .border-gray-800, [class~="border-gray-800/70"], [class~="border-gray-800/50"], [class~="border-gray-800/40"], [class~="border-gray-800/20"]) {
+html[data-theme="grit"] :is(.border-gray-900, .border-gray-800, [class~="border-gray-800/70"], [class~="border-gray-800/50"], [class~="border-gray-800/40"], [class~="border-gray-800/20"]) {
   border-color: var(--color-border-subtle);
 }
 
-html[data-theme="light"] :is(.border-gray-700, [class~="border-gray-700/60"], [class~="border-gray-700/50"], [class~="border-gray-700/30"], [class~="border-gray-700/20"], .border-gray-600, .border-gray-500) {
+html[data-theme="grit"] :is(.border-gray-700, [class~="border-gray-700/60"], [class~="border-gray-700/50"], [class~="border-gray-700/30"], [class~="border-gray-700/20"], .border-gray-600, .border-gray-500) {
   border-color: var(--color-border);
 }
 
-html[data-theme="light"] [class~="divide-gray-800/70"] > :not([hidden]) ~ :not([hidden]) {
+html[data-theme="grit"] [class~="divide-gray-800/70"] > :not([hidden]) ~ :not([hidden]) {
   border-color: var(--color-border-subtle);
 }
 
-html[data-theme="light"] :is(.border-white, [class~="ring-white"], [class~="ring-white/60"]) {
+html[data-theme="grit"] :is(.border-white, [class~="ring-white"], [class~="ring-white/60"]) {
   border-color: var(--color-primary-solid);
   --tw-ring-color: var(--color-primary-solid);
 }
 
-html[data-theme="light"] .placeholder-gray-600::placeholder {
+html[data-theme="grit"] :is(.placeholder-gray-600, .placeholder-gray-700)::placeholder {
   color: var(--color-text-muted);
   opacity: 0.92;
 }
 
-html[data-theme="light"] .mix-blend-screen {
+html[data-theme="grit"] .mix-blend-screen {
   mix-blend-mode: normal;
 }
 
-/* Accent text must remain readable on light surfaces. */
-html[data-theme="light"] :is(.text-indigo-100, .text-indigo-200, .text-indigo-300, .text-indigo-400, .text-indigo-500, .text-indigo-600) {
-  color: #4338ca;
+/* Accent text, re-derived for the wood palette rather than lightened in
+   place. Indigo is the app's de-facto primary (297 utility uses across the
+   React pages), so it must become evergreen or grit is a green shell around a
+   purple app. Every value below clears 4.5:1 on app-bg, surface and
+   surface-muted. */
+html[data-theme="grit"] :is(.text-indigo-100, .text-indigo-200, .text-indigo-300, .text-indigo-400, .text-indigo-500, .text-indigo-600) {
+  color: #24503a;
 }
 
-html[data-theme="light"] :is(.text-violet-300, .text-violet-400, .text-purple-200, .text-purple-400) {
-  color: #6d28d9;
+html[data-theme="grit"] :is(.text-violet-300, .text-violet-400, .text-purple-200, .text-purple-400) {
+  color: #4a3f6b;
 }
 
-html[data-theme="light"] :is(.text-blue-200, .text-sky-400) {
-  color: #1d4ed8;
+html[data-theme="grit"] :is(.text-blue-200, .text-sky-400) {
+  color: #1f5560;
 }
 
-html[data-theme="light"] :is(.text-cyan-100, .text-cyan-200, .text-cyan-300, .text-cyan-400, .text-cyan-500, .text-cyan-600, .text-cyan-700, .text-cyan-800) {
-  color: #0e7490;
+html[data-theme="grit"] :is(.text-cyan-100, .text-cyan-200, .text-cyan-300, .text-cyan-400, .text-cyan-500, .text-cyan-600, .text-cyan-700, .text-cyan-800) {
+  color: #1f5560;
 }
 
-html[data-theme="light"] :is(.text-teal-200, .text-green-300, .text-green-400, .text-green-500) {
-  color: #0f766e;
+html[data-theme="grit"] :is(.text-teal-200, .text-green-300, .text-green-400, .text-green-500) {
+  color: #2f6b3f;
 }
 
-html[data-theme="light"] :is(.text-emerald-200, .text-emerald-300, .text-emerald-400, .text-emerald-500, .text-emerald-600) {
-  color: #047857;
+/* a step lighter than the evergreen primary, so "done" stays distinguishable
+   from "primary" instead of collapsing into one green */
+html[data-theme="grit"] :is(.text-emerald-200, .text-emerald-300, .text-emerald-400, .text-emerald-500, .text-emerald-600) {
+  color: #2f6b3f;
 }
 
-html[data-theme="light"] :is(.text-yellow-100, .text-yellow-200, .text-yellow-300, .text-yellow-400, .text-amber-300, .text-amber-400, .text-amber-500, .text-amber-600) {
-  color: #92400e;
+html[data-theme="grit"] :is(.text-yellow-100, .text-yellow-200, .text-yellow-300, .text-yellow-400, .text-amber-300, .text-amber-400, .text-amber-500, .text-amber-600) {
+  color: #755a12;
 }
 
-html[data-theme="light"] :is(.text-red-200, .text-red-300, .text-red-400, .text-red-500, .text-red-600, .text-red-700, .text-red-800) {
-  color: #b91c1c;
+html[data-theme="grit"] :is(.text-red-200, .text-red-300, .text-red-400, .text-red-500, .text-red-600, .text-red-700, .text-red-800) {
+  color: #8e3b2f;
 }
 
-html[data-theme="light"] :is(
+html[data-theme="grit"] :is(
   [class~="hover:text-indigo-100"]:hover,
   [class~="hover:text-indigo-200"]:hover,
   [class~="hover:text-indigo-300"]:hover,
   [class~="hover:text-indigo-400"]:hover,
   [class~="hover:text-violet-400"]:hover
 ) {
-  color: #3730a3;
+  color: #1a3d2c;
 }
 
-html[data-theme="light"] :is([class~="hover:text-cyan-300"]:hover, [class~="hover:text-cyan-400"]:hover, [class~="hover:text-sky-400"]:hover) {
-  color: #075985;
+html[data-theme="grit"] :is([class~="hover:text-cyan-300"]:hover, [class~="hover:text-cyan-400"]:hover, [class~="hover:text-sky-400"]:hover) {
+  color: #143c44;
 }
 
-html[data-theme="light"] :is([class~="hover:text-emerald-400"]:hover, [class~="hover:text-green-400"]:hover) {
-  color: #065f46;
+html[data-theme="grit"] :is([class~="hover:text-emerald-400"]:hover, [class~="hover:text-green-400"]:hover) {
+  color: #1f4c2b;
 }
 
-html[data-theme="light"] :is([class~="hover:text-red-300"]:hover, [class~="hover:text-red-400"]:hover, [class~="hover:text-red-500"]:hover) {
-  color: #991b1b;
+html[data-theme="grit"] :is([class~="hover:text-red-300"]:hover, [class~="hover:text-red-400"]:hover, [class~="hover:text-red-500"]:hover) {
+  color: #6d2c22;
 }
 
-html[data-theme="light"] [class~="hover:text-yellow-400"]:hover {
-  color: #78350f;
+html[data-theme="grit"] [class~="hover:text-yellow-400"]:hover {
+  color: #57420d;
 }
 
 /* Dark accent tints become light accent surfaces, while solid CTA colors stay solid. */
-html[data-theme="light"] :is(.bg-indigo-950, .bg-indigo-900, [class~="bg-indigo-950/30"], [class~="bg-indigo-950/20"], [class~="bg-indigo-950/10"], [class~="bg-indigo-900/60"], [class~="bg-indigo-900/50"], [class~="bg-indigo-900/40"], [class~="bg-indigo-900/30"], [class~="bg-indigo-900/20"], [class~="bg-indigo-400/20"]) {
-  background-color: #e7e9ff;
+html[data-theme="grit"] :is(.bg-indigo-950, .bg-indigo-900, [class~="bg-indigo-950/30"], [class~="bg-indigo-950/20"], [class~="bg-indigo-950/10"], [class~="bg-indigo-900/60"], [class~="bg-indigo-900/50"], [class~="bg-indigo-900/40"], [class~="bg-indigo-900/30"], [class~="bg-indigo-900/20"], [class~="bg-indigo-400/20"]) {
+  background-color: #dde7df;
 }
 
-html[data-theme="light"] :is(.bg-emerald-950, .bg-emerald-900, [class~="bg-emerald-950/40"], [class~="bg-emerald-950/30"], [class~="bg-emerald-950/10"], [class~="bg-emerald-900/90"], [class~="bg-emerald-900/30"]) {
-  background-color: #dcfce7;
+html[data-theme="grit"] :is(.bg-emerald-950, .bg-emerald-900, [class~="bg-emerald-950/40"], [class~="bg-emerald-950/30"], [class~="bg-emerald-950/10"], [class~="bg-emerald-900/90"], [class~="bg-emerald-900/30"]) {
+  background-color: #dfeadf;
 }
 
-html[data-theme="light"] :is(.bg-cyan-950, .bg-cyan-900, [class~="bg-cyan-950/60"], [class~="bg-cyan-950/50"], [class~="bg-cyan-950/30"], [class~="bg-cyan-950/20"], [class~="bg-cyan-900/50"]) {
-  background-color: #cffafe;
+html[data-theme="grit"] :is(.bg-cyan-950, .bg-cyan-900, [class~="bg-cyan-950/60"], [class~="bg-cyan-950/50"], [class~="bg-cyan-950/30"], [class~="bg-cyan-950/20"], [class~="bg-cyan-900/50"]) {
+  background-color: #d7e4e6;
 }
 
-html[data-theme="light"] :is(.bg-red-950, .bg-red-900, [class~="bg-red-900/60"], [class~="bg-red-900/50"]) {
-  background-color: #fee2e2;
+html[data-theme="grit"] :is(.bg-red-950, .bg-red-900, [class~="bg-red-900/60"], [class~="bg-red-900/50"]) {
+  background-color: #f4e2de;
 }
 
-html[data-theme="light"] :is([class~="bg-amber-950/30"], [class~="bg-amber-950/20"], [class~="bg-amber-900/30"], .bg-yellow-900) {
-  background-color: #fef3c7;
+html[data-theme="grit"] :is([class~="bg-amber-950/30"], [class~="bg-amber-950/20"], [class~="bg-amber-900/30"], .bg-yellow-900) {
+  background-color: #ece3c9;
 }
 
-html[data-theme="light"] :is([class~="bg-violet-950/20"], [class~="bg-violet-900/30"], .bg-purple-900) {
-  background-color: #f3e8ff;
+html[data-theme="grit"] :is([class~="bg-violet-950/20"], [class~="bg-violet-900/30"], .bg-purple-900) {
+  background-color: #e4e0ec;
 }
 
-html[data-theme="light"] :is(.bg-blue-900, .bg-teal-900) {
-  background-color: #dbeafe;
+html[data-theme="grit"] :is(.bg-blue-900, .bg-teal-900) {
+  background-color: #d7e4e6;
 }
 
-html[data-theme="light"] :is(.border-indigo-900, [class~="border-indigo-900/50"], .border-indigo-800, .border-indigo-700) {
-  border-color: #a5b4fc;
+html[data-theme="grit"] :is(.border-indigo-900, [class~="border-indigo-900/50"], .border-indigo-800, .border-indigo-700) {
+  border-color: #8fae9b;
 }
 
-html[data-theme="light"] :is(.border-emerald-900, .border-emerald-800, [class~="border-emerald-800/60"], .border-emerald-700, [class~="border-emerald-700/60"], [class~="border-emerald-700/50"]) {
-  border-color: #6ee7b7;
+html[data-theme="grit"] :is(.border-emerald-900, .border-emerald-800, [class~="border-emerald-800/60"], .border-emerald-700, [class~="border-emerald-700/60"], [class~="border-emerald-700/50"]) {
+  border-color: #9dc0a6;
 }
 
-html[data-theme="light"] :is(.border-cyan-900, [class~="border-cyan-900/50"], [class~="border-cyan-900/20"], .border-yellow-900, [class~="border-yellow-900/50"], .border-red-900, .border-red-800) {
+html[data-theme="grit"] :is(.border-cyan-900, [class~="border-cyan-900/50"], [class~="border-cyan-900/20"], .border-yellow-900, [class~="border-yellow-900/50"], .border-red-900, .border-red-800) {
   border-color: var(--color-border-strong);
 }
 
-html[data-theme="light"] svg [fill="#0f172a"] {
+/* The mind-map and storage canvases hard-code their node fill and stroke in
+   JSX. These rules are a COMPENSATION for that, not a colour swap, so they are
+   re-derived per theme rather than renamed. Night needs them as much as grit
+   now: the old dark palette was navy and #0f172a matched it by luck, but the
+   bark-black ground is green-cast, so an unpatched node reads as a navy blot.
+
+   The selector matches the ATTRIBUTE on purpose. The identical hex is also a
+   user-pickable swatch value applied through style={{backgroundColor}}, and
+   that one must stay literal. */
+html[data-theme="grit"] svg [fill="#0f172a"],
+html[data-theme="dark"] svg [fill="#0f172a"] {
   fill: var(--color-surface);
 }
 
-html[data-theme="light"] svg [stroke="#1f2937"] {
+html[data-theme="grit"] svg [stroke="#1f2937"],
+html[data-theme="dark"] svg [stroke="#1f2937"] {
   stroke: var(--color-border);
 }
 
@@ -1062,7 +1225,7 @@ html[data-theme] #nw-btn {
   border: 1px solid var(--color-primary-border);
   background: var(--color-primary-solid);
   color: #ffffff;
-  box-shadow: 0 10px 30px rgba(79, 70, 229, 0.34);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--color-primary-solid) 34%, transparent);
 }
 
 html[data-theme] #nw-btn:hover {

@@ -867,7 +867,8 @@ notes and deadlines". One piece is still deliberately **not** built:
 - **The caution calendar is now inline on TWO pages, and the case for extracting it has grown
   rather than closed.** `progress.html` styles its picker with Tailwind utilities;
   `documentations.html` styles its own with inline `var(--color-*)` theme tokens, because that
-  page has a light theme and Tailwind's hard-coded greys are unreadable in it. So the two copies
+  page's chrome is token-styled and Tailwind's hard-coded greys are unreadable on it under Grit.
+  So the two copies
   are not even the same technique, and a visual change now has to be made twice, differently.
 
   The extraction was deliberately NOT done when the second surface arrived: it would have meant
@@ -995,6 +996,27 @@ repository with no build step and no package manifest. Handing the picture to an
 already has open is the deliberate alternative.
 
 ## Additional Small Ideas
+
+### Route the React pages' hard-coded UI accents through the theme
+
+`progress.html` (16 hex literals), `sir-ks02.html` (101) and `true-storage.html` (37) pass colour
+as inline `style` values and SVG attributes from JSX, where the `styles.css` remap layer cannot
+reach. Under Grit the effect is visible: the Progression donut, its percentage, the SIR pips, the
+MM progress bar, the today outline and the goal bar all still paint indigo on a green page.
+
+Two things make this a real task rather than a find-and-replace, and both are the reason it was
+left out of the Grit change:
+
+- **Separate the data from the chrome first.** `PALETTE` (`progress.html:1268`) is a categorical
+  palette for distinguishing goals, and `mm.color` is a value the user picked. Those must stay
+  theme-invariant, and a blanket substitution would destroy them. Only the accent *defaults* —
+  the `|| '#6366f1'` fallbacks and the fixed progress/today colours — should move.
+- **`var()` does not work in an SVG presentation attribute.** `stroke={color}` has to become
+  `style={{stroke: color}}` before a token can be used, so every site needs reading rather than
+  patching, in the two files whose geometry the browser suite measures.
+
+Worth doing, and worth doing on its own.
+
 
 ### Add a favicon
 

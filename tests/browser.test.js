@@ -5641,4 +5641,197 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
+
+  // ── 14. Grit mode: the theme names, their migration, and their chrome ────
+  /* Appearance had NO committed coverage before this section, while every
+     other case in this file rendered in what used to be the light theme by
+     accident — headless Chrome reports no dark preference and nothing seeded
+     `track_theme`. So the palette was exercised ~157 times and asserted zero
+     times. These cases fix that, and they assert PER PAGE where the rule has
+     more than one surface, because a rule forgotten at one of several surfaces
+     is this repository's recurring bug. */
+
+  const THEME_OF = function () {
+    return {
+      attr: document.documentElement.getAttribute('data-theme'),
+      stored: localStorage.getItem('track_theme'),
+      // the USED value, not the declared one: a custom-ident like `grit` parses
+      // and sticks, so only the computed value tells you the browser understood.
+      scheme: getComputedStyle(document.documentElement).colorScheme,
+      bg: getComputedStyle(document.documentElement).getPropertyValue('--color-app-bg').trim(),
+      label: (document.querySelector('.theme-toggle__label') || {}).textContent || null
+    };
+  };
+
+  await t.test('THEME: a fresh visitor lands in grit, and a stored dark still lands in night', async () => {
+    // the claim this case is NAMED for goes first, so the fail-first run proves
+    // that one rather than whichever assertion happened to be written earliest.
+    const fresh = await open('index.html', { db: seedDb() });
+    const f = await fresh.evaluate(THEME_OF);
+    assert.equal(f.attr, 'grit', 'a visitor with no stored preference gets grit');
+    assert.equal(f.label, 'Grit', 'and the toggle names it');
+
+    const night = await open('index.html', { db: seedDb(), extra: { track_theme: 'dark' } });
+    const n = await night.evaluate(THEME_OF);
+    assert.equal(n.attr, 'dark', 'an explicit dark preference is untouched — it is NOT renamed in storage');
+    assert.equal(n.label, 'Night', 'but it presents as Night');
+
+    // The comparison is what catches "attribute set to a name no selector
+    // matches": a bogus value falls through to the :root block, so both reads
+    // would come back equal and equally non-empty.
+    assert.ok(f.bg && n.bg, 'both themes resolve an app background');
+    assert.notEqual(f.bg, n.bg, 'and the two backgrounds genuinely differ');
+
+    assert.deepEqual(realErrors(fresh), []);
+    assert.deepEqual(realErrors(night), []);
+    await fresh.close();
+    await night.close();
+  });
+
+  await t.test('THEME: a stored legacy `light` renders as grit and is never rewritten', async () => {
+    const page = await open('progress.html', { db: seedDb(), extra: { track_theme: 'light' } });
+    const before = await page.evaluate(THEME_OF);
+    assert.equal(before.attr, 'grit', 'the legacy value resolves to grit');
+
+    /* GUARD, passing on both sides by design: the alias must stay a READ.
+       Rewriting the key would fire `storage` in every other tab, and a tab on
+       the cached old script does not know `grit` — it would fall through to
+       matchMedia and silently flip. This assertion is what stops a future
+       "let's just migrate the key" patch. */
+    assert.equal(before.stored, 'light', 'and the stored bytes are left alone');
+
+    // an explicit set of the legacy name must still work, and canonicalise
+    await page.evaluate(function () { window.TrackTheme.set('light'); });
+    const after = await page.evaluate(THEME_OF);
+    assert.equal(after.attr, 'grit', 'TrackTheme.set("light") is not a silent no-op');
+    assert.equal(after.stored, 'grit', 'and an explicit choice writes the canonical name');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('THEME: color-scheme resolves to a keyword the browser understands', async () => {
+    /* theme.js writes `root.style.colorScheme` INLINE, so it beats both
+       stylesheet declarations. `grit` and `night` are valid custom-idents —
+       they parse, they stick, and no UA recognises them, so the used scheme
+       silently falls back to light. That would leave a night page with light
+       scrollbars and light native date pickers, and there are 19 date/time
+       inputs across the app. Assert the USED value. */
+    const grit = await open('progress.html', { db: seedDb() });
+    assert.equal((await grit.evaluate(THEME_OF)).scheme, 'light',
+      'grit maps to the `light` keyword, not to the theme name');
+
+    const night = await open('progress.html', { db: seedDb(), extra: { track_theme: 'dark' } });
+    assert.equal((await night.evaluate(THEME_OF)).scheme, 'dark',
+      'night maps to the `dark` keyword, not to the theme name');
+
+    await grit.close();
+    await night.close();
+  });
+
+  await t.test('THEME: html[data-theme] chrome is STYLED, not merely present', async () => {
+    /* The notes widget, the Firebase overlay and all four banners are styled
+       entirely through the BARE `html[data-theme]` selector, because they are
+       injected as hard-coded dark CSS by notes-widget.js and storage-guard.js.
+       If applyTheme ever returns before setting the attribute, every one of
+       them loses all styling at once — and the smoke cases would not notice,
+       because they assert those elements EXIST, never that they are painted. */
+    const page = await open('index.html', { db: seedDb() });
+    const btn = await page.evaluate(function () {
+      var el = document.getElementById('nw-btn');
+      if (!el) return null;
+      var cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, attr: document.documentElement.getAttribute('data-theme') };
+    });
+    assert.ok(btn, 'the notes widget button exists');
+    assert.ok(btn.attr, 'data-theme is set at all — every bare html[data-theme] rule depends on it');
+    assert.notEqual(btn.bg, 'rgba(0, 0, 0, 0)',
+      'and the notes button is actually painted (' + btn.bg + ')');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('THEME: the toggle round-trips and reaches a second tab', async () => {
+    const a = await open('progress.html', { db: seedDb() });
+    assert.equal((await a.evaluate(THEME_OF)).attr, 'grit', 'tab A starts in grit');
+
+    // fresh:false, or the second tab wipes the origin the first is under test with
+    const b = await open('progress.html', { fresh: false });
+    assert.equal((await b.evaluate(THEME_OF)).attr, 'grit', 'tab B agrees');
+
+    await a.evaluate(function () { document.getElementById('theme-toggle').click(); });
+    const flipped = await a.evaluate(THEME_OF);
+    assert.equal(flipped.attr, 'dark', 'clicking the toggle reaches night');
+    assert.equal(flipped.stored, 'dark', 'and persists the canonical name');
+
+    /* This is the assertion that catches a rename missing ONE of the four
+       places theme.js spells the pair. A missed spelling makes applyTheme a
+       silent no-op and the button simply stops working. */
+    await a.evaluate(function () { document.getElementById('theme-toggle').click(); });
+    const back = await a.evaluate(THEME_OF);
+    assert.equal(back.attr, 'grit', 'and clicking again comes back to grit');
+    assert.equal(back.stored, 'grit', 'writing grit, never the legacy name');
+
+    await b.evaluate(function () {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'track_theme', newValue: 'dark' }));
+    });
+    assert.deepEqual(realErrors(a), []);
+    await a.close();
+    await b.close();
+  });
+
+  await t.test('THEME: text clears 4.5:1 on every text-bearing surface, in BOTH themes', async () => {
+    /* README has claimed "stronger text contrast" for a long time with nothing
+       measuring it. This is that measurement, and it is asserted per theme
+       because a palette can easily be fine in one and fail in the other. */
+    const MEASURE = function () {
+      var cs = getComputedStyle(document.documentElement);
+      var tok = function (n) { return cs.getPropertyValue(n).trim(); };
+      var probe = document.createElement('span');
+      document.body.appendChild(probe);
+      var rgb = function (v) {
+        probe.style.color = v;
+        var m = getComputedStyle(probe).color.match(/[\d.]+/g);
+        return m ? [+m[0], +m[1], +m[2]] : null;
+      };
+      var lum = function (c) {
+        var f = c.map(function (v) {
+          v = v / 255;
+          return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+      };
+      var ratio = function (a, b) {
+        var x = lum(a), y = lum(b);
+        return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+      };
+      var texts = ['--color-text', '--color-text-secondary', '--color-text-muted'];
+      var surfaces = ['--color-app-bg', '--color-surface', '--color-surface-muted'];
+      var worst = { ratio: 99, pair: null };
+      texts.forEach(function (t) {
+        surfaces.forEach(function (s) {
+          var a = rgb(tok(t)), b = rgb(tok(s));
+          if (!a || !b) return;
+          var r = ratio(a, b);
+          if (r < worst.ratio) worst = { ratio: r, pair: t + ' on ' + s };
+        });
+      });
+      probe.remove();
+      return worst;
+    };
+
+    const grit = await open('index.html', { db: seedDb() });
+    const g = await grit.evaluate(MEASURE);
+    assert.ok(g.ratio >= 4.5,
+      'grit: worst text pair is ' + g.pair + ' at ' + g.ratio.toFixed(2) + ':1');
+
+    const night = await open('index.html', { db: seedDb(), extra: { track_theme: 'dark' } });
+    const n = await night.evaluate(MEASURE);
+    assert.ok(n.ratio >= 4.5,
+      'night: worst text pair is ' + n.pair + ' at ' + n.ratio.toFixed(2) + ':1');
+
+    await grit.close();
+    await night.close();
+  });
 });

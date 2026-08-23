@@ -86,7 +86,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=6`, `schema.js?v=6`, `calendar-core.js?v=6`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`, `doc-table-core.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. `theme.js` is the only unversioned one left.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=7`, `schema.js?v=6`, `calendar-core.js?v=6`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`, `doc-table-core.js?v=1`, `theme.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
 
 A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
 than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,
@@ -305,12 +305,42 @@ Every write of `track_db` must go through `TrackStorage.saveDB(db)`, never a bar
 
 Other current browser keys include:
 
-- `track_theme`
+- `track_theme` — the appearance preference; see the rules below
 - `track_db_ts` — when this device's data was last **confirmed** in the cloud, written only after the server accepts a write
 - `track_db_pending` — set while this device holds unsent edits, cleared on confirmation
 - `trackPriorityMatrix`
 - `fb_reloaded` and `fb_reloaded_gen` in `sessionStorage`
 - legacy Progress and KS02 keys used during migration
+
+`track_theme` holds `grit` or `dark`. The superseded `light` is the previous name for
+`grit` and is accepted **forever on read**, never written. Four rules follow, and the
+first two are the load-bearing ones:
+
+- The pair is spelled **once**, in `theme.js`'s `GRIT`/`NIGHT` constants and its single
+  `normalizeTheme`, which both the storage read and `applyTheme` go through. It used to
+  be spelled at four sites — the fallback, the click handler, the system-preference
+  listener and `TrackTheme.toggle` — and that is the duplication shape that has already
+  cost this project a caution predicate. Missing one makes `applyTheme` a silent no-op:
+  no attribute is set, and **every bare `html[data-theme]` rule** in `styles.css` dies at
+  once, taking the focus rings, the notes widget, the Firebase overlay and all four
+  banners with it. The smoke cases cannot see this — they assert those elements exist,
+  never that they are painted.
+- The alias is a **read**, never a rewrite. Rewriting the key would fire `storage` in
+  every open tab, and a tab on the cached previous script does not recognise `grit`, so
+  it would fall through to `matchMedia` and silently change appearance under a user who
+  touched nothing. This is also why `dark` deliberately keeps its name rather than
+  becoming `night`: an older tab still understands `dark`, and renaming it would break
+  the one direction that still works across versions. `night` is a display name only.
+- `readStoredTheme`'s accept-list and the alias must stay in the **same** function. If a
+  stored canonical value made it return `null`, the system-preference listener would
+  conclude the user had never chosen and let the next OS change override an explicit
+  preference.
+- `color-scheme` is written **inline** on `<html>`, so it beats both stylesheet
+  declarations, and its grammar accepts a custom ident — a raw appearance name parses,
+  sticks, and is understood by no browser, silently falling back to light. Map the name
+  to a keyword (`colorSchemeFor`); never pass the name through. There are 19 date/time
+  inputs across the app, and the failure looks like light scrollbars and light native
+  pickers on a dark page.
 
 Firebase uploads the complete serialized database gzipped and split across `users/{uid}` (manifest) plus `users/{uid}/blob/{0..n-1}` (payload chunks), committed in one atomic batch. `users/{uid}/backup/v1` holds a one-time copy of the pre-migration legacy document. Readers verify chunk count, per-chunk generation, byte length, and checksum, and refuse a payload rather than partially applying it. See README "Current cloud shape".
 
@@ -1500,6 +1530,98 @@ line at a bare width — do not. See the next section.
 - **Environment note.** Another session was editing `progress.html` and `tests/browser.test.js`
   throughout this task (the Task Priority matrix touch path) and running the suite beside it. Its
   in-flight work is in the same diff and was preserved rather than reverted.
+
+### Grit and Night — light mode replaced by a growth-ring identity (2026-08-23)
+
+- **No data-contract change to `track_db` at all.** The slot stays at **23** fields, nothing was
+  added to `SLOT_FIELDS`, and the hand-written CONTRACT lists in `tests/schema.test.js`,
+  `tests/browser.test.js` and `tests/lib/fixture.js` needed no change. The only persisted key
+  touched is `track_theme`, whose rules are now in the data-contract section above. The offline
+  suites are untouched and pass identically under all five swept timezones. This task adds **six**
+  browser cases — the first appearance coverage this repository has ever had.
+- **`node tests/run.js`: all 14 suites pass**, against a tree that was byte-identical for the
+  whole run (checked by `md5sum` before and after) and with `git log --oneline -1` unchanged at
+  either end, so no concurrent session swept work into it. calendar-core **88** and schema **54**
+  under each of the five swept timezones with identical results; true-storage-core 24;
+  graph-layout 21; doc-table-core 42; browser **163 subtests, 0 failures** (157 → 163).
+- **What was there before: nothing.** A grep of `tests/` for `theme`, `track_theme`, `data-theme`,
+  `light`, `dark` or `contrast` returned zero hits, while the browser suite rendered every one of
+  its ~157 subtests in the light theme **by accident** — headless Chrome reports no dark
+  preference and nothing seeded the key. The palette was exercised constantly and asserted never.
+  That is why a palette-only change is nearly free against this suite, and why 157 passing tells
+  you nothing about whether an appearance is legible.
+- **Fail-first, part one: three cases against the untouched tree.** The working tree *was* the
+  pre-change file, so no scratch directory was needed. Three of the six failed, each on the
+  assertion it is **named** for, all with the same message shape — `'light' !== 'grit'`. The
+  assertion order matters and was chosen deliberately: AGENTS already records that a case
+  asserting N claims is proven for exactly the one that fired, so the named claim goes first.
+- **Fail-first, part two: two doctored baselines, and their failure sets are NOT disjoint — one
+  strictly contains the other, which is itself the finding.** Each `TRACK_TEST_ROOT` held symlinks
+  to the repository, a **REAL copy** of `tests/`, and one doctored `theme.js`:
+  - `root.style.colorScheme = next` (the appearance name passed through instead of mapped) →
+    **only** `THEME: color-scheme resolves to a keyword the browser understands` failed, on
+    `'grit' !== 'light'`. The other five passed. A clean, isolated proof.
+  - the `applyTheme` guard rejecting everything, so `data-theme` is never set → **five of six**
+    failed on `null !== 'grit'`.
+  The second baseline's value is not the five failures but what passed beside them: **all five
+  `smoke:` cases passed against it**, on a tree where every bare `html[data-theme]` rule is dead
+  and the notes widget, Firebase overlay and all four banners render unstyled. The smoke cases
+  assert those elements **exist**; only `THEME: html[data-theme] chrome is STYLED, not merely
+  present` asserts they are painted. That contrast is the evidence the new case covers something
+  the old ones cannot. Never place either doctored copy in the repository.
+- **The defect that would have shipped, found by review rather than by any test.**
+  `theme.js` wrote `root.style.colorScheme = theme` — and `color-scheme`'s grammar accepts a
+  custom ident, so `grit` would have parsed, stuck, and been understood by no browser, falling
+  back to light. Being **inline** it beats both stylesheet declarations. The result would have
+  been a correct dark palette with light native scrollbars and light `<input type="date">` pickers
+  across the 19 date/time inputs in the app. **Generalise it:** when a value is both a domain name
+  and a CSS keyword, map it; never let the two vocabularies be the same string by coincidence.
+- **The four-way spelling was collapsed to one.** The light/dark pair was spelled at
+  `theme.js`'s fallback, click handler, system-preference listener and `TrackTheme.toggle`. That is
+  the same duplication shape that cost this project the deadline caution predicate, and here the
+  failure mode is worse than a wrong colour: a missed spelling makes `applyTheme` return before
+  setting the attribute, and every bare `html[data-theme]` rule dies at once. One `normalizeTheme`,
+  reached by both the storage read and `applyTheme`.
+- **Two compensations were re-derived rather than renamed.** `svg [fill="#0f172a"]` and
+  `[stroke="#1f2937"]` patch hard-coded hex in the canvas JSX. They existed only under the light
+  theme, because the old dark palette was navy and `#0f172a` matched it **by luck**. The Night
+  ground is green-cast, so the rule is now needed under `dark` as well or every mind-map node
+  reads as a navy blot. A mechanical rename would have missed this entirely.
+- **Six pre-existing Tailwind mapping gaps were swept while in there**, each a dark value
+  surviving onto a pale surface because a sibling shade or opacity was mapped and it was not:
+  `hover:text-gray-200` (8 sites), `bg-gray-950/60`, `hover:bg-gray-900/60`,
+  `placeholder-gray-700`, `group-hover:text-gray-400`, and the non-hover `bg-white/5`.
+- **Contrast is measured now, not claimed.** Every text role clears 4.5:1 against app-bg, surface
+  and surface-muted in **both** appearances — worst case 5.19 (Grit) and 5.21 (Night) for the
+  three text tiers, 4.68 and 4.93 including the accent roles. The browser case computes this from
+  the live computed tokens rather than hard-coding hex, so a future palette tweak is checked
+  instead of merely re-recorded. README's long-standing "stronger text contrast" bullet had no
+  measurement behind it until now.
+- **No network dependency was added.** `--font-display` and `--font-data` are system stacks, and
+  they are applied only through `body.home` and explicit classes — never `:root`, `html`, `body`,
+  `*` or a bare element selector. This is load-bearing: `--font-ui` never reaches `progress.html`
+  (it is applied at exactly three places in `styles.css`), so the geometry-sensitive week-view
+  cases are insulated *by construction*, and a font that inherited into `#root` would put them
+  back in play. A webfont would additionally have made text metrics change asynchronously after
+  first paint and would have tripped `realErrors`, which is asserted empty 118 times in this file.
+- **A known and deliberate gap: `progress.html` still paints some chrome indigo.** The remap layer
+  reaches Tailwind utility classes and `styles.css`; it cannot reach a hex literal passed as an
+  inline `style` value or an SVG attribute from JSX. `progress.html` holds 16 such literals. Some
+  are genuinely **data** and must stay theme-invariant — `PALETTE` (line 1268) is a categorical
+  goal palette, and `mm.color` is a user-chosen value. But the rest are UI accent defaults —
+  the progression donut and its percentage (1547, 1584), the SIR pips (1852, 1880), the MM
+  progress bar (3568), the today outline (3804), and the goal bar (9363) — and they read as
+  indigo on a green page. `sir-ks02.html` (101 literals) and `true-storage.html` (37) have the
+  same shape. This was left alone on purpose: the approved scope excluded editing those files'
+  JSX, they are the geometry-sensitive ones, and an SVG **attribute** does not accept `var()`,
+  so the fix is a real refactor rather than a substitution. It is the largest remaining visual
+  inconsistency and it is a follow-up, not an oversight.
+- **Not covered, and stated plainly.** Print output in the new palette was **not** looked at — the
+  `@media print` block flattens to black-on-white and is theme-independent by construction, and
+  the committed case that guards its split flatten rule still passes, but no one has printed a
+  page. Real touch hardware and the live Firebase project are unverified as ever. The growth-ring
+  section on Home was exercised through the suite's page-mount cases and by hand in a headless
+  screenshot, never on a real pointer or a real long-lived workspace.
 
 ### The ☰ panel looks forward only (2026-08-23)
 
