@@ -184,23 +184,33 @@ zooms between 32px and 256px). Dragging or top-edge resizing snaps to five minut
 start to the `00:00`–`23:55` range, so every hour of the day is a valid drop target. Hour labels read
 `12am` through `11pm`.
 
-**A week column is never narrower than 228px**, because the day header has to hold three things
-across it: a 36px SIR-session strip, the centre carrying the weekday, date and the `+ ◎ ⊕ ☰` row,
-and a notes-and-caution strip that starts at 60px and stretches to 110px for a long title. The
-button row needs `4 × 28 + 3 × 6 = 130px`, so the column needs `1 + 36 + 130 + 60 = 227`. At the
-old 140px minimum the centre got 43px and the row overflowed it — and because a flex item paints as
-an atomic unit in document order, that overflow went **underneath** the notes strip beside it. The
-notes strip has no background, so `☰` stayed perfectly visible and stopped answering clicks and
-taps entirely. Only the ends of the row were lost, and only the right one in the ordinary case:
-`◎` and `⊕` were never affected, and `+` spilling left stays on top of the SIR strip, which is an
-*earlier* sibling. A long title makes it worse at that end too — the strip claims 110px, the row
-spills far enough left to reach the sticky time column, which is opaque and `z-index: 30`, so `+`
-disappears as well as going dead. It cost nothing on a wide desktop, where columns grow past the
-minimum, and made `☰` unusable on a tablet. The row also carries `flex-wrap`, so when a long title claims the
-width back (centre 81px) it breaks to 2×2 **inside** its own column rather than spilling again, and
-`flex-shrink-0` keeps every button at 28px instead of collapsing to a bare glyph. The week view
-therefore scrolls horizontally below `56 + 7 × 228 = 1652px`. Day mode is unaffected — its single
-column is never at the minimum.
+**The day header's four buttons are a 2×2 block on their own full-width row**, below the header's
+three-part strip row rather than inside it: `+` task add and `◎` MM add on the first line, `⊕` MG
+add and `☰` day notes & deadlines on the second. That placement is what keeps a **week column
+never narrower than 140px**, so the week view scrolls horizontally only below
+`56 + 7 × 140 = 1036px` and a 1280px laptop shows the whole week without scrolling. Day mode is
+unaffected — its single column is never at the minimum.
+
+The buttons used to sit in the header's centre section, between the 36px SIR-session strip and the
+notes-and-caution strip that starts at 60px and stretches to 110px for a long title. As one line
+they needed `4 × 28 + 3 × 6 = 130px` and the centre had 43px, so the row overflowed — and because a
+flex item paints as an atomic unit in document order, that overflow went **underneath** the notes
+strip beside it. The notes strip has no background, so `☰` stayed perfectly visible and stopped
+answering clicks and taps entirely. Only the ends of the row were lost, and only the right one in
+the ordinary case: `◎` and `⊕` were never affected, and `+` spilling left stayed on top of the SIR
+strip, an *earlier* sibling. A long title made it worse at that end too — the strip claims 110px,
+the row spills far enough left to reach the sticky time column, which is opaque and `z-index: 30`,
+so `+` disappeared as well as going dead. It cost nothing on a wide desktop, where columns grow
+past the minimum, and made `☰` unusable on a tablet.
+
+Widening the column to 228px fixed that by buying the room, at 88px per column and a 1652px
+minimum. Giving the block its own row fixes it **structurally instead**: it spans the whole column,
+shares horizontal space with nothing, and there is no width at which a strip can squeeze it. What a
+long title now takes width from is the *date*, not the buttons — the centre carries a `min-w-[28px]`
+floor at the date circle's own width and the notes strip is allowed to shrink, so flexbox freezes
+the centre at 28px and settles the strip at 75px rather than collapsing the centre to nothing.
+Measured at a pinned 140px column: bare day `centre 43 / strip 60`, long title `centre 28 /
+strip 75`, both with all four buttons hit-testing to themselves on two lines of two.
 
 **Deadlines** are a separate slot field from calendar notes. A deadline is due on one date at a
 required time, and carries a title, an optional description, and the list of days it warns on:
@@ -382,9 +392,17 @@ prep. A run-up that
 would begin before `00:00` is clipped at the top of the grid and shortened, so it still ends on its
 due time rather than being pushed past it.
 
-**The `☰` button** sits beside `+ ◎ ⊕` in each timeline day header and opens a browser over **every**
-day note and deadline in the slot — not only that day's — as **one flat list in chronological order**
-by each item's own date and time. The rows belonging to the day the panel was opened on are tinted
+**The `☰` button** sits beside `+ ◎ ⊕` in each timeline day header and opens a browser over every
+day note and deadline in the slot **dated on or after the day it was opened from** — not only that
+day's, but never an earlier one — as **one flat list in chronological order** by each item's own date
+and time. The panel is opened from a day in order to put work on it, so it **looks forward from that
+day and never back**: an item belonging to an earlier day is not listed, and the text filter cannot
+reach one either. The cut is on the item's **own date**, the date the row reads out, and never on the
+day its block happens to sit on — so moving a block never moves an item in or out of the list. It is
+also relative to the day **clicked**, not to today: a column further out lists strictly less than an
+earlier one, and an earlier item is reached by opening the panel from a day on or before it. When
+everything in the slot is behind the cutoff the panel says so and names the day, rather than
+reporting an empty workspace. The rows belonging to the day the panel was opened on are tinted
 and scrolled into view. `All` / `Notes` / `Deadlines` tabs and a text filter narrow it. Each row
 links to that item's existing popup, shows its **own date and time as a read-out** (they are changed
 from the item and nowhere else), and carries:

@@ -1432,6 +1432,142 @@ UI.
   both cases into its commit. Load average sat near 5 and a full run took 14 minutes. Check
   `pgrep -fc "user-data-dir=/tmp/track-cdp-"` before believing any browser-layer failure.
 
+**Superseded on 2026-08-23** — the widening was reverted the same day and the reachability fixed
+structurally instead. `DAY_MIN_W` is 140 again and the button row is a 2×2 block on its own
+full-width row. The entry above is kept because its *diagnosis* of the paint-order bug and its
+lessons about test messages still apply; its behavioural claims — 228px, 1652px, `flex-wrap`, one
+line at a bare width — do not. See the next section.
+
+### The same four buttons, stacked instead of paid for (2026-08-23)
+
+- **No data-contract change at all.** The slot stays at **23** fields, nothing was added to
+  `SLOT_FIELDS`, the hand-written CONTRACT lists needed no change, and nothing here reaches
+  `track_db`. `styles.css` was not touched and no JS module changed, so **no `?v=` moved**. The
+  offline suites are untouched and pass identically under all five swept timezones. This task adds
+  **one** browser case and rewrites the comments on the two it inherits.
+- **The change, and why the arithmetic forced its shape.** At `DAY_MIN_W = 140` the header's centre
+  section gets `140 − 1 border − 36 SIR strip − 60 notes strip = 43px`, and even a 2×2 block needs
+  `2 × 28 + 6 = 62px`. A stacked block *inside the centre* does not fit at 140 — so the block moved
+  **out** of the three-part strip row onto its own full-width row, where it has `140 − 8 padding =
+  132px` and shares horizontal space with nothing. That is the difference between the two fixes and
+  the reason to prefer this one: 228px made the bug **out-budgeted**, the own row makes it
+  **unreachable**. A user asking for the width back is what prompted it; the 1652px minimum meant a
+  1280 or 1440 laptop scrolled the week.
+- Two supporting edits keep 140 honest: the centre carries `min-w-[28px]` (a floor at the date
+  circle) and the notes strip lost `flex-shrink-0`. Without them a 110px strip over-subscribes the
+  row (`36 + 110 > 139`), the centre collapses to zero, and the **date** paints out under the strip
+  instead. Flexbox resolves the min-violation by freezing the centre and shrinking the strip.
+- **Fail-first evidence, and it took two runs to be worth anything.** The working tree *was* the
+  pre-change file, so no `TRACK_TEST_ROOT` scratch directory was needed — the situation "Movable
+  deadline due date" describes. The new case makes **two** claims, and the first run only proved
+  one: it died on `the day column is back at its 140px minimum (228px)` because that assertion came
+  first, leaving the row-count assertion — the one the case is *named* for — never executed and
+  never shown able to fail. The assertions were reordered and it was re-run, giving
+  `the four buttons are drawn on TWO lines, not one (+◎⊕☰)` / `1 !== 2`. **Generalise it:** a case
+  asserting N independent claims has been fail-first-proven for exactly the one that fired. Order
+  the assertion the case is named for first, or run it twice.
+- The two inherited cases (`every day-header button is hit-testable…`, `a long note title cannot
+  push a day-header button out of reach`) **passed on both sides**, which is exactly their job:
+  they assert the SYMPTOM, so they outlive the mechanism and their staying green through a
+  228 → 140 revert is the evidence the dead `☰` did not come back.
+- **Grouping by `top` rather than counting children is the whole case.** Four buttons in one
+  container is true of both layouts; only the number of lines they are drawn on tells a 2×2 block
+  from a row of four. This is the `data-block-day` lesson again — the right ids at the right times
+  were true on the wrong day, and only the column distinguished them.
+- **A test-helper hazard that would have produced a false pass, caught by reading the code rather
+  than by running it.** `HEADER_BUTTONS` found the notes strip by walking
+  `row.parentElement.parentElement.lastElementChild`, which is only the strip while the button row
+  is *inside the centre*. After the move it resolves to the last **day column** — always wider than
+  60px, so the long-title case's `m.strip.width > 60` precondition would have passed for entirely
+  the wrong reason and the case would have stopped testing the squeeze it names. `data-day-strip`
+  was added to the product and landed **as its own step**, run green before anything else changed,
+  so no later failure could be blamed on a missing hook (the TOUCH-sidebar lesson).
+- **Post-change geometry, measured rather than reasoned** (task-owned script, cannot be re-run):
+  at 820×1180 a bare day gives column 140, centre 43, strip 60; the long-title day gives centre 28
+  and strip 75 — the predicted freeze-and-shrink exactly. Both draw two lines of two at 28px with
+  every button hit-testing to `self`, and the block stays inside its column. At 1280×900 the week
+  **does not scroll** (`scrollWidth === clientWidth === 1265`), which is the direct check on the
+  reason for the change; columns grow to 173 and the strip to 108. At 1024×768 it still scrolls
+  (1036 > 1009), as 1036 requires.
+- Day mode gets the 2×2 too — one code path, no `timelineMode` branch. There is room to spare
+  there; uniformity was preferred to a second layout.
+- The task-owned preload that makes `ONLY_PATTERN` work on this file (wrapping the `t` handed to
+  the parent callback, since `--test-name-pattern` cannot narrow it) turned a 14-minute iteration
+  into ~25 seconds. Worth rebuilding for any future work in here.
+- **Not covered, and it is still the entire point of the original report:** a tap on real touch
+  hardware. iPadOS gesture arbitration is unverified and a real device pass is owed. Also not
+  covered, as ever: the live Firebase project, and print output.
+- **Environment note.** Another session was editing `progress.html` and `tests/browser.test.js`
+  throughout this task (the Task Priority matrix touch path) and running the suite beside it. Its
+  in-flight work is in the same diff and was preserved rather than reverted.
+
+### The ☰ panel looks forward only (2026-08-23)
+
+- **No data-contract change at all.** The slot stays at **23** fields, nothing was added to
+  `SLOT_FIELDS`, no `?v=` moved, and `styles.css` was not touched — the whole change is a filter
+  and an empty-state branch in `progress.html`'s inline JSX. The panel writes nothing, and the new
+  case asserts `track_db` is byte-identical across the whole interaction. The offline suites are
+  untouched and pass identically under all five swept timezones (13 suites). This task adds **one**
+  browser case and re-seeds one existing one.
+- The rule has exactly **one** definition and deliberately no second copy: `documentations.html`
+  and `index.html` render day- and month-scoped calendars, not a browse-everything panel, so there
+  is no sibling surface to keep in step. The gate is applied **once**, after both kinds are
+  collected, rather than beside each of the two pushes — notes and deadlines are collected on
+  separate lines, which is the exact shape that once lost this project the caution predicate.
+- **Fail-first evidence.** The working tree *was* the pre-change file, so no `TRACK_TEST_ROOT`
+  scratch directory was needed. The new case failed on its own assertion rather than on a
+  `waitFor` timeout, which is what proves it could already see the panel and was failing for the
+  reason it names:
+
+  ```
+  both earlier items are gone and the clicked day's own item is kept
+  + actual - expected
+    [
+  +   'n-past',
+  +   'd-past',
+      'n-today',
+      'd-future'
+    ]
+  ```
+
+- **The case opens the panel on TWO different days on purpose, and the second is the one that
+  matters.** An implementation cutting against `todayStr` instead of the day clicked passes step 1
+  completely unchanged; only reopening on `today+3` and finding TODAY's own note gone tells them
+  apart. It also asserts the earlier note and the earlier deadline absent **by id** and re-checks
+  under the `Deadlines` tab, because a cut applied to one kind and forgotten for the other still
+  yields a shorter, plausible-looking list.
+- **An existing case had to be re-seeded, and that is a consequence, not a tidy-up.** `the fourth
+  button lists everything in ONE flat chronological list` seeded the fixed dates `2026-01-05` and
+  `2026-02-09`, both in the **past**, so under the new rule it would have asserted the ordering of
+  an empty list. It moves to `dayFromToday(5)` / `dayFromToday(9)` and still spans three days and
+  four rows. **Any case that seeds a fixed calendar date and opens this panel is now
+  time-dependent in a way it was not before** — seed with `dayFromToday` here.
+- An item whose `date` is not a well-formed day is deliberately **kept** in the list: it belongs to
+  no day, so it cannot belong to an earlier one, and this panel is the only surface such a record
+  appears on. Hiding it would make it unreachable, which is the one thing this project will not
+  trade for a tidier rule.
+- The empty state **names the cutoff** when something was actually cut, and keeps the original
+  wording otherwise. Not cosmetic: a slot full of earlier items, opened from a later column, would
+  otherwise read as "everything I wrote is gone".
+- **What was run.** All 13 offline suites under five swept timezones, identical results. A targeted
+  run of **all ten** browser cases that open this panel, plus the six page-mount smoke cases —
+  plan counts checked rather than the summary line, since `node --test` reports `# pass 1` for a
+  run that executed nothing. Then the full browser suite: **157 subtests, all passing**. That run
+  covered this task's work *and* the other session's in-flight day-header rewrite together, so it
+  is evidence of no interaction between them rather than of either one alone.
+- **Not covered.** Real touch hardware, the live Firebase project, and print output, as ever. The
+  panel was not clicked by hand on a real pointer; the cases drive it through `.click()`. The
+  empty state's *other* branch — the original "No day notes or deadlines yet." for a slot holding
+  nothing at all — is unasserted; only the new cutoff-naming branch has a case.
+- **Environment note, and it is the `f29f3cf` hazard again, one commit later.** Another session was
+  rewriting the *same* day-header region of `progress.html` throughout this task — moving the
+  `+ ◎ ⊕ ☰` row into a 2×2 block and taking `DAY_MIN_W` back from 228 to 140 — and committed
+  mid-task as `1cf7b23`, sweeping this task's filter change and its new browser case into that
+  commit. Nothing was lost. **Check `git log --oneline -1` before and after any long run:** a
+  `git diff` that does not show an edit you know you made usually means another session committed
+  it, not that it vanished. Confirm with `git show HEAD:<file> | rg <your change>` before
+  re-applying anything, or you will duplicate it.
+
 ### Confirmation on every destructive control (2026-08-18)
 
 - 19 controls that deleted or cleared stored data on one unguarded click now ask

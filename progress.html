@@ -4844,16 +4844,21 @@
       const START_HOUR  = 0;
       const END_HOUR    = 24;
       const TIME_COL_W  = 56;
-      // A week column has to hold the day header's three parts side by side:
-      // the 36px SIR strip, the centre, and the 60px notes strip. The centre
-      // carries the `+ ◎ ⊕ ☰` row, which needs 4×28 + 3×6 = 130px, so the
-      // column needs 1 (border) + 36 + 130 + 60 = 227. At the old 140 the
-      // centre got 43px and the row spilled out of it — and a flex item paints
-      // as an atomic unit in document order, so the overflow went UNDER the
-      // notes strip (a later sibling) and under the sticky time column, which
-      // left `☰` visible and completely dead to a click or a tap. The row's
-      // flex-wrap below is what keeps that structural rather than arithmetic.
-      const DAY_MIN_W   = 228;
+      // A week column holds the day header's three parts side by side: the 36px
+      // SIR strip, the centre carrying the weekday and date, and a notes strip
+      // that starts at 60px. This was briefly 228 so the `+ ◎ ⊕ ☰` row would
+      // also fit ACROSS that centre — it needed 4×28 + 3×6 = 130px and got 43,
+      // and because a flex item paints as an atomic unit in document order the
+      // overflow went UNDER the notes strip beside it, leaving `☰` visible and
+      // completely dead to a click or a tap. Buying the room cost every column
+      // 88px and made the week scroll below 1652px.
+      //
+      // That row is now a 2×2 block on its OWN full-width row below the strips
+      // (see the day header), so it shares horizontal space with nothing and no
+      // strip can squeeze it at any column width. The minimum is back to what
+      // the strips and the date alone need, and the bug is unreachable rather
+      // than merely out-budgeted.
+      const DAY_MIN_W   = 140;
       const TOTAL_W     = TIME_COL_W + 7 * DAY_MIN_W;
       const HOURS       = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 
@@ -6445,7 +6450,14 @@
                     </div>
 
                     {/* CENTER — existing day content */}
-                    <div className="flex-1 flex flex-col items-center py-2 min-w-0">
+                    {/* `min-w-[28px]` is a floor at the date circle's own width.
+                        At 140 a 110px notes strip over-subscribes the row
+                        (36 + 110 > 139); flexbox resolves that by freezing this
+                        centre at its floor and shrinking the strip beside it to
+                        75, so the date stays put and a long title truncates a
+                        little harder — instead of the centre collapsing to zero
+                        and painting the date out under the strip. */}
+                    <div className="flex-1 flex flex-col items-center py-2 min-w-[28px]">
                     <div className={`text-[10px] tracking-widest ${isToday ? 'text-indigo-400' : 'text-gray-600'}`}>
                       {day.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()}
                     </div>
@@ -6454,43 +6466,16 @@
                     }`}>
                       {day.getDate()}
                     </div>
-                    {/* DAY_MIN_W is sized so this row fits the centre column,
-                        but the notes strip beside it grows with a long title
-                        and can take that width back. `flex-wrap` is therefore
-                        not decoration: it makes the row break INSIDE its own
-                        column instead of spilling under the strip or the
-                        sticky time column, where it is painted over and stops
-                        answering taps. `flex-shrink-0` keeps the buttons at a
-                        finger's size rather than collapsing them to a glyph. */}
-                    <div className="mt-1 flex flex-wrap justify-center gap-1.5">
-                      <button
-                        onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); setPickerView('tree'); }}
-                        className="text-base w-7 h-7 flex-shrink-0 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
-                      <button
-                        onClick={() => { setMmPickerDay(mmPickerDay === ds ? null : ds); setPickerDay(null); setMgPickerDay(null); setSearch(''); }}
-                        className="text-base w-7 h-7 flex-shrink-0 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">◎</button>
-                      {!isPast && <button
-                        onClick={() => { setMgPickerDay(mgPickerDay === ds ? null : ds); setPickerDay(null); setMmPickerDay(null); setSearch(''); }}
-                        className="text-base w-7 h-7 flex-shrink-0 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">⊕</button>}
-                      {/* Day notes and deadlines: browse every one of them,
-                          dissect them, and put them on the schedule. */}
-                      <button
-                        onClick={() => {
-                          const opening = dlnPickerDay !== ds;
-                          setDlnPickerDay(opening ? ds : null);
-                          setPickerDay(null); setMmPickerDay(null); setMgPickerDay(null); setSearch('');
-                          setDlnDissect(null); setDlnPartDraft({ title: '', date: '', time: '' });
-                          if (opening) { setDlnTab('all'); dlnScrollRef.current = null; }
-                        }}
-                        title="Day notes & deadlines"
-                        data-dln-open={ds}
-                        className="text-base w-7 h-7 flex-shrink-0 flex items-center justify-center text-gray-700 hover:text-fuchsia-400 transition-colors rounded">☰</button>
-                    </div>
                     </div>
 
                     {/* RIGHT STRIP — calendar notes + deadline caution markers */}
+                    {/* deliberately NOT flex-shrink-0: it is the item that has
+                        to give when the centre's floor and this strip's content
+                        width cannot both fit a 140px column. `minWidth` is still
+                        its own floor, and 36 + 28 + 60 = 124 fits, so it never
+                        reaches it. */}
                     <div data-day-strip={ds}
-                      className="flex flex-col gap-0.5 pt-2 pr-1 pl-0.5 flex-shrink-0" style={{ minWidth: '60px', maxWidth: '110px' }}>
+                      className="flex flex-col gap-0.5 pt-2 pr-1 pl-0.5" style={{ minWidth: '60px', maxWidth: '110px' }}>
                       {/* untimed notes only — a note with a time is drawn on the
                           hour grid instead, so it is never in both places */}
                       {(calendarNotes || []).filter(n => n.date === ds && !noteTimed(n)).map(note => (
@@ -6516,6 +6501,50 @@
                         </button>
                       ))}
                     </div>
+                    </div>
+
+                    {/* DAY ACTIONS — full width, 2×2.
+                        This deliberately sits OUTSIDE the three-part strip row
+                        above, on its own row spanning the whole column, which
+                        is the entire reason DAY_MIN_W could go back to 140. It
+                        used to live in the centre section between the two side
+                        strips; a flex item paints as an atomic unit in document
+                        order, so once the row outgrew that centre the overflow
+                        went UNDER the notes strip (a later sibling) and under
+                        the sticky time column, and `☰` stayed perfectly visible
+                        while answering no click or tap at all.
+
+                        Spanning the column instead of sharing it makes that
+                        unreachable rather than merely paid for: a long note
+                        title stretches the strip beside the DATE now, not
+                        beside the buttons, and there is no width at which they
+                        compete. `grid-cols-2` is what puts MG add and the
+                        day-notes browser on a second row under task add and MM
+                        add; `w-max mx-auto` keeps the block its own size and
+                        centred rather than stretching the buttons. */}
+                    <div className="w-max mx-auto grid grid-cols-2 gap-1.5 px-1 pb-1">
+                      <button
+                        onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); setPickerView('tree'); }}
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
+                      <button
+                        onClick={() => { setMmPickerDay(mmPickerDay === ds ? null : ds); setPickerDay(null); setMgPickerDay(null); setSearch(''); }}
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">◎</button>
+                      {!isPast && <button
+                        onClick={() => { setMgPickerDay(mgPickerDay === ds ? null : ds); setPickerDay(null); setMmPickerDay(null); setSearch(''); }}
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">⊕</button>}
+                      {/* Day notes and deadlines: browse every one of them,
+                          dissect them, and put them on the schedule. */}
+                      <button
+                        onClick={() => {
+                          const opening = dlnPickerDay !== ds;
+                          setDlnPickerDay(opening ? ds : null);
+                          setPickerDay(null); setMmPickerDay(null); setMgPickerDay(null); setSearch('');
+                          setDlnDissect(null); setDlnPartDraft({ title: '', date: '', time: '' });
+                          if (opening) { setDlnTab('all'); dlnScrollRef.current = null; }
+                        }}
+                        title="Day notes & deadlines"
+                        data-dln-open={ds}
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-fuchsia-400 transition-colors rounded">☰</button>
                     </div>
 
                     {/* MG list — full width */}
@@ -7887,8 +7916,18 @@
                       className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-fuchsia-600" />
                   </div>
                   <div className="overflow-y-auto flex-1">
+                    {/* Naming the cutoff is not decoration. Opening this panel
+                        from a later day in a slot full of earlier items would
+                        otherwise read as "everything I wrote is gone", which is
+                        the worst thing this application can appear to have
+                        done. The original wording is kept for a slot that
+                        genuinely holds nothing. */}
                     {!rows.length && (
-                      <div className="px-3 py-4 text-[11px] text-gray-600 italic">No day notes or deadlines yet.</div>
+                      <div className="px-3 py-4 text-[11px] text-gray-600 italic">
+                        {all.some(r => !onOrAfter(r))
+                          ? 'No day notes or deadlines on or after ' + openedOn + '.'
+                          : 'No day notes or deadlines yet.'}
+                      </div>
                     )}
                     {rows.map(({ kind, item }, rowIdx) => {
                       const isNote = kind === 'dayNote';

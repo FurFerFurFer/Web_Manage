@@ -4187,14 +4187,21 @@ test('browser suites', skipUnlessChrome, async t => {
 
   await t.test('the fourth button lists everything in ONE flat chronological list', async () => {
     // No date grouping and no date toggle: the date is a read-out on each row.
+    //
+    // The two far-away days are AHEAD of the day the panel is opened on, and
+    // that is not arbitrary: the panel lists nothing from an earlier day, so a
+    // fixture on a fixed past date would leave this case asserting the order of
+    // an empty list. It moved with the restriction rather than being weakened
+    // by it — the list still has four rows spanning three days.
+    const NEAR = dayFromToday(5), LATE = dayFromToday(9);
     const db = seedDb({
       calendarNotes: [
         F.calNote('n-today', TODAY, { title: 'Note today', time: '09:00' }),
-        F.calNote('n-far', '2026-01-05', { title: 'Note far away', time: '10:00' })
+        F.calNote('n-far', NEAR, { title: 'Note far away', time: '10:00' })
       ],
       deadlines: [
-        F.deadline('d-far', '2026-02-09', { cautionDates: [],  time: '17:00', title: 'Deadline far away' }),
-        F.deadline('d-early', '2026-01-05', { cautionDates: [],  time: '08:00', title: 'Deadline same day, earlier' })
+        F.deadline('d-far', LATE, { cautionDates: [],  time: '17:00', title: 'Deadline far away' }),
+        F.deadline('d-early', NEAR, { cautionDates: [],  time: '08:00', title: 'Deadline same day, earlier' })
       ]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
@@ -4209,10 +4216,12 @@ test('browser suites', skipUnlessChrome, async t => {
       return Array.prototype.map.call(document.querySelectorAll('[data-dln-date]'),
         function (e) { return e.getAttribute('data-dln-date') + '|' + e.textContent.trim(); });
     });
-    // 2026-01-05 08:00 (deadline) then 10:00 (note), then 2026-02-09, then TODAY
-    assert.deepEqual(dates.map(x => x.split('|')[0]), ['d-early', 'n-far', 'd-far', 'n-today'],
+    // TODAY, then NEAR 08:00 (deadline) and NEAR 10:00 (note), then LATE
+    assert.deepEqual(dates.map(x => x.split('|')[0]), ['n-today', 'd-early', 'n-far', 'd-far'],
       'one flat list, chronological by the item\'s own date and time');
-    assert.ok(/2026-01-05\s+08:00/.test(dates[0]), 'and each row shows its own date: ' + dates[0]);
+    const earlyRow = dates.find(x => x.split('|')[0] === 'd-early') || '';
+    assert.ok(new RegExp(NEAR + '\\s+08:00').test(earlyRow),
+      'and each row shows its own date: ' + earlyRow);
 
     // the tabs still narrow it by kind
     await page.evaluate(CLICK_SEL, '[data-dln-tab="deadlines"]');
@@ -4283,6 +4292,23 @@ test('browser suites', skipUnlessChrome, async t => {
     await openDlnPanel(page, SOON);
     assert.deepEqual(await page.evaluate(DLN_IDS), ['d-future'],
       'opened three days out, TODAY\'s own note is behind the cut too');
+
+    // 3 — with the whole slot behind the cutoff, the panel NAMES the day it
+    // cut at. Opened from far enough out, a workspace full of work would
+    // otherwise report itself empty, which is the worst thing this application
+    // can appear to have done.
+    const FAR = dayFromToday(5);
+    await page.evaluate(CLICK_SEL, '[data-dln-open="' + SOON + '"]');
+    await page.waitFor(function () { return !document.querySelector('[data-dln-panel]'); },
+      { message: 'the panel closing again' });
+    await openDlnPanel(page, FAR);
+    assert.deepEqual(await page.evaluate(DLN_IDS), [], 'nothing is listed that far out');
+    const empty = await page.evaluate(function () {
+      var e = document.querySelector('[data-dln-panel] .italic');
+      return e ? e.textContent.trim() : '';
+    });
+    assert.equal(empty, 'No day notes or deadlines on or after ' + FAR + '.',
+      'the empty state names the cutoff rather than claiming the slot is empty');
 
     // it is a view filter: it writes nothing
     assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
@@ -5432,13 +5458,20 @@ test('browser suites', skipUnlessChrome, async t => {
      Every other case in this file clicks through `el.click()`, which ignores
      hit testing entirely and so cannot see a control that is painted under
      something else. That is exactly the shape of the bug these two cases
-     exist for: in WEEK mode the day column is pinned to its minimum, the
-     centre section gets what the two side strips leave it, and the four-button
-     row is wider than that. Flex items paint as atomic units in document
-     order, so the row spilling LEFT stays on top of the SIR strip and keeps
-     working, while the same row spilling RIGHT goes under the notes strip —
+     exist for: in WEEK mode the day column is pinned to its minimum, and the
+     four-button row used to live in the centre section, which gets whatever
+     the two side strips leave it. Flex items paint as atomic units in document
+     order, so the row spilling LEFT stayed on top of the SIR strip and kept
+     working, while the same row spilling RIGHT went under the notes strip —
      visible, because that strip has no background, and completely dead to a
-     tap. Only the fourth button, `☰`, is lost.
+     tap. Only the fourth button, `☰`, was lost.
+
+     These cases outlived two different fixes, which is the point of keeping
+     them: the first bought room by widening the column to 228px, the second
+     moved the block onto its own full-width row and took the column back to
+     140px. They assert the SYMPTOM is gone, so they survive the mechanism
+     changing underneath them — and them staying green through that revert is
+     the evidence the narrower column did not bring the bug back.
 
      Each button is therefore asserted SEPARATELY through elementFromPoint. A
      single "all four are fine" assertion would let the one forgotten surface
@@ -5532,10 +5565,16 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('PROGRESS: a long note title cannot push a day-header button out of reach', async () => {
-    /* The notes strip sizes to its content up to 110px, so a long title takes
-       back the width the widened column just gave the centre. This is the case
-       the row's flex-wrap exists for: it must break INSIDE its column rather
-       than spill under the strip again. */
+    /* The notes strip sizes to its content up to 110px, and a long title is
+       what used to take that width straight back off the button row — first
+       reaching under the strip, then, at the strip's full 110px, far enough the
+       other way to reach the opaque sticky time column and take `+` as well.
+
+       The row no longer shares a flex line with the strip at all, so this now
+       asserts an invariant rather than a balance: stretch the strip as far as
+       it goes and every button is still hit-testable. The strip measurement
+       below is the precondition — without a strip actually past 60px this case
+       is not testing the squeeze it names. */
     const db = seedDb({
       calendarNotes: [F.calNote('n-long', TODAY,
         { title: 'A deliberately long untimed note title that stretches the strip' })],
@@ -5575,9 +5614,6 @@ test('browser suites', skipUnlessChrome, async t => {
 
     assert.equal(m.pinned, true,
       'the week columns are still at their minimum — the precondition this case is about');
-    assert.ok(m.cell.width <= 145,
-      'the day column is back at its 140px minimum (' + m.cell.width + 'px)');
-
     const rows = [];
     m.buttons.forEach(b => {
       const row = rows.find(r => Math.abs(r.top - b.top) <= 4);
@@ -5591,6 +5627,9 @@ test('browser suites', skipUnlessChrome, async t => {
       rows.map(r => r.labels.join('')).join(' / ') + ')');
     assert.deepEqual(rows[0].labels, ['+', '◎'], 'task add and MM add share the first row');
     assert.deepEqual(rows[1].labels, ['⊕', '☰'], 'MG add and the day-notes browser are the second row');
+
+    assert.ok(m.cell.width <= 145,
+      'the day column is back at its 140px minimum (' + m.cell.width + 'px)');
 
     // stacking REPLACES the widening; it must not trade one dead button for another
     assert.equal(byLabel['+'].hit, 'self', 'the + task picker takes its own tap');
