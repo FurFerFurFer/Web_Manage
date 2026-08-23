@@ -184,6 +184,24 @@ zooms between 32px and 256px). Dragging or top-edge resizing snaps to five minut
 start to the `00:00`–`23:55` range, so every hour of the day is a valid drop target. Hour labels read
 `12am` through `11pm`.
 
+**A week column is never narrower than 228px**, because the day header has to hold three things
+across it: a 36px SIR-session strip, the centre carrying the weekday, date and the `+ ◎ ⊕ ☰` row,
+and a notes-and-caution strip that starts at 60px and stretches to 110px for a long title. The
+button row needs `4 × 28 + 3 × 6 = 130px`, so the column needs `1 + 36 + 130 + 60 = 227`. At the
+old 140px minimum the centre got 43px and the row overflowed it — and because a flex item paints as
+an atomic unit in document order, that overflow went **underneath** the notes strip beside it. The
+notes strip has no background, so `☰` stayed perfectly visible and stopped answering clicks and
+taps entirely. Only the ends of the row were lost, and only the right one in the ordinary case:
+`◎` and `⊕` were never affected, and `+` spilling left stays on top of the SIR strip, which is an
+*earlier* sibling. A long title makes it worse at that end too — the strip claims 110px, the row
+spills far enough left to reach the sticky time column, which is opaque and `z-index: 30`, so `+`
+disappears as well as going dead. It cost nothing on a wide desktop, where columns grow past the
+minimum, and made `☰` unusable on a tablet. The row also carries `flex-wrap`, so when a long title claims the
+width back (centre 81px) it breaks to 2×2 **inside** its own column rather than spilling again, and
+`flex-shrink-0` keeps every button at 28px instead of collapsing to a bare glyph. The week view
+therefore scrolls horizontally below `56 + 7 × 228 = 1652px`. Day mode is unaffected — its single
+column is never at the minimum.
+
 **Deadlines** are a separate slot field from calendar notes. A deadline is due on one date at a
 required time, and carries a title, an optional description, and the list of days it warns on:
 

@@ -4844,7 +4844,16 @@
       const START_HOUR  = 0;
       const END_HOUR    = 24;
       const TIME_COL_W  = 56;
-      const DAY_MIN_W   = 140;
+      // A week column has to hold the day header's three parts side by side:
+      // the 36px SIR strip, the centre, and the 60px notes strip. The centre
+      // carries the `+ ◎ ⊕ ☰` row, which needs 4×28 + 3×6 = 130px, so the
+      // column needs 1 (border) + 36 + 130 + 60 = 227. At the old 140 the
+      // centre got 43px and the row spilled out of it — and a flex item paints
+      // as an atomic unit in document order, so the overflow went UNDER the
+      // notes strip (a later sibling) and under the sticky time column, which
+      // left `☰` visible and completely dead to a click or a tap. The row's
+      // flex-wrap below is what keeps that structural rather than arithmetic.
+      const DAY_MIN_W   = 228;
       const TOTAL_W     = TIME_COL_W + 7 * DAY_MIN_W;
       const HOURS       = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 
@@ -6276,16 +6285,24 @@
                     }`}>
                       {day.getDate()}
                     </div>
-                    <div className="mt-1 flex gap-1.5">
+                    {/* DAY_MIN_W is sized so this row fits the centre column,
+                        but the notes strip beside it grows with a long title
+                        and can take that width back. `flex-wrap` is therefore
+                        not decoration: it makes the row break INSIDE its own
+                        column instead of spilling under the strip or the
+                        sticky time column, where it is painted over and stops
+                        answering taps. `flex-shrink-0` keeps the buttons at a
+                        finger's size rather than collapsing them to a glyph. */}
+                    <div className="mt-1 flex flex-wrap justify-center gap-1.5">
                       <button
                         onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); setPickerView('tree'); }}
-                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
+                        className="text-base w-7 h-7 flex-shrink-0 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
                       <button
                         onClick={() => { setMmPickerDay(mmPickerDay === ds ? null : ds); setPickerDay(null); setMgPickerDay(null); setSearch(''); }}
-                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">◎</button>
+                        className="text-base w-7 h-7 flex-shrink-0 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">◎</button>
                       {!isPast && <button
                         onClick={() => { setMgPickerDay(mgPickerDay === ds ? null : ds); setPickerDay(null); setMmPickerDay(null); setSearch(''); }}
-                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">⊕</button>}
+                        className="text-base w-7 h-7 flex-shrink-0 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">⊕</button>}
                       {/* Day notes and deadlines: browse every one of them,
                           dissect them, and put them on the schedule. */}
                       <button
@@ -6298,7 +6315,7 @@
                         }}
                         title="Day notes & deadlines"
                         data-dln-open={ds}
-                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-fuchsia-400 transition-colors rounded">☰</button>
+                        className="text-base w-7 h-7 flex-shrink-0 flex items-center justify-center text-gray-700 hover:text-fuchsia-400 transition-colors rounded">☰</button>
                     </div>
                     </div>
 

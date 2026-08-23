@@ -1237,11 +1237,14 @@ UI.
   `cautionDates` — so the hand-written CONTRACT lists in `tests/schema.test.js`,
   `tests/browser.test.js` and `tests/lib/fixture.js` needed no change. Offline cases go 140 →
   **142** (calendar-core 86 → 88), identical under all five timezones, and all 13 suites pass
-  offline. This task adds **six** browser cases and rewrites one existing scope guard; no
-  absolute browser total is quoted, because `tests/browser.test.js` gained seven further cases
-  from separate in-flight work while this task was running and the two deltas are not this
-  task's to conflate. No JS module changed, so no `?v=` was bumped and `styles.css` was not
-  touched at all.
+  offline, with `tests/browser.test.js` reporting **149 subtests, all passing** in 11 minutes.
+  `node tests/run.js` end to end: **all 14 suites pass**, against a tree unmodified for the
+  duration of the run. This task
+  contributes **six** of them and rewrites one existing scope guard (`SCOPE GUARD: the
+  Documentations edit form still moves no due DAY` — its date half stands, its caution half was
+  superseded); the rest of the growth since the last entry is separate in-flight work that was
+  landing in the same file, so only this task's delta is claimed here. No JS module changed, so
+  no `?v=` was bumped and `styles.css` was not touched at all.
 - **Both new offline cases are GUARDS and pass on both sides by design.** One pins that
   `dlStrandedBlockDays` short-circuits on a falsy record — that is what lets ONE picker serve the
   compose and the edit form with no branch, since a deadline being composed has no prep. The
@@ -1278,13 +1281,21 @@ UI.
   in both. That script cannot be re-run from `node tests/run.js`.
 - No new print rule was needed: the picker sits inside `.cal-doc-form`, which
   `body.docs-page .cal-doc-form { display: none !important }` already hides under print.
-- **Environment note, and it dominated this task.** The machine carried 20-41 foreign headless
-  Chrome processes and up to 14 concurrent `browser.test.js` runs from other sessions throughout.
-  A filtered suite run stalled at case 41 for minutes and was killed rather than trusted; the
-  offline sweep and the small task-owned scripts were run instead, since each is one short-lived
-  page load. Also learned: `node --test --test-name-pattern=<subtest>` **silently runs nothing**
-  unless the pattern also matches the parent `browser suites` test — it reports `1..0` and
-  `# pass 1`, which reads as a pass. Check the plan count, never the summary line.
+- **Environment note, and it corrects the advice the earlier entries give.** Those entries say to
+  check `pgrep -fc "user-data-dir=/tmp/track-cdp-"` and re-run on an idle machine. **The process
+  COUNT is not the test.** This machine accumulates orphaned Chrome and `node --test` processes
+  from runs that died without cleaning up — the same leak the 2026-08-18 entry notes when
+  `Browser.close()` fails with `ENOTEMPTY`. During this task it showed 20-41 Chrome processes and
+  7-14 `browser.test.js` processes, which read as heavy contention and cost roughly an hour of
+  waiting; `ps -eo pid,etimes,time,pcpu` then showed **every one of them at 0% CPU and 00:00:00
+  cumulative CPU time**, two of them 15 hours old, with a load average of 2.06 across 12 cores.
+  They were corpses, not load. The full browser suite then ran to completion beside all of them,
+  149 subtests in 11 minutes with no failure and no `CDP connection closed`. Check `time`/`pcpu`
+  and `/proc/loadavg`, not the count — and do not kill them by pattern, since a `pkill -f` on the
+  profile string matches the calling shell.
+- Also learned: `node --test --test-name-pattern=<subtest>` **silently runs nothing** unless the
+  pattern also matches the parent `browser suites` test. It reports `1..0` and `# pass 1`, which
+  reads as a pass. Check the plan count, never the summary line.
 - **Not covered, and weaker than the rest.** Drag was not re-verified, so the interaction between
   a dragged block and a newly un-picked day rests on `dlStrandedBlockDays` plus code reading.
   Also not covered: real touch hardware, the live Firebase project, and print output.
@@ -1296,7 +1307,7 @@ UI.
   `tests/browser.test.js` and `tests/lib/fixture.js` needed no change. One new offline suite,
   `tests/doc-table-core.test.js` (**42** cases), registered in `tests/run.js` and run **once**
   rather than swept: `doc-table-core.js` holds no date code, matching `true-storage-core.test.js`
-  and `graph-layout.test.js`. Suites go 14 → **15**. This task adds **five** browser cases. No
+  and `graph-layout.test.js`. Suites go 13 → **14**. This task adds **five** browser cases. No
   absolute browser total is quoted on purpose: another session was adding cases to
   `tests/browser.test.js` throughout this task, the file grew by 8 subtests *between* two of the
   runs below, and the two deltas are not this task's to conflate. `styles.css` was not touched —
@@ -1349,6 +1360,77 @@ UI.
   and **not** looked at. Also not covered, as ever: real touch hardware and the live Firebase
   project. The merge chrome was exercised only through `.click()` from a task-owned smoke script
   and the committed cases, never by hand on a real pointer.
+
+### The fourth day-header button, unreachable in the week view (2026-08-23)
+
+- **No data-contract change at all.** The slot stays at **23** fields, nothing was added to
+  `SLOT_FIELDS`, and the hand-written CONTRACT lists needed no change. `styles.css` was not
+  touched, so no `?v=` moved — the whole fix is one constant and three Tailwind classes in
+  `progress.html`'s inline JSX. The offline suites are untouched and pass identically under all
+  five swept timezones. This task adds **two** browser cases.
+- **The bug, and why exactly ONE of four buttons died.** In WEEK mode a day column is pinned to
+  `DAY_MIN_W`, and the header spends it on three flex items: a 36px SIR strip, the centre, and a
+  notes strip of 60px (up to 110px for a long title). At the old 140px the centre got 43px while
+  the `+ ◎ ⊕ ☰` row needs 130px, so the row overflowed. A flex item paints as an atomic unit in
+  document order, so the centre paints OVER the earlier SIR strip but UNDER the later notes strip:
+  the row spilling left stayed clickable and the row spilling right went beneath the strip.
+  Visible, because that strip has no background, and completely dead to a click or a tap. The left
+  end is only safe while the spill is small — once a long title stretches the strip to 110px the
+  row reaches the sticky time column, which is opaque and `z-index: 30`, and `+` is both hidden and
+  dead. That is the second fail-first message below, and the reason widening alone is not the fix.
+  Nothing
+  about touch was involved — a desktop window simply never reaches the minimum, which is why the
+  user saw it only on a tablet, and only in WEEK mode.
+- **Fail-first evidence.** The working tree *was* the pre-change file, so no `TRACK_TEST_ROOT`
+  scratch directory was needed — the same situation as "Movable deadline due date". A full pre-fix
+  run: **149 subtests, 147 passed, and exactly the two new ones failed.** The messages are the
+  evidence and are worth quoting:
+  - `the ☰ day-notes browser takes its own tap (hit div.flex.flex-col.gap-0.5)` — the notes strip,
+    named by its own class list. The three assertions **above** it (`+`, `◎`, `⊕` each hit `self`)
+    **passed**, which is what proves the case can see the buttons and that the fourth one
+    specifically is buried, rather than the case being broken.
+  - The long-title case failed on a **different button against a different element**:
+    `the + task picker still takes its own tap (hit div.flex-shrink-0.border-r.border-gray-800/50)`
+    — the **sticky time column**, `z-index: 30`, at the other end of the row. That second failure
+    is why the fix is not only an arithmetic widening: a 110px strip takes the width straight back.
+- **A defect in this task's own test, caught by that first run.** The long-title case originally
+  asserted `m.cell.width - byLabel['☰'].right >= 0` as its precondition — a *width* compared
+  against a *viewport x-coordinate*, which is not a comparison of anything. It failed, so the case
+  looked like it was doing its job; it was in fact failing on an incoherent assertion instead of on
+  the squeeze it names. It measures the strip directly now (`strip.width > 60`). **A case that
+  fails for the wrong reason is worth as little as one that passes for the wrong reason, and only
+  the message tells them apart** — the same lesson the 2026-08-18 Supporting Actions case and the
+  2026-08-22 TOUCH cases each record in a different shape.
+- After the fix, `node tests/run.js`: **all 14 suites pass** — calendar-core (88) and schema (54)
+  under all five swept timezones with identical results, true-storage-core, graph-layout,
+  doc-table-core, and 150/150 in the browser suite with both new cases green.
+- **Post-fix geometry, measured rather than reasoned** (task-owned script, cannot be re-run):
+  a bare day gives column 228, centre 131, strip 60, **one** line, four buttons at 28px, every one
+  hit-testing to itself; the long-title day gives strip 110 (its maximum), centre 81, the row
+  **wraps to two** lines, still four buttons at 28px, still every one `self`. The predicted worst
+  case and the measured one agree exactly. At a 1900px viewport the columns grow to 261px and the
+  row is one line again, which is the direct check on the claim that nothing changes above 1652px. The buttons are deliberately **not** enlarged to 44px,
+  the same call README records for the Documentations sidebar.
+- The cost is stated in README and was the user's explicit choice: the week view's minimum width
+  goes 1036px → 1652px, so a 1280 or 1440 laptop now scrolls it horizontally. Above 1652px nothing
+  changes, since `flex-1` already grew the columns past the minimum.
+- `tests/lib/cdp.js` gained `Page.setViewport(w, h)` over `Emulation.setDeviceMetricsOverride`.
+  Headless Chrome's default is 800×600 and reproduces the bug unaided — but a width-dependent case
+  that is only meaningful because of a default nobody chose is one harness change away from
+  silently testing nothing, so it states its width.
+- **`--test-name-pattern` cannot narrow this file, and knowing that is worth 14 minutes an
+  iteration.** node:test runs EVERY subtest once the parent matches, and `tests/browser.test.js` is
+  one parent test with ~149 children: the flag either runs nothing or runs all of it. Iterating on
+  a single case needs a task-owned preload that intercepts `require('node:test')` — the file takes
+  the callable module itself, so patching the module's `.test` property does nothing.
+- **Not covered, and it is the entire point of the change:** a tap on real touch hardware. The
+  cases prove hit-testability in headless Chrome; iPadOS gesture arbitration is still unverified,
+  and a real device pass is owed. Also not covered, as ever: the live Firebase project, and print
+  output.
+- **Environment note.** Another session ran the full suite on this machine throughout this task and
+  committed mid-task (`f29f3cf`), sweeping this task's `cdp.js` helper and the first version of
+  both cases into its commit. Load average sat near 5 and a full run took 14 minutes. Check
+  `pgrep -fc "user-data-dir=/tmp/track-cdp-"` before believing any browser-layer failure.
 
 ### Confirmation on every destructive control (2026-08-18)
 

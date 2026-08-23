@@ -5135,12 +5135,17 @@ test('browser suites', skipUnlessChrome, async t => {
     var row  = last.parentElement;
     var cell = row.closest('.relative');
     var scroller = row.closest('.overflow-auto');
+    // row → centre section → the three-part strip row; its last child is the
+    // notes-and-caution strip, the sibling painted OVER the centre's overflow.
+    var strip = row.parentElement.parentElement.lastElementChild;
     var cr = cell.getBoundingClientRect();
     var rr = row.getBoundingClientRect();
+    var sr = strip.getBoundingClientRect();
     return {
       pinned: !!scroller && scroller.scrollWidth > scroller.clientWidth,
-      cell: { left: Math.round(cr.left), right: Math.round(cr.right), width: Math.round(cr.width) },
-      row:  { left: Math.round(rr.left), right: Math.round(rr.right), width: Math.round(rr.width) },
+      cell:  { left: Math.round(cr.left), right: Math.round(cr.right), width: Math.round(cr.width) },
+      row:   { left: Math.round(rr.left), right: Math.round(rr.right), width: Math.round(rr.width) },
+      strip: { left: Math.round(sr.left), right: Math.round(sr.right), width: Math.round(sr.width) },
       buttons: Array.prototype.map.call(row.children, function (b) {
         var r  = b.getBoundingClientRect();
         var el = document.elementFromPoint(Math.round(r.left + r.width / 2),
@@ -5219,8 +5224,9 @@ test('browser suites', skipUnlessChrome, async t => {
     });
     const { page, m, byLabel } = await measureHeader(db);
 
-    assert.ok(m.cell.width - byLabel['☰'].right >= 0,
-      'the strip really did claim width back (column ' + m.cell.width + 'px)');
+    assert.ok(m.strip.width > 60,
+      'the long title really did stretch the notes strip past its 60px minimum (' +
+      m.strip.width + 'px) — without that this case is not testing the squeeze it names');
     assert.equal(byLabel['+'].hit, 'self', 'the + task picker still takes its own tap');
     assert.equal(byLabel['◎'].hit, 'self', 'the ◎ MM picker still takes its own tap');
     assert.equal(byLabel['⊕'].hit, 'self', 'the ⊕ MG picker still takes its own tap');
