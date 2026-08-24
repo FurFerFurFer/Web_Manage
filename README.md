@@ -389,11 +389,21 @@ between pointer kinds.
 
 The gesture is the **schedule timeline's two-stage model**, deliberately, and not the Documentations
 sidebar's one-stage one: **tap a chip to arm it** (it takes the same cyan ring a schedule block
-does), then **swipe the armed chip** to move it. Tapping an armed chip un-arms it. The reason for
+does), then **swipe the armed chip** to move it. The reason for
 the extra stage is that the sidebar drags from a *handle*, which is an unambiguous grab affordance,
 while here the whole chip is the target — so an unarmed chip has to go on letting the finger scroll
 its quadrant list. Nothing declares `touch-action: none`; the touch path calls `preventDefault` only
 once a drag has actually begun, from a listener it registers non-passive itself.
+
+**There are two ways out of the armed state, and they apply to the timeline and the matrix
+alike:** tap the armed thing again, or **tap any empty space in the Schedule view** — the grid
+between blocks, an empty quadrant, the panel headers. The cancel handler sits on the one wrapper
+holding both panels, so it has a single definition and covers the timeline and the Task Priority
+list together; in day mode the timeline is only 65% of the width, and a tap on the other 35% cancels
+just the same. Tapping *any* block or chip is never a cancel — each one stops its own click from
+reaching that handler, which is what lets a tap arm something rather than instantly un-arming it.
+A *drag* cannot cancel either, for a different reason: it calls `preventDefault`, so the browser
+synthesizes no click at all.
 
 Dropping **on a chip** inserts before it and dropping anywhere else in a quadrant appends, exactly as
 under a mouse; releasing a chip back on itself is not a move. A ghost label follows the finger, the

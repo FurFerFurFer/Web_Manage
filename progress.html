@@ -6383,13 +6383,27 @@
             </div>
           </div>
 
-          {/* Timeline view — 65/35 split in day mode, full width in week mode */}
+          {/* Timeline view — 65/35 split in day mode, full width in week mode.
+
+              Clicking anywhere that is not a block or a chip CANCELS the
+              selection. Besides tapping the armed thing again, this is the only
+              way out of the touch model's armed state, and it lives on this
+              wrapper rather than on the scroll container so it also covers the
+              Task Priority panel — a SIBLING of the timeline in day mode, where
+              the timeline is only 65% of the width.
+
+              One consequence, and it is load-bearing: every block's and chip's
+              `onClick={e => e.stopPropagation()}` now guards ARMING, not just
+              the resize ring. A tap arms on touchend and the browser then
+              synthesizes a click, so anything that let that click bubble out to
+              here would un-arm itself the instant it was armed. Two GUARD cases
+              in tests/browser.test.js pin exactly that, per surface. */}
           {schedView === 'timeline' && (
-            <div className="flex flex-1 overflow-hidden">
+            <div className="flex flex-1 overflow-hidden"
+              onClick={() => { setSelectedForResize(null); setSelectedForDrag(null); setMatrixArmedId(null); }}>
               <div ref={containerRef}
                 className="overflow-auto relative select-none"
-                style={{ width: timelineMode === 'day' ? '65%' : '100%', flex: timelineMode === 'week' ? '1 1 0%' : undefined }}
-                onClick={() => setSelectedForResize(null)}>
+                style={{ width: timelineMode === 'day' ? '65%' : '100%', flex: timelineMode === 'week' ? '1 1 0%' : undefined }}>
 
             {/* Day header — sticky to top of scroll container */}
             <div ref={headerRef}
@@ -7807,6 +7821,13 @@
                                 onDrop={e => { e.stopPropagation(); handleMatrixDrop(key, id); }}
                                 onDragEnd={() => { setMatrixDragId(null); setMatrixDragOver(null); }}
                                 onTouchStart={e => startMatrixTouch(e, id)}
+                                /* Load-bearing for arming, exactly as on a
+                                   schedule block: a tap arms on touchend and
+                                   the browser then synthesizes a click, which
+                                   would reach the Schedule-view wrapper's
+                                   cancel handler and un-arm this chip the
+                                   instant it was armed. */
+                                onClick={e => e.stopPropagation()}
                                 className={`flex items-center gap-1.5 px-1.5 py-1 rounded text-[11px] cursor-grab select-none transition-all ${isOver ? 'bg-white/10 outline outline-1 outline-dashed outline-white/40' : 'bg-gray-900/60 hover:bg-gray-800/60'} ${isArmed ? 'ring-2 ring-cyan-400/70' : ''} ${isDragged ? 'opacity-20' : ''}`}
                                 style={{ borderLeft: `3px solid ${meta.color}` }}>
                                 <span className="truncate text-gray-200 flex-1 leading-tight">{meta.title}</span>

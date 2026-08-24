@@ -1690,6 +1690,64 @@ line at a bare width — do not. See the next section.
   it, not that it vanished. Confirm with `git show HEAD:<file> | rg <your change>` before
   re-applying anything, or you will duplicate it.
 
+### Tapping empty space un-arms (2026-08-24)
+
+- **No data-contract change at all.** The slot stays at **23** fields, nothing was added to
+  `SLOT_FIELDS`, the hand-written CONTRACT lists needed no edit, and nothing here reaches
+  `track_db` or `trackPriorityMatrix` — both evidence cases assert those byte-identical across the
+  whole interaction. `styles.css` was not touched and no JS module changed, so **no `?v=` moved**.
+  The offline suites are untouched. This task adds **four** browser cases.
+- **The bug, and why it was not the theme change it arrived with.** The two-stage touch model had
+  exactly one way out of stage one — tap the armed thing again — so an armed block stayed ringed
+  indefinitely. The outside-click handler had read `onClick={() => setSelectedForResize(null)}`
+  since `ba2df13`, the repository's first commit; `selectedForDrag` arrived later with the touch
+  work and was never added to it, and `matrixArmedId` never was either. It was reported straight
+  after the Grit palette landed, but `git show a79cb71 -- progress.html` is four lines — a favicon,
+  two `?v=` bumps and a colour — and the one overlay that commit added is `pointer-events: none`.
+  **A bug reported right after a visual change is not evidence the visual change caused it**; the
+  new palette just made the ring easier to see.
+- The clear now sits on the wrapper holding **both** the timeline and the Task Priority panel, so it
+  has one definition and also covers the 35% panel, which in day mode was outside the old handler
+  entirely.
+- **This makes every block's and chip's `onClick={e => e.stopPropagation()}` load-bearing for
+  ARMING, not just for the resize ring.** A tap arms on `touchend` and the browser then synthesizes
+  a click; anything that lets that click bubble to the wrapper un-arms itself the instant it was
+  armed. The four schedule block kinds already stopped it. **The matrix chip had no `onClick` at
+  all** and needed one added — that single line was the highest-risk part of the task.
+- **Fail-first, part one: the untouched tree.** The working tree *was* the pre-change file, so no
+  scratch directory was needed. Both evidence cases failed on the assertion they are **named** for,
+  `ERR_ASSERTION` / `true !== false` against `tapping empty grid space cleared the armed ring` and
+  `tapping an empty quadrant cleared the armed ring` — not a `waitFor` timeout, which would have
+  meant the case had gone blind instead. Both GUARD cases passed, as they must.
+- **Fail-first, part two: a doctored baseline, and the failure sets are exactly DISJOINT.** A
+  `TRACK_TEST_ROOT` tree of symlinks to the repository, a **REAL copy** of `tests/`, and one
+  `progress.html` with the chip's new `stopPropagation` removed and nothing else altered: the two
+  **matrix** cases failed (`GUARD` on `false !== true` for its named assertion, and the evidence
+  case on `waitFor … chip g-p1 showing the armed ring (last value: false)` — it arms and un-arms in
+  the same gesture) while **both schedule cases passed**. That is the direct proof the per-surface
+  assertions are independent and that the one added line is necessary. Never place that doctored
+  copy in the repository.
+- **A synthetic `TouchEvent` produces no click, and that nearly made these cases prove nothing.**
+  A real tap ends in a browser-synthesized click; a dispatched `TouchEvent` does not. The existing
+  `MATRIX_TOUCH` helper therefore never exercised the bubbling path at all, and a case built on it
+  would have passed just as happily against an element that had lost its `stopPropagation`. The new
+  `TAP_REAL` helper fires the click by hand. **Generalise it:** when synthesizing a gesture, ask
+  what the browser does *after* the events you are dispatching, or the case tests half the path.
+- Both clickers go through `document.elementFromPoint` and refuse a point that lands inside a block
+  or chip, rather than dispatching at the handler's own node — a direct dispatch would pass even if
+  the click never bubbled out of a block, which is the entire thing these cases are about.
+- **Not covered, and it is the entire point of the change:** a tap on real touch hardware. The
+  cases synthesize events inside the page, which exercises the handler logic and not iPadOS gesture
+  arbitration. A real device pass is owed. Drag was not re-verified either — the committed suite
+  still simulates no schedule drag — so "a drag cannot cancel, because `preventDefault` suppresses
+  the click" rests on code reading. Also not covered, as ever: the live Firebase project and print
+  output.
+- **Environment note.** `rg -rn "PATTERN" dir` is **not** `rg -n`: ripgrep reads `-r` as
+  `--replace`, so `-rn` silently rewrites every match to `n` **in the output**. It made
+  `TRACK_TEST_ROOT` look like it had been mangled to `process.env.n` in a file that was in fact
+  untouched. Nothing was damaged, but the minute spent confirming that against `git show` is worth
+  avoiding: use `rg -n`.
+
 ### Confirmation on every destructive control (2026-08-18)
 
 - 19 controls that deleted or cleared stored data on one unguarded click now ask

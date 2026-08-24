@@ -5454,6 +5454,185 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* ── tapping empty space un-arms ─────────────────────────────────────────
+     The two-stage touch model had exactly one documented way OUT of stage
+     one: tap the armed thing again. Tapping empty space did nothing, so an
+     armed block stayed ringed until the user found it again — the "click away
+     to cancel" convention every other selection in this app honours, missing
+     on the two surfaces that are only reachable by finger.
+
+     The clear sits on the wrapper holding BOTH the timeline and the Task
+     Priority panel, so one definition covers every empty surface in the
+     Schedule view. That makes each block's and chip's
+     `onClick={e => e.stopPropagation()}` LOAD-BEARING FOR ARMING: without it a
+     tap arms on touchend and the click a real browser synthesizes immediately
+     un-arms again. The two GUARD cases below exist solely to catch that being
+     tidied away, and they pass on both sides by design.
+
+     The timeline and the matrix are asserted SEPARATELY. They are one model in
+     the docs and two code paths in the page, which is precisely the shape that
+     has cost this project a forgotten predicate before.                     */
+
+  /* A real tap ends in a synthesized CLICK. A dispatched TouchEvent does not
+     produce one, so it is fired by hand here — without it these cases would
+     never exercise the bubbling path they exist for, and would pass just as
+     happily against an element that had lost its stopPropagation. */
+  const TAP_REAL = function (sel) {
+    function fire(el, x, y, type) {
+      var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
+      var live = type === 'touchend' ? [] : [t];
+      el.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live, targetTouches: live, changedTouches: [t]
+      }));
+    }
+    var el = document.querySelector(sel);
+    if (!el) return 'no element ' + sel;
+    el.scrollIntoView({ block: 'center' });
+    var r = el.getBoundingClientRect();
+    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+    fire(el, x, y, 'touchstart');
+    fire(el, x, y, 'touchend');
+    el.click();
+    return 'ok';
+  };
+
+  const ARMED_SEL = function (sel) {
+    var e = document.querySelector(sel);
+    return !!e && e.className.indexOf('ring-cyan-400') >= 0;
+  };
+
+  /* Both clickers go through elementFromPoint rather than dispatching at the
+     handler's own node. Dispatching there would pass even if the click never
+     bubbled out of a block, which is the entire thing these cases are about.
+     The point is checked to be outside every block and chip FIRST, so a
+     mis-aimed click fails loudly instead of quietly proving nothing. */
+  const CLICK_EMPTY_GRID = function (id, dy) {
+    var b = document.querySelector('[data-block-id="' + id + '"]');
+    if (!b) return 'no block ' + id;
+    var r = b.getBoundingClientRect();
+    var el = document.elementFromPoint(r.left + r.width / 2, r.bottom + dy);
+    if (!el) return 'nothing at the point';
+    if (el.closest('[data-block-kind]')) return 'the point is inside a block: ' + el.className;
+    el.click();
+    return 'ok';
+  };
+
+  const CLICK_EMPTY_IN = function (sel) {
+    var box = document.querySelector(sel);
+    if (!box) return 'no element ' + sel;
+    var r = box.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) return 'the element has no area';
+    var el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!el) return 'nothing at the point';
+    if (el.closest('[data-matrix-row]')) return 'the point is inside a chip: ' + el.className;
+    el.click();
+    return 'ok';
+  };
+
+  /* Week mode, so the timeline is the full width and the point below the block
+     is unambiguously timeline. A day note is used because the day-note and
+     deadline blocks are the ones carrying data-block-* hooks. */
+  const openArmedSchedule = async () => {
+    const page = await browser.newPage();
+    await page.clearStorage(server.origin);
+    await page.seed(seedDb({
+      calendarNotes: [F.calNote('n-arm', TODAY, { title: 'Armed note', time: '09:00' })]
+    }));
+    await page.setViewport(1280, 900);
+    await page.goto(server.url('progress.html') + '#schedule');
+    await page.skipFirebase();
+    await mountSchedule(page);
+    await page.waitFor(function () { return !!document.querySelector('[data-block-id="n-arm"]'); },
+      { message: 'the seeded note block' });
+    return page;
+  };
+
+  await t.test('TOUCH: tapping empty grid space un-arms a schedule block', async () => {
+    const page = await openArmedSchedule();
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm"]'), false,
+      'it does not start armed');
+
+    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm"]'), 'ok');
+    await page.waitFor(ARMED_SEL, { args: ['[data-block-id="n-arm"]'],
+      message: 'the block showing the armed ring' });
+
+    /* The named assertion, and the only one here that can fail pre-fix —
+       everything above passes on both sides. A plain assert rather than a
+       waitFor, so the failure reads `true !== false` against this message
+       instead of a timeout that could equally mean the case went blind. */
+    assert.equal(await page.evaluate(CLICK_EMPTY_GRID, 'n-arm', 40), 'ok');
+    await sleep(300);
+    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm"]'), false,
+      'tapping empty grid space cleared the armed ring');
+
+    // arming and un-arming are selection, not edits
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'selection wrote nothing — track_db is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('TOUCH: tapping empty space un-arms a priority chip', async () => {
+    const page = await openMatrix();
+    const before = await page.evaluate(MATRIX_RAW);
+
+    assert.equal(await page.evaluate(TAP_REAL, '[data-matrix-row="g-p1"]'), 'ok');
+    await page.waitFor(MATRIX_ARMED, { args: ['g-p1'], message: 'chip g-p1 showing the armed ring' });
+
+    // `nuni` is seeded empty, so its list body is unambiguously empty space
+    assert.equal(await page.evaluate(CLICK_EMPTY_IN,
+      '[data-matrix-quadrant="nuni"] [data-matrix-list]'), 'ok');
+    await sleep(300);
+    assert.equal(await page.evaluate(MATRIX_ARMED, 'g-p1'), false,
+      'tapping an empty quadrant cleared the armed ring');
+
+    assert.equal(await page.evaluate(MATRIX_RAW), before,
+      'selection wrote nothing — trackPriorityMatrix is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: a tap on a schedule block does not un-arm it', async () => {
+    /* Passes on BOTH sides by design. Pre-fix the wrapper had no clear to
+       reach, so this was trivially true; post-fix it is the thing standing
+       between tap-to-arm and a click that bubbles out of the block and
+       cancels the arming it just did. Stage three is asserted in the same
+       case, because a "fix" that broke it would otherwise look identical. */
+    const page = await openArmedSchedule();
+
+    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm"]'), 'ok');
+    await sleep(300);
+    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm"]'), true,
+      'one tap arms the block, and the block\'s own click does not clear it');
+
+    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm"]'), 'ok');
+    await sleep(300);
+    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm"]'), false,
+      're-tapping the armed block still un-arms it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: a tap on a priority chip does not un-arm it', async () => {
+    // The chip half of the case above. The chip had no onClick at all before
+    // this change, so this is the one asserting the added stopPropagation.
+    const page = await openMatrix();
+
+    assert.equal(await page.evaluate(TAP_REAL, '[data-matrix-row="g-p1"]'), 'ok');
+    await sleep(300);
+    assert.equal(await page.evaluate(MATRIX_ARMED, 'g-p1'), true,
+      'one tap arms the chip, and the chip\'s own click does not clear it');
+
+    assert.equal(await page.evaluate(TAP_REAL, '[data-matrix-row="g-p1"]'), 'ok');
+    await sleep(300);
+    assert.equal(await page.evaluate(MATRIX_ARMED, 'g-p1'), false,
+      're-tapping the armed chip still un-arms it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   /* ── the day-header buttons are REACHABLE, not merely present ────────────
      Every other case in this file clicks through `el.click()`, which ignores
      hit testing entirely and so cannot see a control that is painted under
