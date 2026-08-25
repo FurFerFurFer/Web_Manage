@@ -10,9 +10,12 @@ The route is: **show the picture to an AI → paste what it gives you into Track
 ## How to do it
 
 1. Open any AI chat that can see images — Claude, ChatGPT, Gemini, whichever you use.
-2. Attach the picture and paste the instructions in [What to ask the AI](#what-to-ask-the-ai)
-   below.
-3. Copy the block it replies with.
+2. Attach a clear picture of the whole table and paste the instructions in
+   [What to ask the AI](#what-to-ask-the-ai) below. For a dense or small table, also attach
+   overlapping close-up crops: the whole image establishes the grid and the crops make the
+   text readable.
+3. If the reply includes an **Outside text** list, keep that separate. Copy only the
+   `::: track-table` block into Track.
 4. In Track: **Documentations → open a page → `▦ Paste table`**, paste, check the preview,
    press **Insert table**.
 
@@ -29,7 +32,7 @@ hand. It is designed to be readable either way.
 
 Copy everything in this box, and attach your picture:
 
-> Read the table in this image and reproduce it EXACTLY in this format:
+> Read this image, separate any text outside the table, and reproduce the table EXACTLY in this format:
 >
 > ```
 > ::: track-table
@@ -40,6 +43,20 @@ Copy everything in this box, and attach your picture:
 > :::
 > ```
 >
+> Separate surrounding text BEFORE building the grid:
+> - The table begins and ends at its complete outside border.
+> - Any heading, caption, note, or paragraph beyond that border is OUTSIDE TEXT, not a table cell.
+> - Never turn outside text into a table row or merged cell.
+> - Preserve each distinct outside-text item in reading order; join lines that are only visual wrapping.
+>
+> Determine the structure BEFORE transcribing the text:
+> - Use a full-table image to count the smallest underlying columns and rows.
+> - Trace every internal horizontal and vertical border segment.
+> - Treat cells as merged only when their shared border is clearly absent along the entire edge: vertical for a column merge, horizontal for a row merge.
+> - Never infer a merge from centered text, an empty cell, text wrapping, or row height.
+> - A blank cell is still a real cell unless a missing border proves it is merged.
+> - If close-up images are also supplied, use the full image for structure and the close-ups for text.
+>
 > Rules:
 > - One line per row. Separate cells with `|` pipes.
 > - EVERY row must have the same number of cells.
@@ -47,10 +64,46 @@ Copy everything in this box, and attach your picture:
 > - For a cell merged with the one ABOVE it, write `^^`
 > - A merged cell must fill a whole rectangle of rows and columns.
 > - Write `\<<` or `\^^` if a cell really contains those characters, and `\|` for a pipe.
-> - Output only the block. No explanation, no extra text.
+> - If any border, merge, or text is unclear, DO NOT GUESS. Ask for a higher-resolution full-table image plus overlapping close-up crops.
+> - If outside text exists, write `Outside text:` before the block and list each distinct item with a dash. Then write `Table paste:` and the block.
+> - If no outside text exists, output only the block.
+> - Add no explanation beyond the outside-text list and the block.
 
 The same text is available inside the Paste table dialog itself, with a **Copy these
 instructions** button — so you never have to come back to this file.
+
+### Image quality matters
+
+Keep the complete outside border and every internal grid line visible in the full-table
+image. Prefer the original screenshot, scan, or PDF export over a messaging-app thumbnail;
+for a photo, shoot straight on and avoid glare across the lines. Close-up crops should
+overlap so no row boundary disappears between them. Do not send only close-ups: they improve
+the transcription, but they cannot prove how a merge connects across the complete table.
+
+This separates two jobs that need different views. The full image is authoritative for cell
+geometry; the close-ups are authoritative for small text. If either remains ambiguous, the
+brief tells the AI to ask for a clearer image instead of silently inventing a plausible cell.
+
+### Text outside the border
+
+A heading above the table, a caption below it, or a note beside it is not table data. When
+the AI detects any of these, its response keeps them out of the fence and lists them in
+reading order:
+
+```text
+Outside text:
+- Nisit will receive an S grade when every criterion below is met.
+
+Table paste:
+::: track-table
+| Criterion 1 | Attend every activity |
+| Criterion 2 | Score at least 80%    |
+:::
+```
+
+Copy only the fenced block into Track. A long outside paragraph that merely wraps across
+several image lines stays one list item; genuinely separate headings, captions, or notes get
+separate items. This preserves all visible text without falsifying the table's geometry.
 
 ---
 

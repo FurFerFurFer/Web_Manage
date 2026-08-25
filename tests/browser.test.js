@@ -3721,10 +3721,10 @@ test('browser suites', skipUnlessChrome, async t => {
 
   await t.test('merging hides the covered cell, and unmerging restores it exactly', async () => {
     const page = await open('documentations.html', { db: docBlockDb(), hash: '?page=p-1' });
-    await page.waitFor(function () { return !!document.querySelector('.doc-table td input'); },
+    await page.waitFor(function () { return !!document.querySelector('.doc-table td textarea'); },
       { message: 'the table' });
 
-    const clickCell = () => page.evaluate(function () { document.querySelector('.doc-table td input').click(); });
+    const clickCell = () => page.evaluate(function () { document.querySelector('.doc-table td textarea').click(); });
     const clickChrome = label => page.evaluate(function (l) {
       Array.prototype.find.call(document.querySelectorAll('button'),
         function (b) { return b.textContent.indexOf(l) >= 0 && !b.disabled; }).click();
@@ -3798,6 +3798,168 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(after.merges, [{ r: 0, c: 0, rs: 2, cs: 1 }],
       'the region was CLAMPED to the shorter grid, not dropped along with its text');
     assert.equal(after.rows[0][0], 'tall', 'and it kept the text it was holding');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* ── adjustable column widths ─────────────────────────────────────────────
+     A `table` block gained an optional `colWidths` — one percentage per
+     column, summing to 100. Percentages and not pixels, so the proportions
+     survive a narrow sidebar and print at whatever the page turns out to be,
+     and so widening one column narrows its neighbour instead of pushing the
+     table off the page.
+
+     `colWidths` obeys the `merges` rule: absent by default, key deleted when
+     cleared. The case above — a pasted table stored with Object.keys exactly
+     ['id','type','rows'] — is the guard for that half and needs no edit here.
+
+     The drag is synthesised from inside the page. That exercises the handler
+     logic and NOT real pointer or touch hardware: gesture arbitration,
+     momentum and iOS Safari are all still unverified. */
+
+  const tableWidthDb = () => seedDb({
+    docPages: [F.docPage('p-1', {
+      title: 'Notes',
+      blocks: [{ id: 'b-1', type: 'table', rows: [['one', 'two', 'three'], ['a', 'b', 'c']] }]
+    })]
+  });
+
+  const COL_PCTS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('.doc-table col'),
+      function (c) { return c.style.width || null; });
+  };
+
+  /* Pointer events, not touch: one path covers mouse, pen and finger, and
+     pointer capture is what keeps the drag alive once the pointer leaves the
+     6px strip. Dispatched on the handle itself — going through
+     elementFromPoint would only prove the handle is on top, which is not what
+     this case is about. */
+  const DRAG_COL = function (edge, dx) {
+    var h = document.querySelector('[data-col-handle="' + edge + '"]');
+    if (!h) return 'no handle for column ' + edge;
+    var box = h.getBoundingClientRect();
+    var x = box.left + box.width / 2, y = box.top + box.height / 2;
+    var fire = function (type, cx) {
+      h.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse',
+        clientX: cx, clientY: y, button: 0, buttons: type === 'pointerup' ? 0 : 1
+      }));
+    };
+    fire('pointerdown', x);
+    fire('pointermove', x + dx);
+    fire('pointerup', x + dx);
+    return 'ok';
+  };
+
+  await t.test('dragging a column boundary reaches track_db as colWidths', async () => {
+    const page = await open('documentations.html', { db: tableWidthDb(), hash: '?page=p-1' });
+    await page.waitFor(function () { return !!document.querySelector('[data-col-handle="0"]'); },
+      { message: 'the column resize handle' });
+
+    // Nothing stored yet, so table-layout: fixed is drawing equal columns and
+    // the <col> elements carry no width of their own.
+    assert.deepEqual(await page.evaluate(COL_PCTS), [null, null, null],
+      'a table that was never resized stores and styles no width at all');
+
+    assert.equal(await page.evaluate(DRAG_COL, 0, 120), 'ok');
+
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = (((db.slots || [])[0] || {}).docPages || [])[0].blocks[0];
+      return b.colWidths ? b : false;
+    }, { message: 'the drag reaching track_db' });
+
+    assert.equal(after.colWidths.length, 3, 'one entry per column');
+    assert.equal(Math.round(after.colWidths.reduce(function (a, b) { return a + b; }, 0) * 100) / 100,
+      100, 'the widths sum to 100, so the table can never overflow its page');
+    assert.equal(after.colWidths[0] > 100 / 3, true, 'the dragged column grew');
+    assert.equal(after.colWidths[1] < 100 / 3, true, 'and its neighbour paid for it');
+    assert.equal(Math.round(after.colWidths[2] * 100) / 100, Math.round(100 / 3 * 100) / 100,
+      'while the column beyond the boundary did not move');
+
+    assert.deepEqual(after.rows, [['one', 'two', 'three'], ['a', 'b', 'c']],
+      'not one cell of text was touched');
+    assert.equal('merges' in after, false, 'and no merge was invented');
+
+    // The colgroup is what the drag actually moved, so assert the DOM as well
+    // as the store — a stored list the table does not render is not a resize.
+    assert.deepEqual(await page.evaluate(COL_PCTS),
+      after.colWidths.map(function (w) { return w + '%'; }),
+      'the rendered <col> widths are the stored ones');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('⇔ auto width asks first, and Cancel keeps the widths', async () => {
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [{
+        id: 'b-1', type: 'table', rows: [['one', 'two'], ['a', 'b']], colWidths: [70, 30]
+      }] })] }), hash: '?page=p-1' });
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return /auto width/.test(b.textContent) && !b.disabled; });
+    }, { message: 'the enabled auto-width button' });
+
+    assert.deepEqual(await page.evaluate(COL_PCTS), ['70%', '30%'],
+      'the stored widths are what the table is drawn at');
+
+    const before = await rawDb(page);
+    await answering(page, false, CLICK_SOON_TEXT, ['⇔ auto width']);
+    assert.equal(await rawDb(page), before,
+      'Cancel left track_db byte-identical — a prompt that clears anyway is worse than none');
+
+    await answering(page, true, CLICK_SOON_TEXT, ['⇔ auto width']);
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = (((db.slots || [])[0] || {}).docPages || [])[0].blocks[0];
+      return b.colWidths ? false : b;
+    }, { message: 'the reset reaching track_db' });
+
+    assert.deepEqual(Object.keys(after), ['id', 'type', 'rows'],
+      'clearing DELETES the key rather than storing an empty list');
+    assert.deepEqual(after.rows, [['one', 'two'], ['a', 'b']], 'and no cell text went with it');
+    assert.deepEqual(await page.evaluate(COL_PCTS), [null, null],
+      'the columns are back to equal shares');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a long cell value WRAPS rather than being clipped', async () => {
+    // The reason the cell is a textarea and not an <input>. An input is
+    // single-line by construction, so anything longer than its column was cut
+    // off on screen AND in the printed PDF — this page has no separate print
+    // DOM, only @media print re-skinning the editor.
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [{
+        id: 'b-1', type: 'table',
+        rows: [['Introduction to Medicine and the Health Sciences', 'x'], ['short', 'y']]
+      }] })] }), hash: '?page=p-1' });
+
+    const m = await page.waitFor(function () {
+      var tds = document.querySelectorAll('.doc-table td');
+      if (tds.length < 4) return false;
+      var longEl = tds[0].querySelector('textarea');
+      var shortEl = tds[2].querySelector('textarea');
+      if (!longEl || !shortEl || !longEl.value) return false;
+      // The auto-grow effect runs after mount; wait for it to have measured.
+      if (longEl.clientHeight < 1) return false;
+      return {
+        hidden: longEl.scrollHeight - longEl.clientHeight,
+        longH: tds[0].getBoundingClientRect().height,
+        shortH: tds[2].getBoundingClientRect().height,
+        value: longEl.value
+      };
+    }, { message: 'the table cells being measured' });
+
+    assert.equal(m.value, 'Introduction to Medicine and the Health Sciences',
+      'the whole value is in the cell, not a truncated copy of it');
+    assert.equal(m.hidden <= 1, true,
+      'nothing is hidden below the fold of the cell — the box grew to fit (' + m.hidden + 'px over)');
+    assert.equal(m.longH > m.shortH, true,
+      'so the wrapped row is TALLER than a single-line one (' + m.longH + ' vs ' + m.shortH + ')');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();

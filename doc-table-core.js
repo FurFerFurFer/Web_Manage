@@ -9,10 +9,15 @@
 
        { …, merges: [{ r, c, rs, cs }] }
 
+   and one width per column, as percentages of the table:
+
+       { …, colWidths: [number] }
+
    `rows` keeps its old shape exactly — still rectangular, still strings. A
    merge is a separate record naming a top-left cell and how many rows and
-   columns it spans. Four rules follow, and each one is an existing rule in
-   AGENTS.md applied to a new field:
+   columns it spans; a width is a share of the table, not a pixel count. Four
+   rules follow, they govern BOTH added fields, and each one is an existing
+   rule in AGENTS.md applied to a new field:
 
    1. ABSENCE IS THE DEFAULT, and the key is DELETED when the list empties.
       Every table stored before this file existed has no `merges` key and
@@ -80,6 +85,12 @@
      that would bloat track_db. */
   var MAX_ROWS = 200;
   var MAX_COLS = 50;
+
+  /* How narrow a drag may leave a column. Applied at the DRAG and deliberately
+     not inside normalizeColWidths: a 50-column table's equal share is 2%, and a
+     floor above the equal share would refuse every drag on such a table. The
+     effective floor is therefore min(MIN_COL_PCT, 100 / cols). */
+  var MIN_COL_PCT = 3;
 
   /* A fence line can never be confused with a table row, because a row always
      contains a pipe. So both the opening and the closing fence fall out of one
@@ -214,6 +225,114 @@
     return found;
   }
 
+  // ── column widths ────────────────────────────────────────────
+
+  /* A table may carry one width per column:
+
+         { …, colWidths: [number] }   // percentages, summing to 100
+
+     PERCENTAGES, not pixels, and that is the load-bearing choice. The table is
+     rendered at width 100%, so a ratio is resolution-independent: it prints at
+     whatever the page turns out to be, it survives the sidebar being collapsed
+     or thrown full-screen, and it makes horizontal overflow impossible by
+     construction — widening one column narrows its neighbour rather than
+     pushing the table off the page. Pixels would have printed at 96 per inch
+     and overflowed A4 the moment a table got wide.
+
+     The field follows the `merges` rule above and deliberately NOT the
+     `cautionDates` rule: absence is the default and clearing DELETES the key.
+     Nothing sits behind it as a fallback, so an empty stored list would be a
+     second spelling of "none" — and two browser cases deepEqual a whole table
+     block, which any unconditional key would break. */
+
+  function round2(n) { return Math.round(n * 100) / 100; }
+
+  /* Reads a candidate list — or, given none, whatever is stored — against the
+     block's current grid, and returns one percentage per column summing to
+     exactly 100, or [] when there is nothing usable. Cannot throw.
+
+     Any units at all are read as a RATIO, so a hand-written [2, 1] means two
+     thirds and one third. That is what lets `+ col` / `− col` hand a padded or
+     truncated list straight back without doing arithmetic of their own. */
+  function normalizeColWidths(block, widths) {
+    var cols = gridSize(block).cols;
+    if (!cols) return [];
+
+    var raw = isList(widths) ? widths
+      : (isMap(block) && isList(block.colWidths) ? block.colWidths : null);
+    if (!raw || !raw.length) return [];
+
+    // Coerce first, so one damaged entry costs one column rather than the whole
+    // list. A rejected entry becomes null and is filled in below.
+    var vals = [];
+    var sum = 0, n = 0;
+    for (var i = 0; i < raw.length && i < cols; i++) {
+      var v = typeof raw[i] === 'number' ? raw[i] : parseFloat(raw[i]);
+      if (isFinite(v) && v > 0) { vals.push(v); sum += v; n++; }
+      else vals.push(null);
+    }
+    if (!n) return [];
+
+    // A rejected entry, and a column that arrived after the widths were
+    // written, both take the average of what IS there. That is the whole of
+    // what `+ col` needs: the new column shows up at the average and everything
+    // else keeps its proportions.
+    while (vals.length < cols) vals.push(null);
+    var avg = sum / n;
+    for (var j = 0; j < cols; j++) if (vals[j] === null) { vals[j] = avg; sum += avg; }
+
+    var out = vals.map(function (v) { return round2(v * 100 / sum); });
+
+    // Rounding leaves a residual. Give it to the widest column — the one that
+    // can afford it — so the stored list adds up to exactly 100 rather than to
+    // 99.99. First widest wins, so the result does not depend on iteration luck.
+    var diff = round2(100 - out.reduce(function (a, b) { return a + b; }, 0));
+    if (diff) {
+      var big = 0;
+      for (var k = 1; k < out.length; k++) if (out[k] > out[big]) big = k;
+      out[big] = round2(out[big] + diff);
+    }
+    return out;
+  }
+
+  function colWidthsOf(block) { return normalizeColWidths(block); }
+
+  /* Moves the ONE boundary between column `index` and the next, setting the
+     left side to `pct` and making the right side pay for it, so the pair's
+     total — and therefore the table's — is conserved. Both sides keep the
+     floor.
+
+     A table that has never been resized seeds EQUAL columns, because that is
+     exactly what table-layout: fixed with no widths was already drawing. The
+     first drag therefore moves one boundary instead of snapping the whole
+     table into a new shape.
+
+     Refuses by returning the block unchanged, the same contract mergeCells
+     uses, so a caller that skipped the bounds check cannot corrupt the grid. */
+  function resizeColumn(block, index, pct) {
+    var cols = gridSize(block).cols;
+    if (!(index >= 0 && index + 1 < cols)) return block;
+
+    var v = typeof pct === 'number' ? pct : parseFloat(pct);
+    if (!isFinite(v)) return block;
+
+    var w = colWidthsOf(block);
+    if (!w.length) {
+      w = [];
+      for (var i = 0; i < cols; i++) w.push(round2(100 / cols));
+    }
+    if (index + 1 >= w.length) return block;
+
+    var pair = w[index] + w[index + 1];
+    var floor = Math.min(MIN_COL_PCT, 100 / cols);
+    var left = Math.max(floor, Math.min(v, pair - floor));
+
+    var next = w.slice();
+    next[index] = round2(left);
+    next[index + 1] = round2(pair - left);
+    return withColWidths(block, next);
+  }
+
   // ── writers (pure) ───────────────────────────────────────────────────────
 
   /* The one writer of the field, and the one place the delete-when-empty rule
@@ -227,12 +346,28 @@
     return next;
   }
 
+  /* The one writer of `colWidths`, and the one place the delete-when-empty rule
+     lives. Spreads the block rather than rebuilding it, so `merges` and any key
+     a later version adds both survive. */
+  function withColWidths(block, widths) {
+    var next = Object.assign({}, block);
+    var norm = normalizeColWidths(next, widths);
+    if (norm.length) next.colWidths = norm;
+    else delete next.colWidths;
+    return next;
+  }
+
   /* Every row/column operation goes through here: set the new grid, then
      re-normalise against it. That is what clamps a merge whose last row was
      just removed instead of leaving a region pointing off the end. */
   function withRows(block, rows) {
     var next = Object.assign({}, block, { rows: rows });
-    return withMerges(next, normalizeMerges(next));
+    next = withMerges(next, normalizeMerges(next));
+    // And the widths, for the same reason: normalizeColWidths derives the
+    // column count from the new rows, so a dropped column drops its width and
+    // a new one arrives at the average — without any of the four inline
+    // + row / − row / + col / − col handlers having to know this field exists.
+    return withColWidths(next);
   }
 
   /* Whether `⇥ merge right` / `⇩ merge down` can act on the focused cell, and
@@ -558,7 +693,12 @@
     unmergeCell: unmergeCell,
     gridSize: gridSize,
     rowsOf: rowsOf,
+    colWidthsOf: colWidthsOf,
+    normalizeColWidths: normalizeColWidths,
+    withColWidths: withColWidths,
+    resizeColumn: resizeColumn,
     MAX_ROWS: MAX_ROWS,
-    MAX_COLS: MAX_COLS
+    MAX_COLS: MAX_COLS,
+    MIN_COL_PCT: MIN_COL_PCT
   };
 })(window);

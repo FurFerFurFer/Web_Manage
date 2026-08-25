@@ -9,7 +9,7 @@
   <script src="storage-guard.js?v=2"></script>
   <script src="schema.js?v=6"></script>
   <script src="calendar-core.js?v=6"></script>
-  <script src="doc-table-core.js?v=1"></script>
+  <script src="doc-table-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -143,16 +143,41 @@
 
     // ── small shared UI pieces ───────────────────────────────────────────────
 
-    function AutoTextarea({value, onChange, onFocus, placeholder, className}) {
+    function AutoTextarea({value, onChange, onFocus, onClick, placeholder, className}) {
       const ref = useRef(null);
-      useEffect(() => {
+      const fit = () => {
         const el = ref.current; if (!el) return;
         el.style.height='auto'; el.style.height=el.scrollHeight+'px';
-      }, [value]);
+      };
+      useEffect(fit, [value]);
+      // Width, not only value. A table column being dragged, a sidebar thrown
+      // full-screen or the window resizing all change where the text wraps
+      // without changing a character of it, and the [value] effect alone would
+      // leave every row at the wrong height.
+      //
+      // WIDTH ONLY, and that gate is load-bearing rather than an optimisation.
+      // fit() sets this element's height, which changes its parent's height,
+      // which is a resize — so an ungated observer re-fits forever and React
+      // dies on "Maximum update depth exceeded", taking the whole page with it.
+      // Observing the textarea instead of the parent has the identical loop.
+      const lastW = useRef(-1);
+      useEffect(() => {
+        const el = ref.current;
+        const box = el && el.parentElement;
+        if (!box || typeof ResizeObserver !== 'function') return;
+        const ro = new ResizeObserver(() => {
+          const w = box.clientWidth;
+          if (w === lastW.current) return;
+          lastW.current = w;
+          fit();
+        });
+        ro.observe(box);
+        return () => ro.disconnect();
+      }, []);
       return (
         <textarea ref={ref} rows={1} value={value} placeholder={placeholder}
-          onChange={onChange} onFocus={onFocus}
-          className={"w-full bg-transparent resize-none outline-none overflow-hidden placeholder-gray-600 "+(className||'')} />
+          onChange={onChange} onFocus={onFocus} onClick={onClick}
+          className={"w-full bg-transparent resize-none outline-none overflow-hidden break-words placeholder-gray-600 "+(className||'')} />
       );
     }
 
@@ -344,24 +369,55 @@
        paste modal's preview. Both go through TrackDocTable.mergeMap — the ONE
        definition of which cells are drawn and how far they span — so the
        preview cannot disagree with what lands on the page. */
-    function TableGrid({block, cell}) {
+    function TableGrid({block, cell, widths, resize}) {
       const DT = window.TrackDocTable;
       const rows = DT.rowsOf(block);
       const map = DT.mergeMap(block);
+      const cols = DT.gridSize(block).cols;
+      // The in-flight drag wins over the stored list, so the columns follow the
+      // finger without a write per pointermove. Column count comes from
+      // gridSize, never rows[0].length — a ragged stored row would otherwise
+      // desynchronise the colgroup from the widest row.
+      const w = (widths && widths.length === cols) ? widths : DT.colWidthsOf(block);
       return (
-        <table className="doc-table w-full border-collapse text-sm">
+        <table className="doc-table w-full table-fixed border-collapse text-sm">
+          {/* table-layout: fixed ALWAYS, so a <col> width is authoritative
+              rather than a suggestion the content can override. With nothing
+              stored the columns carry no width and fixed layout draws them
+              equally — which is exactly what resizeColumn seeds from, so the
+              first drag moves one boundary instead of snapping the table. */}
+          <colgroup>
+            {Array.from({length: cols}, (_, ci) => (
+              <col key={ci} data-col={ci}
+                style={w.length ? {width: w[ci] + '%'} : undefined} />
+            ))}
+          </colgroup>
           <tbody>
             {rows.map((row, ri) => (
               <tr key={ri}>
                 {row.map((text, ci) => {
                   const span = map[ri] && map[ri][ci];
                   if (!span) return null;   // covered by a merge — draw nothing
+                  // The boundary this cell's handle moves. A colSpan cell
+                  // resizes the LAST column it covers, so every unmerged cell
+                  // anywhere in the table offers a handle for its own edge and
+                  // no boundary is left unreachable behind a merge.
+                  const edge = ci + span.cs - 1;
                   return (
-                    <td key={ci} className="border border-gray-700 p-0 align-top"
+                    <td key={ci} className="relative border border-gray-700 p-0 align-top"
                       colSpan={span.cs} rowSpan={span.rs}
                       data-cell={ri + ',' + ci}
                       data-span={span.rs + 'x' + span.cs}>
                       {cell(text, ri, ci, span)}
+                      {resize && edge + 1 < cols && (
+                        <span data-col-handle={edge} title="Drag to resize this column"
+                          onPointerDown={e => resize.start(e, edge)}
+                          onPointerMove={resize.move}
+                          onPointerUp={resize.end}
+                          onPointerCancel={resize.end}
+                          onLostPointerCapture={resize.end}
+                          className="doc-chrome absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize touch-none bg-gray-600/60 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-sky-500" />
+                      )}
                     </td>
                   );
                 })}
@@ -378,8 +434,60 @@
       // caret, not data.
       const [sel, setSel] = useState(null);
 
+      // The in-flight column drag. Held here rather than written per move: a
+      // pointermove-per-write would put hundreds of whole-database writes
+      // through TrackStorage.saveDB and arm the sync debounce on every one of
+      // them. It commits once, on pointerup — the same draft-then-Save shape
+      // the Documentations caution picker already uses.
+      const [drag, setDrag] = useState(null);
+      // A ref beside the state, and it is load-bearing rather than a shortcut.
+      // React runs a functional setState updater during the RENDER phase, so
+      // reading the in-flight drag out of one — and worse, calling the parent's
+      // onChange from inside one — is a side effect during render: React
+      // re-runs it, the parent updates, and the page dies on "Maximum update
+      // depth exceeded". The ref is read synchronously in the handler instead.
+      const dragRef = useRef(null);
+      const putDrag = d => { dragRef.current = d; setDrag(d); };
+
       const setCell = (ri, ci, v) =>
         onChange({...block, rows: block.rows.map((r,i)=>i===ri?r.map((c,j)=>j===ci?v:c):r)});
+
+      const resize = {
+        start: (e, index) => {
+          const table = e.currentTarget.closest('table');
+          if (!table) return;
+          // Stop the pointer reaching the cell behind the handle, and stop the
+          // mouse drag turning into a text selection.
+          e.preventDefault();
+          e.stopPropagation();
+          // Capture, so the pointer stays ours once it leaves the 6px strip.
+          try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+          const cols = DT.gridSize(block).cols;
+          let base = DT.colWidthsOf(block);
+          if (!base.length) base = Array.from({length: cols}, () => 100 / cols);
+          putDrag({index, startX: e.clientX, tableW: table.getBoundingClientRect().width || 1,
+            base, widths: base});
+        },
+        move: e => {
+          const d = dragRef.current;
+          if (!d) return;
+          // Recomputed from the ORIGINAL widths every time, never applied
+          // cumulatively, so a move that arrives out of order cannot drift.
+          const pct = d.base[d.index] + (e.clientX - d.startX) / d.tableW * 100;
+          const probe = DT.resizeColumn(DT.withColWidths(block, d.base), d.index, pct);
+          putDrag({...d, widths: DT.colWidthsOf(probe)});
+        },
+        end: () => {
+          // pointerup releases the capture, so lostpointercapture follows it —
+          // this runs twice for one drag and the second must do nothing.
+          const d = dragRef.current;
+          if (!d) return;
+          putDrag(null);
+          onChange(DT.withColWidths(block, d.widths));
+        }
+      };
+
+      const hasWidths = DT.colWidthsOf(block).length > 0;
 
       const size = DT.gridSize(block);
       const selValid = sel && sel.r < size.rows && sel.c < size.cols;
@@ -387,10 +495,13 @@
       const canDown  = selValid ? DT.canMerge(block, sel.r, sel.c, 'down')  : {ok:false, reason:'Click a cell first.'};
       const merged   = selValid ? DT.mergeAt(block, sel.r, sel.c) : null;
 
-      // Merging hides the covered text, it never clears it, so unmerge is a
-      // restore rather than a guess — which is exactly why neither of these
-      // asks first. The row/column removals below still do: those DO drop text.
-      const mergeBtn = (label, title, enabled, onClick) => (
+      // A chrome button that can be disabled with its reason as the tooltip,
+      // rather than discovered by clicking and having nothing happen. Merging
+      // hides the covered text and never clears it, so unmerge is a restore
+      // rather than a guess — which is exactly why neither of those asks first.
+      // The row/column removals and the width reset below still do: those DO
+      // drop text or clear a stored field.
+      const chromeBtn = (label, title, enabled, onClick) => (
         <button onClick={onClick} disabled={!enabled} title={title}
           className={"rounded px-1.5 py-0.5 " + (enabled
             ? "bg-gray-800 text-gray-400 hover:text-white"
@@ -400,15 +511,21 @@
       return (
         <div onFocus={onFocus}>
           <div className="overflow-x-auto">
-            <TableGrid block={block} cell={(text, ri, ci) => (
-              <input value={text}
-                onChange={e=>setCell(ri,ci,e.target.value)}
-                // Click as well as focus: tabbing into a cell selects it, and so
-                // does clicking one that already had the caret.
-                onClick={()=>setSel({r:ri, c:ci})}
-                onFocus={()=>setSel({r:ri, c:ci})}
-                className={"w-full min-w-[90px] bg-transparent px-2 py-1 outline-none "+(ri===0?'font-bold text-gray-100 bg-gray-800/60':'text-gray-300')} />
-            )} />
+            {/* AutoTextarea, not an <input>: an input is single-line by
+                construction, so anything longer than its column was clipped —
+                on screen AND in the printed PDF, since this page has no
+                separate print DOM. A textarea wraps and the row grows. */}
+            <TableGrid block={block} resize={resize}
+              widths={drag ? drag.widths : null}
+              cell={(text, ri, ci) => (
+                <AutoTextarea value={text}
+                  onChange={e=>setCell(ri,ci,e.target.value)}
+                  // Click as well as focus: tabbing into a cell selects it, and so
+                  // does clicking one that already had the caret.
+                  onClick={()=>setSel({r:ri, c:ci})}
+                  onFocus={()=>setSel({r:ri, c:ci})}
+                  className={"px-2 py-1 "+(ri===0?'font-bold text-gray-100 bg-gray-800/60':'text-gray-300')} />
+              )} />
           </div>
           <div className="doc-chrome mt-1 flex flex-wrap gap-1 text-[10px] opacity-0 transition-opacity group-hover:opacity-100">
             <button onClick={()=>onChange(DT.withRows(block, [...block.rows, block.rows[0].map(()=> '')]))} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">+ row</button>
@@ -424,12 +541,21 @@
               if(!window.confirm('Delete the last column?\n\nAny text in its cells goes with it.')) return;
               onChange(DT.withRows(block, block.rows.map(r=>r.slice(0,-1))));
             }} className="rounded bg-gray-800 px-1.5 py-0.5 text-gray-400 hover:text-white">− col</button>
+            {chromeBtn('⇔ auto width',
+              hasWidths ? 'Give every column an equal share again'
+                        : 'The columns are already at their default widths.',
+              hasWidths, () => {
+                // After the has-anything guard, never before it — a button that
+                // does nothing must not still demand an answer.
+                if (!window.confirm('Reset the column widths?\n\nEvery column goes back to an equal share. No cell text is touched.')) return;
+                onChange(DT.withColWidths(block, []));
+              })}
             <span className="mx-1 w-px bg-gray-800" />
-            {mergeBtn('⇥ merge right', canRight.ok ? 'Merge the selected cell with the one to its right' : canRight.reason,
+            {chromeBtn('⇥ merge right', canRight.ok ? 'Merge the selected cell with the one to its right' : canRight.reason,
               canRight.ok, ()=>onChange(DT.mergeCells(block, sel.r, sel.c, 'right')))}
-            {mergeBtn('⇩ merge down', canDown.ok ? 'Merge the selected cell with the one below it' : canDown.reason,
+            {chromeBtn('⇩ merge down', canDown.ok ? 'Merge the selected cell with the one below it' : canDown.reason,
               canDown.ok, ()=>onChange(DT.mergeCells(block, sel.r, sel.c, 'down')))}
-            {mergeBtn('⤫ unmerge', merged ? 'Split this cell back apart — the hidden text comes back' : 'The selected cell is not merged.',
+            {chromeBtn('⤫ unmerge', merged ? 'Split this cell back apart — the hidden text comes back' : 'The selected cell is not merged.',
               !!merged, ()=>onChange(DT.unmergeCell(block, sel.r, sel.c)))}
           </div>
         </div>
@@ -440,7 +566,7 @@
        version, with worked examples, is TABLE-PASTE.md at the repository root
        — this is the copy that has to be reachable without leaving the page. */
     const TABLE_AI_BRIEF = [
-      'Read the table in this image and reproduce it EXACTLY in this format:',
+      'Read this image, separate any text outside the table, and reproduce the table EXACTLY in this format:',
       '',
       '::: track-table',
       '| Region     | Q1  | Q2  |',
@@ -449,6 +575,20 @@
       '| Total: 155 | <<  | <<  |',
       ':::',
       '',
+      'Separate surrounding text BEFORE building the grid:',
+      '- The table begins and ends at its complete outside border.',
+      '- Any heading, caption, note, or paragraph beyond that border is OUTSIDE TEXT, not a table cell.',
+      '- Never turn outside text into a table row or merged cell.',
+      '- Preserve each distinct outside-text item in reading order; join lines that are only visual wrapping.',
+      '',
+      'Determine the structure BEFORE transcribing the text:',
+      '- Use a full-table image to count the smallest underlying columns and rows.',
+      '- Trace every internal horizontal and vertical border segment.',
+      '- Treat cells as merged only when their shared border is clearly absent along the entire edge: vertical for a column merge, horizontal for a row merge.',
+      '- Never infer a merge from centered text, an empty cell, text wrapping, or row height.',
+      '- A blank cell is still a real cell unless a missing border proves it is merged.',
+      '- If close-up images are also supplied, use the full image for structure and the close-ups for text.',
+      '',
       'Rules:',
       '- One line per row. Separate cells with | pipes.',
       '- EVERY row must have the same number of cells.',
@@ -456,7 +596,10 @@
       '- For a cell merged with the one ABOVE it, write ^^',
       '- A merged cell must fill a whole rectangle of rows and columns.',
       '- Write \\<< or \\^^ if a cell really contains those characters, and \\| for a pipe.',
-      '- Output only the block. No explanation, no extra text.'
+      '- If any border, merge, or text is unclear, DO NOT GUESS. Ask for a higher-resolution full-table image plus overlapping close-up crops.',
+      '- If outside text exists, write Outside text: before the block and list each distinct item with a dash. Then write Table paste: and the block.',
+      '- If no outside text exists, output only the block.',
+      '- Add no explanation beyond the outside-text list and the block.'
     ].join('\n');
 
     /* Paste a table in as text. A dedicated modal rather than a page-level

@@ -492,7 +492,9 @@ still cleaned up without requiring a slot write.
 - A per-page emoji icon chosen from a picker grid or typed freely.
 - Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, merged cells, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
 - **Tables can merge cells.** Click a cell, then `⇥ merge right` or `⇩ merge down` in the block's hover chrome; `⤫ unmerge` splits it back. A button is disabled with an explanatory tooltip when the operation would run off the grid or absorb a region that is already merged. Merging **hides** the covered cells and never clears them, so unmerging restores what was typed — which is why neither control asks for confirmation, while `− row` and `− col` still do. Removing a row or column a merged cell reached into **clamps** that cell to fit rather than deleting it.
-- **A table can be pasted in as text**, through `▦ Paste table` in the block menu. It accepts the `::: track-table` pipe-grid format, in which `<<` marks a cell merged with the one to its left and `^^` one merged with the cell above; the fence and the outer pipes are optional and a markdown separator row is skipped, so an ordinary markdown table pastes correctly too. The dialog previews the parse through the same renderer the page uses and **refuses** a table whose rows disagree on cell count, whose markers point off the grid, or whose merged region is not a rectangle, naming the offending line. Nothing is inserted while an error is showing. The dialog also carries the instructions to hand an AI along with a photo of a table, with a copy button; `TABLE-PASTE.md` is the longer version with worked examples.
+- **Table columns are draggable.** Hover a table and every internal column boundary grows a handle; drag it and the column takes width from its neighbour, so the table always fills its line and can never be pushed off the page. Widths are stored per table as **percentages**, not pixels, so they hold up when the sidebar is collapsed or thrown full screen and they print at the proportions on screen. `⇔ auto width` puts every column back to an equal share and asks first, being the one control here that clears a stored field. A table nobody has resized stores no widths at all and is drawn with equal columns.
+- **Table cells wrap.** A cell is a growing textarea rather than a one-line input, so a value longer than its column runs onto a second line and the row gets taller — visible on screen and in the exported PDF, where a long value used to be silently cut off at the column edge.
+- **A table can be pasted in as text**, through `▦ Paste table` in the block menu. It accepts the `::: track-table` pipe-grid format, in which `<<` marks a cell merged with the one to its left and `^^` one merged with the cell above; the fence and the outer pipes are optional and a markdown separator row is skipped, so an ordinary markdown table pastes correctly too. The dialog previews the parse through the same renderer the page uses and **refuses** a table whose rows disagree on cell count, whose markers point off the grid, or whose merged region is not a rectangle, naming the offending line. Nothing is inserted while an error is showing. The dialog also carries a copyable, structure-first brief to hand an AI with the image: it makes the complete table authoritative for border geometry, close-up crops authoritative for small text, forbids inferring a merge from alignment or an empty cell, and asks for a clearer image instead of guessing when a border or character is ambiguous. Text beyond the table's outside border is kept out of the grid and returned as a separate `Outside text` list, so a nearby heading, caption, or note cannot become an invented merged row. `TABLE-PASTE.md` is the longer version with image-quality guidance and worked examples.
 - A **Reference source dump** popup that shows the active slot's source-dump tree fully expanded — every nesting level and every leaf `{label, url}` link visible at once — and inserts a picked link as a link block carrying `dumpRef: {dumpId, linkId, urlId}` provenance. The block shows a "from: <dump title>" badge that degrades to "source removed" if the source is later deleted.
 - Images chosen from disk are downscaled (max dimension 1000px) and stored as compressed JPEG data-URIs inside the page, so they export, import, and cloud-sync with the slot. There is no size gate on inserting one: cloud sync gzips and chunks the workspace, so images no longer threaten it. The header instead shows a plain workspace-size readout plus a cloud sync state (`✓ synced`, `↻ syncing…`, `⚠ sync failed`, `⚠ conflict`, or `· local only`), read from `window.TrackSync`. The size turns amber only past ~4 MB, which tracks the browser's own `localStorage` quota rather than any cloud limit.
 - **Calendar blocks** — see below.
@@ -563,6 +565,27 @@ its text, which is what makes unmerging a restore rather than a recomputed guess
 `mergeMap` decides which cells are drawn and how far they span, `withRows` re-normalises
 after a row or column changes, and `parseTableText` / `formatTableText` are the paste
 format in both directions.
+
+A table block's `colWidths` obeys the same absence rule and holds one **percentage** per
+column, summing to 100:
+
+```js
+{ id, type: 'table', rows: [[string]],
+  merges: [{r, c, rs, cs}],    // optional
+  colWidths: [number] }        // optional — percentages, one per column
+```
+
+Percentages rather than pixels is the load-bearing choice. The table is drawn at width
+100%, so a ratio is resolution-independent: it prints at whatever the page turns out to be,
+it survives the sidebar changing width, and it makes horizontal overflow impossible —
+widening one column narrows its neighbour instead of pushing the table off the page.
+`resizeColumn` is the only thing that moves a boundary and it conserves the total;
+`withColWidths` is the only writer and it deletes the key when the list empties; `withRows`
+re-normalises the widths against the new column count, which is why `+ col` and `− col`
+need to know nothing about the field. A table that was never resized has no key, and
+`table-layout: fixed` draws its columns equally — exactly what the first drag seeds from.
+`colWidths` is layout, not content, so it does **not** travel through the `::: track-table`
+paste format in either direction.
 
 A **storage** (`trueStorages`) is:
 
@@ -1205,7 +1228,7 @@ It runs three layers:
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
-| Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
+| Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, column widths normalising to a conserved total and following a row or column change, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
 | Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed |
 
@@ -1440,7 +1463,7 @@ node tests/run.js
 As of 2026-08-25 that is 142 offline cases (88 in `calendar-core.test.js`, 54 in
 `schema.test.js`, several hundred assertions) executed under five timezones from
 UTC+14 to UTC-11, plus 24 cases in `true-storage-core.test.js`, 21 in
-`graph-layout.test.js`, 42 in `doc-table-core.test.js` and 13 in
+`graph-layout.test.js`, 57 in `doc-table-core.test.js` and 13 in
 `cdp-cleanup.test.js` run once each — none of them holds date code — plus 168
 browser subtests in headless Chrome. **All 15 suites pass**, leaving no process
 and no `/tmp/track-cdp-*` directory behind. Budget 10 minutes on an idle machine

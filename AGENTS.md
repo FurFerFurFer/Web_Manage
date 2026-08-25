@@ -251,6 +251,43 @@ A `docPages` block of type `table` holds a rectangular `rows: [[string]]` and ma
 - Every row/column change goes through `withRows`, which re-normalises against the new bounds. A region that lost a row is **CLAMPED**, not dropped; one clamped down to a single cell is dropped, because a 1x1 merge is not a merge. `normalizeMerges` also drops out-of-bounds origins and overlaps, first-wins, so the result never depends on iteration luck.
 - `merges` is deliberately **not** validated in `schema.js`, which checks `docPages: 'list'` and no block shape at all. Gating one block field and not the others would invent an inconsistent rule; `doc-table-core.js` pays for that instead, reading every nested value through a helper that cannot throw — a throw here escapes a React render and empties the whole page.
 
+A `table` block may also carry `colWidths` — one **percentage** per column, summing to 100.
+Four rules follow, and the first is the load-bearing one:
+
+- **Percentages, never pixels.** The table is drawn at width 100%, so a ratio prints at
+  whatever the page turns out to be, survives the sidebar changing width, and makes
+  horizontal overflow *impossible by construction* — widening a column narrows its
+  neighbour rather than pushing the table off the page. A pixel width would print at
+  96-per-inch and overflow A4 the moment a table got wide. Do not "simplify" this into
+  pixels because a drag delta arrives in them; convert at the drag.
+- **Absence is the default and clearing DELETES the key** — the `merges` rule, not the
+  `cautionDates: []` rule, because nothing sits behind it as a fallback. `withColWidths`
+  is the one writer and it does the delete. A browser case asserts `Object.keys` is
+  exactly `['id','type','rows']` for a table nobody has resized, and it is the guard for
+  this half.
+- `withRows` re-normalises the widths as well as the merges, which is what lets the four
+  inline `+ row` / `− row` / `+ col` / `− col` handlers stay ignorant of the field: a
+  dropped column drops its width, a new one arrives at the average, and the list still
+  sums to 100. `resizeColumn` is the only thing that moves a boundary and it makes the
+  NEIGHBOUR pay, so the total is conserved and no other column shifts.
+- `colWidths` is layout, not content, so it deliberately does **not** travel through
+  `formatTableText` / `parseTableText`. That format is a transcription of a picture and
+  has no business carrying widths.
+
+A table cell is a growing **textarea**, not an `<input>`, because an input is single-line
+by construction and clipped anything longer than its column — on screen and in the printed
+PDF, since this page has no separate print DOM. It goes through the shared `AutoTextarea`,
+whose `ResizeObserver` is gated on **width only**: `fit()` sets the element's height, which
+changes its parent's height, which is a resize, so an ungated observer re-fits forever and
+React dies on "Maximum update depth exceeded" — taking the whole page down, not just the
+table. Observing the textarea rather than the parent has the identical loop.
+
+The column drag holds its widths in a **ref** beside the state and commits once on
+`pointerup`. Both halves are load-bearing: a write per `pointermove` would put hundreds of
+whole-database writes through `TrackStorage.saveDB` and arm the sync debounce on each, and
+reading or writing through a functional `setState` updater is a side effect during React's
+render phase — which is the same "Maximum update depth exceeded" crash by a different road.
+
 The `::: track-table` paste format is the other half of that file. Markers occupy **real cells** — `<<` for a cell merged leftward, `^^` for one merged upward — so the text stays rectangular and a row with the wrong cell count is **detected and refused against its line number**, never guessed at. That is the whole argument for the format, and `parseTableText` returns nothing half-parsed: `ok === false` means insert nothing. It is also lenient where leniency is free — the fence and the outer pipes are optional and a markdown separator row is skipped — so an ordinary markdown table pastes with no extra code.
 
 A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may carry `tags` — each one naming a **pair**: a source-dump leaf (`dumpId`) and one MM linked inside it (`mmId`). Four rules follow, and the first is the load-bearing one:
@@ -1851,6 +1888,118 @@ line at a bare width — do not. See the next section.
   is the backstop and is why it earns its place. Windows and macOS process-group semantics are
   unexercised; this ran on Linux only. And the suite still simulates no drag and touches no real
   hardware, unchanged by this work.
+
+### Draggable table columns, and cells that wrap (2026-08-25)
+
+- **No `track_db` slot change at all.** The slot stays at **23** fields — `colWidths` is an
+  item-level key inside a block inside the existing `docPages` list — so the hand-written
+  CONTRACT lists in `tests/schema.test.js`, `tests/browser.test.js` and `tests/lib/fixture.js`
+  needed no change. `styles.css` was **not touched**: `table-fixed`, `relative`, `absolute`,
+  `cursor-col-resize`, `touch-none` and `break-words` are all Tailwind utilities and the width
+  itself is an inline `<col>` style, so no `?v=` moved except `doc-table-core.js?v=1` → `?v=2`
+  in `documentations.html`, the only page that loads it. Offline cases in
+  `tests/doc-table-core.test.js` go 42 → **57** (still run once, not swept — no date code).
+  This task adds **three** browser cases and rewrites the cell selector in one it inherits.
+- **The inherited case is a consequence, not a tidy-up.** `merging hides the covered cell, and
+  unmerging restores it exactly` selected cells through `.doc-table td input`; the cell is a
+  textarea now, so it reads `.doc-table td textarea`. It must go on passing, and it does — it
+  is the guard that the wrapping change did not disturb merge geometry. The other inherited
+  guard needed no edit at all and is the load-bearing one: *a pasted table with nothing merged
+  is stored with NO merges key* asserts `Object.keys` is exactly `['id','type','rows']`, which
+  is what proves `colWidths` is genuinely absent by default.
+- **Fail-first, offline: 57 cases, 15 failed — and only ONE of those failures is evidence.**
+  Fourteen died on `colWidthsOf is not a function` and the like, which is just what a new export
+  looks like. The one that counts is `withRows leaves a table that was never resized with NO
+  colWidths key`, which **passed on both sides** by design — the absence guard. Read which
+  failures are load-bearing before counting them; a suite that goes 15-red to all-green is not
+  15 pieces of evidence. This is the `cdp-cleanup` lesson in a second shape.
+- **Fail-first, browser: the whole-feature baseline proved almost nothing, and that is the
+  lesson.** A `TRACK_TEST_ROOT` tree of symlinks to the repository plus the two pre-change files
+  (`documentations.html`, `doc-table-core.js`, both real copies) failed all three new cases —
+  every one on a `waitFor` timeout for a selector that did not exist yet. That is
+  "the control is absent" evidence, not behavioural evidence, and it is exactly the shape the
+  TOUCH-sidebar entry warns about. Three **doctored** baselines were built instead, each
+  symlinks plus **one** file with a single rule reversed, and their failure sets are
+  informative:
+  - `withColWidths` never DELETING the key → **only** `⇔ auto width asks first, and Cancel
+    keeps the widths` failed, on `the reset reaching track_db` — the case's own named claim.
+    The drag case and the wrap case passed.
+  - `resizeColumn` not making the NEIGHBOUR pay → **only** the drag case failed, and on a hard
+    assertion rather than a timeout: `while the column beyond the boundary did not move`,
+    `26.05 !== 33.33`. Without the neighbour absorbing the change, normalisation spreads the
+    cost across every column, which is the whole reason the total has to be conserved at the
+    pair.
+  - the cell reverted to an `<input>` → the wrap case **and** the inherited merge case failed,
+    which is not a defect in the pairing but the visible cost of the selector change.
+
+  The first two sets are disjoint and each fails on its named assertion. Never place any of the
+  five baseline copies in the repository.
+- **Two real defects were found by the browser cases and would both have shipped as a white
+  screen, not a cosmetic bug.** Both are `Maximum update depth exceeded`, from different causes,
+  and both are now written into the data-contract section:
+  1. `AutoTextarea`'s new `ResizeObserver` fired on **height** as well as width. `fit()` sets
+     the element's height, which changes the parent's height, which is a resize — an infinite
+     re-fit. Gating on `clientWidth` changing is the fix; observing the textarea instead of its
+     parent has the identical loop, so there is no "observe the other element" escape.
+  2. The drag's `end` called the parent's `onChange` from **inside a functional `setState`
+     updater**. React runs updaters during the render phase, so that is a side effect during
+     render. The drag state lives in a ref beside the state now and the handler reads it
+     synchronously. **Generalise it:** a functional updater is for computing the next state and
+     nothing else — never read the in-flight value out of one to act on, and never call another
+     component's setter from inside one.
+- **A defect in this task's own test, of the kind that reads as a product bug.** The auto-width
+  case passed `['auto width']` to `CLICK_SOON_TEXT`, which matches `textContent.trim()`
+  **exactly**, so the button was never found and the failure said `the control exists` — which
+  looks exactly like a missing control. The label is `⇔ auto width`, glyph included. Check the
+  helper's matching rule before believing a "control not found".
+- Percentages rather than pixels was chosen against the user's stated preference to have widths
+  survive printing — it is the way to *honour* it. A pixel width prints at 96-per-inch and
+  overflows A4 the moment a table gets wide; a ratio prints at whatever the page turns out to be
+  and cannot overflow at all, because widening a column narrows its neighbour.
+- **What was run: `node tests/run.js` end to end THREE times, and only the third one counts.**
+  `node --check` passes on all nine shared modules. The final run: **all 15 suites pass** —
+  calendar-core (88) and schema (54) under all five swept timezones with identical results,
+  true-storage-core (24), graph-layout (21), doc-table-core (**57**), cdp-cleanup (13), and
+  **170 browser subtests, 0 failures** in 13.4 minutes, with `md5sum -c` confirming the tree
+  **byte-identical across the whole run**. No absolute browser total is claimed as this task's:
+  another session was adding to `tests/browser.test.js` and `documentations.html` throughout,
+  and only the delta of three is this task's.
+- **Why the first two runs did not count, and both reasons are worth carrying forward.**
+  - Run 1 reported all 15 suites passing — and the `md5sum -c` taken across it showed
+    `documentations.html` had **changed while it ran**, because the other session landed its
+    `TABLE_AI_BRIEF` edit mid-run. That is the `f29f3cf` / `1cf7b23` hazard in a third shape:
+    the result was a run against a file that no longer existed on disk. The edit was provably
+    inert here (a string array), and it would have been easy to reason it away; it was re-run
+    instead. **Take an `md5sum` of the tree before a long run and check it after** — on this
+    machine the tree can change without you touching it.
+  - Run 2 was against a byte-identical tree and reported **2 of 170 failing**: cases 96 and 97,
+    `malformed track_db (a goal has invalid children)` and `a malformed database survives a
+    reload`, on `CDP connection closed` and a `progress.html mounting` timeout. That is the
+    contention symptom the 2026-08-18 entry already names, in the section it already names as
+    the suite's heaviest. Both passed in isolation immediately afterwards, and both passed in
+    run 3.
+- **The contention was not another test run, and the process list said so only if read
+  properly.** There was exactly ONE `tests/run.js` alive — mine. `ps -eo pcpu --sort=-pcpu`
+  showed the real cause: GNOME's `tracker-extract-3` pinned at 78% for over twenty minutes,
+  indexing, with `tracker-miner-fs-3` behind it. **Look at what is actually burning CPU, not at
+  how many test processes exist.** Two further traps hit in the same five minutes: `pgrep -f
+  "tests/run.js"` matched the wait-loop shells that contained that string in their own command
+  line and reported a run in progress when none existed — the self-match this file already warns
+  about — and a quiet-check written as `ps --sort=-pcpu | head -1` always reads **`ps` itself**
+  at ~100%, so it never fires. Skip the first row, or watch `/proc/loadavg`.
+- **A trailing `grep` for failures makes a passing run exit 1.** The final run's wrapper
+  reported exit code 1 while the log said `all 15 suites passed`, because `grep -E "^ *not ok"`
+  exits 1 when it matches nothing and it was the last command in the chain. `node tests/run.js`
+  itself had already printed `EXIT=0`. The `# pass 1` lesson again: **check the thing itself,
+  not the summary you were handed.**
+- **Not covered, and stated plainly.** Real touch hardware: the drag is synthesised from
+  `PointerEvent`s inside the page, which exercises the handler and not iPadOS gesture
+  arbitration, momentum, or scroll interception — and the handle is a 6px target, so a real
+  finger pass is genuinely owed. Print output of a resized table was **reasoned about and not
+  looked at**: no `@media print` rule sets `table-layout` or touches a `<col>`, and the blanket
+  flatten rule forces colour and border but never width, so the colgroup survives by
+  construction — but nobody has printed one. Also not covered, as ever: the live Firebase
+  project.
 
 ### Confirmation on every destructive control (2026-08-18)
 

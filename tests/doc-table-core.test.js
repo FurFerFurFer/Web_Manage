@@ -57,9 +57,10 @@ test('the module exports exactly the documented surface', () => {
   // Written out by hand on purpose: if an export is added or renamed, this is
   // the case that notices, the same way tests/schema.test.js pins SLOT_FIELDS.
   assert.deepEqual(Object.keys(T).sort(), [
-    'MAX_COLS', 'MAX_ROWS', 'canMerge', 'formatTableText', 'gridSize', 'mergeAt',
-    'mergeCells', 'mergeMap', 'normalizeMerges', 'parseTableText', 'rowsOf',
-    'unmergeCell', 'withMerges', 'withRows'
+    'MAX_COLS', 'MAX_ROWS', 'MIN_COL_PCT', 'canMerge', 'colWidthsOf', 'formatTableText',
+    'gridSize', 'mergeAt', 'mergeCells', 'mergeMap', 'normalizeColWidths',
+    'normalizeMerges', 'parseTableText', 'resizeColumn', 'rowsOf', 'unmergeCell',
+    'withColWidths', 'withMerges', 'withRows'
   ].sort());
 });
 
@@ -331,6 +332,150 @@ test('withRows clamps a merge when the last COLUMN goes', () => {
     merges: [{ r: 0, c: 0, rs: 1, cs: 3 }] };
   const narrower = T.withRows(b, b.rows.map(r => r.slice(0, -1)));
   assert.deepEqual(narrower.merges, [{ r: 0, c: 0, rs: 1, cs: 2 }]);
+});
+
+// ── column widths ──────────────────────────────────────────────────────────
+// `colWidths` is a list of percentages, one per column, summing to 100. It
+// follows the `merges` rule and deliberately NOT the `cautionDates` rule:
+// absence is the default and clearing DELETES the key, because there is no
+// legacy fallback sitting behind it and an empty list would be a second
+// spelling of "none". Two browser cases deepEqual a whole table block.
+
+const total = ws => Math.round(ws.reduce((a, b) => a + b, 0) * 100) / 100;
+
+test('colWidthsOf returns [] for a table that has never been resized', () => {
+  assert.deepEqual(T.colWidthsOf({ id: 'b-1', type: 'table', rows: [['a', 'b']] }), []);
+});
+
+test('colWidthsOf reads a stored list back, one entry per column', () => {
+  assert.deepEqual(T.colWidthsOf({ rows: [['a', 'b']], colWidths: [70, 30] }), [70, 30]);
+});
+
+test('colWidthsOf cannot throw on a hand-edited or synced block', () => {
+  // schema.js validates `docPages: 'list'` and no block shape at all, so this
+  // module is the only thing standing between damaged data and a throw out of
+  // a React render — which would empty the whole page, not just the table.
+  const bad = [
+    { rows: [['a', 'b']], colWidths: 'wide' },
+    { rows: [['a', 'b']], colWidths: {} },
+    { rows: [['a', 'b']], colWidths: null },
+    { rows: [['a', 'b']], colWidths: ['a', 'b'] },
+    { rows: [['a', 'b']], colWidths: [NaN, Infinity] },
+    { rows: [['a', 'b']], colWidths: [70, -5] },
+    { rows: [['a', 'b']], colWidths: [0, 0] }
+  ];
+  bad.forEach(b => {
+    const w = T.colWidthsOf(b);
+    assert.equal(Array.isArray(w), true);
+    if (w.length) {
+      assert.equal(w.length, 2, 'one entry per column or nothing at all');
+      assert.equal(w.every(n => typeof n === 'number' && isFinite(n) && n > 0), true);
+      assert.equal(total(w), 100);
+    }
+  });
+});
+
+test('colWidthsOf normalises a list that does not add up to 100', () => {
+  // Stored data is not a promise. A list in any units at all is read as a
+  // ratio, so a hand-written [2, 1] means two thirds and one third.
+  assert.deepEqual(T.colWidthsOf({ rows: [['a', 'b', 'c']], colWidths: [2, 1, 1] }), [50, 25, 25]);
+});
+
+test('withColWidths DELETES the key when the list empties', () => {
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b']], colWidths: [70, 30] };
+  const cleared = T.withColWidths(b, []);
+  assert.equal('colWidths' in cleared, false);
+  assert.deepEqual(cleared, { id: 'b-1', type: 'table', rows: [['a', 'b']] });
+});
+
+test('withColWidths preserves keys it has never heard of, merges included', () => {
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b']],
+    merges: [{ r: 0, c: 0, rs: 1, cs: 2 }], somethingLater: 42 };
+  const next = T.withColWidths(b, [70, 30]);
+  assert.equal(next.somethingLater, 42);
+  assert.deepEqual(next.merges, [{ r: 0, c: 0, rs: 1, cs: 2 }]);
+});
+
+test('withColWidths stores a list that sums to exactly 100', () => {
+  const b = { rows: [['a', 'b', 'c']] };
+  const next = T.withColWidths(b, [1, 1, 1]);
+  assert.equal(total(next.colWidths), 100, 'thirds still add up, despite the rounding');
+});
+
+test('withRows TRUNCATES the widths when a column goes, and still sums to 100', () => {
+  // − col computes the new rows itself and hands them to withRows, exactly as
+  // it already does for merges — so neither of those four inline handlers has
+  // to know this field exists.
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b', 'c'], ['d', 'e', 'f']],
+    colWidths: [50, 25, 25] };
+  const narrower = T.withRows(b, b.rows.map(r => r.slice(0, -1)));
+  assert.equal(narrower.colWidths.length, 2);
+  assert.equal(total(narrower.colWidths), 100);
+  assert.equal(narrower.colWidths[0] > narrower.colWidths[1], true,
+    'the columns that survive keep their proportions to each other');
+});
+
+test('withRows PADS the widths when a column arrives, and still sums to 100', () => {
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b'], ['c', 'd']], colWidths: [50, 50] };
+  const wider = T.withRows(b, b.rows.map(r => [...r, '']));
+  assert.equal(wider.colWidths.length, 3);
+  assert.equal(total(wider.colWidths), 100);
+});
+
+test('withRows leaves a table that was never resized with NO colWidths key', () => {
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b'], ['c', 'd']] };
+  const wider = T.withRows(b, b.rows.map(r => [...r, '']));
+  assert.deepEqual(Object.keys(wider), ['id', 'type', 'rows'],
+    'the stored shape is exactly what it was before this feature existed');
+});
+
+test('resizeColumn moves ONE boundary and conserves the total', () => {
+  const b = { rows: [['a', 'b', 'c']], colWidths: [40, 30, 30] };
+  const next = T.resizeColumn(b, 0, 60);
+  assert.equal(next.colWidths[0], 60);
+  assert.equal(next.colWidths[1], 10, 'the neighbour paid for it');
+  assert.equal(next.colWidths[2], 30, 'and nothing else moved');
+  assert.equal(total(next.colWidths), 100);
+});
+
+test('resizeColumn seeds equal columns for a table that was never resized', () => {
+  // table-layout: fixed with no widths draws the columns equally, so seeding
+  // equal is what the user was already looking at — the first drag moves one
+  // boundary rather than snapping the whole table.
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b', 'c', 'd']] };
+  const next = T.resizeColumn(b, 0, 40);
+  assert.equal(next.colWidths[0], 40);
+  assert.equal(next.colWidths[1], 10, '25 gave up 15');
+  assert.deepEqual(next.colWidths.slice(2), [25, 25]);
+});
+
+test('resizeColumn refuses to push either side of the boundary below the floor', () => {
+  const b = { rows: [['a', 'b']], colWidths: [50, 50] };
+  assert.equal(T.resizeColumn(b, 0, 0).colWidths[0], T.MIN_COL_PCT);
+  assert.equal(T.resizeColumn(b, 0, 999).colWidths[1], T.MIN_COL_PCT);
+  assert.equal(total(T.resizeColumn(b, 0, 999).colWidths), 100);
+});
+
+test('resizeColumn returns the block UNCHANGED for a boundary that is not there', () => {
+  // Same refuse-by-returning-unchanged contract mergeCells already uses, so a
+  // caller that skipped the bounds check cannot corrupt the grid.
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b']], colWidths: [50, 50] };
+  assert.equal(T.resizeColumn(b, 1, 40), b, 'the last column has no boundary to its right');
+  assert.equal(T.resizeColumn(b, -1, 40), b);
+  assert.equal(T.resizeColumn(b, 9, 40), b);
+});
+
+test('GUARD: width and merge geometry are independent', () => {
+  // Passes on both sides of this feature by design. If it ever fails, the two
+  // fields have become entangled and unmerging has stopped being a restore.
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b'], ['c', 'd']], colWidths: [70, 30] };
+  const merged = T.mergeCells(b, 0, 0, 'right');
+  assert.deepEqual(merged.colWidths, [70, 30], 'merging did not touch the widths');
+  assert.deepEqual(T.unmergeCell(merged, 0, 0).colWidths, [70, 30]);
+
+  const resized = T.resizeColumn(b, 0, 50);
+  assert.equal('merges' in resized, false, 'and resizing invented no merges');
+  assert.deepEqual(resized.rows, [['a', 'b'], ['c', 'd']], 'nor touched a single cell');
 });
 
 // ── canMerge / mergeCells / unmergeCell ────────────────────────────────────
