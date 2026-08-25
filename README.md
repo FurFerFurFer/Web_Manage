@@ -887,6 +887,8 @@ Track-website/
     ├── schema.test.js
     ├── true-storage-core.test.js
     ├── graph-layout.test.js
+    ├── doc-table-core.test.js
+    ├── cdp-cleanup.test.js
     ├── browser.test.js
     └── lib/
         ├── cdp.js
@@ -1203,6 +1205,8 @@ It runs three layers:
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
+| Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
+| Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
 | Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed |
 
 The first two offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
@@ -1210,9 +1214,20 @@ The first two offline files run **once per timezone** — `UTC`, `Pacific/Kiriti
 That sweep is the point, not a detail: `calendar-core.js` exists to turn instants
 into *local* calendar days and `schema.js` stamps a new slot with one, and the
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
-machine running in UTC. `true-storage-core.test.js` and `graph-layout.test.js`
-run **once**: neither module holds any date code, so a sweep would cost five runs
-and prove the same thing.
+machine running in UTC. `true-storage-core.test.js`, `graph-layout.test.js`,
+`doc-table-core.test.js` and `cdp-cleanup.test.js` run **once**: none of those
+modules holds any date code, so a sweep would cost five runs and prove the same
+thing.
+
+A run **cleans up after itself, including when it is interrupted.** `close()`
+cannot throw, so a profile directory that refuses to delete prints a warning and
+nothing more — it used to abort the caller's teardown and strand a listening HTTP
+server, leaving a node process that could never exit. Chrome is spawned detached
+and killed as a process *group*, so its zygote, GPU and renderer children go with
+it, and an exit handler reaps the browser on `SIGINT`/`SIGTERM`/`SIGHUP` or an
+unhandled throw. The one case nothing can intercept is a `SIGKILL` of node
+itself; for that, each `Browser.launch()` first sweeps `track-cdp-*` profile
+directories older than a day.
 
 Useful variations:
 
@@ -1422,11 +1437,14 @@ The committed suite is the part of this baseline a reader can reproduce:
 node tests/run.js
 ```
 
-As of 2026-08-22 that is 140 offline cases (86 in `calendar-core.test.js`, 54 in
+As of 2026-08-25 that is 142 offline cases (88 in `calendar-core.test.js`, 54 in
 `schema.test.js`, several hundred assertions) executed under five timezones from
-UTC+14 to UTC-11, plus 24 cases in `true-storage-core.test.js` and 21 in
-`graph-layout.test.js` run once — neither holds date code — plus 136 browser
-subtests in headless Chrome. **All 13 suites pass.**
+UTC+14 to UTC-11, plus 24 cases in `true-storage-core.test.js`, 21 in
+`graph-layout.test.js`, 42 in `doc-table-core.test.js` and 13 in
+`cdp-cleanup.test.js` run once each — none of them holds date code — plus 168
+browser subtests in headless Chrome. **All 15 suites pass**, leaving no process
+and no `/tmp/track-cdp-*` directory behind. Budget 10 minutes on an idle machine
+and around 14 under a load average of 2.5 — both were measured.
 
 ### Hand-picked caution days (2026-08-22)
 

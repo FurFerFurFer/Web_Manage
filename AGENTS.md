@@ -72,7 +72,7 @@ Active files:
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js` and `doc-table-core.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -638,7 +638,7 @@ Then run the committed suite — it is the only automated check that sees the in
 node tests/run.js
 ```
 
-It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js` once (no date code in it), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
 
 - Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
 - A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.
@@ -1322,7 +1322,10 @@ UI.
   They were corpses, not load. The full browser suite then ran to completion beside all of them,
   149 subtests in 11 minutes with no failure and no `CDP connection closed`. Check `time`/`pcpu`
   and `/proc/loadavg`, not the count — and do not kill them by pattern, since a `pkill -f` on the
-  profile string matches the calling shell.
+  profile string matches the calling shell. **The leak that produced those corpses was fixed on
+  2026-08-25** (see "A run that cannot leak"), so a fresh accumulation now means something new is
+  wrong rather than business as usual. Everything else in this note — `time`/`pcpu` over the
+  count, and never `pkill -f` — still stands.
 - Also learned: `node --test --test-name-pattern=<subtest>` **silently runs nothing** unless the
   pattern also matches the parent `browser suites` test. It reports `1..0` and `# pass 1`, which
   reads as a pass. Check the plan count, never the summary line.
@@ -1748,6 +1751,107 @@ line at a bare width — do not. See the next section.
   untouched. Nothing was damaged, but the minute spent confirming that against `git show` is worth
   avoiding: use `rg -n`.
 
+### A run that cannot leak (2026-08-25)
+
+- **No data-contract change at all.** The slot stays at **23** fields, nothing was added to
+  `SLOT_FIELDS`, the hand-written CONTRACT lists needed no change, `styles.css` was not touched
+  and no `?v=` moved. Nothing here reaches `track_db` or any product page — this is test
+  infrastructure only. One new offline suite, `tests/cdp-cleanup.test.js` (**13** cases),
+  registered in `UNSWEPT_FILES`: no date code, so one run rather than five, matching
+  `true-storage-core.test.js`, `graph-layout.test.js` and `doc-table-core.test.js`. Suites go
+  14 → **15**.
+- **This file already half-described the bug, in two separate entries, without anyone joining
+  them up.** The
+  2026-08-18 note records that "`Browser.close()` can fail with `ENOTEMPTY` … which is where the
+  stray `/tmp/track-cdp-*` directories come from", and the 2026-08-22 note records 20-41 orphaned
+  Chrome processes read as contention and costing an hour of waiting. Both were symptoms of one
+  cause nobody had traced. **Two distinct leaks, and only the second one is the obvious one:**
+  - **Leak A — the immortal node process.** `t.after(async () => { await browser.close(); await
+    server.close(); })` is ONE statement. `fs.rmSync` had `maxRetries: 10, retryDelay: 100` —
+    exactly **one second** of tolerance for Chrome flushing its profile on exit. On a loaded
+    machine it threw, the throw escaped `close()`, **`server.close()` never ran**, and the still-
+    listening HTTP server kept node's event loop alive forever. Nine such processes were found
+    alive, aged 32-63 hours, every one having already printed `# fail 0` — the tests had PASSED
+    and the process could not exit. `ss -tlnp` naming nine node PIDs each holding fd 21 is what
+    turned a guess into a diagnosis; the process list alone had looked like this for days without
+    anyone reading it that way.
+  - **Leak B — the orphaned browser.** Nothing killed Chrome when node died first, and
+    `proc.kill()` signals only the ROOT process, leaving the zygote, GPU process and one renderer
+    per tab to reparent to init.
+- **Fail-first, offline: 13 cases, 11 failed — and only TWO of those failures are evidence.**
+  Cases 1 and 2 died on a real `ENOTEMPTY` escaping `close()`, which is the bug itself. The other
+  nine died on `killTree is not a function`, `sweepStaleProfiles is not a function`, an undefined
+  `_liveBrowsers`, and the module-surface list — all of which is just what a new export looks like
+  and proves nothing on its own. **Read which failures are load-bearing before counting them**; a
+  suite that goes 11-red to all-green is not 11 pieces of evidence. **Two cases passed on both
+  sides by design and are the guards**: the `SIGTERM`→`SIGKILL` escalation, and a removal that
+  succeeds. If either ever fails, the fix has broken what already worked.
+- **Fail-first, browser: an A/B on the INTERRUPT path, which is the only way to see Leak B.** A
+  scratch directory held symlinks to the repository, a REAL copy of `tests/` (never a symlink —
+  `require`/`__dirname` resolve through the realpath, which this file already records as having
+  cost one run a false pass) and **one** doctored file: `tests/lib/cdp.js` exactly as
+  `git show HEAD:` returned it. Both trees were driven identically — start
+  `node --test tests/browser.test.js`, wait for Chrome, `SIGINT` it with 11 Chrome processes live:
+
+  | | pre-fix | post-fix |
+  | --- | --- | --- |
+  | profile directories left behind | **1** | **0** |
+  | Chrome survivors | **11** | **0** |
+
+  Never place that doctored copy in the repository.
+- What changed, in the order that matters: `close()` **cannot throw** (the `rmSync` is wrapped and
+  warns instead); Chrome spawns `detached` so `killTree` can signal the process **group** via a
+  negative pid, falling back to the single process on `ESRCH`; a module-level registry plus
+  `process.once('exit' | 'SIGINT' | 'SIGTERM' | 'SIGHUP')` reaps whatever is still live, using only
+  synchronous calls because `'exit'` permits nothing else; and `launch()` sweeps `track-cdp-*`
+  directories older than a day. `browser.test.js`'s teardown is now `try/finally` — belt-and-braces
+  once `close()` is total, but it is the line the leak was made of.
+- **The sweep is bounded by BOTH a prefix and an age, and is tested for what it must NOT delete.**
+  It is the only code in this repository that removes something the current run did not create. A
+  day is far past the 11-14 minutes a full suite takes, and a live Chrome keeps its own profile's
+  mtime fresh — both 59-hour-old orphans showed that day's mtime — so a concurrent session is
+  never swept out from under itself. Three of the 13 cases assert non-deletion: a fresh directory,
+  an unrelated name, and `track-cdp` without the trailing dash.
+- **A lesson about the tooling, not the product, and it cost a wrong claim.** `nohup node
+  tests/run.js … &` inside a backgrounded call reports **exit code 0 the moment the wrapper shell
+  exits**, while the suite is still running. The completion notification was believed, the leftover
+  Chrome processes were briefly read as a failure of the fix, and they were in fact a *live* run.
+  This is the same shape as the `# pass 1` lesson already in this file: **the summary you are handed
+  is not the one you asked for — check the thing itself** (`ps` for the pid, the plan count for the
+  suite).
+- **`pgrep -fc` counts your own shell.** `pgrep -fc browser.test.js` returned 2 against a genuinely
+  clean machine, because the invoking command line contained the string. This is the same
+  self-match that makes `pkill -f "user-data-dir=/tmp/track-cdp-"` kill its caller. List and read
+  the matches; never trust the count.
+- **One-time cleanup performed.** 21 processes (13 node, 6 shell wrappers, 2 Chrome roots) killed
+  by explicit PID after re-verifying each against `/proc/<pid>/cmdline` and `pcpu`, and 31 profile
+  directories totalling **1.8 GB** removed via `sweepStaleProfiles` itself, which dogfooded the new
+  code against the exact mess it exists to prevent.
+- **What was run: `node tests/run.js` end to end TWICE, and the second one is the one that
+  counts.** Run 1 passed all 15 suites in 9.5 minutes on a machine made quiet by this task's own
+  cleanup — but `cdp.js` was edited *while it was running*, so it had tested a module that no
+  longer existed on disk. The two edits were provably inert for that path (a moved comment, and an
+  early return that only fires when Chrome has already exited, which it has not at teardown), and
+  it would have been easy to reason the second run away. It was run anyway: **all 15 suites pass
+  on the final tree** — calendar-core (88) and schema (54) under all five swept timezones with
+  identical results, true-storage-core (24), graph-layout (21), doc-table-core (42), cdp-cleanup
+  (13), and **168 browser subtests, all passing** in 13.6 minutes under a load average of 2.5.
+  Immediately after it: **0** `track-cdp-*` directories, **0** Chrome survivors, **0** node
+  survivors, **0** stray listeners, and **0** of this suite's own scratch directories — the first
+  time this repository can claim that. **A run against code you have since edited is not a run**,
+  however small the edit and however sound the argument; the argument is what you write down when
+  re-running is genuinely impossible, not instead of a re-run that costs ten background minutes.
+- The browser file has grown from the 157 the previous entry records; that growth is other
+  sessions' work, not this task's, which adds **no** browser case and changes only the teardown
+  line.
+- **Timing, since two entries above quote 11-14 minutes as if it were a constant:** the same suite
+  took **9.5** minutes idle and **13.6** minutes at load 2.5, on the same machine, the same day.
+  Treat the range as a load measurement, not a property of the suite.
+- **Not covered.** A `SIGKILL` of node itself, which no handler can intercept — the day-old sweep
+  is the backstop and is why it earns its place. Windows and macOS process-group semantics are
+  unexercised; this ran on Linux only. And the suite still simulates no drag and touches no real
+  hardware, unchanged by this work.
+
 ### Confirmation on every destructive control (2026-08-18)
 
 - 19 controls that deleted or cleared stored data on one unguarded click now ask
@@ -1804,7 +1908,9 @@ line at a bare width — do not. See the next section.
   machine; a `CDP connection closed` is a resource symptom, not a regression.
   Note also that `Browser.close()` can fail with `ENOTEMPTY` while removing its
   profile directory, which is where the stray `/tmp/track-cdp-*` directories come
-  from.
+  from. **Fixed on 2026-08-25** — `close()` can no longer throw and the browser is
+  reaped on interrupt; see "A run that cannot leak" below. The `pkill -f` warning
+  still stands.
 
 ### Documentations calendar blocks (2026-08-06)
 

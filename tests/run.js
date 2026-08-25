@@ -61,10 +61,11 @@ function run(label, file, env) {
 // invisibly on a machine running in UTC.
 const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js'];
 
-// Swept once, not per zone: true-storage-core.js, graph-layout.js and
-// doc-table-core.js hold no date code at all, so five runs would cost five
-// times as long and prove exactly the same thing.
-const UNSWEPT_FILES = ['true-storage-core.test.js', 'graph-layout.test.js', 'doc-table-core.test.js'];
+// Swept once, not per zone: true-storage-core.js, graph-layout.js,
+// doc-table-core.js and the cdp cleanup path hold no date code at all, so five
+// runs would cost five times as long and prove exactly the same thing.
+const UNSWEPT_FILES = ['true-storage-core.test.js', 'graph-layout.test.js', 'doc-table-core.test.js',
+  'cdp-cleanup.test.js'];
 
 for (const tz of zones)
   for (const file of OFFLINE_FILES)

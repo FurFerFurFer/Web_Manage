@@ -270,6 +270,73 @@ class Page {
   }
 }
 
+// ── cleanup ───────────────────────────────────────────────────────────────
+
+/* Chrome forks a zygote, a GPU process, a network/storage utility and one
+   renderer per tab. Signalling proc.pid alone kills the browser process and
+   leaves every one of those reparented to init, which is where the stray
+   `chrome --type=renderer` processes came from. launch() therefore spawns
+   detached so Chrome leads its own process group, and a negative pid signals
+   the whole group. */
+function killTree(proc, sig) {
+  if (!proc || proc.pid == null) return;
+  try {
+    process.kill(-proc.pid, sig);
+    return;
+  } catch { /* no group (not detached), or already gone — fall through */ }
+  try { proc.kill(sig); } catch { /* already dead */ }
+}
+
+const PROFILE_PREFIX = 'track-cdp-';
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/* The backstop for the one case no handler can cover: a SIGKILL of node
+   itself, which leaves the profile directory behind with nobody to remove it.
+
+   Bounded by BOTH a strict prefix and an age, because this is the only code
+   here that deletes something the current run did not create. A day is far
+   past the 11-14 minutes a full suite takes, and a live Chrome keeps its own
+   profile's mtime fresh, so a concurrent run is never swept out from under
+   itself. Every error is swallowed: failing to tidy up must never fail a run. */
+function sweepStaleProfiles(dir = os.tmpdir(), maxAgeMs = STALE_AFTER_MS) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return; }
+  const cutoff = Date.now() - maxAgeMs;
+  for (const name of names) {
+    if (!name.startsWith(PROFILE_PREFIX)) continue;
+    const full = path.join(dir, name);
+    try {
+      const st = fs.statSync(full);
+      if (!st.isDirectory() || st.mtimeMs >= cutoff) continue;
+      fs.rmSync(full, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch { /* raced, or not ours to remove */ }
+  }
+}
+
+/* Browsers that have been launched and not yet closed. The exit handler below
+   is the only thing standing between an interrupted run (Ctrl-C, an unhandled
+   throw, the shell going away) and an orphaned Chrome holding a debug port. */
+const _liveBrowsers = new Set();
+
+let _reaperInstalled = false;
+function installReaper() {
+  if (_reaperInstalled) return;
+  _reaperInstalled = true;
+  // 'exit' allows synchronous work only, which is why reap() uses process.kill
+  // and fs.rmSync rather than anything awaited.
+  const reap = () => {
+    for (const b of _liveBrowsers) {
+      killTree(b.proc, 'SIGKILL');
+      try { fs.rmSync(b.profileDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+    _liveBrowsers.clear();
+  };
+  process.once('exit', reap);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.once(sig, () => { reap(); process.exit(1); });
+  }
+}
+
 // ── the browser ───────────────────────────────────────────────────────────
 
 class Browser {
@@ -286,7 +353,12 @@ class Browser {
     const bin = findChrome();
     if (!bin) throw new Error('no Chrome found; set CHROME_PATH');
 
-    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'track-cdp-'));
+    installReaper();
+    sweepStaleProfiles();
+
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), PROFILE_PREFIX));
+    // detached: Chrome leads its own process group, so killTree can signal the
+    // zygote, GPU process and renderers along with it.
     const proc = spawn(bin, [
       '--headless=new',
       '--no-sandbox',
@@ -299,20 +371,26 @@ class Browser {
       '--remote-debugging-port=0',
       '--user-data-dir=' + profileDir,
       'about:blank'
-    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    ], { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
 
     let stderr = '';
     proc.stderr.on('data', d => { stderr += d.toString().slice(0, 2000); });
+
+    const browser = new Browser(proc, null, profileDir);
+    _liveBrowsers.add(browser);
 
     let port;
     try {
       port = (await waitForFile(path.join(profileDir, 'DevToolsActivePort'), timeout)).split('\n')[0].trim();
     } catch (e) {
-      proc.kill('SIGKILL');
-      fs.rmSync(profileDir, { recursive: true, force: true });
+      _liveBrowsers.delete(browser);
+      killTree(proc, 'SIGKILL');
+      try { fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+      catch { /* the sweep will get it */ }
       throw new Error('Chrome did not start: ' + e.message + '\n' + stderr);
     }
-    return new Browser(proc, 'http://127.0.0.1:' + port, profileDir);
+    browser.endpoint = 'http://127.0.0.1:' + port;
+    return browser;
   }
 
   /* Tabs created this way share one profile, so they share an origin's
@@ -330,16 +408,45 @@ class Browser {
     await fetch(this.endpoint + '/json/close/' + targetId).catch(() => {});
   }
 
+  /* NEVER THROWS, and that is the whole point of it.
+
+     The caller in browser.test.js is one statement — `await browser.close();
+     await server.close();` — so a throw here skipped server.close() and left an
+     HTTP server listening on localhost. Node cannot exit while a server is
+     listening, so the run hung forever, holding its port and its Chrome. Nine
+     such processes were found alive on the dev machine, aged 32-63 hours, every
+     one having already reported `# fail 0`. Failing to delete a temp directory
+     is a nuisance; letting that failure escape is an immortal process. */
   async close() {
+    _liveBrowsers.delete(this);
     for (const p of this.pages) { try { p.session.ws.close(); } catch { /* ignore */ } }
-    try { await fetch(this.endpoint + '/json/close/browser').catch(() => {}); } catch { /* ignore */ }
-    this.proc.kill('SIGTERM');
-    await Promise.race([new Promise(r => this.proc.once('exit', r)), sleep(3000)]);
-    if (this.proc.exitCode === null) this.proc.kill('SIGKILL');
+    if (this.endpoint) {
+      try { await fetch(this.endpoint + '/json/close/browser').catch(() => {}); } catch { /* ignore */ }
+    }
+    killTree(this.proc, 'SIGTERM');
+    await this.waitForExit(3000);
+    if (this.proc.exitCode === null) killTree(this.proc, 'SIGKILL');
     // remove only what this run created — Chrome may still be flushing profile
-    // files as it exits, so retry rather than failing the run on ENOTEMPTY
-    fs.rmSync(this.profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // files as it exits, so retry, and shrug if it still will not go. The next
+    // launch()'s sweep collects whatever is left behind.
+    try {
+      fs.rmSync(this.profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (e) {
+      console.error('warning: left ' + this.profileDir + ' behind (' + (e && e.code) + ')');
+    }
+  }
+
+  /* A bare Promise.race against sleep() leaves its timer armed, which keeps the
+     event loop alive for the full 3s after Chrome has already gone. The
+     exitCode check matters for the same reason: 'exit' has already fired for a
+     process that is gone, and `once` would never resolve. */
+  waitForExit(ms) {
+    if (this.proc.exitCode !== null && this.proc.exitCode !== undefined) return Promise.resolve();
+    return new Promise(resolve => {
+      const timer = setTimeout(resolve, ms);
+      this.proc.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
   }
 }
 
-module.exports = { Browser, Page, findChrome, sleep };
+module.exports = { Browser, Page, findChrome, sleep, killTree, sweepStaleProfiles, _liveBrowsers };

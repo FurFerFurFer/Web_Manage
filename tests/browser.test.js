@@ -78,7 +78,13 @@ const skipUnlessChrome = { skip: Browser.available() ? false : 'no Chrome found 
 test('browser suites', skipUnlessChrome, async t => {
   const server = await startServer(process.env.TRACK_TEST_ROOT || undefined);
   const browser = await Browser.launch();
-  t.after(async () => { await browser.close(); await server.close(); });
+  /* `finally`, not `;`. These were once one statement, and when browser.close()
+     threw on a stubborn profile directory the server was never closed — leaving
+     a listening socket that kept node alive forever. close() no longer throws,
+     so this is belt-and-braces, but it is the line the leak was made of. */
+  t.after(async () => {
+    try { await browser.close(); } finally { await server.close(); }
+  });
 
   /* `fresh` wipes the origin before seeding. Tabs share one browser profile,
      so a test that skips it inherits the previous test's data — and seed() is
