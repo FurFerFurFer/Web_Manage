@@ -35,12 +35,12 @@
 
    Fixtures are synthetic, always (AGENTS.md, "Preserve old data").
 
-   Expect three `# warning: left /tmp/cdp-cleanup-test-… behind (ENOTEMPTY)`
-   lines in a PASSING run. They are the point: three cases force fs.rmSync to
-   throw, and that warning is close() choosing to report instead of throw. The
-   directories are still removed afterwards by the real rmSync — this file
-   leaves nothing behind, which would be a poor look for the suite that exists
-   to stop things being left behind.
+   A PASSING run of this file prints NOTHING. Three cases deliberately make
+   fs.rmSync throw, and close() responds by warning to console.error — but
+   withFailingRmSync captures that warning and asserts on it rather than
+   letting it reach the terminal. Scary text in a green run is a real cost: it
+   trains a reader to ignore the warning, and the warning matters, because
+   outside these tests it fires only when a directory genuinely will not go.
 */
 'use strict';
 
@@ -76,13 +76,6 @@ function scratchDir() {
   return d;
 }
 
-// Runs fn with fs.rmSync replaced, restoring it however fn ends.
-async function withRmSync(fake, fn) {
-  const real = fs.rmSync;
-  fs.rmSync = fake;
-  try { return await fn(); } finally { fs.rmSync = real; }
-}
-
 function enotempty(dir) {
   const e = new Error("ENOTEMPTY: directory not empty, rmdir '" + dir + "'");
   e.code = 'ENOTEMPTY';
@@ -91,17 +84,41 @@ function enotempty(dir) {
   return e;
 }
 
+/* Runs fn with fs.rmSync throwing ENOTEMPTY, and CAPTURES the warning close()
+   prints instead of letting it reach the terminal. Both halves matter:
+
+   - Captured, so a PASSING run prints no scary ENOTEMPTY text. A warning a
+     reader cannot evaluate is worse than no warning: it trains them to ignore
+     the real one, which fires only when a directory genuinely will not go.
+   - Returned rather than discarded, so each caller can ASSERT the warning was
+     produced. That is strictly better than printing it — the reporting is now
+     covered behaviour rather than decoration, and silencing it later would
+     fail a test instead of quietly losing the only sign anything happened.
+
+   Restores both globals however fn ends. */
+async function withFailingRmSync(dir, fn) {
+  const realRm = fs.rmSync;
+  const realErr = console.error;
+  const warnings = [];
+  fs.rmSync = () => { throw enotempty(dir); };
+  console.error = (...a) => { warnings.push(a.join(' ')); };
+  try { await fn(); } finally { fs.rmSync = realRm; console.error = realErr; }
+  return warnings;
+}
+
 // ── close() is total ───────────────────────────────────────────────────────
 
 test('close() resolves even when the profile directory cannot be removed', async () => {
   const dir = scratchDir();
   const b = new Browser(stubProc(), 'http://127.0.0.1:1', dir);
 
-  await withRmSync(() => { throw enotempty(dir); }, async () => {
-    // The regression: this used to reject, and the rejection escaped the
-    // caller's teardown before it could close its HTTP server.
-    await b.close();
-  });
+  // The regression: this used to reject, and the rejection escaped the
+  // caller's teardown before it could close its HTTP server.
+  const warnings = await withFailingRmSync(dir, () => b.close());
+
+  assert.equal(warnings.length, 1, 'it reported the failure exactly once');
+  assert.match(warnings[0], /ENOTEMPTY/, 'the warning names the reason');
+  assert.ok(warnings[0].includes(dir), 'and names the directory it gave up on');
 });
 
 test('close() has already killed Chrome by the time the removal fails', async () => {
@@ -109,7 +126,7 @@ test('close() has already killed Chrome by the time the removal fails', async ()
   const proc = stubProc();
   const b = new Browser(proc, 'http://127.0.0.1:1', dir);
 
-  await withRmSync(() => { throw enotempty(dir); }, () => b.close());
+  await withFailingRmSync(dir, () => b.close());
 
   assert.ok(proc.calls.length > 0, 'the browser was signalled');
   assert.equal(proc.calls[0], 'SIGTERM', 'politely first');
@@ -141,7 +158,7 @@ test('close() drops the browser from the live registry, even on a failed removal
   const b = new Browser(stubProc(), 'http://127.0.0.1:1', dir);
   CDP._liveBrowsers.add(b);
 
-  await withRmSync(() => { throw enotempty(dir); }, () => b.close());
+  await withFailingRmSync(dir, () => b.close());
 
   assert.equal(CDP._liveBrowsers.has(b), false,
     'a closed browser is not left for the exit handler to kill twice');
