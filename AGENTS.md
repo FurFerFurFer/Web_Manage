@@ -249,6 +249,10 @@ A `docPages` block of type `table` holds a rectangular `rows: [[string]]` and ma
 - **Absence is the default, and clearing deletes the key.** No legacy fallback sits behind `merges`, so this is the `time` / `link` rule and deliberately NOT the `cautionDates: []` rule. `withMerges` is the one writer and it does the delete. Two existing browser cases `assert.deepEqual` a whole table block, and every table stored before the field existed has no such key, so writing `merges: []` would break both for nothing.
 - **Merging hides covered text; it never clears it.** `rows` stays rectangular and a covered cell keeps whatever was typed in it, so unmerging is a **restore, not a recomputed guess** — the same reasoning as `blockOff`. That is also why merge and unmerge take no `window.confirm`: nothing is deleted or cleared, so they sit outside the destructive-control rule, while `− row` and `− col` still prompt because those do drop text.
 - Every row/column change goes through `withRows`, which re-normalises against the new bounds. A region that lost a row is **CLAMPED**, not dropped; one clamped down to a single cell is dropped, because a 1x1 merge is not a merge. `normalizeMerges` also drops out-of-bounds origins and overlaps, first-wins, so the result never depends on iteration luck.
+- **A MOVE is not a row/column change, and must never go through `withRows`.** That funnel re-normalises merges against the new *bounds*, which is exactly right for a row added or dropped and exactly wrong for a reorder: the bounds do not change, the **indices** do. Sent through it, every merge keeps its old `r`/`c` and silently takes over whichever content moved into those coordinates — text intact, rectangle intact, and pointing at the wrong cells, which is the quietest kind of corruption this file exists to prevent. `TrackDocTable.moveLine` is the one positional writer; it remaps `merges` and permutes `colWidths` itself, then hands the result to `withMerges` / `withColWidths` so the delete-when-empty rule keeps its single home. A browser case is pinned against a doctored `moveLine` that skips the remap.
+- **What moves is a BAND, defined once by `lineBands`.** A merge spanning more than one line glues the boundaries inside it; a band is a maximal run with no unglued boundary. Bands are contiguous, cover every line and never overlap, so every merge lies entirely inside exactly one — which is what makes a move a permutation **no rectangle can straddle**, and why a merged region can only travel whole. That property is the whole design: it is why moving needs no refusal for merges and can never tear one. Glue per **boundary**, not per region, and transitivity is free — two merges overlapping in the same rows fall out as one band with no union-find and no second pass. Never re-derive a band at a call site. Reordering **inside** a region is deliberately not offered even though the rectangle would survive it: the extent would hold while the owner cell started drawing text that had been covered, which reads as loss. The cost is that a merge gluing a whole axis — a full-width `| Total | << | << |` footer does exactly that to every column — freezes that axis until it is unmerged, and `canMoveLine` names that case specifically rather than reporting "already the first column", which is true of a one-column table and unactionable here.
+- **A move writes nothing away, so it asks nothing** — it is a permutation, undone by moving back, and sits outside the destructive-control rule beside merge and unmerge. `canMoveLine` returns `canMerge`'s `{ok, reason}` shape plus `span` and `to`. **`to` is load-bearing, not a convenience:** the caller's selection must follow the line it moved, or the second press of the same button moves whatever slid into the old coordinates — one press does what was asked and the next undoes half of it. Compute it in `canMoveLine`, never at the call site; it is band arithmetic.
+- **A cell merged downward FILLS with its text box, and that height is computed rather than declared.** Chrome resolves neither `height: 100%` nor `min-height: 100%` against a table cell — measured, not assumed: a 165px cell left the box at 32px — so `AutoTextarea` floors its own measured content height at `parentElement.clientHeight`, gated on a `fill` prop that `TableGrid` already supplies via the span it passes to `cell(text, ri, ci, span)`. Two things about that function are load-bearing. It sets `height:auto` **before** reading either number, so the cell height it reads is what the OTHER rows demand rather than what its own last write imposed — that is what makes it idempotent, and idempotence is what lets the ResizeObserver admit height at all. And the observer's height gate is restricted to **filled** cells: a rowSpan cell grows when a neighbouring row does, which changes no width, so the original width-only gate would put the dead space straight back — but for an unfilled cell the floor is never read and a height re-fit would be pure loop risk. The file's own comment records an ungated observer taking the page down with "Maximum update depth exceeded"; do not widen that gate. A filled box is also `display: block`, because a textarea is inline-block and its baseline leading would leave the floor permanently a few pixels short.
 - `merges` is deliberately **not** validated in `schema.js`, which checks `docPages: 'list'` and no block shape at all. Gating one block field and not the others would invent an inconsistent rule; `doc-table-core.js` pays for that instead, reading every nested value through a helper that cannot throw — a throw here escapes a React render and empties the whole page.
 
 A `table` block may also carry `colWidths` — one **percentage** per column, summing to 100.
@@ -2000,6 +2004,138 @@ line at a bare width — do not. See the next section.
   flatten rule forces colour and border but never width, so the colgroup survives by
   construction — but nobody has printed one. Also not covered, as ever: the live Firebase
   project.
+
+### A merged cell you can type into, and movable rows and columns (2026-08-26)
+
+- **No data-contract change at all.** The slot stays at **23** fields, nothing was added to
+  `SLOT_FIELDS`, and the hand-written CONTRACT lists in `tests/schema.test.js`,
+  `tests/browser.test.js` and `tests/lib/fixture.js` needed no edit. Nothing here is a new
+  stored key: a move is a **permutation** of `rows`, `merges` and `colWidths`, and the fill
+  is geometry. That mattered concretely — three browser cases pin a table block's whole
+  shape (two `assert.deepEqual` of the block, one `Object.keys === ['id','type','rows']`),
+  and an offline GUARD case asserts a move on an unmerged table gains no `merges` key, so a
+  writer that stored `merges: []` would break all four for nothing. `styles.css` was **not**
+  touched and no `?v=` moved except `doc-table-core.js?v=2` → `?v=3`, its only loader being
+  `documentations.html`. Offline cases in `doc-table-core.test.js` go 57 → **73**; browser
+  subtests go 170 → **176**.
+- **The CSS this was planned around does not work, and only measuring found that.** The plan
+  was `min-height: 100%` on the cell's textarea, on the widely-repeated belief that
+  percentage heights resolve against a table cell. A standalone probe says otherwise in this
+  Chrome: in a 165px `rowspan` cell, `min-height:100%` left the box at **32px** and
+  `height:100%` at **36px** — neither resolved. The fix is a computed floor instead
+  (`Math.max(scrollHeight, parentElement.clientHeight)`), and `styles.css` went back to
+  untouched along with the five `?v=` bumps that had already been made for it. **Generalise
+  it: a layout belief that degrades SILENTLY to the current behaviour cannot be confirmed by
+  the page looking unchanged** — the case has to assert the number, and the number has to be
+  looked at before the mechanism is chosen.
+- Two things about `AutoTextarea.fit()` are load-bearing and are written into the data
+  contract above. It sets `height:auto` **before** reading either number, so the cell height
+  it reads is what the OTHER rows demand rather than what its own last write imposed — which
+  is what makes it idempotent. And the ResizeObserver's new height gate is restricted to
+  **filled** cells, because a rowSpan cell grows when a neighbouring row does (changing no
+  width) while an unfilled cell never reads the floor at all, so admitting height there would
+  be pure loop risk against a file whose own comment records an ungated observer killing the
+  page with "Maximum update depth exceeded".
+- **Fail-first, part one: the working tree WAS the pre-change file**, so the fill case needed
+  no scratch directory. It failed on the assertion it is named for —
+  `the text box FILLS the merged cell rather than sitting one line tall at its top (28 of 102px)`
+  — with both preconditions passing, which is what proves it could see the cell. It was then
+  **run a second time with its two claims reordered**, because AGENTS.md already records that
+  a case asserting N claims is proven for exactly the one that fired: the hit-test claim then
+  failed on its own, naming the dead space by its own class list —
+  `hit td.relative.border.border-gray-700.p-0.align-top`, the bare `<td>` with no click
+  handler.
+- **Fail-first, part two: five doctored baselines, and the failure sets separate cleanly.**
+  Each was a `TRACK_TEST_ROOT` of symlinks to the repository plus **one** doctored file, and
+  the builder **prints the root it serves** on every run — the 2026-08-22 entry records a
+  false all-green from a mis-set variable, and that is cheap insurance against repeating it.
+
+  | doctored | fails | on |
+  | --- | --- | --- |
+  | `moveLine` skips the merge remap (the `withRows` trap) | the band case, alone | `r: 1` where `r: 2` was expected |
+  | `lineBands` ignores merges — a plain adjacent swap | the band case, alone | `last` landed INSIDE the band |
+  | `moveLine` does not permute `colWidths` | the width case, alone | `[20,30,50]` where `[30,20,50]` |
+  | the button's `disabled` gating removed | the edge case | `the top row cannot go up` |
+  | the selection does not follow the moved line | the repeat-press case, alone | `last` back at the bottom |
+
+  A sixth, on the fill half: removing the observer's height gate fails the
+  neighbour-grows case **alone** while the fill case passes. Never place any of these six in
+  the repository.
+- **And one whole-file baseline, which the environment chase produced as a by-product.** A
+  complete run against a served tree holding the committed `doc-table-core.js` and
+  `documentations.html` and nothing else changed failed **exactly** the six cases this task
+  adds — 116 through 121 — and passed all 170 others. That is the cleanest statement of
+  fail-first available: not six separate arguments, one run in which precisely this task's
+  cases are red and nothing else is. It is also why the per-mechanism baselines above still
+  earn their place — this one proves the cases need the feature, those prove each case needs
+  its own half of it.
+- **A limitation found by reasoning, not by a failure, and worth the paragraph it cost.**
+  Bands mean a merge gluing a whole axis freezes that axis — and a full-width
+  `| Total | << | << |` footer, which is in this repository's own paste examples, does
+  exactly that to every column. The first implementation reported it as "This is already
+  the first column", which is true of a one-column table and unactionable here, so
+  `canMoveLine` now names the single-band case specifically. Reordering INSIDE a region
+  was considered and rejected: the rectangle would survive it, but the owner cell would
+  start drawing text that had been covered, which reads as loss. **The general point is
+  that a refusal inherited from a general rule still has to be phrased for the case that
+  actually triggers it** — the user cannot act on a reason that describes a different
+  situation.
+- **A real usability defect the tests surfaced rather than the code reading.** With the
+  selection left pointing at the coordinate a move had emptied, a second press of the same
+  button moved whatever slid into it — the first click did what was asked and the second
+  undid half of it, which is worse than a button that does nothing. `canMoveLine` now returns
+  `to`, computed where the band arithmetic lives rather than at the call site, and a browser
+  case presses the same button twice.
+- **Two defects in this task's own tests, both caught by reading the message.** (1) The
+  "never changes cell text" case compared rows joined into strings — but a COLUMN move
+  legitimately reorders the cells inside a row, so it failed on exactly the permutation it
+  had asked for. It compares the multiset of cells now. (2) The band case first waited for
+  the *right answer* to appear in `track_db`, so a wrong move timed out instead of reporting
+  itself; against the `lineBands` baseline it produced a bare `waitFor timed out` and proved
+  nothing. It waits for the write to LAND and then asserts, and the same baseline now fails
+  with the actual rows. **A case that dies on its own `waitFor` says the control is
+  unreachable, not that it is wrong** — that lesson is now in this file four times, in four
+  shapes.
+- **Environment note, and the wrong turn taken chasing it is the part worth keeping.** Two
+  consecutive `node tests/run.js` runs failed the SAME single subtest — `a soft flaw (a
+  dangling activeSlotId) still loads and stays editable`, on `waitFor timed out after
+  15000ms — progress.html mounting`. Twice is not a flake you may wave away, and this task's
+  first three attempts to clear it all proved nothing:
+  - It passes run ALONE, and the whole 33-case malformed-`track_db` section passes together.
+    Neither is evidence: the failure needs the cumulative state of a full run to appear.
+  - Capped at the first 98 cases it passes on BOTH trees — but the cap changes the harness
+    (direct `node file.js` rather than `node --test` after fourteen offline suites), so that
+    comparison answers a different question than the one asked.
+  - A full run against a pristine served tree passed case 98 — but it was run DIRECTLY, not
+    through `run.js`, so it too was unmatched. **A control that differs from the failing run
+    in two ways isolates neither.** On that single unmatched pass this task briefly concluded
+    the regression was its own; it was not.
+  The matched control — `TRACK_TEST_ROOT=<pristine> node tests/run.js`, same harness, same
+  machine, only the two product files reverted — settled it by failing case **101** (`a
+  healthy database is untouched by the load boundary`, which mounts all five pages in a loop)
+  while passing 98. **Both trees drop a heavy page-mount case; which one falls over varies
+  per run.** The cause is structural: every one of those mounts pulls React, ReactDOM, Babel,
+  Tailwind and three Firebase scripts from `unpkg` and `gstatic`, and this session hit three
+  outright CDN failures. `progress.html` loads *nothing* this task changed — checked, not
+  assumed — so no causal path existed in the first place.
+  **Generalise it: when a browser-layer failure reproduces, build the control that differs in
+  exactly ONE variable before believing either verdict.** A reproducible failure is not proof
+  of causation, and a single green control is not proof of innocence.
+- **Environment note, and it is a new one.** Three separate browser runs failed on
+  `realErrors` being non-empty with `ERR_CERT_VERIFIER_CHANGED` / `ERR_SOCKET_NOT_CONNECTED`
+  fetching Firebase and Tailwind from their CDNs, plus the `ReferenceError: firebase is not
+  defined` that follows. Every one passed on an immediate re-run. These pages load four
+  scripts from `gstatic.com` and `unpkg.com` at mount, so **any** case in this suite can fail
+  on a network blip in a way that looks like a product regression and even lands on a
+  plausible-looking assertion. Read the actual `realErrors` payload before believing one.
+- **Not covered, and stated plainly.** The four buttons live in the editor-body `.doc-chrome`
+  strip, which has **no** `@media (hover: none)` fallback — only `.docs-sidebar
+  .doc-row-acts` gets one — so on a touch device the whole table chrome stays at `opacity-0`
+  and this feature is **unreachable**. That is pre-existing and not introduced here, but it
+  is the largest gap in this entry and it is a real one: the complaint that prompted the work
+  may well have come from such a device. Print output of a filled merged cell was reasoned
+  about and looked at only through the existing print rules, never printed. Real touch
+  hardware and the live Firebase project are unverified as ever.
 
 ### Confirmation on every destructive control (2026-08-18)
 

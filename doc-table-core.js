@@ -15,9 +15,9 @@
 
    `rows` keeps its old shape exactly — still rectangular, still strings. A
    merge is a separate record naming a top-left cell and how many rows and
-   columns it spans; a width is a share of the table, not a pixel count. Four
-   rules follow, they govern BOTH added fields, and each one is an existing
-   rule in AGENTS.md applied to a new field:
+   columns it spans; a width is a share of the table, not a pixel count. Five
+   rules follow, the first four govern BOTH added fields, and each one is an
+   existing rule in AGENTS.md applied to a new field:
 
    1. ABSENCE IS THE DEFAULT, and the key is DELETED when the list empties.
       Every table stored before this file existed has no `merges` key and
@@ -46,6 +46,24 @@
       sites, one dropped half of it, and the Progress timeline mismarked every
       due day until it was found (AGENTS.md, "Choosable deadline caution
       period").
+
+   5. A MOVE IS NOT A ROW/COLUMN CHANGE, and is the one thing that must NOT go
+      through `withRows`. Rule 3 re-normalises against the new BOUNDS, which is
+      right when a line was added or dropped and wrong for a reorder: the bounds
+      do not change, the INDICES do. Sent through it, every merge would keep its
+      old r/c and quietly take over whichever content had moved into those
+      coordinates — text intact, rectangle intact, pointing at the wrong cells.
+      `moveLine` is therefore a writer of its own: it remaps `merges`, permutes
+      `colWidths`, and only then hands the result to `withMerges` /
+      `withColWidths` so rule 1 keeps its single home.
+
+      What it moves is a BAND, defined once by `lineBands`. A merge spanning
+      more than one line glues the boundaries inside it, and a band is a maximal
+      run with no unglued boundary. Bands are contiguous, cover every line and
+      never overlap, so every merge lies entirely inside exactly one — which is
+      what makes a move a permutation NO RECTANGLE CAN STRADDLE. That is the
+      whole design: it is why moving needs no refusal for merges and can never
+      tear one, and why a merged region can only ever travel whole.
 
    The other half of this file is the paste format: the text an AI is asked to
    emit when it is shown a picture of a table. See TABLE-PASTE.md, which is the
@@ -441,6 +459,145 @@
     return withMerges(block, kept);
   }
 
+  // ── moving a row or a column ─────────────────────────────────────────────
+
+  /* The unit a move operates on, and the reason a merge can never be torn.
+
+     A merge that spans more than one line GLUES the boundaries inside it. A band
+     is a maximal run of lines with no unglued boundary in it, so bands are
+     contiguous, do not overlap, cover every line, and — the property everything
+     below rests on — every merge lies entirely inside exactly ONE band. Moving a
+     band is therefore a permutation that no rectangle straddles.
+
+     Gluing per BOUNDARY rather than per region is what makes this transitive for
+     free: two merges overlapping in the same rows glue an overlapping set of
+     boundaries and fall out as one band, with no union-find and no second pass.
+
+     `axis` is 'row' or 'col'. Returns [{start, end}], end exclusive. */
+  function lineBands(block, axis) {
+    var col = axis === 'col';
+    var size = gridSize(block);
+    var n = col ? size.cols : size.rows;
+    if (n <= 0) return [];
+
+    var glued = {};
+    normalizeMerges(block).forEach(function (m) {
+      var start = col ? m.c : m.r;
+      var len = col ? m.cs : m.rs;
+      for (var i = start; i < start + len - 1; i++) glued[i] = true;
+    });
+
+    var bands = [];
+    var from = 0;
+    for (var k = 0; k < n; k++) {
+      if (k === n - 1 || !glued[k]) { bands.push({ start: from, end: k + 1 }); from = k + 1; }
+    }
+    return bands;
+  }
+
+  function bandIndexOf(bands, line) {
+    for (var i = 0; i < bands.length; i++)
+      if (line >= bands[i].start && line < bands[i].end) return i;
+    return -1;
+  }
+
+  /* Whether the four move buttons can act on the focused cell, and if not, why —
+     shown as the disabled button's title, the same contract canMerge uses.
+
+     `dir` is -1 or +1, matching moveBlock in documentations.html. `span` is how
+     many lines would travel, so the button can say "these 2 merged rows" rather
+     than leaving the user to discover it.
+
+     `to` is where `index` itself ends up, and it is not a convenience: the
+     caller's selection has to FOLLOW the line it just moved, or a second click
+     on the same button moves whatever slid into the old coordinates instead —
+     one press moves your row, the next moves its new neighbour. It is computed
+     here rather than at the call site because it is band arithmetic, and that
+     has one home. Refused, it is `index` unchanged, so a caller can read it
+     without branching. */
+  function canMoveLine(block, axis, index, dir) {
+    var word = axis === 'col' ? 'column' : 'row';
+    var bands = lineBands(block, axis);
+    var i = bandIndexOf(bands, index);
+    if (i < 0) return { ok: false, reason: 'Click a cell first.', span: 0, to: index };
+
+    var span = bands[i].end - bands[i].start;
+    // One band means a merge glues the whole axis together — a footer like
+    // `| Total | << | << |` spans every column, so no column can move without
+    // some line leaving the rectangle. Say THAT, rather than "already the first
+    // column", which is technically true of a table with one column and plainly
+    // misleading here.
+    if (bands.length === 1)
+      return { ok: false, reason: 'A merged cell spans every ' + word + '. Unmerge it first.',
+        span: span, to: index };
+
+    var back = dir < 0;
+    var j = i + (back ? -1 : 1);
+    if (j < 0) return { ok: false, reason: 'This is already the first ' + word + '.', span: span, to: index };
+    if (j >= bands.length) return { ok: false, reason: 'This is already the last ' + word + '.', span: span, to: index };
+
+    // The selected line shifts by the whole LENGTH of the band it jumps.
+    var jump = bands[j].end - bands[j].start;
+    return { ok: true, reason: '', span: span, to: index + (back ? -jump : jump) };
+  }
+
+  /* Swaps the band holding `index` with its neighbour. A merged region moves as
+     one piece, and a plain line steps straight OVER a merged band rather than
+     into the middle of it — which is what keeps one click one move however the
+     table happens to be spanned.
+
+     Refuses by returning the block unchanged, the same contract mergeCells uses.
+
+     NOT withRows, and that is the whole reason this is a writer of its own. That
+     funnel re-normalises merges against the new BOUNDS, which is right for a row
+     added or dropped and wrong here: the bounds do not change, the indices do.
+     Sent through it, every merge would keep its old r/c and silently take over
+     whichever content had moved into those coordinates. The remap below is the
+     job. */
+  function moveLine(block, axis, index, dir) {
+    if (!canMoveLine(block, axis, index, dir).ok) return block;
+
+    var col = axis === 'col';
+    var bands = lineBands(block, axis);
+    var i = bandIndexOf(bands, index);
+    var j = i + (dir < 0 ? -1 : 1);
+
+    // The permutation, as old line numbers in their new order.
+    var order = [];
+    for (var k = 0; k < bands.length; k++) {
+      var b = k === i ? bands[j] : k === j ? bands[i] : bands[k];
+      for (var x = b.start; x < b.end; x++) order.push(x);
+    }
+    var moved = [];
+    order.forEach(function (from, to) { moved[from] = to; });
+
+    var rows = rowsOf(block);
+    var nextRows = col
+      ? rows.map(function (row) { return order.map(function (o) { return o < row.length ? row[o] : ''; }); })
+      : order.map(function (o) { return rows[o] || []; });
+
+    // rs/cs are untouched: a band moves contiguously, so a span that was
+    // contiguous still is. Sorted, so normalizeMerges' first-wins overlap rule
+    // can never depend on the order the list happened to be built in.
+    var nextMerges = normalizeMerges(block).map(function (m) {
+      var to = moved[col ? m.c : m.r];
+      if (to === undefined) return m;
+      return col
+        ? { r: m.r, c: to, rs: m.rs, cs: m.cs }
+        : { r: to, c: m.c, rs: m.rs, cs: m.cs };
+    }).sort(function (a, b) { return a.r - b.r || a.c - b.c; });
+
+    var next = Object.assign({}, block, { rows: nextRows });
+    next = withMerges(next, nextMerges);
+    // Widths are per COLUMN, so only a column move disturbs them — but both
+    // branches go through the one writer, so the delete-when-empty rule keeps
+    // its single home either way.
+    var w = colWidthsOf(next);
+    return withColWidths(next, col && w.length
+      ? order.map(function (o) { return w[o]; })
+      : w);
+  }
+
   // ── the paste format ─────────────────────────────────────────────────────
 
   function isMarkerCell(raw) { return raw === MERGE_LEFT || raw === MERGE_UP; }
@@ -691,6 +848,9 @@
     canMerge: canMerge,
     mergeCells: mergeCells,
     unmergeCell: unmergeCell,
+    lineBands: lineBands,
+    canMoveLine: canMoveLine,
+    moveLine: moveLine,
     gridSize: gridSize,
     rowsOf: rowsOf,
     colWidthsOf: colWidthsOf,

@@ -231,6 +231,13 @@ The table is an ordinary Track table from that point on. Hover it and the contro
   they do drop text.
 - Click a cell, then `⇥ merge right` / `⇩ merge down` — merge by hand, without pasting.
 - `⤫ unmerge` — split a merged cell back apart.
+- Click a cell, then `↑ row` `↓ row` `← col` `→ col` — move that whole row or column one
+  step. A merged region moves as one piece, and a plain row beside one steps clear over
+  the whole thing rather than into the middle of it, so one press is always one line.
+  Nothing is dropped, so these do not ask. The first row is still drawn as the header, so
+  a row moved to the top **becomes** the header.
+- `⇔ auto width` — put every column back to an equal share. This one asks, because it
+  clears widths you dragged.
 
 **Unmerging always gives you your text back.** Merging hides the covered cells, it never
 erases them, so nothing you typed is lost by experimenting. That is also why merging does

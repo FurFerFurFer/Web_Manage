@@ -962,17 +962,10 @@ prompt at all, so those cases must be rewritten in the same change rather than a
 
 ## Proposal 16: Finish the Flexible Documentation Table
 
-Documentation tables can now merge cells and be pasted in from the `::: track-table` format
-(see README, "Documentations"). Three capabilities were scoped out of that change on purpose,
-and none of them is started.
-
-**Column widths.** Every column is currently equal-width with a `min-w-[90px]` floor
-hard-coded in `TableBlock`. A width per column — `2fr`, `30%`, `120px`, `auto` — would be the
-biggest remaining difference between a Track table and the picture it was copied from. The
-data shape is the easy part: an optional `cols: [string]` on the block, absent meaning today's
-behaviour. The format already has a natural place for it, a `cols:` line above the grid, which
-the parser would have to start accepting; the current parser deliberately rejects any line
-that is not a row, so this is an additive change to a refusal rather than a new tolerance.
+Documentation tables can now merge cells, be pasted in from the `::: track-table` format,
+carry a dragged width per column, wrap a long value, fill a downward merge with text, and
+move a whole row or column (see README, "Documentations"). Two capabilities remain, and
+neither is started.
 
 **Per-cell alignment.** Left/centre/right and top/middle/bottom. Cheap once cells can carry
 attributes, but they cannot today — `rows` is a grid of plain strings, and keeping it that way
@@ -986,9 +979,13 @@ An optional `head: n` (and `headCol: n`) would cover it. Note the interaction wi
 header cell spanning two columns is the common case that motivates this, and it already works
 geometrically — only the styling is index-based.
 
-Do these together or not at all. Each one alone changes the format and the block shape, and
-three separate rounds of "the paste format grew a field" would cost three migrations of the
-AI-facing spec in `TABLE-PASTE.md` and three re-reads by anyone who had memorised it.
+Do these two together or not at all. Each one alone changes the format and the block shape,
+and two separate rounds of "the paste format grew a field" would cost two migrations of the
+AI-facing spec in `TABLE-PASTE.md` and two re-reads by anyone who had memorised it.
+
+Note that moving rows makes the header question sharper rather than milder: the styling is
+positional, so a row moved to the top *becomes* the header and a header moved down stops
+being one. That is currently documented as a consequence rather than fixed.
 
 Not proposed: pasting a table by dropping an image on the page and doing the recognition
 locally. That needs an OCR dependency and a model, both of which are out of scope for a

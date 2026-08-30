@@ -3965,6 +3965,297 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* ── moving a whole row or column ─────────────────────────────────────────
+
+     Bands, not lines: a merged region travels as one piece and a plain line
+     steps OVER one rather than into the middle of it. The offline cover is
+     tests/doc-table-core.test.js; these exist to prove the page is wired to it,
+     that `merges` and `colWidths` are remapped rather than left pointing at the
+     old indices, and that a refusal writes nothing. */
+
+  const clickCellAt = (page, cell) => page.evaluate(function (sel) {
+    var ta = document.querySelector('.doc-table td[data-cell="' + sel + '"] textarea');
+    if (!ta) return false;
+    ta.click();
+    return true;
+  }, cell);
+
+  const moveSeed = () => seedDb({
+    docPages: [F.docPage('p-1', { title: 'Notes', blocks: [{
+      id: 'b-1', type: 'table',
+      rows: [['head', 'x'], ['tall', 'a'], ['', 'b'], ['last', 'z']],
+      merges: [{ r: 1, c: 0, rs: 2, cs: 1 }]
+    }] })]
+  });
+
+  await t.test('a row steps OVER a merged band, which moves as one piece', async () => {
+    const page = await open('documentations.html', { db: moveSeed(), hash: '?page=p-1' });
+    await page.waitFor(function () {
+      return !!document.querySelector('.doc-table td[data-cell="3,0"] textarea');
+    }, { message: 'the table' });
+
+    // The last row is directly under a two-row merge. One click must put it
+    // ABOVE the whole band, not between its two rows.
+    assert.equal(await clickCellAt(page, '3,0'), true);
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '↑ row' && !b.disabled; });
+    }, { message: 'the ↑ row button becoming available' });
+
+    await expectNoDialog(page, CLICK_SOON_TEXT, ['↑ row']);
+
+    /* Wait for the write to LAND, not for the right answer to appear. Waiting on
+       `rows[1][0] === 'last'` would make a wrong move time out instead of
+       reporting itself, and a case that dies on its own waitFor proves the
+       control is unreachable rather than wrong — AGENTS.md records that lesson
+       three times over. */
+    const seeded = JSON.stringify([['head', 'x'], ['tall', 'a'], ['', 'b'], ['last', 'z']]);
+    const after = (await page.waitFor(function (was) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return b && JSON.stringify(b.rows) !== was ? b : false;
+    }, { message: 'the move reaching track_db', args: [seeded] }));
+
+    assert.deepEqual(after.rows, [['head', 'x'], ['last', 'z'], ['tall', 'a'], ['', 'b']],
+      'the plain row jumped the WHOLE band rather than landing inside it');
+    assert.deepEqual(after.merges, [{ r: 2, c: 0, rs: 2, cs: 1 }],
+      'and the merge was REMAPPED to follow its own rows — the trap withRows would have left it at r:1');
+    assert.equal(await page.evaluate(function () {
+      var td = document.querySelector('.doc-table td[data-cell="2,0"]');
+      return td && td.getAttribute('data-span');
+    }), '2x1', 'the grid draws the band at its new home, still spanning two rows');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('pressing the same button twice moves the SAME row twice', async () => {
+    /* The selection has to follow the line it just moved. Left pointing at the
+       coordinate the move emptied, a second press moves whatever slid into it —
+       so the first click does what you asked and the second undoes half of it,
+       which is worse than the button not working at all. */
+    const page = await open('documentations.html', { db: moveSeed(), hash: '?page=p-1' });
+    await page.waitFor(function () {
+      return !!document.querySelector('.doc-table td[data-cell="3,0"] textarea');
+    }, { message: 'the table' });
+
+    assert.equal(await clickCellAt(page, '3,0'), true);
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '↑ row' && !b.disabled; });
+    }, { message: 'the ↑ row button becoming available' });
+
+    const rowsNow = () => page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0].rows;
+    });
+
+    await page.evaluate(CLICK_SOON_TEXT, '↑ row');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return b.rows[1][0] === 'last';
+    }, { message: 'the first move landing' });
+
+    await page.evaluate(CLICK_SOON_TEXT, '↑ row');
+    await sleep(600);
+
+    assert.deepEqual(await rowsNow(),
+      [['last', 'z'], ['head', 'x'], ['tall', 'a'], ['', 'b']],
+      'the second press moved `last` on up, not the row that had taken its place');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a column move carries its stored width with it', async () => {
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [{
+        id: 'b-1', type: 'table',
+        rows: [['a', 'b', 'c'], ['d', 'e', 'f']],
+        colWidths: [20, 30, 50]
+      }] })] }), hash: '?page=p-1' });
+    await page.waitFor(function () {
+      return !!document.querySelector('.doc-table td[data-cell="0,0"] textarea');
+    }, { message: 'the table' });
+
+    assert.equal(await clickCellAt(page, '0,0'), true);
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '→ col' && !b.disabled; });
+    }, { message: 'the → col button becoming available' });
+
+    await expectNoDialog(page, CLICK_SOON_TEXT, ['→ col']);
+
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return b && b.rows[0][0] === 'b' ? b : false;
+    }, { message: 'the column move reaching track_db' });
+
+    assert.deepEqual(after.rows, [['b', 'a', 'c'], ['e', 'd', 'f']]);
+    assert.deepEqual(after.colWidths, [30, 20, 50],
+      'the width travelled with its column instead of staying at its old index');
+    assert.deepEqual(await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('.doc-table col'),
+        function (c) { return c.style.width; });
+    }), ['30%', '20%', '50%'], 'and the drawn columns agree with what was stored');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('at the edge the move button is disabled, and clicking it writes nothing', async () => {
+    const page = await open('documentations.html', { db: moveSeed(), hash: '?page=p-1' });
+    await page.waitFor(function () {
+      return !!document.querySelector('.doc-table td[data-cell="0,0"] textarea');
+    }, { message: 'the table' });
+
+    assert.equal(await clickCellAt(page, '0,0'), true);
+    const state = await page.waitFor(function () {
+      var by = {};
+      Array.prototype.forEach.call(document.querySelectorAll('button'), function (b) {
+        var t = b.textContent.trim();
+        if (t === '↑ row' || t === '↓ row' || t === '← col') by[t] = { off: b.disabled, title: b.title };
+      });
+      return by['↑ row'] && by['↓ row'] && by['← col'] ? by : false;
+    }, { message: 'the move buttons' });
+
+    assert.equal(state['↑ row'].off, true, 'the top row cannot go up');
+    assert.equal(state['↑ row'].title, 'This is already the first row.',
+      'and the disabled button SAYS why rather than being discovered by clicking');
+    assert.equal(state['← col'].off, true, 'nor the first column left');
+    assert.equal(state['← col'].title, 'This is already the first column.');
+    assert.equal(state['↓ row'].off, false, 'while the direction that IS available stays live');
+
+    const before = await rawDb(page);
+    await page.evaluate(CLICK_SOON_TEXT, '↑ row');
+    await sleep(500);
+    assert.equal(await rawDb(page), before,
+      'clicking the disabled button anyway left track_db byte-identical');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a cell merged DOWNWARD is typable over its whole height', async () => {
+    /* A rowSpan cell is as tall as the rows it covers, but the textarea inside
+       it was only as tall as its own text — pinned to the top by `align-top`,
+       with the rest of the cell dead: the <td> has no click handler, so a click
+       down there focused nothing and did not even select the cell for the merge
+       buttons. "I can only type in one row" was that, not a missing newline —
+       Enter has always worked, there was just nowhere to aim. */
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [{
+        id: 'b-1', type: 'table',
+        rows: [['tall', 'a'], ['', 'b'], ['', 'c']],
+        merges: [{ r: 0, c: 0, rs: 3, cs: 1 }]
+      }] })] }), hash: '?page=p-1' });
+    await page.setViewport(1280, 900);
+
+    const m = await page.waitFor(function () {
+      var td = document.querySelector('.doc-table td[data-cell="0,0"]');
+      var plain = document.querySelector('.doc-table td[data-cell="0,1"]');
+      if (!td || !plain) return false;
+      var ta = td.querySelector('textarea');
+      if (!ta || ta.clientHeight < 1) return false;   // the auto-grow effect runs after mount
+      var tr = td.getBoundingClientRect();
+      // Four fifths of the way down the merged cell — well clear of the one
+      // line of text at the top, and the exact place the complaint is about.
+      var hit = document.elementFromPoint(Math.round(tr.left + tr.width / 2),
+                                          Math.round(tr.top + tr.height * 0.8));
+      return {
+        span: td.getAttribute('data-span'),
+        // clientHeight, not the bounding rect: the rect includes the cell's 1px
+        // borders, and a tolerance wide enough to swallow those would also
+        // swallow a genuinely short box.
+        tdH: td.clientHeight,
+        taH: Math.round(ta.getBoundingClientRect().height),
+        plainH: Math.round(plain.getBoundingClientRect().height),
+        hit: hit === ta ? 'self'
+          : hit ? hit.tagName.toLowerCase() + (hit.className ? '.' + String(hit.className).trim().split(/\s+/).join('.') : '')
+          : 'null'
+      };
+    }, { message: 'the merged cell being measured' });
+
+    assert.equal(m.span, '3x1', 'precondition: the fixture really does span three rows');
+    assert.equal(m.tdH > m.plainH * 2, true,
+      'precondition: the merged cell is much taller than a plain one (' + m.tdH + ' vs ' + m.plainH + ')');
+
+    assert.equal(m.tdH - m.taH <= 1, true,
+      'the text box FILLS the merged cell rather than sitting one line tall at its top ('
+      + m.taH + ' of ' + m.tdH + 'px)');
+    assert.equal(m.hit, 'self',
+      'so a click four fifths of the way down lands in that text box, not on dead space (hit ' + m.hit + ')');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a filled cell re-fits when a NEIGHBOURING row grows, and settles', async () => {
+    /* The reason AutoTextarea's ResizeObserver admits height at all, and the
+       case that has to hold for that to be safe. A rowSpan cell gets taller when
+       a row it covers gets taller, which changes no WIDTH — so the original
+       width-only gate would leave the dead space back the moment anyone typed in
+       the cell beside it.
+
+       The second half is the loop guard. fit() sets this box's height, which can
+       change the parent's height, which is a resize: the comment in that file
+       records an ungated observer taking the whole page down with "Maximum
+       update depth exceeded". So the height is sampled twice, half a second
+       apart, and must be the SAME number — a re-fit that keeps re-triggering
+       itself is a height that never stops moving. */
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [{
+        id: 'b-1', type: 'table',
+        rows: [['tall', 'a'], ['', 'b'], ['', 'c']],
+        merges: [{ r: 0, c: 0, rs: 3, cs: 1 }]
+      }] })] }), hash: '?page=p-1' });
+    await page.setViewport(1280, 900);
+
+    await page.waitFor(function () {
+      var ta = document.querySelector('.doc-table td[data-cell="0,0"] textarea');
+      return !!ta && ta.clientHeight > 40;
+    }, { message: 'the merged cell filling on first paint' });
+
+    const before = await page.evaluate(function () {
+      return document.querySelector('.doc-table td[data-cell="0,0"]').clientHeight;
+    });
+
+    // Type a paragraph into the plain cell beside it, so THAT row grows.
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('.doc-table td[data-cell="0,1"] textarea'), value);
+      return true;
+    }, SET_REACT_INPUT, 'one two three four five six seven eight nine ten eleven twelve '.repeat(4));
+
+    const grown = await page.waitFor(function () {
+      var td = document.querySelector('.doc-table td[data-cell="0,0"]');
+      var ta = td.querySelector('textarea');
+      var gap = td.clientHeight - Math.round(ta.getBoundingClientRect().height);
+      return gap <= 1 && td.clientHeight > 40 ? { tdH: td.clientHeight, gap: gap } : false;
+    }, { message: 'the merged cell re-filling after the neighbour grew' });
+
+    assert.equal(grown.tdH > before, true,
+      'precondition: the neighbour really did make the merged cell taller ('
+      + before + ' -> ' + grown.tdH + 'px)');
+    assert.equal(grown.gap <= 1, true,
+      'the filled box followed it rather than leaving the dead space back (' + grown.gap + 'px short)');
+
+    await sleep(500);
+    const settled = await page.evaluate(function () {
+      var td = document.querySelector('.doc-table td[data-cell="0,0"]');
+      return { tdH: td.clientHeight, taH: Math.round(td.querySelector('textarea').getBoundingClientRect().height) };
+    });
+    assert.equal(settled.tdH, grown.tdH,
+      'and it SETTLED — a cell still growing half a second later is fit() re-triggering itself ('
+      + grown.tdH + ' -> ' + settled.tdH + 'px)');
+    assert.equal(settled.tdH - settled.taH <= 1, true, 'still filled once settled');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('removing a storage tag asks, and Cancel keeps the pair', async () => {
     const page = await open('true-storage.html', { db: tagSeed(), hash: '?storage=ts-1' });
     await page.waitFor(function () { return !!document.querySelector('[data-tag-remove="tg-1"]'); },

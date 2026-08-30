@@ -9,7 +9,7 @@
   <script src="storage-guard.js?v=2"></script>
   <script src="schema.js?v=6"></script>
   <script src="calendar-core.js?v=6"></script>
-  <script src="doc-table-core.js?v=2"></script>
+  <script src="doc-table-core.js?v=3"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -143,11 +143,29 @@
 
     // ── small shared UI pieces ───────────────────────────────────────────────
 
-    function AutoTextarea({value, onChange, onFocus, onClick, placeholder, className}) {
+    function AutoTextarea({value, onChange, onFocus, onClick, placeholder, className, fill}) {
       const ref = useRef(null);
+      // `fill` is read through a ref so fit() can stay one stable function that
+      // the ResizeObserver effect can close over once, on mount, and still see
+      // the current value.
+      const fillRef = useRef(fill);
+      fillRef.current = fill;
       const fit = () => {
         const el = ref.current; if (!el) return;
-        el.style.height='auto'; el.style.height=el.scrollHeight+'px';
+        // height:auto FIRST, always, so both numbers below are measured with this
+        // box at its natural size.
+        el.style.height='auto';
+        // scrollHeight is what the text needs. clientHeight of the cell, measured
+        // in this same collapsed state, is what the OTHER rows of a rowSpan
+        // demand — for a plain cell the two are the same number, which is why
+        // `fill` gates the read rather than the max.
+        //
+        // A percentage height cannot do this job: Chrome resolves neither
+        // `height:100%` nor `min-height:100%` against a table cell (measured —
+        // a 165px cell left the box at 32px), so the floor has to be computed.
+        let h = el.scrollHeight;
+        if (fillRef.current && el.parentElement) h = Math.max(h, el.parentElement.clientHeight);
+        el.style.height=h+'px';
       };
       useEffect(fit, [value]);
       // Width, not only value. A table column being dragged, a sidebar thrown
@@ -155,20 +173,34 @@
       // without changing a character of it, and the [value] effect alone would
       // leave every row at the wrong height.
       //
-      // WIDTH ONLY, and that gate is load-bearing rather than an optimisation.
-      // fit() sets this element's height, which changes its parent's height,
-      // which is a resize — so an ungated observer re-fits forever and React
-      // dies on "Maximum update depth exceeded", taking the whole page with it.
-      // Observing the textarea instead of the parent has the identical loop.
+      // The width gate is load-bearing rather than an optimisation. fit() sets
+      // this element's height, which changes its parent's height, which is a
+      // resize — so an observer that re-fits on any change re-fits forever and
+      // React dies on "Maximum update depth exceeded", taking the whole page
+      // with it. Observing the textarea instead of the parent has the identical
+      // loop.
+      //
+      // HEIGHT is admitted too, but ONLY for a filled cell, and only through the
+      // same last-value gate. A rowSpan cell grows when a NEIGHBOURING row does,
+      // which changes no width, so the width gate alone would leave the dead
+      // space back the moment someone typed in the cell beside it. That is safe
+      // here only because fit() is idempotent under a fixed cell height — it
+      // re-collapses to auto before measuring, so calling it twice computes the
+      // same number twice, the parent stops changing, and the observer stops
+      // firing. Do not widen this gate to unfilled cells, where the floor is
+      // never read and the re-fit would be pure loop risk.
       const lastW = useRef(-1);
+      const lastH = useRef(-1);
       useEffect(() => {
         const el = ref.current;
         const box = el && el.parentElement;
         if (!box || typeof ResizeObserver !== 'function') return;
         const ro = new ResizeObserver(() => {
           const w = box.clientWidth;
-          if (w === lastW.current) return;
+          const h = fillRef.current ? box.clientHeight : lastH.current;
+          if (w === lastW.current && h === lastH.current) return;
           lastW.current = w;
+          lastH.current = h;
           fit();
         });
         ro.observe(box);
@@ -177,7 +209,16 @@
       return (
         <textarea ref={ref} rows={1} value={value} placeholder={placeholder}
           onChange={onChange} onFocus={onFocus} onClick={onClick}
-          className={"w-full bg-transparent resize-none outline-none overflow-hidden break-words placeholder-gray-600 "+(className||'')} />
+          className={"w-full bg-transparent resize-none outline-none overflow-hidden break-words placeholder-gray-600 "
+            /* `block` only when filling. A textarea is inline-block, so it sits on a
+               text baseline and leaves a few pixels of descender leading under it —
+               which is exactly the gap between a filled box and the bottom of its
+               cell, and would make the floor permanently short by that much. The
+               unfilled cells and the text blocks keep their existing box so this
+               stays one concern. `doc-cell-fill` carries no style at all and is
+               not in styles.css: it is a marker, so a filled cell is legible in
+               the inspector and selectable from a test. */
+            +(fill?'doc-cell-fill block ':'')+(className||'')} />
       );
     }
 
@@ -508,17 +549,49 @@
             : "bg-gray-900 text-gray-700 cursor-not-allowed")}>{label}</button>
       );
 
+      /* The four move buttons. One step per click, on the band holding the
+         selected cell — so a merged region travels as one piece and a plain line
+         steps over one rather than into it. Nothing is deleted or cleared, and
+         moving back undoes it exactly, so like merge and unmerge these ask no
+         question; the row and column REMOVALS still do, because those drop text. */
+      const moveBtn = (label, axis, dir, noun) => {
+        const can = selValid
+          ? DT.canMoveLine(block, axis, axis === 'col' ? sel.c : sel.r, dir)
+          : {ok:false, reason:'Click a cell first.', span:0};
+        const many = can.span > 1;
+        return chromeBtn(label,
+          can.ok ? 'Move ' + (many ? 'these ' + can.span + ' merged ' + noun + 's' : 'this ' + noun)
+                   + ' ' + (dir < 0 ? (axis === 'col' ? 'left' : 'up') : (axis === 'col' ? 'right' : 'down'))
+                 : can.reason,
+          can.ok, () => {
+            const line = axis === 'col' ? sel.c : sel.r;
+            onChange(DT.moveLine(block, axis, line, dir));
+            // The selection FOLLOWS the line it just moved. Without this the
+            // caret keeps pointing at a coordinate the move emptied, and a
+            // second press on the same button moves whatever slid into it.
+            setSel(axis === 'col' ? {...sel, c: can.to} : {...sel, r: can.to});
+          });
+      };
+
       return (
         <div onFocus={onFocus}>
           <div className="overflow-x-auto">
             {/* AutoTextarea, not an <input>: an input is single-line by
                 construction, so anything longer than its column was clipped —
                 on screen AND in the printed PDF, since this page has no
-                separate print DOM. A textarea wraps and the row grows. */}
+                separate print DOM. A textarea wraps and the row grows.
+
+                `fill` on a cell merged DOWNWARD, from the span TableGrid
+                already hands us. That cell is as tall as the rows it covers
+                while its text is one line, and the <td> has no click handler —
+                so everything below that line was dead: no caret, and not even a
+                selection for the merge buttons. AutoTextarea floors its height
+                at the cell's instead, which has to be computed: Chrome resolves
+                no percentage height against a table cell. */}
             <TableGrid block={block} resize={resize}
               widths={drag ? drag.widths : null}
-              cell={(text, ri, ci) => (
-                <AutoTextarea value={text}
+              cell={(text, ri, ci, span) => (
+                <AutoTextarea value={text} fill={span.rs > 1}
                   onChange={e=>setCell(ri,ci,e.target.value)}
                   // Click as well as focus: tabbing into a cell selects it, and so
                   // does clicking one that already had the caret.
@@ -557,6 +630,11 @@
               canDown.ok, ()=>onChange(DT.mergeCells(block, sel.r, sel.c, 'down')))}
             {chromeBtn('⤫ unmerge', merged ? 'Split this cell back apart — the hidden text comes back' : 'The selected cell is not merged.',
               !!merged, ()=>onChange(DT.unmergeCell(block, sel.r, sel.c)))}
+            <span className="mx-1 w-px bg-gray-800" />
+            {moveBtn('↑ row', 'row', -1, 'row')}
+            {moveBtn('↓ row', 'row',  1, 'row')}
+            {moveBtn('← col', 'col', -1, 'column')}
+            {moveBtn('→ col', 'col',  1, 'column')}
           </div>
         </div>
       );

@@ -490,10 +490,12 @@ still cleaned up without requiring a slot write.
 - **A `⛶` button at the top of the sidebar expands it to fill the viewport**, with 16px rows, 44px controls and a wider indent. Picking a page selects it *and* exits, so it is one tap in, one tap to a page, out; `✕` and `Escape` also exit. It is `position: fixed` at `z-index: 50`, which covers the page header and the theme toggle while staying under the notes widget and the storage/sync banners, and its bottom padding clears the notes-widget button so the last row stays tappable.
 - A Favorites sidebar section toggled per page from either of two star buttons that share the same `favorite` field: the small one revealed on hover in the sidebar page row, and a large touch-sized one at the right end of the page's toolbar row.
 - A per-page emoji icon chosen from a picker grid or typed freely.
-- Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove rows and columns, merged cells, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
+- Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove/move rows and columns, merged cells, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
 - **Tables can merge cells.** Click a cell, then `⇥ merge right` or `⇩ merge down` in the block's hover chrome; `⤫ unmerge` splits it back. A button is disabled with an explanatory tooltip when the operation would run off the grid or absorb a region that is already merged. Merging **hides** the covered cells and never clears them, so unmerging restores what was typed — which is why neither control asks for confirmation, while `− row` and `− col` still do. Removing a row or column a merged cell reached into **clamps** that cell to fit rather than deleting it.
 - **Table columns are draggable.** Hover a table and every internal column boundary grows a handle; drag it and the column takes width from its neighbour, so the table always fills its line and can never be pushed off the page. Widths are stored per table as **percentages**, not pixels, so they hold up when the sidebar is collapsed or thrown full screen and they print at the proportions on screen. `⇔ auto width` puts every column back to an equal share and asks first, being the one control here that clears a stored field. A table nobody has resized stores no widths at all and is drawn with equal columns.
 - **Table cells wrap.** A cell is a growing textarea rather than a one-line input, so a value longer than its column runs onto a second line and the row gets taller — visible on screen and in the exported PDF, where a long value used to be silently cut off at the column edge.
+- **A cell merged downward fills with text.** A cell spanning several rows is as tall as all of them, and its text box is now that tall too, so a click anywhere in it puts the caret in the text and typing runs down into the space. It used to be one line pinned to the top of the cell, with everything below it unclickable — visible space that could hold nothing. The height is computed rather than declared: Chrome resolves neither `height: 100%` nor `min-height: 100%` against a table cell, so `AutoTextarea` floors its own measured content height at the cell's, and re-measures when a **neighbouring** row grows and makes the merged cell taller.
+- **A whole row or column can be moved.** Click a cell, then `↑ row`, `↓ row`, `← col` or `→ col`. One press is one step, and the step is a **band**: a merged region travels as a single piece, and a plain row next to a two-row merge steps clear over the whole thing rather than into the middle of it, so a click always moves something by a whole line however the table is spanned. `merges` and `colWidths` are remapped with the cells, so a merged region keeps the text it was holding and a resized column keeps its width. The selection follows the line it moved, so pressing the same button twice moves the same row twice. At either end the button is disabled and its tooltip says which end — and when a merge glues the whole axis together, as a full-width `| Total | << | << |` footer does to every column, the tooltip says *that* instead, because "already the first column" would be true of a one-column table and useless here. Reordering **inside** a merged region is not offered: the region would keep its extent while its visible cell started showing text that had been hidden, which looks like loss even though nothing is lost. Unmerge first. Nothing is deleted and moving back undoes it exactly, so — like merge and unmerge — these ask no confirmation, while `− row` and `− col` still do. Note that the header styling is positional: a row moved to the top **becomes** the bold header row.
 - **A table can be pasted in as text**, through `▦ Paste table` in the block menu. It accepts the `::: track-table` pipe-grid format, in which `<<` marks a cell merged with the one to its left and `^^` one merged with the cell above; the fence and the outer pipes are optional and a markdown separator row is skipped, so an ordinary markdown table pastes correctly too. The dialog previews the parse through the same renderer the page uses and **refuses** a table whose rows disagree on cell count, whose markers point off the grid, or whose merged region is not a rectangle, naming the offending line. Nothing is inserted while an error is showing. The dialog also carries a copyable, structure-first brief to hand an AI with the image: it makes the complete table authoritative for border geometry, close-up crops authoritative for small text, forbids inferring a merge from alignment or an empty cell, and asks for a clearer image instead of guessing when a border or character is ambiguous. Text beyond the table's outside border is kept out of the grid and returned as a separate `Outside text` list, so a nearby heading, caption, or note cannot become an invented merged row. `TABLE-PASTE.md` is the longer version with image-quality guidance and worked examples.
 - A **Reference source dump** popup that shows the active slot's source-dump tree fully expanded — every nesting level and every leaf `{label, url}` link visible at once — and inserts a picked link as a link block carrying `dumpRef: {dumpId, linkId, urlId}` provenance. The block shows a "from: <dump title>" badge that degrades to "source removed" if the source is later deleted.
 - Images chosen from disk are downscaled (max dimension 1000px) and stored as compressed JPEG data-URIs inside the page, so they export, import, and cloud-sync with the slot. There is no size gate on inserting one: cloud sync gzips and chunks the workspace, so images no longer threaten it. The header instead shows a plain workspace-size readout plus a cloud sync state (`✓ synced`, `↻ syncing…`, `⚠ sync failed`, `⚠ conflict`, or `· local only`), read from `window.TrackSync`. The size turns amber only past ~4 MB, which tracks the browser's own `localStorage` quota rather than any cloud limit.
@@ -565,6 +567,24 @@ its text, which is what makes unmerging a restore rather than a recomputed guess
 `mergeMap` decides which cells are drawn and how far they span, `withRows` re-normalises
 after a row or column changes, and `parseTableText` / `formatTableText` are the paste
 format in both directions.
+
+`moveLine` is the one **positional** writer, and it is deliberately not another caller
+of `withRows`. That funnel re-normalises merges against the new *bounds*, which is right
+for a row added or dropped and wrong for a move: the bounds do not change, the indices
+do — sent through it, every merge would keep its old `r`/`c` and silently take over
+whichever content had moved into those coordinates. `moveLine` remaps them instead, and
+permutes `colWidths` alongside the cells on a column move.
+
+What it moves is a **band**, defined once by `lineBands`: a merge spanning more than one
+line glues the boundaries inside it, and a band is a maximal run with no unglued boundary
+in it. Bands are contiguous, cover every line, and never overlap, so every merge lies
+entirely inside exactly one of them — which is what makes a move a permutation no
+rectangle can straddle, and why a merged region can only ever travel whole. Gluing per
+*boundary* rather than per region is what makes that transitive for free: two merges
+overlapping in the same rows fall out as one band with no second pass. `canMoveLine`
+reports the same `{ok, reason}` refusal shape as `canMerge`, plus `span` (how many lines
+would travel) and `to` (where the selected line lands, so the caller's selection can
+follow it).
 
 A table block's `colWidths` obeys the same absence rule and holds one **percentage** per
 column, summing to 100:
@@ -872,7 +892,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `notes-widget.js` | Floating per-slot notes widget |
 | `true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
-| `doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
+| `doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
 | `styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
@@ -1228,7 +1248,7 @@ It runs three layers:
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
-| Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, column widths normalising to a conserved total and following a row or column change, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
+| Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, column widths normalising to a conserved total and following a row or column change, band geometry and the row/column move that permutes `rows`, `merges` and `colWidths` together, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
 | Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed |
 
@@ -1460,11 +1480,11 @@ The committed suite is the part of this baseline a reader can reproduce:
 node tests/run.js
 ```
 
-As of 2026-08-25 that is 142 offline cases (88 in `calendar-core.test.js`, 54 in
+As of 2026-08-26 that is 142 offline cases (88 in `calendar-core.test.js`, 54 in
 `schema.test.js`, several hundred assertions) executed under five timezones from
 UTC+14 to UTC-11, plus 24 cases in `true-storage-core.test.js`, 21 in
-`graph-layout.test.js`, 57 in `doc-table-core.test.js` and 13 in
-`cdp-cleanup.test.js` run once each — none of them holds date code — plus 168
+`graph-layout.test.js`, 73 in `doc-table-core.test.js` and 13 in
+`cdp-cleanup.test.js` run once each — none of them holds date code — plus 176
 browser subtests in headless Chrome. **All 15 suites pass**, leaving no process
 and no `/tmp/track-cdp-*` directory behind. Budget 10 minutes on an idle machine
 and around 14 under a load average of 2.5 — both were measured.

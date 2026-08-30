@@ -57,10 +57,10 @@ test('the module exports exactly the documented surface', () => {
   // Written out by hand on purpose: if an export is added or renamed, this is
   // the case that notices, the same way tests/schema.test.js pins SLOT_FIELDS.
   assert.deepEqual(Object.keys(T).sort(), [
-    'MAX_COLS', 'MAX_ROWS', 'MIN_COL_PCT', 'canMerge', 'colWidthsOf', 'formatTableText',
-    'gridSize', 'mergeAt', 'mergeCells', 'mergeMap', 'normalizeColWidths',
-    'normalizeMerges', 'parseTableText', 'resizeColumn', 'rowsOf', 'unmergeCell',
-    'withColWidths', 'withMerges', 'withRows'
+    'MAX_COLS', 'MAX_ROWS', 'MIN_COL_PCT', 'canMerge', 'canMoveLine', 'colWidthsOf',
+    'formatTableText', 'gridSize', 'lineBands', 'mergeAt', 'mergeCells', 'mergeMap',
+    'moveLine', 'normalizeColWidths', 'normalizeMerges', 'parseTableText',
+    'resizeColumn', 'rowsOf', 'unmergeCell', 'withColWidths', 'withMerges', 'withRows'
   ].sort());
 });
 
@@ -541,6 +541,181 @@ test('mergeAt finds the region a cell owns, and nothing for a plain cell', () =>
   const b = block([['a', 'b'], ['c', 'd']], [{ r: 0, c: 0, rs: 1, cs: 2 }]);
   assert.deepEqual(T.mergeAt(b, 0, 0), { r: 0, c: 0, rs: 1, cs: 2 });
   assert.equal(T.mergeAt(b, 1, 0), null);
+});
+
+// ── moving a row or a column ───────────────────────────────────────────────
+
+test('lineBands glues the rows a merge spans and leaves plain rows alone', () => {
+  const b = block([['a', 'b'], ['c', 'd'], ['e', 'f'], ['g', 'h']],
+    [{ r: 1, c: 0, rs: 2, cs: 1 }]);
+  assert.deepEqual(T.lineBands(b, 'row'),
+    [{ start: 0, end: 1 }, { start: 1, end: 3 }, { start: 3, end: 4 }]);
+  // cs is 1, so the same merge glues no COLUMN boundary.
+  assert.deepEqual(T.lineBands(b, 'col'), [{ start: 0, end: 1 }, { start: 1, end: 2 }]);
+});
+
+test('lineBands is transitive — two merges sharing a row fall out as ONE band', () => {
+  // Gluing per boundary rather than per region is what buys this. Rows 0-1 and
+  // rows 1-2 are separate rectangles that between them tie all three together.
+  const b = block([['a', 'b', 'c'], ['d', 'e', 'f'], ['g', 'h', 'i']],
+    [{ r: 0, c: 0, rs: 2, cs: 1 }, { r: 1, c: 1, rs: 2, cs: 1 }]);
+  assert.deepEqual(T.lineBands(b, 'row'), [{ start: 0, end: 3 }]);
+});
+
+test('lineBands on a table with no merges is one band per line', () => {
+  const b = block([['a', 'b', 'c'], ['d', 'e', 'f']]);
+  assert.deepEqual(T.lineBands(b, 'row'), [{ start: 0, end: 1 }, { start: 1, end: 2 }]);
+  assert.deepEqual(T.lineBands(b, 'col'),
+    [{ start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }]);
+});
+
+test('moveLine swaps two plain rows', () => {
+  const b = block([['a', 'b'], ['c', 'd'], ['e', 'f']]);
+  assert.deepEqual(T.moveLine(b, 'row', 2, -1).rows, [['a', 'b'], ['e', 'f'], ['c', 'd']]);
+  assert.deepEqual(T.moveLine(b, 'row', 0, 1).rows, [['c', 'd'], ['a', 'b'], ['e', 'f']]);
+});
+
+test('moveLine steps a plain row straight OVER a merged band, in one move', () => {
+  // The whole point of bands: the row below a two-row merge lands ABOVE it, not
+  // in the middle of it, so one click is one move however the table is spanned.
+  const b = block([['head', 'x'], ['tall', 'a'], ['', 'b'], ['last', 'z']],
+    [{ r: 1, c: 0, rs: 2, cs: 1 }]);
+  const up = T.moveLine(b, 'row', 3, -1);
+  assert.deepEqual(up.rows, [['head', 'x'], ['last', 'z'], ['tall', 'a'], ['', 'b']]);
+  assert.deepEqual(up.merges, [{ r: 2, c: 0, rs: 2, cs: 1 }],
+    'and the merge followed its own rows rather than staying at index 1');
+});
+
+test('moveLine moves a merged band as ONE piece, its span unchanged', () => {
+  const b = block([['head', 'x'], ['tall', 'a'], ['', 'b'], ['last', 'z']],
+    [{ r: 1, c: 0, rs: 2, cs: 1 }]);
+  const up = T.moveLine(b, 'row', 1, -1);
+  assert.deepEqual(up.rows, [['tall', 'a'], ['', 'b'], ['head', 'x'], ['last', 'z']]);
+  assert.deepEqual(up.merges, [{ r: 0, c: 0, rs: 2, cs: 1 }], 'rs is still 2');
+  // Reached from the covered row too — sel lands on the owner, but the band is
+  // what is looked up, so either index finds it.
+  assert.deepEqual(T.moveLine(b, 'row', 2, -1).rows, up.rows);
+});
+
+test('moveLine on the column axis permutes colWidths alongside the cells', () => {
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b', 'c'], ['d', 'e', 'f']],
+    colWidths: [20, 30, 50] };
+  const right = T.moveLine(b, 'col', 0, 1);
+  assert.deepEqual(right.rows, [['b', 'a', 'c'], ['e', 'd', 'f']]);
+  assert.deepEqual(right.colWidths, [30, 20, 50], 'the width travelled with its column');
+});
+
+test('moveLine NEVER changes cell text — the same strings come back reordered', () => {
+  // The analogue of "mergeCells NEVER touches rows", and the reason a move needs
+  // no confirmation: it is a permutation, undone by moving back.
+  const b = block([['a', 'b'], ['c', 'd'], ['e', 'f']], [{ r: 0, c: 0, rs: 2, cs: 1 }]);
+  // Every CELL, sorted — not the rows joined up. A column move reorders the
+  // cells inside a row, so a row-wise comparison would fail on a permutation
+  // that is exactly what was asked for.
+  const cells = x => x.rows.reduce((a, r) => a.concat(r), []).sort().join(',');
+  assert.equal(cells(T.moveLine(b, 'row', 0, 1)), cells(b));
+  assert.equal(cells(T.moveLine(b, 'col', 0, 1)), cells(b));
+});
+
+test('canMoveLine refuses at the first and last band, and with no selection', () => {
+  const b = block([['a', 'b'], ['c', 'd'], ['e', 'f']], [{ r: 1, c: 0, rs: 2, cs: 1 }]);
+  assert.deepEqual(T.canMoveLine(b, 'row', 0, -1),
+    { ok: false, reason: 'This is already the first row.', span: 1, to: 0 });
+  // Rows 1-2 are one band, so it is the LAST band even from index 1.
+  assert.deepEqual(T.canMoveLine(b, 'row', 1, 1),
+    { ok: false, reason: 'This is already the last row.', span: 2, to: 1 });
+  assert.deepEqual(T.canMoveLine(b, 'col', 1, 1),
+    { ok: false, reason: 'This is already the last column.', span: 1, to: 1 });
+  assert.deepEqual(T.canMoveLine(b, 'row', 9, -1),
+    { ok: false, reason: 'Click a cell first.', span: 0, to: 9 });
+  // Refused, `to` is the line itself, so a caller can read it without branching.
+  assert.deepEqual(T.canMoveLine(b, 'row', 0, 1), { ok: true, reason: '', span: 1, to: 2 });
+});
+
+test('a merge spanning the whole axis says so, rather than "already the first"', () => {
+  // A footer like `| Total | << | << |` glues every column into one band, so no
+  // column can move. "This is already the first column." would be true of a
+  // one-column table and misleading here, and the user cannot act on it.
+  const wide = block([['Total', '', ''], ['a', 'b', 'c']], [{ r: 0, c: 0, rs: 1, cs: 3 }]);
+  assert.equal(T.canMoveLine(wide, 'col', 1, -1).reason,
+    'A merged cell spans every column. Unmerge it first.');
+  assert.equal(T.canMoveLine(wide, 'col', 1, 1).reason,
+    'A merged cell spans every column. Unmerge it first.');
+  // ROWS are untouched by it — cs glues no row boundary, so they still move.
+  assert.equal(T.canMoveLine(wide, 'row', 0, 1).ok, true);
+
+  // And a merge covering only SOME columns still leaves the rest movable.
+  const part = block([['x', '', 'c', 'd'], ['a', 'b', 'e', 'f']], [{ r: 0, c: 0, rs: 1, cs: 2 }]);
+  assert.equal(T.canMoveLine(part, 'col', 2, -1).ok, true, 'column 2 jumps the merged pair');
+  assert.equal(T.canMoveLine(part, 'col', 0, 1).ok, true, 'and the pair moves as one');
+  assert.equal(T.canMoveLine(part, 'col', 0, -1).reason, 'This is already the first column.');
+});
+
+test('canMoveLine.to reports where the moved line LANDS, jumping a whole band', () => {
+  // The selection has to follow the line it moved, or a second press on the same
+  // button moves whatever slid into the old coordinates. That offset is band
+  // arithmetic, so it lives here rather than at the call site.
+  const b = block([['head', 'x'], ['tall', 'a'], ['', 'b'], ['last', 'z']],
+    [{ r: 1, c: 0, rs: 2, cs: 1 }]);
+  assert.equal(T.canMoveLine(b, 'row', 3, -1).to, 1, 'the plain row clears BOTH merged rows');
+  assert.equal(T.canMoveLine(b, 'row', 1, -1).to, 0, 'and the band itself steps up by one');
+  // From the covered row: the band moves as one, so its covered row lands one
+  // above too, and the selection stays inside the same region.
+  assert.equal(T.canMoveLine(b, 'row', 2, -1).to, 1);
+  // Applying the move must actually put the line where `to` said it would.
+  const moved = T.moveLine(b, 'row', 3, -1);
+  assert.deepEqual(moved.rows[T.canMoveLine(b, 'row', 3, -1).to], ['last', 'z']);
+});
+
+test('moveLine returns the block UNCHANGED when refused', () => {
+  // A caller that skipped canMoveLine must not be able to corrupt the grid.
+  const b = block([['a', 'b'], ['c', 'd']]);
+  assert.equal(T.moveLine(b, 'row', 0, -1), b);
+  assert.equal(T.moveLine(b, 'row', 1, 1), b);
+  assert.equal(T.moveLine(b, 'row', 7, 1), b);
+});
+
+test('moveLine cannot throw on a hand-edited or synced block, and keeps row COUNT', () => {
+  // Same discipline as mergeMap and colWidthsOf: a throw here escapes a React
+  // render and empties the whole page. It reads through rowsOf, so a malformed
+  // row is emptied rather than dropped — the row count has to survive, because
+  // the editor writes a cell back by the index it rendered at.
+  const bad = { id: 'b-1', type: 'table',
+    rows: [['a', 'b'], 'not a row', [null, 7]],
+    merges: [{ r: 0, c: 0, rs: 2, cs: 1 }, 'junk', null],
+    colWidths: 'nope' };
+  const out = T.moveLine(bad, 'row', 0, 1);
+  assert.equal(out.rows.length, 3, 'the malformed row is emptied, never dropped');
+  assert.deepEqual(T.moveLine({ id: 'x', type: 'table' }, 'row', 0, 1), { id: 'x', type: 'table' });
+  assert.deepEqual(T.lineBands({}, 'row'), []);
+  assert.deepEqual(T.lineBands(null, 'col'), []);
+});
+
+test('a COLUMN move squares off a ragged row rather than shifting its cells', () => {
+  // The editor writes a cell back by the index it RENDERED at, and gridSize
+  // takes the widest row — so a short row has to gain an empty cell, not have
+  // its existing ones slide left under the header they no longer sit beneath.
+  const ragged = { id: 'b-1', type: 'table', rows: [['a', 'b', 'c'], ['d', 'e']] };
+  const out = T.moveLine(ragged, 'col', 0, 1);
+  assert.deepEqual(out.rows, [['b', 'a', 'c'], ['e', 'd', '']]);
+});
+
+test('GUARD: a table with no merges gains no merges key from a move', () => {
+  // Passes on both sides by design. withMerges deletes the key when the list is
+  // empty, and three browser cases deepEqual a whole table block — a move that
+  // wrote `merges: []` would break all three for nothing.
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b'], ['c', 'd']] };
+  const out = T.moveLine(b, 'row', 0, 1);
+  assert.equal('merges' in out, false);
+  assert.deepEqual(Object.keys(out), ['id', 'type', 'rows']);
+});
+
+test('GUARD: a ROW move leaves colWidths exactly as they were', () => {
+  // Passes on both sides by design. Widths are per column; a row move that
+  // touched them would be reaching across axes.
+  const b = { id: 'b-1', type: 'table', rows: [['a', 'b'], ['c', 'd'], ['e', 'f']],
+    colWidths: [70, 30] };
+  assert.deepEqual(T.moveLine(b, 'row', 0, 1).colWidths, [70, 30]);
 });
 
 // ── round trip ─────────────────────────────────────────────────────────────
