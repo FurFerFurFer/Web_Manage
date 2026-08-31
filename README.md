@@ -241,6 +241,37 @@ the centre at 28px and settles the strip at 75px rather than collapsing the cent
 Measured at a pinned 140px column: bare day `centre 43 / strip 60`, long title `centre 28 /
 strip 75`, both with all four buttons hit-testing to themselves on two lines of two.
 
+**Creating work from a day.** The `+` button opens the task picker for that day. Every route out of
+it — the goal tree, the ACTIONS list, the Routines and Milestone tabs — only ever **dates a record
+that already exists**, so a workspace with nothing schedulable used to leave the day a dead end: the
+user had to go to Goals or Supporting Actions, create the thing, come back, and schedule it.
+
+A **`＋ New task on this day`** bar at the top of the Directory tab closes that. Expanded it takes a
+title, a kind — **Task**, **Routine** or **Action** — the thing it sits under, and an optional start
+time (`09:00` if left blank). Create makes the record **and** puts it on the day the picker was
+opened from, in one action.
+
+The bar sits outside the tab's scroll area, so a long goal tree cannot push it out of reach — the
+case it exists for most is the workspace with nothing to scroll at all. Nothing here is a new stored
+field: a Task or Routine is an ordinary node in `goals`, filed with the same
+`addChildAndTransferNotes` the Goals panel uses (so the first-child note transfer behaves
+identically) and dated through `updateSchedule`, which already writes `routineDates[day]` for a
+routine and `scheduledDate`/`scheduledTime` for a task. An Action creates an `saActions` record and
+the `saEntries` row that puts it on the day, exactly as `assignSAToDate` does — neither half is
+useful alone, so both are one click.
+
+**A Task or Routine must be told what it sits under, and the refusal is not repaired.** A top-level
+node in `goals` is a *goal*, not a task, so there is nowhere for an unparented one to go: Create is
+disabled and the bar names the reason. No "Unfiled" goal is invented to hold it. An Action needs no
+parent — top level is a real place for one — and may optionally be filed under an existing root
+action as a sub-action. Nothing here deletes or clears, so nothing asks for confirmation.
+
+The same refusal covers a parent that has **stopped existing**. `addChildAndTransferNotes` and
+`updateSchedule` both walk for an id and return the tree untouched when they do not find one, so a
+goal deleted in another tab between this modal opening and Create being pressed would have closed
+the modal having written nothing at all — the typed task simply gone, with no error anywhere. The
+chosen parent is therefore checked against the live list, and Create refuses and says so.
+
 **Deadlines** are a separate slot field from calendar notes. A deadline is due on one date at a
 required time, and carries a title, an optional description, and the list of days it warns on:
 

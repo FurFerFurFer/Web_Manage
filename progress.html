@@ -964,6 +964,37 @@
       return walk(goals);
     }
 
+    // Every node a newly typed task or routine could be filed under, flattened
+    // in tree order with its depth so one <select> can render the whole shape.
+    //
+    // This is deliberately NOT `getAllParentNodeIds`, which answers a different
+    // question — that one returns nodes which ALREADY have visible children, so
+    // the picker knows what to expand. A leaf is a perfectly good parent for a
+    // new task (the Goals panel's own `commitKid` adds a child to any node), it
+    // simply stops being a leaf, so excluding leaves here would hide most of the
+    // tree from the very control that needs it.
+    //
+    // The exclusions match `renderPickerTreeNode`: a link node is an alias and
+    // owns no children of its own, and a completed branch is finished work that
+    // new work does not belong under. A milestone node is INCLUDED — a task
+    // under one is a milestone task, which is meaningful, and only a milestone
+    // CHILD is refused (by `addChildAndTransferNotes`, not by us). The guard is
+    // a per-path `seen` set: `goals` is a tree, but a hand-edited or synced file
+    // is not obliged to be one, and a cycle here would hang the render.
+    function taskParentOptions(nodes, allGoals) {
+      const out = [];
+      function walk(list, depth, seen) {
+        (list || []).forEach(n => {
+          if (!n || n.isLink || seen.has(n.id)) return;
+          if (isComplete(n, allGoals)) return;
+          out.push({ id: n.id, title: n.title || 'Untitled', depth, isMilestone: isMilestoneNode(n) });
+          walk(n.children || [], depth + 1, new Set([...seen, n.id]));
+        });
+      }
+      walk(nodes, 0, new Set());
+      return out;
+    }
+
     function getSCTextBlocks(link) {
       const blocks = Array.isArray(link?.textBlocks) ? link.textBlocks : [];
       if (blocks.length) return blocks;
@@ -4840,7 +4871,7 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, initialDate, initialDeadlineId }) {
+    function SchedulePanel({ goals, setGoals, saActions, setSaActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, initialDate, initialDeadlineId }) {
       const START_HOUR  = 0;
       const END_HOUR    = 24;
       const TIME_COL_W  = 56;
@@ -4896,6 +4927,17 @@
       const [mgPickerDay, setMgPickerDay] = useState(null);
       const [search, setSearch]   = useState('');
       const [pickerView, setPickerView] = useState('tree');
+      // The picker's create bar. Every other path out of this modal —
+      // assignToDate, assignSAToDate, assignDirectoryToDate — only ever DATES a
+      // record that already exists, which is why a slot with nothing schedulable
+      // renders `nothing to add` and leaves the day a dead end. This is the one
+      // path that brings a record into being from a calendar day, and it creates
+      // and schedules in a single write so a half-made task can never be left
+      // behind. `parentId` is required for a task or a routine: a top-level node
+      // in `goals` is a GOAL, not a task, so there is nowhere for an unparented
+      // one to go and we refuse rather than inventing a goal to hold it.
+      const [createOpen,  setCreateOpen]  = useState(false);
+      const [createDraft, setCreateDraft] = useState({ title: '', kind: 'task', parentId: '', time: '' });
       // The day-note / deadline browser behind the fourth add button. It lists
       // every note and deadline in the slot, not only this day's, so the day it
       // was opened on is only used to decide which group starts expanded.
@@ -5430,6 +5472,10 @@
         } else {
           setExpandedNodes(new Set());
         }
+        // The create bar starts closed and empty on every opening, so a title
+        // typed and abandoned on one day never follows the picker to another.
+        setCreateOpen(false);
+        setCreateDraft({ title: '', kind: 'task', parentId: '', time: '' });
       }, [pickerDay]);
 
       const allTasks   = flattenAll(goals).filter(t => !t.isLink);
@@ -5795,6 +5841,80 @@
           });
           return next;
         });
+        setPickerDay(null);
+        setSearch('');
+      }
+
+      // Why a draft is refused, or null when it is fine. The message is shown
+      // beside a disabled Create rather than being repaired or guessed at: the
+      // one thing we will not do is invent a top-level goal to hold a task
+      // nobody said where to put.
+      function createDraftError(draft, parentOpts) {
+        if (!(draft.title || '').trim()) return 'Type a title.';
+        if (draft.kind === 'action') return null;              // top level is a valid home
+        if (parentOpts.length === 0)  return 'Create a goal first — a task lives under one.';
+        if (!draft.parentId)          return 'Choose what this sits under.';
+        // The chosen parent must still BE there. Another tab can delete a goal
+        // between this modal opening and Create being pressed, and both
+        // `addChildAndTransferNotes` and `updateSchedule` walk for an id and
+        // return the tree untouched when they do not find it — so the click
+        // would close the modal having silently written nothing, and the typed
+        // task would simply be gone. Refuse instead, and say so.
+        if (!parentOpts.some(o => o.id === draft.parentId))
+          return 'That goal is no longer there — pick another.';
+        return null;
+      }
+
+      // Create the record AND put it on the day, in one action per owned key.
+      //
+      // The goal branch is a single `setGoals` updater on purpose: creating the
+      // node and dating it are one edit, so there is no render in between in
+      // which an undated task exists. It reuses the two mutators the Goals panel
+      // already uses — `addChildAndTransferNotes` (so the first-child note
+      // transfer behaves identically here) and `updateSchedule`, which already
+      // branches on `taskType` and writes `routineDates[dateStr]` for a routine
+      // instead of `scheduledDate`. That branch is why the routine kind costs no
+      // code of its own, and it is exactly the kind of silent branch a test has
+      // to name separately.
+      //
+      // `dateStr` is the day the picker was opened from. It is already a local
+      // calendar day string, so nothing here constructs a Date and the UTC-day
+      // hazard is not in play.
+      function createAndSchedule(dateStr) {
+        const draft = createDraft;
+        const title = (draft.title || '').trim();
+        const parentOpts = draft.kind === 'action' ? [] : taskParentOptions(goals, goals);
+        if (createDraftError(draft, parentOpts)) return;
+        const time = draft.time || '09:00';
+
+        if (draft.kind === 'action') {
+          // Mirrors `assignSAToDate`: an action is only ever visible on the
+          // calendar through an entry, so both writes belong to one click.
+          // Neither half alone is a usable record.
+          const action = {
+            id: uid(), title, emoji: '◆', color: SA_COLORS[0], description: '',
+            parentId: draft.parentId || null, createdAt: Date.now(),
+            ...(draft.parentId ? { time, duration: 60 } : {}),
+          };
+          const entryId = uid();
+          setSaActions(prev => [...prev, action]);
+          setSaEntries(prev => [...prev, {
+            id: entryId, actionId: action.id, date: dateStr,
+            time, duration: 60, done: false,
+          }]);
+          setOpenComments(prev => new Set(prev).add(entryId));
+        } else {
+          const child = {
+            id: uid(), title, children: [], completed: false,
+            createdAt: Date.now(), scheduledDate: null, taskType: draft.kind,
+          };
+          setGoals(prev => updateSchedule(
+            addChildAndTransferNotes(prev, draft.parentId, child), child.id, dateStr, time));
+          setOpenComments(prev => new Set(prev).add(child.id));
+        }
+
+        setCreateOpen(false);
+        setCreateDraft({ title: '', kind: 'task', parentId: '', time: '' });
         setPickerDay(null);
         setSearch('');
       }
@@ -6538,6 +6658,7 @@
                         centred rather than stretching the buttons. */}
                     <div className="w-max mx-auto grid grid-cols-2 gap-1.5 px-1 pb-1">
                       <button
+                        data-day-add-task={ds}
                         onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); setPickerView('tree'); }}
                         className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
                       <button
@@ -8190,6 +8311,11 @@
             const rootActions = saActions.filter(a => !a.parentId);
             const hasGoalTasks = activeTasks.length > 0 || normalTasks.length > 0;
             const routineTasks = allTasks.filter(t => t.taskType === 'routine' && !isComplete(t, goals) && taskMatchesSearch(t));
+            const taskParents = taskParentOptions(goals, goals);
+            const createErr = createDraftError(createDraft, createDraft.kind === 'action' ? [] : taskParents);
+            const createParentOpts = createDraft.kind === 'action'
+              ? rootActions.map(a => ({ id: a.id, title: a.title || 'Untitled', depth: 0, isMilestone: false }))
+              : taskParents;
             return (
               <>
                 <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setPickerDay(null); setMmPickerDay(null); setSearch(''); }} />
@@ -8219,6 +8345,78 @@
                       Milestone
                     </button>
                   </div>
+                  {/* Create bar. It sits OUTSIDE the scrolling tab content on
+                      purpose — a long goal tree would otherwise push it out of
+                      reach, and the case it exists for most is the slot with
+                      nothing to scroll at all. Only under Directory, which is
+                      where goal tasks and the ACTIONS section already live. */}
+                  {pickerView === 'tree' && (
+                    <div data-picker-create className="border-b border-gray-800 flex-shrink-0">
+                      {!createOpen ? (
+                        <button data-picker-create-open onClick={() => setCreateOpen(true)}
+                          className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:text-indigo-400 hover:bg-gray-800/60 transition-colors">
+                          ＋ New task on this day
+                        </button>
+                      ) : (
+                        <div className="p-3 flex flex-col gap-2">
+                          <input autoFocus data-picker-create-title value={createDraft.title}
+                            onChange={e => setCreateDraft(d => ({ ...d, title: e.target.value }))}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && !createErr) createAndSchedule(ds);
+                              if (e.key === 'Escape') { e.stopPropagation(); setCreateOpen(false); }
+                            }}
+                            placeholder="what needs doing..."
+                            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-indigo-600" />
+                          <div className="flex gap-1">
+                            {[['task', 'Task'], ['routine', 'Routine'], ['action', 'Action']].map(([k, label]) => (
+                              <button key={k} data-picker-create-kind={k}
+                                onClick={() => setCreateDraft(d => ({ ...d, kind: k, parentId: '' }))}
+                                className={`flex-1 py-1 rounded text-[10px] tracking-wide transition-colors border ${
+                                  createDraft.kind === k
+                                    ? 'border-indigo-600 bg-indigo-950/40 text-indigo-300'
+                                    : 'border-gray-700 text-gray-500 hover:text-gray-300'}`}>
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <select data-picker-create-parent value={createDraft.parentId}
+                              onChange={e => setCreateDraft(d => ({ ...d, parentId: e.target.value }))}
+                              className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 outline-none focus:border-indigo-600">
+                              <option value="">{createDraft.kind === 'action' ? '— top level —' : 'under…'}</option>
+                              {createParentOpts.map(o => (
+                                <option key={o.id} value={o.id}>
+                                  {'  '.repeat(o.depth) + (o.isMilestone ? '◈ ' : '') + o.title}
+                                </option>
+                              ))}
+                            </select>
+                            <input type="time" data-picker-create-time value={createDraft.time}
+                              onChange={e => setCreateDraft(d => ({ ...d, time: e.target.value }))}
+                              title="Start time — 09:00 if left blank"
+                              className="w-[92px] flex-shrink-0 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 outline-none focus:border-indigo-600" />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button data-picker-create-save disabled={!!createErr}
+                              onClick={() => createAndSchedule(ds)}
+                              className={`px-3 py-1 rounded text-xs transition-colors ${createErr
+                                ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                                : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}>
+                              Create
+                            </button>
+                            <button onClick={() => setCreateOpen(false)}
+                              className="px-2 py-1 text-xs text-gray-500 hover:text-gray-300 transition-colors">
+                              Cancel
+                            </button>
+                            {createErr && (
+                              <span data-picker-create-error className="text-[10px] text-amber-400 flex-1 min-w-0 truncate">
+                                {createErr}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {/* Tab content */}
                   <div className="overflow-y-auto flex-1">
                     {pickerView === 'tree' && (
@@ -8249,7 +8447,7 @@
                           </>
                         )}
                         {!hasGoalTasks && rootActions.length === 0 && (goals || []).every(g => renderPickerTreeNode(g, 0, ds) === null) && (
-                          <div className="px-3 py-4 text-xs text-gray-600 text-center">nothing to add</div>
+                          <div className="px-3 py-4 text-xs text-gray-600 text-center">nothing to schedule yet — use ＋ above</div>
                         )}
                       </>
                     )}
@@ -9416,7 +9614,7 @@
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <SchedulePanel
                 goals={goals} setGoals={setGoals}
-                saActions={saActions} saEntries={saEntries} setSaEntries={setSaEntries}
+                saActions={saActions} setSaActions={setSaActions} saEntries={saEntries} setSaEntries={setSaEntries}
                 mms={mms} mmEntries={mmEntries} setMmEntries={setMmEntries}
                 sessions={sessions}
                 mgChanges={mgChanges} mgSchedule={mgSchedule} setMgSchedule={setMgSchedule}

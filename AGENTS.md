@@ -2137,6 +2137,78 @@ line at a bare width — do not. See the next section.
   about and looked at only through the existing print rules, never printed. Real touch
   hardware and the live Firebase project are unverified as ever.
 
+### Creating work from a calendar day (2026-08-31)
+
+- **No data-contract change at all.** The slot stays at **23** fields, nothing was added to
+  `SLOT_FIELDS`, and the hand-written CONTRACT lists in `tests/schema.test.js`,
+  `tests/browser.test.js` and `tests/lib/fixture.js` needed no edit — a Task or Routine is an
+  ordinary node in the existing `goals` tree and an Action is an `saActions` record plus its
+  `saEntries` row. `styles.css` was **not** touched (Tailwind utilities only) and no shared JS
+  module changed, so **no `?v=` moved**. The offline suites are untouched and pass identically
+  under all five swept timezones. This task adds **five** browser cases and one prop
+  (`setSaActions`) to `SchedulePanel`.
+- **No new date code, which is the cheapest part of the change.** The picker is opened per-day and
+  already holds `ds`, a local calendar day string, so nothing here constructs a `Date` and the
+  `toISOString().split('T')[0]` hazard is not in play at all.
+- **Reuse rather than a second definition.** The goal branch is one `setGoals` updater composing
+  `addChildAndTransferNotes` (so the first-child note transfer behaves as it does from the Goals
+  panel) with `updateSchedule` (which already forks on `taskType`). The action branch mirrors
+  `assignSAToDate`. `taskParentOptions` is the only new function, and it is deliberately NOT
+  `getAllParentNodeIds`: that one answers "which nodes already have visible children", which is
+  the wrong question — a leaf is a perfectly good parent for a new task, it simply stops being a
+  leaf, and excluding leaves would hide most of the tree from the control that needs it.
+- **Fail-first: three doctored baselines, and their failure sets are exactly DISJOINT.** Each was a
+  `TRACK_TEST_ROOT` of symlinks to the repository plus **one** `progress.html` with a single rule
+  reversed, and the builder **prints the root it serves** on every run — an earlier task in this
+  file records a false all-green from a mis-set variable:
+
+  | doctored | fails, alone | on |
+  | --- | --- | --- |
+  | the `updateSchedule` step dropped (created, never dated) | the task case and the routine case | `expected '<today>', actual undefined` |
+  | the `setSaEntries` push dropped (action created, no entry) | the supporting-action case | `0 !== 1` on the entry count |
+  | the parent refusal removed **entirely** | the refusal guard | `false !== true` on Create being disabled |
+
+  Every one failed on the assertion its case is **named** for, which is why the named claim is
+  written first in each. `GUARD: creating from the picker writes no key progress.html does not own`
+  passed against all three, as a guard must. Never place any of the three doctored copies in the
+  repository.
+- **The third baseline passed on its first build, and that was the finding.** It deleted the two
+  refusal lines the case was written against — and all five cases went green, because the
+  cross-tab membership check added later *also* refuses an empty `parentId`, so the behaviour was
+  still there. The doctoring had removed part of a refusal rather than the refusal. Rebuilt to
+  delete the whole block, it fails the guard alone. **Generalise it: when a refusal has grown a
+  second path, a baseline that reverses only the first proves nothing — and it reads as
+  all-green, which is indistinguishable from the case being wrong.** It is also the evidence that
+  the three checks are not redundant: they fire in order so the message names the user's actual
+  situation ("create a goal first" / "choose what this sits under" / "that goal is no longer
+  there") rather than the last one to match.
+- **One of this task's own cases failed for the wrong reason first, and fixing it is the point.**
+  The supporting-action case originally waited for BOTH `saActions` and `saEntries` to be non-empty
+  and then read them. Against the dropped-`setSaEntries` baseline it died on
+  `waitFor timed out after 15000ms — the action and its entry reaching track_db`, which says the
+  control is unreachable and says nothing about the entry. It waits for the **write to land**
+  (`saActions` non-empty) and asserts afterwards, and the same baseline now fails on `0 !== 1`.
+  This is the same lesson this file already records in four other shapes: **never wait for the
+  right answer to appear.**
+- **A defect found by reading the diff, which no test would have caught.** `addChildAndTransferNotes`
+  and `updateSchedule` both walk for an id and return the tree **untouched** when they do not find
+  it. A `parentId` pointing at a goal another tab had deleted would therefore have closed the modal
+  having written nothing at all — the typed task simply gone, with no error anywhere. The refusal
+  now checks the chosen parent is still in the options list. It is covered by code reading only:
+  exercising it needs a genuine cross-tab `storage` refresh landing between the modal opening and
+  Create being pressed, and the committed suite does not drive that here.
+- What the cases assert beyond the reversals: the new node is a leaf with `completed: false` and a
+  string id from `TrackStorage.newId()`; a routine occupies the day through `routineDates[day]` and
+  leaves `scheduledDate` alone, which is the arm the plain-task case never reaches; an action's
+  entry points at the action it was created with; and the refusal asserts the **Cancel path** —
+  `track_db` byte-identical after clicking the disabled button anyway.
+- Nothing here deletes or clears, so nothing asks for confirmation. That is deliberate and sits
+  beside merge/unmerge and line-move in the destructive-control rule's exemptions.
+- **Not covered.** Real touch hardware — the bar is ordinary form controls, but it is reached
+  through a 28px day-header button this repository has already had reachability trouble with, and
+  a real device pass is owed. The cross-tab parent refusal above. The live Firebase project and
+  print output, as ever; the picker is a modal and prints nothing.
+
 ### Confirmation on every destructive control (2026-08-18)
 
 - 19 controls that deleted or cleared stored data on one unguarded click now ask

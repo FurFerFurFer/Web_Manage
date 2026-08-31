@@ -6280,6 +6280,196 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  // ── 13b. Creating work FROM a calendar day ───────────────────────────────
+  /* Every other path out of the task picker only ever DATES a record that
+     already exists — assignToDate, assignSAToDate, assignDirectoryToDate. A
+     slot with nothing schedulable therefore left the day a dead end. The create
+     bar is the one path that brings a record into being from a day, and it
+     creates and schedules in a single write.
+
+     The three kinds are asserted SEPARATELY, and not for symmetry: the goal
+     branch and the action branch are different writes to different owned keys,
+     and `updateSchedule` silently forks on `taskType` so the routine kind takes
+     a code path the plain task never touches. One assertion over all three
+     would let a forgotten branch hide behind a passing sibling — the failure
+     shape this file exists to catch. */
+
+  const CREATE_SEED = () => seedDb({
+    goals: [F.task('g-root', { title: 'Root goal', children: [] })],
+    saActions: [], saEntries: [],
+  });
+
+  const openCreateBar = async page => {
+    await mountSchedule(page);
+    // By the button's OWN hook, never by a walk from `☰`. The four buttons
+    // have already moved once — out of the header centre and into a 2x2 block
+    // on their own row — and `parentElement.children[0]` would have quietly
+    // resolved somewhere else that day rather than failing. This file already
+    // records the same trap costing HEADER_BUTTONS its notes-strip lookup.
+    await page.evaluate(CLICK_SEL, '[data-day-add-task="' + TODAY + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-picker-create-open]'); },
+      { message: 'the picker create bar' });
+    await page.evaluate(CLICK_SEL, '[data-picker-create-open]');
+    await page.waitFor(function () { return !!document.querySelector('[data-picker-create-title]'); },
+      { message: 'the create bar expanded' });
+  };
+
+  const fillCreate = async (page, { kind, title, parentId = '', time = '' }) => {
+    await page.evaluate(CLICK_SEL, '[data-picker-create-kind="' + kind + '"]');
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-picker-create-title]'), value);
+      return true;
+    }, SET_REACT_INPUT, title);
+    if (parentId) {
+      await page.evaluate(function (id) {
+        var s = document.querySelector('[data-picker-create-parent]');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, id);
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }, parentId);
+    }
+    if (time) {
+      await page.evaluate(function (setterSrc, value) {
+        var set = new Function('return ' + setterSrc)();
+        set(document.querySelector('[data-picker-create-time]'), value);
+        return true;
+      }, SET_REACT_INPUT, time);
+    }
+  };
+
+  const KID_OF = function (goalId) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var g = (((db.slots || [])[0] || {}).goals || []).filter(function (x) { return x.id === goalId; })[0];
+    return g && (g.children || []).length ? g.children[0] : null;
+  };
+
+  await t.test('PICKER: a task typed on a day is created under its goal AND scheduled on that day', async () => {
+    const page = await open('progress.html', { db: CREATE_SEED(), hash: '#schedule' });
+    await openCreateBar(page);
+    await fillCreate(page, { kind: 'task', title: 'Drafted from the calendar', parentId: 'g-root', time: '11:30' });
+    await page.evaluate(CLICK_SEL, '[data-picker-create-save]');
+    const kid = await page.waitFor(KID_OF, { args: ['g-root'], message: 'the new node reaching track_db' });
+
+    // The claim this case is NAMED for goes first: creating it is only half the
+    // feature, and a create that forgets to date lands the task nowhere the
+    // calendar can see it.
+    assert.equal(kid.scheduledDate, TODAY, 'the new task is scheduled on the day the picker was opened from');
+    assert.equal(kid.scheduledTime, '11:30', 'and at the time typed beside it');
+    assert.equal(kid.title, 'Drafted from the calendar');
+    assert.equal(kid.taskType, 'task');
+    assert.equal(kid.completed, false);
+    assert.deepEqual(kid.children, [], 'a new task is a leaf');
+    assert.equal(typeof kid.id, 'string', 'the id comes from TrackStorage.newId()');
+    assert.ok(kid.id.length > 0);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PICKER: a routine typed on a day writes routineDates, NOT scheduledDate', async () => {
+    /* `updateSchedule` forks on taskType and this is the arm the plain-task
+       case never reaches. It is exactly the branch that costs no code of its
+       own and so could silently not fire. */
+    const page = await open('progress.html', { db: CREATE_SEED(), hash: '#schedule' });
+    await openCreateBar(page);
+    await fillCreate(page, { kind: 'routine', title: 'Every day', parentId: 'g-root', time: '07:15' });
+    await page.evaluate(CLICK_SEL, '[data-picker-create-save]');
+    const kid = await page.waitFor(KID_OF, { args: ['g-root'], message: 'the new routine reaching track_db' });
+
+    assert.ok(kid.routineDates && kid.routineDates[TODAY],
+      'a routine occupies the day through routineDates, which is where every routine reader looks');
+    assert.equal(kid.routineDates[TODAY].time, '07:15');
+    assert.equal(kid.routineDates[TODAY].done, false);
+    assert.equal(kid.taskType, 'routine');
+    assert.ok(!kid.scheduledDate,
+      'and NOT through scheduledDate — a routine written there would be drawn once and never again');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PICKER: a supporting action typed on a day creates BOTH the action and its entry', async () => {
+    /* Either half alone is useless: an action with no entry is invisible on
+       every calendar surface, and an entry with no action points at nothing. */
+    const page = await open('progress.html', { db: CREATE_SEED(), hash: '#schedule' });
+    await openCreateBar(page);
+    await fillCreate(page, { kind: 'action', title: 'Read for twenty minutes', time: '20:00' });
+    await page.evaluate(CLICK_SEL, '[data-picker-create-save]');
+    /* Wait for the write to LAND, then assert — never wait for the right
+       answer to appear. A waitFor on both halves times out when either is
+       missing and reports only that the control is unreachable, which is the
+       one thing this case is not about. */
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return (((db.slots || [])[0] || {}).saActions || []).length > 0;
+    }, { message: 'the action reaching track_db' });
+    const sa = await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (db.slots || [])[0] || {};
+      return { actions: s.saActions || [], entries: s.saEntries || [] };
+    });
+
+    assert.equal(sa.entries.length, 1, 'the entry is what puts the action on the day');
+    assert.equal(sa.entries[0].date, TODAY, 'and it is on the day the picker was opened from');
+    assert.equal(sa.entries[0].time, '20:00');
+    assert.equal(sa.actions.length, 1, 'the action itself was created too');
+    assert.equal(sa.actions[0].title, 'Read for twenty minutes');
+    assert.equal(sa.actions[0].parentId, null, 'top level, since none was chosen');
+    assert.equal(sa.entries[0].actionId, sa.actions[0].id, 'and the entry points at it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: the create bar refuses an unparented task, and writes nothing when clicked anyway', async () => {
+    /* A top-level node in `goals` is a GOAL, not a task, so there is nowhere
+       for an unparented one to go. The refusal NAMES the reason rather than
+       inventing an "Unfiled" goal to hold it, and this asserts the Cancel path
+       — that the bytes are unchanged after the disabled button is clicked —
+       because a control that shows a reason and then writes anyway is worse
+       than none. */
+    const page = await open('progress.html', { db: seedDb({ goals: [], saActions: [], saEntries: [] }), hash: '#schedule' });
+    await openCreateBar(page);
+    const RAW = function () { return localStorage.getItem('track_db'); };
+    await fillCreate(page, { kind: 'task', title: 'Nowhere to put me' });
+    const before = await page.evaluate(RAW);
+
+    const state = await page.evaluate(function () {
+      var b = document.querySelector('[data-picker-create-save]');
+      var e = document.querySelector('[data-picker-create-error]');
+      return { disabled: !!(b && b.disabled), msg: e ? e.textContent.trim() : null };
+    });
+    assert.equal(state.disabled, true, 'Create is disabled with no goal to file the task under');
+    assert.match(state.msg || '', /goal/i, 'and the reason names the missing goal: ' + state.msg);
+
+    await page.evaluate(CLICK_SEL, '[data-picker-create-save]');
+    await sleep(500);
+    assert.equal(await page.evaluate(RAW), before, 'track_db is byte-identical after clicking it anyway');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: creating from the picker writes no key progress.html does not own', async () => {
+    const page = await open('progress.html', { db: CREATE_SEED(), hash: '#schedule' });
+    await mountSchedule(page);
+    const FOREIGN = ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
+      'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes'];
+    const SNAP = function (keys) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (db.slots || [])[0] || {};
+      var out = {}; keys.forEach(function (k) { out[k] = JSON.stringify(s[k]); }); return out;
+    };
+    const before = await page.evaluate(SNAP, FOREIGN);
+
+    await openCreateBar(page);
+    await fillCreate(page, { kind: 'task', title: 'Ownership probe', parentId: 'g-root' });
+    await page.evaluate(CLICK_SEL, '[data-picker-create-save]');
+    await page.waitFor(KID_OF, { args: ['g-root'], message: 'the write landing' });
+
+    assert.deepEqual(await page.evaluate(SNAP, FOREIGN), before,
+      'every foreign key is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   // ── 14. Grit mode: the theme names, their migration, and their chrome ────
   /* Appearance had NO committed coverage before this section, while every
      other case in this file rendered in what used to be the light theme by

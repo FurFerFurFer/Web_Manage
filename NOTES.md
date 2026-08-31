@@ -818,7 +818,16 @@ remain explicit and separately authorized.
 
 Remaining candidate directions:
 
-- Click-to-create tasks and documentation pages from calendar days.
+- Click-to-create **documentation pages** from calendar days. The tasks half is built — see
+  README "Creating work from a day" — but a page is harder: `docPages` has no date at all,
+  and the only page↔day link that exists runs the other way (`docPageId` stamped on a note or
+  deadline). So this needs a decision on what the link *is* before any UI: create the page and
+  a day note carrying its `docPageId` in one action (no schema change, and the day surfaces the
+  page through the note's existing origin chip); or give a page its own date, which makes it a
+  fourteenth calendar category on three surfaces plus a filter key; or a title convention,
+  which stores nothing and breaks on rename. Only `documentations.html` writes `docPages`, so
+  reaching this from the Schedule means a query param that creates the page on the page that
+  owns the key — mirroring `?page=` and `progress.html?date=&dl=` — rather than a second writer.
 - Deep-link KS02 calendar items into their owning record.
 - Add filter toggles to the Home legend and/or Progress schedule.
 - Add a week view using the shared aggregation buckets.
