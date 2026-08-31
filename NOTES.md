@@ -857,13 +857,6 @@ notes and deadlines". One piece is still deliberately **not** built:
 
   Note that `dlWithCautionDays` is now a twinned **writer**, not just a reader, which raises
   the cost of a silent divergence: the migration in `progress.html` runs through its copy.
-- **`documentations.html` still cannot move an existing due day.** It now chooses caution days
-  in both its deadline forms — see README "Choosing the caution days" — because that needed only
-  the stranded-prep refusal, and holding that meant *calling* `dlStrandedBlockDays` rather than
-  repeating it. Moving a due day additionally needs the ORPHANED-chosen-day refusal, which has
-  no shared definition to call: it lives inline in the Progress popup's Edit form. Extracting it
-  is the prerequisite for a due-date field here, not the field itself. A scope-guard browser
-  case asserts this edit form has no date field, so adding one without that refusal trips a test.
 - **A note's block is unrestricted; a deadline's is not.** A note block may be dragged to any
   day at all, which is deliberate — a note has no days to belong to. If notes ever grow them,
   the deadline rule (`dlBlockDayValid` membership plus a refusal at every writer) is the shape

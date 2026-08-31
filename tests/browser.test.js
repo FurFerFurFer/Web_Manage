@@ -1787,9 +1787,11 @@ test('browser suites', skipUnlessChrome, async t => {
       return !!document.querySelector('.cal-doc-form input[type="date"]');
     }, { message: 'the deadline composer showing a Due on row' });
   };
-  // The edit form now has NO date field, so `dates[0]` can legitimately be
-  // absent. Reading `.value` off it unconditionally threw and the scope-guard
-  // case failed on a TypeError rather than on what it asserts.
+  // `dates[0]` stays guarded even though BOTH forms carry a due-day row now: a
+  // case may read this before it has asserted the field is there at all, and
+  // reading `.value` off an absent node throws. A case that dies on a TypeError
+  // has stopped testing what it names — which is the defect this guard was
+  // added for, back when the edit form had no date row to find.
   const docDlFields = page => page.evaluate(function () {
     var form = document.querySelector('.cal-doc-form');
     var dates = form.querySelectorAll('input[type="date"]');
@@ -1803,9 +1805,19 @@ test('browser suites', skipUnlessChrome, async t => {
     page.evaluate(function (setterSrc, v) {
       var set = new Function('return ' + setterSrc)();
       var form = document.querySelector('.cal-doc-form');
-      if (v.date !== undefined) set(form.querySelectorAll('input[type="date"]')[0], v.date);
-      if (v.time !== undefined) set(form.querySelector('input[type="time"]'), v.time);
-      if (v.title !== undefined) set(form.querySelector('input:not([type])'), v.title);
+      // NAME the missing field. Writing through an absent node threw
+      // "Cannot read properties of undefined (reading 'tagName')" out of
+      // SET_REACT_INPUT, which reads as a logic failure in whatever case called
+      // this — and a case that dies on a TypeError has stopped testing the
+      // thing it is named for.
+      var pick = function (sel, what) {
+        var el = form.querySelector(sel);
+        if (!el) throw new Error('the deadline form has no ' + what + ' to fill');
+        return el;
+      };
+      if (v.date !== undefined) set(pick('input[type="date"]', 'due-day field'), v.date);
+      if (v.time !== undefined) set(pick('input[type="time"]', 'due-time field'), v.time);
+      if (v.title !== undefined) set(pick('input:not([type])', 'title field'), v.title);
       return true;
     }, SET_REACT_INPUT, { date, time, title });
   const docDlSave = page => page.evaluate(function () {
@@ -1867,16 +1879,23 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('SCOPE GUARD: the Documentations edit form still moves no due DAY', async () => {
-    // The due day of a STORED deadline moves from the Progress popup alone: it
-    // is the one writer that refuses a move ORPHANING a chosen caution day, and
-    // a second writer would have to repeat that check — exactly the shape that
-    // cost this project the caution predicate once already.
+  await t.test('DOCUMENTATIONS: the edit form opens on a Due on field seeded to the stored day', async () => {
+    // This case used to assert the OPPOSITE — that the edit form carried no
+    // date field at all — and it existed precisely so that adding one without
+    // the refusals that must come with it would trip a test. It did its job.
+    // The field is here now and the refusals arrived beside it, asserted by
+    // the two cases at the end of this section.
     //
-    // The caution days themselves ARE editable here now, and the cases below
-    // cover them. What this guard pins is that the STRANDING refusal came with
-    // them and the ORPHANING one did not have to: with no date field there is
-    // no move to orphan anything. Adding one without that refusal trips here.
+    // The claim that DIED is "the Progress popup is the only writer of a due
+    // day". The claim that SURVIVES is "the popup is the only writer that
+    // REFUSES an orphaned chosen day" — this form drops them silently instead,
+    // which it can afford because its picks are draft-held and Cancel restores
+    // them. That asymmetry is deliberate and is pinned by its own scope guard
+    // at the end of this section, so a future "make it uniform" pass has
+    // something to trip over.
+    //
+    // What this case pins now: the row is seeded from the record, and merely
+    // OPENING the form writes nothing.
     const { db, due } = moveDb();
     const page = await open('documentations.html', { db });
     await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
@@ -1891,11 +1910,14 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.waitFor(function () { return !!document.querySelector('.cal-doc-form'); },
       { message: 'the deadline edit form' });
     const fields = await docDlFields(page);
-    assert.equal(fields.count, 0, 'the edit form carries NO date field at all');
+    assert.equal(fields.count, 1,
+      'the edit form carries exactly ONE date field — the due day. The caution '
+      + 'days are chosen on the picker below it, which is a grid of buttons');
+    assert.equal(fields.due, due, 'seeded to the stored due day');
     const stored = (await storedDl(page))[0];
-    assert.equal(stored.date, due, 'the stored due day is untouched');
+    assert.equal(stored.date, due, 'and opening the form alone moved nothing');
     assert.deepEqual(stored.cautionDates, [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17)],
-      'and so are the chosen days');
+      'nor did it disturb the chosen days');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -2161,6 +2183,279 @@ test('browser suites', skipUnlessChrome, async t => {
       'and only the day still before the due day was stored');
     assert.deepEqual(realErrors(page), []);
     await page.close();
+  });
+
+  /* ── moving an existing due day, from Documentations ──────────────────────
+     The due day of a STORED deadline used to move from the Progress popup
+     alone. It moves here too now, and the two surfaces behave DIFFERENTLY on
+     purpose:
+
+       Progress   writes every caution pick straight to track_db, so it cannot
+                  drop a day the user chose — it REFUSES the move and names the
+                  days, and the user un-picks them in the same popup.
+       Docs       holds picks in the draft until Save, so a due day pulled back
+                  over a chosen day simply DROPS it, visibly, through the one
+                  resolver — and Cancel puts every one of them back.
+
+     Placed PREP is protected on both, and that is what makes the drop safe:
+     a caution day carrying a scheduled block cannot be dropped by a move, on
+     either surface. Cases 3 and 4 below are that half. */
+
+  const openDocEditOn = async (db, day) => {
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, day);
+    await openDocDlEdit(page);
+    return page;
+  };
+  // reads Save WITHOUT pressing it — docDlSave clicks, which is right for the
+  // Cancel-path assertions and wrong for checking a state mid-sequence
+  const docSaveState = page => page.evaluate(function () {
+    var form = document.querySelector('.cal-doc-form');
+    return {
+      disabled: !!form.querySelector('button.primary').disabled,
+      text: form.textContent.replace(/\s+/g, ' ').trim()
+    };
+  });
+  const docCauCount = page => page.evaluate(function () {
+    var el = document.querySelector('.cal-doc-form [data-dl-caution-count]');
+    return el ? el.getAttribute('data-dl-caution-count') : null;
+  });
+  const docRefused = page => page.evaluate(function () {
+    var el = document.querySelector('.cal-doc-form [data-dl-caution-refused]');
+    return el ? el.textContent.replace(/\s+/g, ' ').trim() : null;
+  });
+
+  await t.test('DOCUMENTATIONS: the edit form moves the due day, and the calendar jumps to it', async () => {
+    const { db, due } = moveDb();
+    const page = await openDocEditOn(db, 18);
+    const fields = await docDlFields(page);
+    assert.equal(fields.count, 1, 'the edit form carries a Due on field');
+    assert.equal(fields.due, due, 'seeded to the stored due day');
+
+    const moved = thisMonthDay(20);
+    await fillDocDl(page, { date: moved });
+    assert.equal((await docSaveState(page)).disabled, false,
+      'a FORWARD move drops nothing and strands nothing, so Save is live');
+    await docDlSave(page);
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing after Save' });
+
+    const stored = (await storedDl(page))[0];
+    assert.equal(stored.date, moved, 'the due day moved');
+    assert.deepEqual(stored.cautionDates,
+      [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17)],
+      'and every chosen day survived — all three are still before it');
+    assert.equal(stored.startDate, undefined, 'no legacy key was written');
+    // the whole point of putting `date` INSIDE the dlWithCautionDays spread
+    // rather than after it: the stored record is the base, so nothing is lost
+    assert.equal(stored.id, 'dl-move');
+    assert.equal(stored.docPageId, 'p-1');
+    assert.equal(stored.createdAt, 1771000000000);
+    assert.equal(stored.title, 'Ship the thing');
+    assert.equal(stored.time, '17:00');
+
+    const sel = await page.evaluate(function () {
+      var c = document.querySelector('.doc-cal .cal-cell.selected .cal-day-num');
+      return c ? c.textContent.trim() : null;
+    });
+    assert.equal(sel, '20', 'and the calendar followed the deadline to its new day');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: a due day pulled back over chosen days DROPS them silently', async () => {
+    // This is the decision this feature was built around, so it is asserted
+    // rather than assumed: no refusal is raised, Save stays live, and the days
+    // that no longer fit are simply gone. The Progress popup does the opposite
+    // in the same situation, and the scope guard below pins that difference.
+    const { db } = moveDb();
+    const page = await openDocEditOn(db, 18);
+    assert.equal(await docCauCount(page), '3', 'three days are chosen to begin with');
+
+    const moved = thisMonthDay(16);
+    await fillDocDl(page, { date: moved });
+    assert.equal(await docCauCount(page), '1',
+      'the 16th and 17th stop counting the moment the due day lands on the 16th');
+    assert.equal((await docCau(page, thisMonthDay(16))).disabled, true,
+      'the new due day is locked, not silently still picked');
+    assert.equal((await docCau(page, thisMonthDay(17))).disabled, true,
+      'and so is the day beyond it');
+    assert.equal(await docRefused(page), null,
+      'NO refusal is raised — this form drops, it does not refuse');
+    assert.equal((await docSaveState(page)).disabled, false, 'and Save stays live');
+
+    await docDlSave(page);
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing after Save' });
+    const stored = (await storedDl(page))[0];
+    assert.equal(stored.date, moved, 'the due day moved');
+    assert.deepEqual(stored.cautionDates, [thisMonthDay(15)],
+      'and only the day still before it was stored');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS refuses a due-day move that would strand placed prep', async () => {
+    // Marks drop silently; WORK never does. This deadline's prep is anchored on
+    // day 16, so pulling the due day back to the 15th would leave that block on
+    // a day the deadline no longer occupies. Refused, and the day is named.
+    const { db, due } = moveDb({ blockDate: thisMonthDay(16) });
+    const page = await openDocEditOn(db, 18);
+    const before = await docRawDb(page);
+
+    await fillDocDl(page, { date: thisMonthDay(15) });
+    const blocked = await docSaveState(page);
+    assert.equal(blocked.disabled, true, 'Save is refused');
+    assert.match(blocked.text, /Prep sits on/, 'and the form says why');
+    assert.ok(blocked.text.indexOf(thisMonthDay(16)) >= 0,
+      'naming the day the prep actually sits on: ' + blocked.text);
+
+    // the Cancel path — the one that matters. Pressing a disabled button must
+    // reach no writer at all, not merely be visually discouraged.
+    await docDlSave(page);
+    await sleep(250);
+    assert.equal(await docRawDb(page), before, 'clicking Save anyway wrote nothing at all');
+    assert.ok(await page.evaluate(function () { return !!document.querySelector('.cal-doc-form'); }),
+      'and the form stayed open');
+
+    // the refusal is NARROW: put the due day back and it lifts
+    await fillDocDl(page, { date: due });
+    assert.equal((await docSaveState(page)).disabled, false,
+      'a move that strands nothing is still allowed — the refusal did not freeze the form');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS refuses un-picking the OLD due day once the due day has moved past it', async () => {
+    // The case the combined {date, cautionDates} span exists for. Prep is
+    // anchored on day 18, which is the due day — so it needs NO caution day
+    // while the deadline is due on the 18th. Move the due day to the 20th and
+    // the 18th becomes an ordinary day the deadline no longer occupies, so the
+    // prep on it is stranded until the 18th is picked as a caution day.
+    //
+    // Ask dlStrandedBlockDays without the new date and it compares the block
+    // day against the OLD due day, finds 18 === 18, and allows an un-pick that
+    // strands the work. That is the whole reason all four call sites carry the
+    // date now.
+    const { db } = moveDb({ blockDate: thisMonthDay(18) });
+    const page = await openDocEditOn(db, 18);
+    const before = await docRawDb(page);
+
+    const moved = thisMonthDay(20);
+    await fillDocDl(page, { date: moved });
+    const blocked = await docSaveState(page);
+    assert.equal(blocked.disabled, true,
+      'Save is refused while prep sits on a day the deadline has left');
+    assert.ok((await docRefused(page) || '').indexOf(thisMonthDay(18)) >= 0,
+      'and the picker names the 18th: ' + await docRefused(page));
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('.cal-doc-form [data-dl-caution-clear]').disabled;
+    }), true, '"clear all" is disabled too');
+
+    // the 18th is pickable now — it is no longer the due day
+    assert.equal((await docCau(page, thisMonthDay(18))).disabled, false,
+      'the old due day became an ordinary, pickable day');
+    await clickDocCau(page, thisMonthDay(18));
+    assert.equal((await docCau(page, thisMonthDay(18))).on, '1', 'picking it works');
+    assert.equal((await docSaveState(page)).disabled, false,
+      'and that lifts the refusal — the form offered the fix rather than just blocking');
+
+    // un-picking it again strands the prep once more, so it is refused
+    await clickDocCau(page, thisMonthDay(18));
+    assert.equal((await docCau(page, thisMonthDay(18))).on, '1',
+      'the un-pick was REFUSED — the day is still picked');
+    assert.equal(await docRawDb(page), before, 'and nothing reached track_db through any of it');
+
+    await docDlSave(page);
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing after Save' });
+    const stored = (await storedDl(page))[0];
+    assert.equal(stored.date, moved, 'the due day moved');
+    assert.deepEqual(stored.cautionDates,
+      [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17), thisMonthDay(18)],
+      'the old due day is stored as a caution day, sorted in');
+    assert.equal(stored.blockDate, thisMonthDay(18), 'and the prep never moved');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: Cancel after moving the due day leaves track_db byte-identical', async () => {
+    // The drop is only safe because it is undoable right up to Save. This is
+    // also what keeps the unconfirmed `clear all` exemption honest now that
+    // this form can move a date as well as pick days.
+    const { db, due } = moveDb();
+    const page = await openDocEditOn(db, 18);
+    const before = await docRawDb(page);
+
+    await fillDocDl(page, { date: thisMonthDay(16) });
+    await clickDocCau(page, thisMonthDay(14));
+    assert.equal(await docCauCount(page), '2', 'the draft did change on screen');
+    assert.equal(await docRawDb(page), before, 'but nothing reached track_db while editing');
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.cal-doc-form-acts button'),
+        function (b) { return b.textContent.trim() === 'Cancel'; }).click();
+      return true;
+    });
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing on Cancel' });
+    assert.equal(await docRawDb(page), before, 'and Cancel left track_db byte-identical');
+
+    // re-opening re-seeds from the RECORD, not from the abandoned draft
+    await openDocDlEdit(page);
+    const fields = await docDlFields(page);
+    assert.equal(fields.due, due, 'the due day came back');
+    assert.equal(await docCauCount(page), '3', 'and so did all three dropped days');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: a blank due day disables Save in the EDIT form too', async () => {
+    const { db } = moveDb();
+    const page = await openDocEditOn(db, 18);
+    const before = await docRawDb(page);
+
+    await fillDocDl(page, { date: '' });
+    const blocked = await docSaveState(page);
+    assert.equal(blocked.disabled, true, 'Save is disabled on a blank due day');
+    assert.match(blocked.text, /Needs a due date and a time/, 'and the form says why');
+
+    await docDlSave(page);
+    await sleep(250);
+    assert.equal(await docRawDb(page), before, 'clicking Save anyway wrote nothing at all');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SCOPE GUARD: Progress still REFUSES the move Documentations drops', async () => {
+    // The asymmetry is the design, so it gets its own case. Same seed, same
+    // move, two surfaces, two different right answers — and each is only right
+    // because of how that surface writes. Making them uniform would be a
+    // regression in one direction or the other, and this is what would trip.
+    const { db, due } = moveDb();
+
+    const prog = await openMovePopup({ db, due });
+    await openMoveEdit(prog);
+    await setDue(prog, thisMonthDay(16));
+    const progState = await moveSaveState(prog);
+    assert.equal(progState.disabled, true,
+      'PROGRESS refuses: it writes picks straight through, so it cannot drop one');
+    assert.ok(await prog.evaluate(function () {
+      return !!document.querySelector('[data-dl-orphaned]');
+    }), 'and it names the orphaned days');
+    assert.deepEqual(realErrors(prog), []);
+    await prog.close();
+
+    const docs = await openDocEditOn(moveDb().db, 18);
+    await fillDocDl(docs, { date: thisMonthDay(16) });
+    assert.equal((await docSaveState(docs)).disabled, false,
+      'DOCUMENTATIONS allows it: picks are draft-held, so the drop is undoable by Cancel');
+    assert.equal(await docRefused(docs), null, 'and raises no refusal of its own');
+    assert.deepEqual(realErrors(docs), []);
+    await docs.close();
   });
 
   await t.test('both pages mint ids in one shape', async () => {

@@ -1058,31 +1058,47 @@
         // already make. goToDay closes the forms for us.
         if (date !== selDs) goToDay(date); else closeForms();
       };
-      // The edit form changes the title, the detail, the due TIME and the
-      // caution days — but NOT the due day. Moving an existing due day has to
-      // refuse a move that orphans a chosen caution day, and that refusal lives
-      // in the Progress popup's Edit form alone; if a due-date field ever comes
-      // back to this form it needs that check in the same change.
+      // The edit form changes the title, the detail, the due TIME, the caution
+      // days — and the due DAY. What it does with that last one is deliberately
+      // NOT what the Progress popup does with the same move. That writer
+      // commits every pick straight to track_db, so a due day pulled back over
+      // a chosen day would destroy it: the popup REFUSES and names the days.
+      // This form holds its picks in the DRAFT until Save, so the same move
+      // simply DROPS them — visibly, through the one resolver, and Cancel puts
+      // every one of them back. Neither is the "safe" one in general; each is
+      // right for how its own surface writes.
       //
-      // Un-picking a day CAN strand prep, so this refuses it — through
-      // TC.dlStrandedBlockDays, the one definition, never a re-spelled
-      // comparison. The picker below refuses at the click too; this is the gate
-      // that makes it impossible to write a stranding set even so.
+      // Placed PREP is the half that is never dropped on either surface. An
+      // un-pick can strand it and so can moving the due day off it, so both go
+      // through TC.dlStrandedBlockDays — the one definition, never a re-spelled
+      // comparison — and it is asked about the PROPOSED record, date included.
+      // Ask it without the new date and it compares the block against the OLD
+      // due day and waves through a move that strands the work.
       //
-      // TC.dlWithCautionDays spreads the STORED record first, so docPageId,
-      // createdAt, done, date, id and every block key survive — and a legacy
-      // `startDate` record is migrated by the act of being saved here, exactly
-      // as progress.html's bulk migration does, through the same function.
+      // The date goes INSIDE the TC.dlWithCautionDays spread, never after it.
+      // That function sanitises the list against the record's own `date`, so
+      // handing it the stored record and patching `date` on afterwards would
+      // store caution days on or after the due day — the inverted list the
+      // resolver exists to make unrepresentable. Spreading the stored record
+      // first is also what keeps docPageId, createdAt, done, id and every block
+      // key, and what migrates a legacy `startDate` by the act of saving.
       const saveDeadline = id => {
         const dl = (slot.deadlines || []).find(d => d.id === id);
-        if (!dl || !TC.dlValid(dlDraft)) return;
-        if (TC.dlStrandedBlockDays(dl, {cautionDates: dlDraft.cautionDates}).length) return;
+        // dlDraftValid FIRST, because it is the one that format-checks `date`:
+        // dlStrandedBlockDays falls back to the STORED day on a blank one, and
+        // would then answer a question about a record nobody proposed.
+        if (!dl || !TC.dlDraftValid(dlDraft)) return;
+        if (TC.dlStrandedBlockDays(dl, {date: dlDraft.date,
+                                        cautionDates: dlDraft.cautionDates}).length) return;
+        const date = dlDraft.date;
         onMutate('deadlines', prev => prev.map(d => d.id === id
-          ? {...TC.dlWithCautionDays(d, dlDraft.cautionDates),
+          ? {...TC.dlWithCautionDays({...d, date}, dlDraft.cautionDates),
              time: dlDraft.time,
              title: dlDraft.title.trim(), detail: dlDraft.detail.trim()}
           : d));
-        closeForms();
+        // Moved off the open day panel it would vanish from view, so follow it
+        // there — the same move addDeadline and the caution rows already make.
+        if (date !== selDs) goToDay(date); else closeForms();
       };
       // Writes `done` and nothing else, spreading the stored record so
       // docPageId, createdAt, cautionDates and any key a later version added
@@ -1116,31 +1132,40 @@
       );
       // `dl` is the stored record when editing, and absent when composing.
       const dlForm = (onSave, label, dl) => {
-        // Composing, the due day is TYPED and starts on the selected cell;
-        // editing, there is no date field at all. Moving an EXISTING deadline
-        // has to refuse a move that ORPHANS a chosen caution day, and the
-        // Progress popup's Edit form is the one writer that does — so it stays
-        // the only place an existing due day moves.
+        // ONE form, one date field, both modes. Composing, the due day starts
+        // on the selected cell; editing, it starts on the stored record — and
+        // either way it is TYPED and lives in the draft, which is what lets the
+        // two modes share every line below with no `composing` branch left.
         //
-        // The caution days ARE chosen here, in both modes. Every rule behind
+        // The caution days are chosen here in both modes too. Every rule behind
         // them stays in calendar-core.js and is CALLED, never re-spelled:
         // dlWithCautionDays sanitises and writes, dlToggleCautionDay toggles,
-        // and dlStrandedBlockDays decides what an un-pick would strand. That
-        // last one is why this was once impossible here — holding the refusal
-        // is one call, not a second copy of the rule.
-        const composing = !dl;
-        const due = composing ? dlDraft.date : dl.date;
+        // and dlStrandedBlockDays decides what an un-pick or a MOVE would
+        // strand. That last one is why moving a due day was once impossible
+        // here — holding the refusal is one call, not a second copy of a rule.
+        const due = dlDraft.date;
         // THE resolver doubles as the draft sanitiser: a due day typed earlier
         // drops picks that are no longer before it, with no second rule saying
         // so, and the readout always matches what Save would store.
         const days = TC.dlWithCautionDays({date: due}, dlDraft.cautionDates).cautionDates;
         const chosen = new Set(days);
         // Days already holding this deadline's prep. A pick can never strand
-        // work, but an UN-pick can, so those cells are marked and refuse.
+        // work, but an UN-pick can — and so can moving the due day off it — so
+        // those cells are marked and refuse.
+        //
+        // Read off the PROPOSED record, not the stored one. A block with no
+        // blockDate follows the item's own `date`, so it moves WITH a draft
+        // due-day change; reading TC.blockDay(dl) here would underline the OLD
+        // due day, a cell the deadline is about to stop occupying. Display
+        // only — every refusal still goes through dlStrandedBlockDays, which
+        // builds the same probe internally. This is the one place in this file
+        // that re-states "an absent blockDate follows date", so a future
+        // extraction of that probe should collect it.
+        const proposed = dl ? {...dl, date: due} : null;
         const held = new Set();
-        if (dl && TC.blockOn(dl)) {
-          const parts = TC.itemParts(dl);
-          (parts.length ? parts.map(p => TC.partDay(p, dl)) : [TC.blockDay(dl)])
+        if (proposed && TC.blockOn(proposed)) {
+          const parts = TC.itemParts(proposed);
+          (parts.length ? parts.map(p => TC.partDay(p, proposed)) : [TC.blockDay(proposed)])
             .forEach(day => { if (day) held.add(day); });
         }
         // What un-picking EVERYTHING would strand — the same quantity the
@@ -1150,9 +1175,16 @@
         // composing, because dlStrandedBlockDays short-circuits on a falsy
         // record — a deadline that does not exist yet has no prep to strand,
         // which is what lets one picker serve both modes with no branch.
-        const protectedDays = TC.dlStrandedBlockDays(dl, {cautionDates: []});
-        const stranded = TC.dlStrandedBlockDays(dl, {cautionDates: days});
-        const valid = (composing ? TC.dlDraftValid(dlDraft) : TC.dlValid(dlDraft)) && !stranded.length;
+        //
+        // BOTH carry the draft's `date`, and they must carry the same one: with
+        // an identical date, `cautionDates: []` is strictly stricter than
+        // `days`, so protectedDays ⊇ stranded and "clear all is disabled
+        // whenever Save is stranded" holds. Give them different dates and the
+        // picker can name days the Save gate does not, or the reverse.
+        const protectedDays = TC.dlStrandedBlockDays(dl, {date: due, cautionDates: []});
+        const stranded = TC.dlStrandedBlockDays(dl, {date: due, cautionDates: days});
+        // One gate for both modes now that both type a due day.
+        const valid = TC.dlDraftValid(dlDraft) && !stranded.length;
         const dueOk = /^\d{4}-\d{2}-\d{2}$/.test(due || '');
         const cauAnchor = cauMonth || (dueOk
           ? {y: Number(due.slice(0, 4)), m: Number(due.slice(5, 7)) - 1}
@@ -1168,7 +1200,7 @@
           // performed. Work the user put on the grid by hand is not ours to
           // drop or move, so the cell simply does not change and the line
           // below names the day.
-          if (dl && TC.dlStrandedBlockDays(dl, {cautionDates: next}).length) return;
+          if (dl && TC.dlStrandedBlockDays(dl, {date: due, cautionDates: next}).length) return;
           setCau(next);
         };
         // Additive: UNIONS the n days before the due day into whatever is
@@ -1199,10 +1231,14 @@
           <input value={dlDraft.title} autoFocus placeholder="Deadline title"
             onChange={e=>setDlDraft(d=>({...d, title: e.target.value}))} />
           <div className="cal-doc-form-row">
-            {composing && (
-              <label>Due on<input type="date" value={dlDraft.date}
-                onChange={e=>setDlDraft(d=>({...d, date: e.target.value}))} /></label>
-            )}
+            {/* Both modes now. Deliberately NO min: the Progress popup caps its
+                own due-date input at the earliest chosen day because it REFUSES
+                a move past one, and here every earlier day is legal — a min
+                would grey out the very move this field exists to allow. The
+                real gate is dlStrandedBlockDays, which refuses stranded PREP,
+                never a day. */}
+            <label>Due on<input type="date" value={dlDraft.date}
+              onChange={e=>setDlDraft(d=>({...d, date: e.target.value}))} /></label>
             <label>Due at<input type="time" value={dlDraft.time}
               onChange={e=>setDlDraft(d=>({...d, time: e.target.value}))} /></label>
           </div>
@@ -1310,7 +1346,7 @@
               <span className="cal-doc-hint">
                 {stranded.length
                   ? `Prep sits on ${stranded.join(', ')} — move it first.`
-                  : composing && !dlDraft.date
+                  : !dlDraft.date
                   ? 'Needs a due date and a time.'
                   : 'Needs a time.'}
               </span>
@@ -1530,9 +1566,13 @@
                             closeForms(); setEditing({kind:'deadline', id:dl.id});
                             /* seeded THROUGH the resolver, so a legacy startDate
                                record arrives as the explicit list it expands to
-                               and saving migrates it */
+                               and saving migrates it. `|| ''` because schema.js
+                               only WARNS on a malformed date, so dl.date can be
+                               absent — and value={undefined} flips the input
+                               from uncontrolled to controlled, which React logs
+                               as an error the browser suite would surface. */
                             setDlDraft({title: dl.title||'', detail: dl.detail||'', time: dl.time||'',
-                              date: dl.date, cautionDates: TC.dlCautionDays(dl)});
+                              date: dl.date || '', cautionDates: TC.dlCautionDays(dl)});
                           }}>✎</button>
                           <button type="button" title="Delete" className="danger"
                             onClick={()=>removeItem('deadlines', dl.id, 'deadline')}>✕</button>

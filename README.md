@@ -353,11 +353,13 @@ the two cannot drift.
 caution field of its own — the picker above it is already live, so a second copy inside the form
 would be two controls writing one field.
 
-**Moving the due day.** `Edit` carries a `Due date` row, above `Due time`. It is the only place an
-**existing** deadline's date can change: moving one has to refuse a move that orphans a chosen caution
-day or strands placed prep, and this is the one writer that does. The two composers type a due date
-only while creating, where there is neither. The due day moves **alone** — the chosen days are never
-rewritten to make room, because a day the user picked is not ours to drop.
+**Moving the due day.** `Edit` carries a `Due date` row, above `Due time`. An **existing** deadline's
+day also moves from the Documentations edit form, and the two surfaces answer the same move
+differently on purpose — see "Authoring" under Documentations calendar blocks. Here the picks are
+already committed to `track_db`, so a move that would orphan one is **refused**; there the picks are
+held in a draft until Save, so the same move drops them and Cancel puts them back. Placed prep is
+refused on both. The due day moves **alone** — this writer never rewrites the chosen days to make
+room, because a day the user picked is not ours to drop.
 
 Two refusals guard it, each with its own message. A due day that would land on or before a chosen day
 would silently delete that day, so it is **refused** and the days are **named**. A due day that would
@@ -543,7 +545,9 @@ Pages are stored in the per-slot `docPages` field, and day notes and deadlines a
 
 A calendar shows the same aggregation as the Universal calendar on Home — month grid, today highlight, milestone period bars, category dots, and a click-to-open day detail with the read-only day timeline — plus the two things a documentation page can author itself: **day notes** and **deadlines**. Both are written into the shared slot arrays, so they appear on the Progress Schedule and the Home calendar like any others.
 
-**Authoring.** `+ note` and `+ deadline` on the selected day's panel open an inline composer. The deadline composer carries a `Due on` date of its own, seeded to the selected cell, so a deadline can be filed for any day from any page; filing one on another day moves the calendar to that day. Its **edit** form has no date field at all — an existing deadline's due day still moves only from the Progress popup, the one writer that refuses an orphaned caution day. Save is gated on `TrackCalendar.dlDraftValid` while composing and on `dlValid` while editing, and a blank date is refused with the reason shown rather than repaired.
+**Authoring.** `+ note` and `+ deadline` on the selected day's panel open an inline composer. Both deadline forms — the composer and `✎` — carry a `Due on` date, seeded to the selected cell while composing and to the stored record while editing, so a deadline can be filed for or moved to any day from any page; either way the calendar follows it to that day. Save is gated on `TrackCalendar.dlDraftValid` in both modes, and a blank date is refused with the reason shown rather than repaired.
+
+Moving an existing due day back over days already marked as caution days **drops those marks**, silently and visibly: the resolver that stores the list is the same one the picker reads, so the count falls and the cells lock as the date changes, and `Cancel` restores every one of them. This is deliberately the opposite of the Progress popup, which writes each pick straight to `track_db` and therefore has to refuse the same move; a draft with a Cancel can afford to drop what a committed list cannot. What neither will drop is **placed prep** — if a scheduled block would be left on a day the deadline no longer occupies, Save is refused and the day is named, on both surfaces.
 
 **Choosing the caution days.** Both deadline forms carry the same month picker, below the description. A cell toggles a day; `+3d` / `+7d` / `+14d` union the last *n* days into whatever is already picked; `clear all` empties the list. The due day and every day after it are drawn locked, because the due day is red on every surface and must never also be amber.
 
