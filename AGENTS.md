@@ -2345,6 +2345,107 @@ line at a bare width — do not. See the next section.
   hand-written CONTRACT lists following it. That failure is that feature's to resolve and was
   left alone.
 
+### A pasted timetable, drawn as a read-only backdrop (2026-09-05)
+
+- The slot went from **23 to 24 fields** — `refSchedules` is a real `SLOT_FIELDS` row, the
+  first added since `trueStorages`/`trueStoragePos`. That made the seven hand-written
+  contract lists earn their keep, and **one of them was found only by running the suite**:
+  `tests/browser.test.js`'s `assert.equal(Object.keys(imported).length, 23)` in the
+  export→import case, which the plan had not counted. The other six failed immediately and
+  by name. One new offline suite, `tests/schedule-paste-core.test.js` (**26** cases),
+  registered in `UNSWEPT_FILES`; suites go 15 → **16**. Offline cases go 142 → **168**
+  (calendar-core 88 → 106, schema 54 → 62), identical under all five swept timezones. This
+  task adds **13** browser cases.
+- **`node tests/run.js`: all 16 suites pass** — 206 browser subtests, 0 failures, in 17
+  minutes. `node --check` passes on all ten shared modules.
+- **The sweep decision is asserted, not merely claimed.** `schedule-paste-core.js` is in
+  `UNSWEPT_FILES` because it holds no date code, and its suite carries a **structural case**
+  that greps the module (comments stripped first) for `new Date` / `Date.now` / `getDay(` /
+  `toISOString`. If that ever fires, the suite has moved to the wrong list. All
+  weekday-to-calendar-day resolution lives in `calendar-core.js`, which is swept. That first
+  attempt failed on the file's own PROSE explaining why it constructs no Date — strip
+  comments before grepping source for a construct you also write about.
+- **Fail-first, browser: two doctored baselines, and their failure sets are exactly DISJOINT
+  — zero overlap.** Each `TRACK_TEST_ROOT` held symlinks to the repository, a REAL copy of
+  `tests/`, and **one** file whose `refOccupies` dropped the weekly arm:
+  - doctored **`calendar-core.js`** → **2** failed, `HOME draws the same class` and
+    `DOCUMENTATIONS draws the same class`. Every Progress case passed.
+  - doctored **`progress.html`** → **1** failed, `PROGRESS draws a weekly class`. Both
+    read-only surfaces passed.
+
+  Each failed on its own `deepEqual` — `rs-w` absent while `rs-o` remained — not on a
+  timeout. This is the direct proof `progress.html` needs its own copy of the predicate.
+  Never place either doctored file in the repository.
+- **Getting to that cleanliness took a restructure, and it is the lesson worth carrying.**
+  The first version of every case opened with `waitFor(REF_IDS_ON, …)` — waiting for the
+  RIGHT ANSWER. Against the doctored trees six cases died on that `waitFor`, which says the
+  control is unreachable and says nothing about the claim each case is named for. They now
+  wait on a landmark true on BOTH trees (the ONE-OFF entry, which no doctoring of the weekly
+  arm can remove) and then assert. Three further cases — the untickable/undraggable one, the
+  overlap GUARD, and the popover — were re-seeded with a one-off entry outright, because
+  their claims are about element shape, geometry and the popover and have nothing to do with
+  weekday resolution. That is what turned a 4-and-2 overlap into a clean 1-and-2 split.
+- **Fail-first, offline:** a doctored `schema.js` with `refScheduleErrors` unwired failed
+  exactly **3** of the 8 new schema cases — the three that assert the checker RUNS. The other
+  five are guards covering defaults and `normalizeSlot`, which come free from `SLOT_FIELDS`
+  and pass on both sides by design.
+- **Three defects in this task's own tests, all found by reading the failure message.** (1)
+  `2031-09-08` was asserted not to be a Monday; it is one — check a weekday, never assume it.
+  (2) `refSpan('25:00')` was expected to return `null`; `minsOf`/`hhmmOf` CLAMP, which is what
+  every other stored time in `calendar-core.js` already does, so the case now pins the clamp
+  and names the validate-on-write / tolerate-on-read split. (3) A malformed range bound was
+  expected to make an entry occupy nothing; see below.
+- **One design question the tests forced into the open, and the answer is written into the
+  data contract.** A MALFORMED `from`/`until` reads as ABSENT — open in that direction —
+  matching `blockDay`'s treatment of a malformed `blockDate`. Occupying nothing was tempting
+  because the blast radius is larger here (an unbounded weekly entry draws on every matching
+  weekday the user scrolls to), and it was rejected anyway: a backdrop drawn too often is
+  noisy, visible and deleted in one click, while an entry that occupies nothing is INVISIBLE.
+  `schema.js` warns about the value so the user is told which record is wrong. An offline
+  case pins the decision rather than leaving it to whichever branch runs first.
+- **The mechanism for "untickable, undraggable" is an ABSENCE, deliberately.** The Progress
+  block carries no `onMouseDown`, no `onTouchStart`, no resize handle, no checkbox and no `✕`;
+  the two read-only layers carry `pointer-events: none`. A guard inside the shared drag
+  handler would have been one more rule to remember at one more call site. The case asserts
+  both the absence and the consequence — a synthetic drag across the grid leaves `track_db`
+  byte-identical on the raw string.
+- **`refBlocks` is a SEPARATE array on `buildDaySchedule`**, never mixed into `blocks`. A
+  browser case measures a real block's width and height with and without a timetable behind
+  it and asserts they are identical, which is the overlap-layout half of "show both, always".
+  The empty-state branch on all three surfaces had to learn about it too — without that, a
+  day holding only classes says "Nothing scheduled" over a full timetable.
+- **Every documented example was fed through the parser** — 3 fenced blocks in
+  `SCHEDULE-PASTE.md` plus the example inside the in-page `SCHEDULE_AI_BRIEF`, extracted from
+  `documentations.html` itself. All 4 parse. A spec that ships an example the parser rejects
+  is worse than no example. That check was a task-owned script and cannot be re-run from
+  `node tests/run.js`; re-check by hand if the examples change.
+- **Environment note, and it is the `f29f3cf` hazard twice in one task.** Another session was
+  building the Home calendar legend-as-filter in `index.html` throughout, and edited
+  `AGENTS.md`, `README.md`, `NOTES.md` and `tests/browser.test.js` mid-run — twice, caught
+  both times by an `md5sum` taken before and checked after. Its in-flight work is in the same
+  diff and was preserved, not reverted. My 13 cases were re-run against the final file
+  afterwards and all pass.
+- **A one-variable control saved a wrong accusation, and this is the sharpest instance of
+  that rule this file records.** A full run reported
+  `HOME: a corrupt or out-of-scope legend preference…` failing. Running that case against a
+  tree with `calendar-core.js` reverted to HEAD made it PASS, which looked like proof my new
+  `FILTERS` entry had broken it. It was not: that comparison changed TWO variables — the
+  module version AND isolation (1 case vs 206). Running the same case in isolation against
+  the UNMODIFIED working tree also passed. The real cause was that the other session had
+  corrected its own in-flight expectation (a uniform `dots: 4` became per-value, `dots: 3`
+  for `'["note",7,{}]'`) while the run was in flight. **Build the control that differs in
+  exactly ONE variable before believing either verdict** — a green control is not proof of
+  causation any more than a red one is.
+- **Not covered, and stated plainly.** No image is ever read: the transcription happens in
+  whatever AI the user hands the picture to, so its accuracy is outside this repository
+  entirely — the same boundary `TABLE-PASTE.md` draws. Real touch hardware is unverified; the
+  Progress backdrop takes a click to open its popover and has not been tapped on a real
+  device. Print output of a backdrop block was reasoned about from the existing `@media print`
+  rules and **not looked at** — no page has been printed. The Home calendar's legend has no
+  Timetable row (the backdrop is switchable only from a Documentations calendar block), which
+  follows from keeping `ref` out of `CATS` and is a real inconsistency between surfaces. The
+  live Firebase project, as ever.
+
 ### Confirmation on every destructive control (2026-08-18)
 
 - 19 controls that deleted or cleared stored data on one unguarded click now ask
