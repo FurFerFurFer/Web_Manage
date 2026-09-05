@@ -829,7 +829,15 @@ Remaining candidate directions:
   reaching this from the Schedule means a query param that creates the page on the page that
   owns the key — mirroring `?page=` and `progress.html?date=&dl=` — rather than a second writer.
 - Deep-link KS02 calendar items into their owning record.
-- Add filter toggles to the Home legend and/or Progress schedule.
+- Add filter toggles to the Progress schedule. The Home half is built — its legend rows are
+  the toggles, see README "Universal calendar" — but Progress cannot copy it directly, and the
+  two reasons are worth settling before any UI. `progress.html` does not load
+  `calendar-core.js`, so it has no `shownFn` to route through and would either duplicate the
+  filtering (the shape that has already cost this project a caution predicate) or finally take
+  the script tag. And it needs its own browser key rather than reading Home's, or switching a
+  category off on one surface would silently change the other. Home also filters only the five
+  categories its legend draws; a Schedule filter would want the schedule kinds instead, which
+  is a different subset of the same `FILTERS` list rather than the same control moved.
 - Add a week view using the shared aggregation buckets.
 - Add an optional all-slots view with slot badges.
 

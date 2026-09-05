@@ -62,7 +62,8 @@
     levelTemplates: 'map',
     docPages: 'list',
     trueStorages: 'list',
-    trueStoragePos: 'map'
+    trueStoragePos: 'map',
+    refSchedules: 'list'
   };
 
   var SLOT_KEYS = Object.keys(SLOT_FIELDS);
@@ -326,6 +327,65 @@
     return errors;
   }
 
+  /* A reference-schedule entry — one line of a pasted timetable. Its own
+     checker rather than a third name in datedItemErrors, because its shape is
+     genuinely different: EXACTLY ONE of `date` and `dow` is present, so a
+     weekly entry has no `date` at all and folding it into that function would
+     warn about every single row of a term timetable.
+
+     Everything here is a WARNING, and the reasoning is the blockDate one
+     exactly. These values reach GEOMETRY and PLACEMENT — a bad `time` renders
+     at the wrong hour, a bad `duration` renders `height: NaNpx`, a bad `dow`
+     or range simply occupies no day. None of them is traversed as a record the
+     way `parts` and a goal's `children` are, so none can throw out of a render,
+     and freezing the whole database over one is a worse outcome than drawing
+     one block wrong. TrackCalendar.refOccupies tolerates every one of them. */
+  function refScheduleErrors(slot) {
+    var errors = [];
+    var list = slot.refSchedules;
+    if (!isList(list)) return errors; // the kind check already reported this
+
+    list.forEach(function (item, n) {
+      var at = '"refSchedules[' + n + ']"';
+      if (!isMap(item)) return; // listItemErrors reports this one
+
+      var hasDate = item.date !== undefined && item.date !== null;
+      var hasDow = item.dow !== undefined && item.dow !== null;
+
+      // The one shape rule. Both arms at once is genuinely ambiguous — there
+      // is no defensible answer to which day such an entry occupies — and
+      // neither arm means it occupies none, so both are worth saying out loud.
+      if (hasDate && hasDow) {
+        errors.push(validationError('refSchedules', at + ' carries both a date and a dow; an entry is one-off OR weekly, never both', false));
+      } else if (!hasDate && !hasDow) {
+        errors.push(validationError('refSchedules', at + ' has neither a date nor a dow, so it can never be drawn', false));
+      }
+
+      if (hasDate && !isDay(item.date)) {
+        errors.push(validationError('refSchedules', at + ' needs a YYYY-MM-DD date, found ' + describe(item.date), false));
+      }
+      if (hasDow && !(item.dow === Math.floor(item.dow) && item.dow >= 0 && item.dow <= 6)) {
+        errors.push(validationError('refSchedules', at + ' has an invalid dow ' + describe(item.dow) + ', expected 0-6 with Sunday 0', false));
+      }
+      // The repeat window. Absent means the weekly entry is unbounded in that
+      // direction, which is a real and useful state — a timetable with no end
+      // date yet — so only a present value is checked.
+      ['from', 'until'].forEach(function (k) {
+        if (item[k] !== undefined && item[k] !== null && !isDay(item[k])) {
+          errors.push(validationError('refSchedules', at + ' has an invalid ' + k + ', found ' + describe(item[k]), false));
+        }
+      });
+      if (item.time !== undefined && !isTime(item.time)) {
+        errors.push(validationError('refSchedules', at + ' has an invalid time ' + describe(item.time) + ', expected HH:MM', false));
+      }
+      if (item.duration !== undefined
+          && !(typeof item.duration === 'number' && isFinite(item.duration) && item.duration > 0)) {
+        errors.push(validationError('refSchedules', at + ' has an invalid duration ' + describe(item.duration) + ', expected a positive number of minutes', false));
+      }
+    });
+    return errors;
+  }
+
   // calendarNotes and deadlines are the two arrays whose items carry dates that
   // the calendar reads directly, so a bad one there is what actually breaks a
   // render.
@@ -455,7 +515,8 @@
         ));
       }
     }
-    errors = errors.concat(listItemErrors(input), goalTreeErrors(input), datedItemErrors(input));
+    errors = errors.concat(listItemErrors(input), goalTreeErrors(input), datedItemErrors(input),
+      refScheduleErrors(input));
     return { ok: !errors.length, errors: errors };
   }
 

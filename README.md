@@ -32,6 +32,8 @@ The code is operational. Verification is syntax checking, the committed suite, a
 | `README.md` | Current product behavior, architecture, data layout, project progress, and active workflow |
 | `NOTES.md` | Ideas, risks to address, possible changes, target architecture, and roadmap |
 | `AGENTS.md` | Mandatory project rules and verification procedure for coding agents |
+| `TABLE-PASTE.md` | The user-facing spec for `::: track-table` — what to ask an AI shown a picture of a table |
+| `SCHEDULE-PASTE.md` | The user-facing spec for `::: track-schedule` — what to ask an AI shown a picture of a timetable |
 
 When a proposed change is implemented:
 
@@ -66,7 +68,7 @@ When a proposed change is implemented:
 
 Each slot is intended to isolate a different subject, course, project, or learning area.
 
-The Universal calendar is a month grid with a legend, a today highlight, milestone period bars, per-category colored dots, and a click-to-open day detail panel. It never writes data, re-renders on slot activation and on cross-tab `storage` events, and uses local calendar dates throughout.
+The Universal calendar is a month grid with a clickable legend that filters it, a today highlight, milestone period bars, per-category colored dots, and a click-to-open day detail panel. It never writes slot data, re-renders on slot activation and on cross-tab `storage` events, and uses local calendar dates throughout.
 
 **The calendar always fills the screen.** It is the last section of Home, but breaks out of the page's `46rem` column to span the full viewport width and is pinned to exactly one viewport height (`100dvh`), so scrolling down to it gives the month the whole device screen on phone, tablet, and desktop. Grid rows share the remaining height (`1fr`), so cells grow with the display instead of sitting at a fixed pixel height, and day numbers, dots, and milestone bars scale with them. On viewports under 600px tall (landscape phones) the panel keeps a `min-height` and grows past one screen rather than crushing the cells, with a `2rem` row floor. Cell padding and the grid gap come from `--cal-cell-pad-x` and `--cal-gap` on `.cal-panel`, which the milestone bridge margins are derived from — change padding through those variables so the bars stay aligned.
 
@@ -76,7 +78,13 @@ The Universal calendar is a month grid with a legend, a today highlight, milesto
 
 **Deadlines** appear in that strip as red `⏰ HH:MM Title` chips on their due day, followed by amber `! Title` chips on each day the user chose as a caution day (the due day itself is never also a caution day, and a ticked deadline contributes no `!` at all — its due chip turns green, struck through, with a `✓`). Both kinds are links to `progress.html?date=<due day>&dl=<id>#schedule`, which opens that deadline's popup in the Schedule — always the **due** day, so a `!` three weeks out still leads to the thing it is warning about rather than to the day it sits on. Hovering a note or deadline shows where it came from — "Added in the Schedule", or the documentation page that added it. The Home calendar stays read-only: it links out to where a deadline is edited rather than editing one itself, so provenance is a tooltip here while Progress and Documentations render it as a link.
 
-The aggregation behind this calendar lives in `calendar-core.js`, shared with the calendar blocks in Documentations. Home renders all of it — it passes no filter set.
+The aggregation behind this calendar lives in `calendar-core.js`, shared with the calendar blocks in Documentations. Home passes it a filter set built from the legend.
+
+**The legend rows are the filter toggles.** Each of the five — Milestone period, Kolb / MG change, LIN record, Floating note, Source dump — is a button that switches its category off and on in place. A switched-off row dims, strikes through, and hollows its swatch, keeping the colour as a ring so the legend still teaches what it names; `aria-pressed` carries the state, and a "Show all" chip beside them clears the set and is disabled when nothing is hidden. Switching a category off removes its dots from the month grid and its group from the open day detail; switching milestones off removes the period bars and the day tint together.
+
+These are five of the thirteen categories `calendar-core.js` can filter — the ones this legend has always drawn. **The legend controls what the month grid draws (dots and milestone bars); the day preview's strip and timeline — goal tasks, routines, SIR sessions, supporting actions, MM sessions, MG focus, day notes, deadlines, and a pasted timetable — are not among these five and are unaffected.** The growth rings above the calendar stay unfiltered too: they are the workspace's record, not a view of it.
+
+The switched-**off** keys are stored in the browser key `track_home_cal_hidden`, so a category added to `calendar-core.js` later is on by default. The stored set is clamped on read to the rows the legend actually renders, so a key with no visible control can never hide anything. This is a per-browser view preference, not slot data: it is not part of `track_db`, not exported, not imported, and never synced, and a browser that refuses to store it leaves the calendar working. A change in one Home tab re-renders the calendar in the others through the same `storage` listener.
 
 The detail appears **beside the grid above 720px** as a scrollable column, so the whole month stays visible while a day is open, and **as a fixed bottom sheet at 720px and below**, capped at `62dvh` and padded clear of the notes-widget button. Because the panel's height is definite, a long timeline scrolls inside the column instead of pushing the calendar past one screen. When no workspace exists, the "create a workspace" message renders in the empty month area rather than in the detail.
 
@@ -555,7 +563,7 @@ Unlike the Progress popup's picker, this one holds its picks in the **draft** an
 
 **Un-picking a day that holds prep is refused here too**, with the day named and underlined, through the same single `TrackCalendar.dlStrandedBlockDays` the Progress picker calls — this page holds the refusal by asking for it, not by repeating it. Save is gated on the same check, so a stranding set cannot be written even if the click path is later changed. While composing there is nothing to refuse: a deadline that does not exist yet has no prep, which is what lets one picker serve both forms. If the typed due day moves *before* a day already picked, that day simply stops counting — the readout is what `dlWithCautionDays` says it would store, so what is shown and what is saved cannot disagree.
 
-**Filtering.** A new calendar shows everything. The filter bar switches any of thirteen categories off: Kolb / MG change, LIN record, Floating note, Source dump, Milestones, Goal tasks & routines, Supporting actions, MM sessions, SIR sessions, MG focus, Day notes, Deadlines, and **Documentation**. Everything added from Documentations — notes *and* deadlines, from any page — answers to that single Documentation key, and correspondingly the Day notes and Deadlines keys cover only items authored in the Schedule. The block stores the switched-**off** keys (`hidden: []` means show all), so a category added later is on by default for calendars that already exist. "Show all" clears the set. Filters are per block; Home and the Schedule are unaffected.
+**Filtering.** A new calendar shows everything. The filter bar switches any of thirteen categories off: Kolb / MG change, LIN record, Floating note, Source dump, Milestones, Goal tasks & routines, Supporting actions, MM sessions, SIR sessions, MG focus, Day notes, Deadlines, and **Documentation**. Everything added from Documentations — notes *and* deadlines, from any page — answers to that single Documentation key, and correspondingly the Day notes and Deadlines keys cover only items authored in the Schedule. The block stores the switched-**off** keys (`hidden: []` means show all), so a category added later is on by default for calendars that already exist. "Show all" clears the set. Filters are per block; Home keeps its own five legend toggles in a separate browser key, and the Schedule has none.
 
 **Ownership.** Items added from Documentations carry `docPageId`, the id of the page that added them. A calendar highlights and exclusively edits the items within its scope, which the header button toggles between **this page** and **this page + sub-pages** (the default, resolved through the same descendant walk the sidebar drag uses). Items from any other documentation page stay visible but read-only, with a `📄 <page title>` chip that opens that page. Items added in the Schedule are visible and read-only with no chip.
 
@@ -676,6 +684,58 @@ A day note or deadline authored from a documentation page carries one extra fiel
 Its absence means the item was added in the Schedule, so existing data reads exactly as before and no migration is needed. Because it is a field on an item inside an already-registered slot array, it needs no slot-constructor default and no import allow-list entry — whole-object export, the array-level import copy, and the opaque Firebase blob all carry it, and every edit path in `progress.html` spreads the item rather than rebuilding it.
 
 Sibling order in the sidebar is the pages' relative order inside the flat `docPages` array — there is no separate order field. Drag-to-arrange therefore persists by splicing the one moved page to a new array position (and re-parenting is just a `parentId` change), so export/import, Firebase sync, and the slot constructors need no order-specific handling.
+
+#### A pasted timetable, drawn as a backdrop
+
+A picture of a timetable — a university term grid, a shift rota — becomes real blocks on the
+hour grid through the same route a table does: show the picture to an AI, paste what it gives
+back. `🕘 Timetable` adds a block; `🕘 Paste a timetable` opens the dialog. `SCHEDULE-PASTE.md`
+is the user-facing spec and the in-page `<details>` carries the same brief behind
+**Copy these instructions**.
+
+The format is three cells per row — day, time, title:
+
+```
+::: track-schedule
+| Mon        | 09:00-10:30 | Mathematics    |
+| Wed        | 13:00-16:00 | Chemistry lab  |
+| 2026-09-14 | 09:00-10:30 | Makeup lecture |
+:::
+```
+
+**One format carries both kinds of timetable, and that is the design.** The day cell takes
+either a weekday name or a `YYYY-MM-DD` date. A weekday row repeats on every matching day
+inside a range set once in the dialog; a dated row happens once. A multi-week term grid and a
+one-off day therefore paste through the same parser with no mode for the user to select, and
+the two can be mixed freely in one paste. A time cell is a range (`09:00-10:30`) or a bare
+start, which falls back to `DEFAULT_BLOCK_MINS`.
+
+Tolerances match the table format — the fence is optional, both ``` and `:::` are accepted,
+outer pipes are optional, and markdown separator and header rows are skipped, so an ordinary
+markdown table pastes with no extra work. A row with the wrong cell count is **refused against
+its line number**, and nothing is ever returned half-parsed.
+
+The blocks are drawn on **all three hour grids** — the Progress timeline, the Home calendar and
+any Documentations calendar block — as transparent dashed blocks in their own layer *behind*
+real work. They are read-only by construction:
+
+- **Not tickable and not draggable.** The Progress block carries no `onMouseDown`, no
+  `onTouchStart`, no resize handle, no checkbox and no `✕`; the two read-only layers carry
+  `pointer-events: none`. The absence of a handler is the mechanism, not a guard inside a
+  shared one.
+- **They never enter the overlap layout.** `buildDaySchedule` returns them in a separate
+  `refBlocks` array rather than in `blocks`, so a class can never squeeze a real task's width,
+  and a browser case measures a real block with and without a timetable behind it.
+- **Clicking one on Progress** opens a read-only card, with a `＋ day note here` button that
+  hands off to the existing timeline note composer seeded with the class's day, time and
+  length. That is the only writing path, and it writes a `calendarNotes` record — never a
+  timetable entry.
+
+Removal lives in the Timetable block: `✕` on a row, `✕ remove all` on an import, both behind a
+`window.confirm`. Deleting a documentation page does **not** delete the classes it pasted, the
+same rule that keeps day notes alive — they appear in an amber *from a page that no longer
+exists* section of any Timetable block, so nothing becomes unreachable. `⚟ Filter` in a
+calendar block has a **Timetable** entry that switches the backdrop off.
 
 ### True Storage
 
@@ -917,9 +977,9 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule, calendar notes |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
-| `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, PDF export |
+| `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, timetable blocks, PDF export |
 | `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, explanation, and source-dump tags |
-| `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry and deadline rules (`window.TrackCalendar`) |
+| `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry, the deadline rules, and `refOccupies` — the one test for which days a pasted timetable entry falls on (`window.TrackCalendar`) |
 | `theme.js` | Initial appearance selection, the Grit/Night switch, persistence, and cross-tab updates. Holds the one normaliser that aliases the superseded `light` and maps an appearance to a `color-scheme` keyword |
 | `schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
 | `storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
@@ -927,6 +987,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `notes-widget.js` | Floating per-slot notes widget |
 | `true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
+| `schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
 | `doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
 | `styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
@@ -1046,7 +1107,8 @@ The pages currently read or write fields including:
   levelTemplates,
   docPages,
   trueStorages,
-  trueStoragePos
+  trueStoragePos,
+  refSchedules
 }
 ```
 
@@ -1167,6 +1229,35 @@ warning that leaves the database editable. `parts` is checked more strictly and
 stray `null` in it imports cleanly under a field-only check and then throws out
 of the next render.
 
+A `refSchedules` item is one line of a pasted timetable — reference data, never work:
+
+```js
+{ id, title, time, duration, docPageId, importId, createdAt,
+  date }                                    // one-off, OR
+  dow, from, until }                        // weekly, inclusive
+```
+
+**Exactly one of `date` and `dow` is present.** That single rule is what lets one paste format
+carry both a term timetable and a one-off day, and an entry carrying both is refused by every
+reader rather than resolved by whichever branch runs first — there is no defensible answer to
+which day such a record occupies. `schema.js` reports the same shape as a warning.
+
+The occupancy test has exactly **one** definition, `TrackCalendar.refOccupies`, with the
+documented twin in `progress.html`, which does not load `calendar-core.js`. Never re-spell
+`entry.dow === d.getDay()` at a call site. The weekly arm compares the range as strings, which
+is total for `YYYY-MM-DD`, and parses at `'T12:00:00'` for the weekday. An **absent** bound is
+open in that direction — a term with no end date yet is an ordinary state — and a **malformed**
+bound reads the same way, matching `blockDay`'s treatment of a malformed `blockDate`: the
+alternative would make the entry invisible, and this project does not trade reachability for a
+tidier rule.
+
+Everything on the item is validated as a **warning**, alongside `blockDate`. These values reach
+geometry and placement, never traversal, so none can throw out of a render; freezing the whole
+database over a mistyped hour would be the worse outcome.
+
+`documentations.html` owns the key and is the only page that writes it. `progress.html` and
+`index.html` read it and never write it — the mirror of how `docPages` works.
+
 Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`
 (timestamp + random, e.g. `mshajngq-ehhoj`), which `progress.html`'s `uid()`,
 `documentations.html`'s `genId()` and `notes-widget.js` all delegate to, so the
@@ -1181,6 +1272,7 @@ The project also currently uses:
 - `track_theme` for the explicit appearance preference. It holds `grit` or `dark`; the superseded `light` is still accepted on read and resolves to `grit`, and is never written back.
 - `track_db_ts` for the local Firebase comparison timestamp. It records when this device's data was last **confirmed** in the cloud, not when the device last edited, so it is written only after the server accepts a write.
 - `track_db_pending` while this device holds edits the cloud has not accepted yet. Set synchronously on every `track_db` write and removed on confirmation, so a tab closed mid-upload still records that edits are unsent.
+- `track_home_cal_hidden` for the Home calendar legend's filter. It holds a JSON array of the switched-**off** category keys, so absence and `[]` are the same state and a category added to `calendar-core.js` later is on by default. It is clamped on read to the five rows the legend renders, and both ends are total: a malformed value hides nothing and a browser that refuses the write leaves the calendar working. A view preference only — never part of `track_db`, never exported or synced.
 - `trackPriorityMatrix` for schedule priority-matrix state.
 - `fb_reloaded` and `fb_reloaded_gen` in `sessionStorage` to break Firebase reload loops and record which cloud generation was reloaded into.
 - Older legacy keys during migration, including former Progress and KS02 storage keys.
@@ -1718,6 +1810,15 @@ Universal calendar: 57 assertions passed against a synthetic slot — legend red
   90min → 42px, per-date routine duration honoured), four-way overlap split, SIR/MG-carry/
   calendar-note strip, parent task superseded by its same-day child, and track_db
   byte-identical after mouse, dblclick, contextmenu and touch events on every block
+Universal calendar legend filter: 5 browser cases — switching a dot category off removes its
+  dots and its day-detail group while the other three stay, switching milestones off removes
+  the period bars and the day tint together, the choice survives a reload and "Show all"
+  restores it, a corrupt or out-of-scope stored value hides nothing and cannot throw out of
+  renderCalendar, and the whole interaction leaves track_db byte-identical while adding
+  exactly one browser key. Proven against four doctored baselines, each reversing one rule:
+  the hidden set never reaching the collectors, the read replaced by a module cache, the
+  milestone key filtered out on its way out, and the read left unhardened. Every failure
+  landed on the assertion its case is named for
 progress.html: React root rendered in headless Chrome; ?date=YYYY-MM-DD#schedule opened the
   Schedule tab in day mode focused on the linked date, and omitting ?date= still starts in
   week mode

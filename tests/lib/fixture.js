@@ -44,7 +44,8 @@ function emptySlot(over = {}) {
     levelTemplates: {},
     docPages: [],
     trueStorages: [],
-    trueStoragePos: {}
+    trueStoragePos: {},
+    refSchedules: []
   }, over);
 }
 

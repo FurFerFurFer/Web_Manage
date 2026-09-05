@@ -7,9 +7,9 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="theme.js?v=1"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=6"></script>
-  <script src="calendar-core.js?v=6"></script>
-  <link rel="stylesheet" href="styles.css?v=7">
+  <script src="schema.js?v=7"></script>
+  <script src="calendar-core.js?v=7"></script>
+  <link rel="stylesheet" href="styles.css?v=8">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -94,7 +94,7 @@
           <button type="button" class="cal-nav-btn" onclick="calShiftMonth(1)" aria-label="Next month">›</button>
         </div>
       </div>
-      <div id="cal-legend" class="cal-legend"></div>
+      <div id="cal-legend" class="cal-legend" role="group" aria-label="Calendar categories"></div>
       <div class="cal-body">
         <div class="cal-grid-wrap">
           <div id="cal-dow" class="cal-dow-row"></div>
@@ -150,6 +150,9 @@
              && out.length < RING_MAX) {
         let days = 0;
         try {
+          // null, deliberately: the rings are the workspace's HISTORY, not a
+          // view of it. The calendar legend below filters the month grid; it
+          // must not rewrite the record. Do not "make this consistent".
           const buckets = TrackCalendar.buildBuckets(slot, y, m, null) || {};
           days = Object.keys(buckets).length;
         } catch (e) { days = 0; }
@@ -497,8 +500,10 @@
 
     // ── universal calendar (read-only aggregation of the active slot) ──────
     // The collectors live in calendar-core.js so documentations.html renders
-    // the same aggregation. This page renders all of it, unfiltered: it passes
-    // no `hidden` set, so every category is shown.
+    // the same aggregation. This page passes a `hidden` set built from the
+    // legend, whose rows ARE the filter toggles — see CAL_LEGEND below. It is
+    // still read-only: the filter is a browser preference, not slot data, and
+    // nothing on this page writes track_db.
 
     const calToDateStr = TrackCalendar.toDateStr;
     const calDIM = TrackCalendar.dim;
@@ -518,6 +523,70 @@
     const calDurLabel = TrackCalendar.durLabel;
     const calDlDone = TrackCalendar.dlDone;
 
+    /* The five legend rows, in display order, and they are the filter controls.
+       The four dot rows come from TrackCalendar.CATS, so a category added there
+       appears here with no edit.
+
+       The milestone row is not a dot category, so its key is looked UP in
+       TrackCalendar.FILTERS rather than spelled as a value. The collectors match
+       that exact string; a literal here would be a second definition that a
+       rename in calendar-core.js desynchronises silently — the chip would grey
+       out and the bars would keep drawing. .filter().map() rather than .find()
+       because this runs at script top level, where a throw costs the whole page:
+       if the key ever leaves FILTERS the row simply disappears, which is the
+       right answer, since there would be nothing left to toggle.
+
+       The LABEL and the swatch stay local. This calendar draws milestones as a
+       period bar coloured from MS_PALETTE, not as one dot in FILTERS' single
+       colour, and "Milestone period" is what that bar means. */
+    const CAL_LEGEND = TrackCalendar.FILTERS
+      .filter(f => f.key === 'milestone')
+      .map(f => ({ key: f.key, label: 'Milestone period', bar: true }))
+      .concat(CAL_CATS.map(c => ({ key: c.key, label: c.label, color: c.color })));
+    const CAL_LEGEND_KEYS = CAL_LEGEND.map(e => e.key);
+
+    /* A UI-only browser key, like track_theme. It is NOT part of track_db: it
+       never goes through TrackStorage, and firebase-sync.js's setItem patch acts
+       only on track_db, so writing it arms no upload and marks nothing pending.
+       Do not "fix" that by routing it through the guard.
+
+       It holds the switched-OFF keys, per the contract in calendar-core.js's
+       FILTERS comment, so a category added to CATS later is on by default.
+       Never invert it to a shown set. */
+    const CAL_HIDDEN_KEY = 'track_home_cal_hidden';
+
+    /* Total: a view preference must never be able to break the calendar.
+       JSON.parse does NOT throw on 'null', '42' or '{}' — the trap
+       TrackStorage.loadDB exists for — so the shape is checked AFTER parsing
+       rather than by a try/catch around it. getItem is wrapped too: it throws
+       outright where site data is disabled.
+
+       The result is clamped to the keys this legend actually renders, and that
+       clamp is what makes an unrecoverable state impossible: every key that can
+       hide something has a visible control that turns it back on. A stray or
+       hand-edited "task" would otherwise reach buildDaySchedule and hide the day
+       preview's goal tasks with nothing on screen to undo it. Clamping on read
+       also means a sixth legend row added later still honours what is stored.
+       It subsumes a typeof check — a number can never be in CAL_LEGEND_KEYS. */
+    function calReadHidden() {
+      let raw;
+      try { raw = localStorage.getItem(CAL_HIDDEN_KEY); } catch (e) { return []; }
+      if (raw === null) return [];
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch (e) { return []; }
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(k => CAL_LEGEND_KEYS.indexOf(k) >= 0);
+    }
+
+    /* A preference the browser refuses to store is dropped, not thrown: the next
+       render reads storage again, so the toggle visibly refuses to stick while
+       the calendar keeps working. Applying it in memory instead would be a lie.
+       '[]' is written rather than removing the key — absence and [] are the same
+       state, and track_theme sets unconditionally too. */
+    function calWriteHidden(keys) {
+      try { localStorage.setItem(CAL_HIDDEN_KEY, JSON.stringify(keys)); } catch (e) {}
+    }
+
     // A day note or deadline authored from a Documentations page carries that
     // page's id; absence means it was authored in the Schedule. This calendar
     // is read-only, so the provenance goes in the tooltip — documentations.html
@@ -530,8 +599,11 @@
         : 'From documentation (source page removed)';
     }
 
-    function renderCalDaySchedule(el, slot, ds) {
-      const day = calBuildDaySchedule(slot, ds);
+    /* `opts` is threaded in as a PARAMETER rather than read here. renderCalendar
+       reads the preference once per render, so a storage event landing between
+       two reads cannot make the grid and the day preview disagree in one frame. */
+    function renderCalDaySchedule(el, slot, ds, opts) {
+      const day = calBuildDaySchedule(slot, ds, opts);
       const wrap = document.createElement('div');
       wrap.className = 'cal-sched';
 
@@ -628,7 +700,11 @@
         wrap.appendChild(strip);
       }
 
-      if (!day.blocks.length) {
+      // refBlocks counts here: a day holding only a pasted timetable still has
+      // an hour grid worth drawing, and saying "nothing scheduled" over a day
+      // full of classes would be plainly wrong.
+      const refs = day.refBlocks || [];
+      if (!day.blocks.length && !refs.length) {
         const p = document.createElement('div');
         p.className = 'cal-empty-msg';
         p.textContent = 'Nothing scheduled.';
@@ -665,6 +741,40 @@
         };
       });
       const overlap = calOverlapInfo(laid);
+
+      /* The reference backdrop — a pasted timetable. Appended BEFORE the real
+         block layer so it paints behind, spans the full track width rather
+         than joining the overlap layout, and is inert: .cal-sched-refs carries
+         pointer-events:none, so nothing here can be ticked, dragged or clicked
+         and no guard has to remember that. Read-only display; the popover that
+         lets a class become a real note lives on progress.html alone. */
+      const refLayer = document.createElement('div');
+      refLayer.className = 'cal-sched-refs';
+      refs.forEach(b => {
+        const parts = String(b.time).split(':');
+        const h = Number(parts[0]) || 0, mi = Number(parts[1]) || 0;
+        const top = (h + mi / 60 - CAL_SCHED_START_HOUR) * CAL_SCHED_PX_PER_HOUR;
+        const height = Math.max(16, (b.duration / 60) * CAL_SCHED_PX_PER_HOUR);
+        if (top < -height || top >= totalH) return;
+        const div = document.createElement('div');
+        div.className = 'cal-sched-ref';
+        div.dataset.refDay = ds;
+        div.dataset.refId = b.entryId;
+        div.style.top = top + 'px';
+        div.style.height = height + 'px';
+        div.style.borderColor = b.color;
+        div.style.background = b.color + '1a';
+        div.title = 'Timetable · ' + b.title + ' · ' + b.time + ' · ' + calDurLabel(b.duration);
+        const t = document.createElement('div');
+        t.className = 'cal-sched-ref-title';
+        t.textContent = b.title;
+        const meta = document.createElement('div');
+        meta.className = 'cal-sched-ref-meta';
+        meta.textContent = b.time + ' · ' + calDurLabel(b.duration);
+        div.append(t, meta);
+        refLayer.appendChild(div);
+      });
+      grid.appendChild(refLayer);
 
       // blocks live in their own layer so their percentage widths are measured
       // against the track area, not the hour-label gutter
@@ -715,7 +825,7 @@
       renderCalendar();
     }
 
-    function renderCalDetail(el, slot, ds, bucket) {
+    function renderCalDetail(el, slot, ds, bucket, opts) {
       el.className = 'cal-detail';
       const head = document.createElement('div');
       head.className = 'cal-detail-head';
@@ -743,7 +853,7 @@
       head.append(date, acts);
       el.appendChild(head);
 
-      renderCalDaySchedule(el, slot, ds);
+      renderCalDaySchedule(el, slot, ds, opts);
 
       const cats = CAL_CATS.filter(c => bucket[c.key] && bucket[c.key].length);
       cats.forEach(c => {
@@ -781,23 +891,79 @@
 
       document.getElementById('cal-month-label').textContent = CAL_MONTHS[calM] + ' ' + calY;
 
+      /* Read the preference ONCE per render, and read it fresh rather than
+         caching it in a module variable. renderCalendar already re-reads the
+         whole database through getDB(), so the DOM stays a pure function of
+         storage plus calY/calM/calSelectedDs — and there is no cache that can
+         disagree with what a cross-tab storage event just changed.
+
+         `hiddenCats`, not `hidden`: the milestone-overflow block further down
+         already declares a `const hidden` that is a NUMBER (lanes that did not
+         fit). Block scope makes shadowing legal and unreadable. */
+      const calOpts = { hidden: calReadHidden() };
+      const hiddenCats = calOpts.hidden;
+
+      /* The legend rows ARE the filter toggles. This runs before the `if (!slot)`
+         return below, so with no workspace it is five live toggles over an empty
+         grid — harmless, the preference simply applies once a workspace exists,
+         and exactly as odd as the five inert rows that were here before. */
       const legend = document.getElementById('cal-legend');
       legend.innerHTML = '';
-      const msLegend = document.createElement('span');
-      msLegend.className = 'cal-legend-item';
-      const msBar = document.createElement('span');
-      msBar.className = 'cal-legend-bar';
-      msLegend.append(msBar, document.createTextNode('Milestone period'));
-      legend.appendChild(msLegend);
-      CAL_CATS.forEach(c => {
-        const item = document.createElement('span');
+      CAL_LEGEND.forEach(e => {
+        const on = hiddenCats.indexOf(e.key) < 0;
+        const item = document.createElement('button');
+        item.type = 'button';
         item.className = 'cal-legend-item';
-        const dot = document.createElement('span');
-        dot.className = 'cal-dot';
-        dot.style.background = c.color;
-        item.append(dot, document.createTextNode(c.label));
+        // aria-pressed is the ONLY state carrier — styles.css reads it directly
+        // rather than a parallel `.on` class, so the two cannot disagree.
+        item.setAttribute('aria-pressed', String(on));
+        item.setAttribute('data-cal-legend', e.key);
+        item.title = (on ? 'Hide ' : 'Show ') + e.label;
+        const swatch = document.createElement('span');
+        if (e.bar) {
+          swatch.className = 'cal-legend-bar';
+        } else {
+          swatch.className = 'cal-dot';
+          // hollow when off, so the legend still teaches the colour it names
+          swatch.style.background = on ? e.color : 'transparent';
+          swatch.style.borderColor = e.color;
+        }
+        item.append(swatch, document.createTextNode(e.label));
+        item.onclick = () => {
+          calWriteHidden(on ? hiddenCats.concat([e.key]) : hiddenCats.filter(k => k !== e.key));
+          renderCalendar();
+          /* renderCalendar rebuilds this legend, so the button just pressed no
+             longer exists and keyboard focus would fall back to <body>. Put it
+             on the row's replacement. A mouse click shows nothing, because the
+             focus ring is :focus-visible only. */
+          const again = document.querySelector('[data-cal-legend="' + e.key + '"]');
+          if (again) again.focus();
+        };
         legend.appendChild(item);
       });
+
+      /* Rendered always and disabled when nothing is hidden, never conditionally:
+         .cal-panel is a 100dvh flex column, so a chip that appears and disappears
+         would re-flow the whole month grid on the first and last toggle. It
+         clears a view preference and reaches no track_db, so it asks nothing —
+         it sits beside merge/unmerge in the destructive-control exemptions. */
+      const legendReset = document.createElement('button');
+      legendReset.type = 'button';
+      legendReset.className = 'cal-legend-item cal-legend-reset';
+      // its own attribute, so querySelectorAll('[data-cal-legend]') stays exactly
+      // the five categories
+      legendReset.setAttribute('data-cal-legend-reset', '');
+      legendReset.disabled = !hiddenCats.length;
+      legendReset.title = 'Show every category again';
+      legendReset.textContent = 'Show all';
+      legendReset.onclick = () => {
+        calWriteHidden([]);
+        renderCalendar();
+        // it is about to be disabled, so focus goes to the first row instead
+        const first = document.querySelector('[data-cal-legend]');
+        if (first) first.focus();
+      };
+      legend.appendChild(legendReset);
 
       const dow = document.getElementById('cal-dow');
       dow.innerHTML = '';
@@ -824,8 +990,8 @@
         return;
       }
 
-      const buckets = calBuildBuckets(slot, calY, calM);
-      const ms = calBuildMilestoneLanes(slot, calY, calM);
+      const buckets = calBuildBuckets(slot, calY, calM, calOpts);
+      const ms = calBuildMilestoneLanes(slot, calY, calM, calOpts);
       const shownLanes = Math.min(ms.laneCount, CAL_MS_MAX_LANES);
       const todayDs = calToDateStr(new Date());
 
@@ -898,11 +1064,22 @@
         grid.appendChild(cell);
       }
 
-      if (calSelectedDs) renderCalDetail(detail, slot, calSelectedDs, buckets[calSelectedDs] || {});
+      if (calSelectedDs) renderCalDetail(detail, slot, calSelectedDs, buckets[calSelectedDs] || {}, calOpts);
     }
 
-    // cross-tab refresh: another page edited track_db → re-render slots + calendar
-    window.addEventListener('storage', e => { if (!e.key || e.key === 'track_db') renderSlots(); });
+    /* Cross-tab refresh. Another page edited track_db → re-render slots and the
+       calendar; another Home tab moved a legend toggle → the calendar alone,
+       because renderSlots would also rebuild the slot list and the rings, and
+       renderRings calls buildBuckets once per month of the workspace's life for
+       a preference that changes neither.
+
+       Neither branch trusts e.newValue: renderCalendar re-reads storage itself,
+       the same rule theme.js records. The `!e.key` branch already covers another
+       tab calling localStorage.clear(), which fires with a null key. */
+    window.addEventListener('storage', e => {
+      if (!e.key || e.key === 'track_db') renderSlots();
+      else if (e.key === CAL_HIDDEN_KEY) renderCalendar();
+    });
 
     renderSlots();
   </script>

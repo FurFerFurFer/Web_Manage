@@ -46,7 +46,8 @@ test('module surface', () => {
     'noteTimed', 'daysBetween', 'dayShift',
     'noteBlockDuration', 'dlBlockDuration', 'dlBlockSpan', 'dlBlockTime', 'itemParts', 'partSpan',
     'blockOn', 'noteBlockSpan', 'noteBlockStart', 'blockDay', 'partDay',
-    'dlBlockDayValid', 'dlStrandedBlockDays']) {
+    'dlBlockDayValid', 'dlStrandedBlockDays',
+    'refSpan', 'refOccupies', 'refOn']) {
     assert.equal(typeof TC[name], 'function', name + ' is exported');
   }
   // dlDayCount was REMOVED rather than renamed: the number it returned changed
@@ -1374,4 +1375,202 @@ test('GUARD: dlWithCautionDays doubles as the draft sanitiser for a typed due da
   // through to the legacy startDate branch and resurrects a cleared span
   assert.equal(Object.prototype.hasOwnProperty.call(
     TC.dlWithCautionDays({ date: '2026-03-18' }, []), 'cautionDates'), true);
+});
+
+// ── reference schedules: a pasted timetable ────────────────────────────────
+// SWEPT under five timezones on purpose, and this is the half of the feature
+// that needs it. schedule-paste-core.js reads the SHAPE of a day cell and is
+// run once; everything that turns a weekday into an actual calendar day is
+// here, and a weekday is exactly the kind of thing that regresses to a UTC day
+// invisibly on a machine running in UTC.
+
+const weekly = (over = {}) => Object.assign(
+  { id: 'r-w', dow: 1, time: '09:00', duration: 90, title: 'Mathematics',
+    from: '2026-09-07', until: '2026-12-14' }, over);
+const oneOff = (over = {}) => Object.assign(
+  { id: 'r-o', date: '2026-09-14', time: '13:00', duration: 60, title: 'Makeup' }, over);
+const refSlot = (...entries) => ({ refSchedules: entries });
+
+test('a weekly entry occupies EVERY matching weekday inside its range', () => {
+  const e = weekly();
+  // 2026-09-07 is a Monday; so are the 14th and 21st.
+  assert.equal(TC.refOccupies(e, '2026-09-07'), true, 'the first Monday, TZ=' + TZ);
+  assert.equal(TC.refOccupies(e, '2026-09-14'), true);
+  assert.equal(TC.refOccupies(e, '2026-09-21'), true);
+  assert.equal(TC.refOccupies(e, '2026-09-08'), false, 'Tuesday is not Monday');
+});
+
+test('a weekly entry stops at both ends of its range, inclusive', () => {
+  const e = weekly({ from: '2026-09-14', until: '2026-09-21' });
+  assert.equal(TC.refOccupies(e, '2026-09-07'), false, 'before the range');
+  assert.equal(TC.refOccupies(e, '2026-09-14'), true, 'the first day is IN');
+  assert.equal(TC.refOccupies(e, '2026-09-21'), true, 'the last day is IN');
+  assert.equal(TC.refOccupies(e, '2026-09-28'), false, 'after the range');
+});
+
+test('an absent bound is open in that direction — a term with no end yet', () => {
+  const noEnd = weekly({ until: undefined });
+  assert.equal(TC.refOccupies(noEnd, '2031-09-09'), false, 'still only Mondays (the 9th is a Tuesday)');
+  assert.equal(TC.refOccupies(noEnd, '2031-09-01'), true, 'a Monday years later');
+  const noStart = weekly({ from: undefined, until: '2026-09-14' });
+  assert.equal(TC.refOccupies(noStart, '2020-09-07'), true, 'a Monday years earlier');
+});
+
+test('a one-off entry occupies its own day and no other', () => {
+  const e = oneOff();
+  assert.equal(TC.refOccupies(e, '2026-09-14'), true);
+  assert.equal(TC.refOccupies(e, '2026-09-21'), false, 'it does NOT repeat weekly');
+  assert.equal(TC.refOccupies(e, '2026-09-13'), false);
+});
+
+test('an entry carrying BOTH arms, or NEITHER, occupies nothing', () => {
+  // Refused rather than resolved by whichever branch runs first. There is no
+  // defensible answer to which day such a record belongs to, and inventing one
+  // would draw a class on a day the user never wrote down. schema.js reports
+  // the same shape as a warning.
+  assert.equal(TC.refOccupies({ date: '2026-09-14', dow: 1, time: '09:00' }, '2026-09-14'), false);
+  assert.equal(TC.refOccupies({ date: '2026-09-14', dow: 1, time: '09:00' }, '2026-09-21'), false);
+  assert.equal(TC.refOccupies({ time: '09:00', title: 'nowhere' }, '2026-09-14'), false);
+});
+
+test('refOccupies tolerates anything stored, because stored data is not a promise', () => {
+  for (const bad of [null, undefined, 42, 'nope', [], { dow: 7 }, { dow: -1 }, { dow: 1.5 },
+    { dow: '1' }, { date: 'someday' }]) {
+    assert.equal(TC.refOccupies(bad, '2026-09-14'), false, JSON.stringify(bad) + ' must not occupy a day');
+  }
+  // and a malformed DAY is refused rather than parsed
+  assert.equal(TC.refOccupies(weekly(), 'someday'), false);
+  assert.equal(TC.refOccupies(weekly(), ''), false);
+});
+
+test('a MALFORMED range bound is read as OPEN, not as "occupies nothing"', () => {
+  // A decision worth stating rather than leaving to whichever branch runs
+  // first. The house rule for a malformed value that reaches geometry is to
+  // fall back to the DEFAULT behaviour, not to vanish — blockDate does exactly
+  // this, falling back to the item's own day. Absence of a bound means "open",
+  // so damage to a bound means "open" too.
+  //
+  // The alternative was tempting because the blast radius is bigger here: an
+  // unbounded weekly entry draws on every matching weekday the user scrolls
+  // to. It was rejected anyway. A backdrop drawn too often is noisy, visible,
+  // and deleted in one click; an entry that occupies nothing is INVISIBLE, and
+  // the user cannot act on what they cannot see. schema.js warns about the
+  // malformed value, so they are told which record is wrong.
+  const broken = weekly({ from: 'x', until: 'y' });
+  assert.equal(TC.refOccupies(broken, '2026-09-14'), true, 'still drawn, still a Monday');
+  assert.equal(TC.refOccupies(broken, '2026-09-15'), false, 'and still only on Mondays');
+});
+
+test('SUNDAY IS ZERO and is not mistaken for absent', () => {
+  // The classic falsy-zero trap: `if (entry.dow)` would make every Sunday
+  // class fall through to the "neither arm" refusal and vanish.
+  const sun = weekly({ dow: 0, from: '2026-09-01', until: '2026-09-30' });
+  assert.equal(TC.refOccupies(sun, '2026-09-06'), true, '2026-09-06 is a Sunday, TZ=' + TZ);
+  assert.equal(TC.refOccupies(sun, '2026-09-07'), false);
+});
+
+test('a weekly entry crosses a MONTH boundary without drifting', () => {
+  const e = weekly({ from: '2026-09-28', until: '2026-10-12' });
+  assert.deepEqual(
+    ['2026-09-28', '2026-10-05', '2026-10-12'].map(ds => TC.refOccupies(e, ds)),
+    [true, true, true], 'consecutive Mondays across the month end, TZ=' + TZ);
+});
+
+test('a weekly entry crosses a YEAR boundary without drifting', () => {
+  const e = weekly({ from: '2026-12-21', until: '2027-01-11' });
+  assert.deepEqual(
+    ['2026-12-21', '2026-12-28', '2027-01-04', '2027-01-11'].map(ds => TC.refOccupies(e, ds)),
+    [true, true, true, true], 'consecutive Mondays across the year end, TZ=' + TZ);
+});
+
+test('a weekly entry crosses a DST transition without drifting', () => {
+  // America/Los_Angeles springs forward on 2026-03-08 and falls back on
+  // 2026-11-01, both Sundays. A Monday entry spanning either must still land
+  // on Mondays — this is the case a naive +7*86400000 loop gets wrong.
+  const e = weekly({ from: '2026-03-02', until: '2026-03-16' });
+  assert.deepEqual(
+    ['2026-03-02', '2026-03-09', '2026-03-16'].map(ds => TC.refOccupies(e, ds)),
+    [true, true, true], 'Mondays across the spring-forward, TZ=' + TZ);
+  const f = weekly({ from: '2026-10-26', until: '2026-11-09' });
+  assert.deepEqual(
+    ['2026-10-26', '2026-11-02', '2026-11-09'].map(ds => TC.refOccupies(f, ds)),
+    [true, true, true], 'Mondays across the fall-back, TZ=' + TZ);
+});
+
+test('refSpan floors a missing or malformed duration at the shared default', () => {
+  assert.deepEqual(TC.refSpan(weekly()), { time: '09:00', duration: 90 });
+  assert.deepEqual(TC.refSpan(weekly({ duration: undefined })), { time: '09:00', duration: TC.DEFAULT_BLOCK_MINS });
+  assert.deepEqual(TC.refSpan(weekly({ duration: 'ninety' })), { time: '09:00', duration: TC.DEFAULT_BLOCK_MINS });
+  assert.deepEqual(TC.refSpan(weekly({ duration: 0 })), { time: '09:00', duration: TC.DEFAULT_BLOCK_MINS });
+  // no usable time at all means no block, rather than one at midnight
+  assert.equal(TC.refSpan(weekly({ time: undefined })), null);
+  assert.equal(TC.refSpan(weekly({ time: 'period 3' })), null);
+  assert.equal(TC.refSpan(null), null);
+  // An out-of-range time is CLAMPED rather than refused, which is what every
+  // other stored time in this file already does. The split is deliberate and
+  // is the ordinary validate-on-write / tolerate-on-read one:
+  // schedule-paste-core.js REFUSES '25:00' at paste time with the line named,
+  // so this path is only ever reached by data that was hand-edited, synced
+  // from another version, or imported — and for that, drawing it at the edge
+  // of the grid beats making it disappear.
+  assert.deepEqual(TC.refSpan(weekly({ time: '25:00' })), { time: '23:55', duration: 90 });
+});
+
+test('refOn sorts by time and gives every block a day-qualified id', () => {
+  // The id is COMPOSITE because one weekly entry appears on many days at once,
+  // and every column of a week view is in the DOM together. A bare entry id
+  // could not tell a block drawn on the wrong day from one drawn correctly —
+  // the same lesson data-block-day already records for real blocks.
+  const slot = refSlot(oneOff(), weekly());
+  const got = TC.refOn(slot, '2026-09-14');
+  assert.deepEqual(got.map(b => b.id), ['r-w@2026-09-14', 'r-o@2026-09-14']);
+  assert.deepEqual(got.map(b => b.time), ['09:00', '13:00'], 'sorted by time');
+  assert.equal(got[0].entryId, 'r-w', 'the underlying record is still reachable');
+});
+
+test('refOn drops an entry with no usable time rather than drawing it at midnight', () => {
+  const slot = refSlot(weekly(), weekly({ id: 'r-bad', time: 'period 3' }));
+  assert.deepEqual(TC.refOn(slot, '2026-09-14').map(b => b.entryId), ['r-w']);
+});
+
+test('refOn tolerates a missing or malformed refSchedules field', () => {
+  // Every slot stored before this field existed has no refSchedules at all.
+  for (const slot of [{}, { refSchedules: null }, { refSchedules: 'nope' }, { refSchedules: [null, 7] }]) {
+    assert.deepEqual(TC.refOn(slot, '2026-09-14'), [], JSON.stringify(slot));
+  }
+});
+
+test('the Timetable filter hides reference blocks and nothing else', () => {
+  const slot = refSlot(weekly(), oneOff());
+  assert.equal(TC.refOn(slot, '2026-09-14', { hidden: ['ref'] }).length, 0);
+  assert.equal(TC.refOn(slot, '2026-09-14', { hidden: ['deadline'] }).length, 2, 'another key must not hide these');
+  assert.equal(TC.refOn(slot, '2026-09-14', {}).length, 2);
+});
+
+test('buildDaySchedule returns reference blocks in their OWN array', () => {
+  // Load-bearing. Mixed into `blocks` they would reach overlapInfo and squeeze
+  // a real task's width, and every existing consumer would start drawing them
+  // by accident rather than opting in.
+  const day = TC.buildDaySchedule(refSlot(weekly(), oneOff()), '2026-09-14');
+  assert.deepEqual(day.refBlocks.map(b => b.entryId), ['r-w', 'r-o']);
+  assert.deepEqual(day.blocks, [], 'not one of them reached the real block list');
+});
+
+test('GUARD: reference blocks change nothing about a real day', () => {
+  // Passes on both sides by design. If this ever fails, the backdrop has
+  // stopped being additive and has started taking a surface away — the "show
+  // both, always" rule.
+  const base = {
+    calendarNotes: [{ id: 'n-1', date: '2026-09-14', title: 'Note', time: '10:00' }],
+    deadlines: [{ id: 'd-1', date: '2026-09-14', time: '17:00', title: 'Essay', cautionDates: ['2026-09-13'] }]
+  };
+  const without = TC.buildDaySchedule(base, '2026-09-14');
+  const withRef = TC.buildDaySchedule(Object.assign({}, base, { refSchedules: [weekly(), oneOff()] }), '2026-09-14');
+
+  assert.deepEqual(withRef.blocks, without.blocks, 'the real blocks are byte-for-byte what they were');
+  assert.deepEqual(withRef.calNotes, without.calNotes);
+  assert.deepEqual(withRef.deadlines, without.deadlines);
+  assert.deepEqual(withRef.deadlinesCaution, without.deadlinesCaution);
+  assert.deepEqual(withRef.sir, without.sir);
+  assert.equal(without.refBlocks.length, 0, 'and a slot with no timetable has an empty array, not undefined');
 });

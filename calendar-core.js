@@ -36,6 +36,11 @@
   // items (tasks, routines, SIR, supporting actions, MM sessions, MG focus,
   // day notes, deadlines) render in the day timeline instead, and milestones
   // render as spanning lane bars — see buildMilestoneLanes.
+  // Reference-schedule blocks. Slate on purpose: pink, red and indigo already
+  // mean day note, deadline and task, and a backdrop that borrowed one of them
+  // would read as work the user chose to do.
+  const REF_COLOR = '#94a3b8';
+
   const CATS = [
     { key: 'kolbmg', label: 'Kolb / MG change', color: '#38bdf8' },
     { key: 'lin', label: 'LIN record', color: '#2dd4bf' },
@@ -57,7 +62,12 @@
     { key: 'mg', label: 'MG focus', color: '#facc15' },
     { key: 'daynote', label: 'Day notes', color: '#e879f9' },
     { key: 'deadline', label: 'Deadlines', color: '#f87171' },
-    { key: 'doc', label: 'Documentation', color: '#c084fc' }
+    { key: 'doc', label: 'Documentation', color: '#c084fc' },
+    // A pasted timetable. In FILTERS and deliberately NOT in CATS: a weekly
+    // entry would put a month dot on every single weekday, which is noise
+    // rather than information. It is switchable because a term grid is a
+    // backdrop, and a backdrop you cannot turn off is wallpaper.
+    { key: 'ref', label: 'Timetable', color: REF_COLOR }
   ]);
 
   // milestone bar colours — same palette progress.html uses for chipColor
@@ -479,6 +489,102 @@
     return out.sort();
   }
 
+  // ── reference schedules ──────────────────────────────────────────────────
+  /* A pasted timetable — see schedule-paste-core.js for the text format and
+     AGENTS.md for the stored shape. An entry is ONE line of a printed grid:
+
+         { id, title, time, duration, docPageId, importId,
+           date }                                   one-off, OR
+           dow, from, until }                       weekly, inclusive
+
+     EXACTLY ONE of `date` and `dow` is present. That single rule is what lets
+     one paste format carry both a term timetable and a one-off day without the
+     user choosing a mode, and it is why an entry carrying both is REFUSED here
+     rather than resolved by whichever branch happens to run first — there is
+     no defensible answer to which day such a record occupies.
+
+     THIS IS REFERENCE DATA, NEVER WORK. Nothing here is tickable, nothing is
+     draggable, and no reader may write to it. It is returned in its own array
+     rather than mixed into `blocks`, which is load-bearing three times over:
+     every existing consumer of `blocks` is untouched, overlapInfo never sees a
+     ghost so a class can never squeeze a real task's width, and each surface
+     opts in to drawing the layer rather than inheriting it by accident. */
+
+  const refDur = e => { const m = blockMins(e && e.duration); return m === null ? DEFAULT_BLOCK_MINS : m; };
+
+  /* Where a reference block sits, or null when it has no usable time at all.
+     Unlike dlBlockSpan there is no start to compute backwards — a class starts
+     at its own time — so there is nothing to clip at the top. An out-of-range
+     stored hour is CLAMPED into the grid by hhmmOf rather than refused: the
+     paste format already refuses '25:00' at authoring time with the line named,
+     so this path is only reached by data that was hand-edited, synced from
+     another version, or imported, and drawing it at the edge of the grid beats
+     making it disappear. */
+  function refSpan(entry) {
+    if (!entry) return null;
+    const start = minsOf(entry.time);
+    if (start === null) return null;
+    return { time: hhmmOf(start), duration: refDur(entry) };
+  }
+
+  /* THE occupancy test, and it has exactly one definition. progress.html
+     carries a documented twin because it does not load this file; nothing else
+     may re-spell it. Never write `entry.dow === d.getDay()` at a call site —
+     this repository has already paid twice for a predicate written out per
+     call site, most expensively with the deadline caution rule, which was
+     spelled at three sites and dropped at one.
+
+     The weekly arm compares the range as STRINGS, which is correct and total
+     for YYYY-MM-DD, and asks the platform for the weekday through a parse at
+     'T12:00:00' — the standing rule in this file, because a bare
+     'YYYY-MM-DD' is UTC midnight and lands a day early west of UTC. */
+  function refOccupies(entry, ds) {
+    if (!entry || !DAY_RE.test(ds || '')) return false;
+
+    const hasDate = entry.date !== undefined && entry.date !== null;
+    const hasDow = entry.dow !== undefined && entry.dow !== null;
+    if (hasDate === hasDow) return false;   // both, or neither: refused, never guessed
+
+    if (hasDate) return entry.date === ds;
+
+    const dow = entry.dow;
+    if (!(dow === Math.floor(dow) && dow >= 0 && dow <= 6)) return false;
+    // An absent bound is open in that direction — a term whose end is not
+    // known yet is an ordinary state, not damage.
+    if (DAY_RE.test(entry.from || '') && ds < entry.from) return false;
+    if (DAY_RE.test(entry.until || '') && ds > entry.until) return false;
+    const d = new Date(ds + 'T12:00:00');
+    if (isNaN(d.getTime())) return false;
+    return d.getDay() === dow;
+  }
+
+  /* Every reference block drawn on `ds`, in time order. The id is COMPOSITE
+     (`entry.id@ds`) because one weekly entry appears on many days at once —
+     every column of a week view is in the DOM together, so an id that repeated
+     across days could not tell a React key apart, and a test could not tell a
+     block drawn on the wrong day from one drawn correctly. */
+  function refOn(slot, ds, opts) {
+    if (!shownFn(opts)('ref')) return [];
+    const list = Array.isArray(slot && slot.refSchedules) ? slot.refSchedules : [];
+    const out = [];
+    list.forEach(entry => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+      if (!refOccupies(entry, ds)) return;
+      const span = refSpan(entry);
+      if (!span) return;
+      out.push({
+        id: String(entry.id) + '@' + ds,
+        entryId: entry.id,
+        title: entry.title || 'Class',
+        time: span.time,
+        duration: span.duration,
+        color: REF_COLOR,
+        entry: entry
+      });
+    });
+    return out.sort((a, b) => a.time.localeCompare(b.time) || a.title.localeCompare(b.title));
+  }
+
   function buildDaySchedule(slot, ds, opts) {
     const show = shownFn(opts);
     const mms = slot.mms || [];
@@ -643,7 +749,11 @@
       // three call sites, and the timeline was the one that missed it.
       deadlinesCaution: allDl.filter(d => !dlDone(d) && dlInCaution(d, ds) && show(originKey(d, 'deadline'))).sort(dlByDate),
       mgs: mgIds.map(mmName),
-      mgCarried: mgIds.length > 0 && !Object.prototype.hasOwnProperty.call(mgSchedule, ds)
+      mgCarried: mgIds.length > 0 && !Object.prototype.hasOwnProperty.call(mgSchedule, ds),
+      // A SEPARATE array, never mixed into `blocks`. See refOn: it keeps every
+      // existing consumer untouched, keeps overlapInfo from ever seeing a
+      // ghost, and makes drawing the backdrop an opt-in per surface.
+      refBlocks: refOn(slot, ds, opts)
     };
   }
 
@@ -701,6 +811,7 @@
     noteBlockDuration, dlBlockDuration, dlBlockSpan, dlBlockTime, itemParts, partSpan,
     blockOn, noteBlockSpan, noteBlockStart, blockDay, partDay,
     dlBlockDayValid, dlStrandedBlockDays,
+    refSpan, refOccupies, refOn, REF_COLOR,
     DEFAULT_BLOCK_MINS, DEFAULT_NOTE_TIME,
     originKey,
     buildBuckets, buildMilestoneLanes, buildDaySchedule, overlapInfo, durLabel

@@ -62,10 +62,14 @@ function run(label, file, env) {
 const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js'];
 
 // Swept once, not per zone: true-storage-core.js, graph-layout.js,
-// doc-table-core.js and the cdp cleanup path hold no date code at all, so five
-// runs would cost five times as long and prove exactly the same thing.
+// doc-table-core.js, schedule-paste-core.js and the cdp cleanup path hold no
+// date code at all, so five runs would cost five times as long and prove
+// exactly the same thing. schedule-paste-core.js is the one that has to earn
+// its place here rather than merely claiming it — it reads DAYS — so its suite
+// carries a structural case asserting the file constructs no Date. All
+// weekday-to-calendar-day resolution lives in calendar-core.js, which is swept.
 const UNSWEPT_FILES = ['true-storage-core.test.js', 'graph-layout.test.js', 'doc-table-core.test.js',
-  'cdp-cleanup.test.js'];
+  'schedule-paste-core.test.js', 'cdp-cleanup.test.js'];
 
 for (const tz of zones)
   for (const file of OFFLINE_FILES)

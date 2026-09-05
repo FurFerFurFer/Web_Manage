@@ -1635,20 +1635,69 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
   letter-spacing: 0.04em;
 }
 
+/* The row gap is trimmed from 0.25rem to pay back most of the vertical padding
+   .cal-legend-item now needs: .cal-panel is a 100dvh flex column, so whatever
+   the legend takes comes straight out of the day cells. */
 .cal-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 0.75rem;
+  gap: 0.125rem 0.35rem;
   margin-bottom: 0.75rem;
 }
 
+/* The legend rows ARE the filter toggles (renderCalendar in index.html), so
+   each is a real <button>. It must still read as the text label it has always
+   been: no chrome, no background, same colour and size as before. The one
+   deliberate cost is the padding, which buys a finger-sized hit box — a 10px
+   text row is not a tap target, which is why .doc-cal-filter carries
+   min-height: 1.6rem for the same job.
+
+   A ::before hit-area expansion would be cheaper and is WRONG here: this legend
+   wraps to two rows on a phone, so expanded areas on adjacent rows would overlap
+   and a tap could land on the wrong category. */
 .cal-legend-item {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+  margin: 0;
+  padding: 0.25rem 0.3rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
   color: var(--color-text-muted);
   font-size: 0.625rem;
   letter-spacing: 0.02em;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The legend was never clickable before, so the affordance lives in hover and
+   nowhere else — the resting appearance is unchanged from before this change.
+   There is deliberately no [aria-pressed="true"] rule: brightening all five
+   rows would change the page for every user who never touches a filter. */
+@media (hover: hover) {
+  .cal-legend-item:hover:not(:disabled) { color: var(--color-text); }
+}
+
+/* State is read from aria-pressed, not from a parallel class, so one fact in
+   the DOM cannot disagree with itself. The reset carries no aria-pressed, so it
+   is excluded without a :not() — compare .doc-cal-filter:not(.on):not(.reset),
+   which needs one because it styles off a class. */
+.cal-legend-item[aria-pressed="false"] {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+/* Inset, NOT a border: the bar is 0.25rem tall, and 1px borders top and bottom
+   would leave 2px of content, which border-radius: 999px draws as a lozenge. */
+.cal-legend-item[aria-pressed="false"] .cal-legend-bar {
+  background: none;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.cal-legend-reset {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.15em;
 }
 
 .cal-dow-row {
@@ -1811,6 +1860,12 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
   width: 0.4rem;
   height: 0.4rem;
 }
+
+/* Its OWN rule, not merged into the size rule above: a switched-off legend dot
+   goes hollow with its colour kept as the ring, and the day-detail dots that
+   rule also covers must stay solid. box-sizing is border-box globally, so the
+   ring eats into the 0.4rem rather than growing it — no layout shift. */
+.cal-legend-item .cal-dot { border: 1px solid transparent; }
 
 /* renderCalendar only adds the class while a day is selected, so an unopened
    month gives the whole width to the grid */
@@ -1980,6 +2035,55 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
   bottom: 0;
   left: 2.9rem;
   right: 0.35rem;
+}
+
+/* ── reference schedule (a pasted timetable) ──────────────────────────────
+   A BACKDROP, not work. Its own layer BEHIND .cal-sched-blocks, spanning the
+   full track width rather than taking part in the overlap layout, so a class
+   can never squeeze a real task's block or push it sideways.
+
+   pointer-events: none here is what makes it undraggable and untickable on
+   the two read-only surfaces by CONSTRUCTION rather than by a guard someone
+   has to remember inside a shared handler. progress.html deliberately does
+   NOT inherit this: there the block takes its own click to open a read-only
+   popover, and it re-enables pointer events on itself alone. */
+.cal-sched-refs {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2.9rem;
+  right: 0.35rem;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.cal-sched-ref {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 0.05rem 0.3rem;
+  border: 1px dashed;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  opacity: 0.55;
+}
+
+.cal-sched-ref-title {
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-sched-ref-meta {
+  color: var(--color-text-muted);
+  font-size: 0.5625rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cal-sched-block {

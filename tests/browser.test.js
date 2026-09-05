@@ -277,7 +277,10 @@ test('browser suites', skipUnlessChrome, async t => {
       // single-key tag path, never as part of its autosave patch — so an
       // ordinary KS02 edit has to leave them exactly as they were found.
       trueStorages: [{ id: 'ts-x', name: 'owned by True Storage', parentIds: [], tags: [] }],
-      trueStoragePos: { 'ts-x': { x: 5, y: 6 } } };
+      trueStoragePos: { 'ts-x': { x: 5, y: 6 } },
+      // Owned by documentations.html, which is the only page that writes a
+      // pasted timetable. KS02 has never heard of it either.
+      refSchedules: [{ id: 'rs-x', dow: 1, time: '09:00', duration: 60, title: 'owned by Documentations' }] };
     for (const [k, v] of Object.entries(foreign)) {
       assert.notEqual(await ks02.evaluate(WRITE_SLOT_KEY, k, v), false, 'seeding ' + k);
     }
@@ -744,12 +747,49 @@ test('browser suites', skipUnlessChrome, async t => {
     var db = JSON.parse(localStorage.getItem('track_db') || '{}');
     return (((db.slots || [])[0] || {}).deadlines || [])[0] || null;
   });
-  const clickCautionDay = (page, ds) => page.evaluate(function (v) {
-    var b = document.querySelector('[data-dl-caution-day="' + v + '"]');
-    if (!b) return false;
-    b.click();
+  /* The picker opens on the DUE day's month, and a caution day can perfectly
+     well sit in the month BEFORE it — a deadline due on the 3rd with a run-up
+     in the previous month is an ordinary case. Those cells are not rendered
+     until the picker is stepped back, so a case that clicks blind fails with
+     "not clickable" whenever `cautionDb`'s due day (today + 3) crosses a month
+     end while its caution days (today - 4, today - 1) do not. That is the last
+     three days of every month, and it is a fault in the FIXTURES, not the page:
+     a user in the same position clicks `‹`. So does this now.
+
+     The month is read off the rendered cells rather than the label, because
+     `YYYY-MM` compares lexicographically and needs no month-name table — and
+     MONTHS_LONG is declared further down this file, so it is still in its
+     temporal dead zone when the first of these cases runs. */
+  const shownCautionMonth = page => page.evaluate(function () {
+    var b = document.querySelector('[data-dl-caution-day]');
+    return b ? b.getAttribute('data-dl-caution-day').slice(0, 7) : null;
+  });
+  const stepCautionMonth = (page, dir) => page.evaluate(function (d) {
+    var pop = document.querySelector('[data-dl-caution-cal]').closest('div.fixed');
+    Array.prototype.find.call(pop.querySelectorAll('button'), function (b) {
+      return b.getAttribute('title') === (d < 0 ? 'Previous month' : 'Next month');
+    }).click();
     return true;
-  }, ds);
+  }, dir);
+  const showCautionDay = async (page, ds) => {
+    const want = ds.slice(0, 7);
+    for (let i = 0; i < 14; i++) {                 // bounded: never spin
+      const shown = await shownCautionMonth(page);
+      if (shown === null) return false;
+      if (shown === want) return true;
+      await stepCautionMonth(page, shown > want ? -1 : 1);
+    }
+    return false;
+  };
+  const clickCautionDay = async (page, ds) => {
+    if (!(await showCautionDay(page, ds))) return false;
+    return page.evaluate(function (v) {
+      var b = document.querySelector('[data-dl-caution-day="' + v + '"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    }, ds);
+  };
 
   await t.test('?dl= opens the popup, and a calendar day is picked from the read view', async () => {
     const { db, due } = cautionDb();
@@ -3347,7 +3387,7 @@ test('browser suites', skipUnlessChrome, async t => {
       'and the storage parent/child link');
 
     // The allow-list must not silently shrink back.
-    assert.equal(Object.keys(imported).length, 23, 'the imported slot carries all 23 canonical fields');
+    assert.equal(Object.keys(imported).length, 24, 'the imported slot carries all 24 canonical fields');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -3376,7 +3416,7 @@ test('browser suites', skipUnlessChrome, async t => {
     'id', 'name', 'createdAt', 'sessions', 'mms', 'kolbs', 'mgChanges',
     'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
     'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos'
+    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules'
   ];
 
   await t.test('every entry point creates a slot with the same canonical shape', async () => {
@@ -5724,6 +5764,320 @@ test('browser suites', skipUnlessChrome, async t => {
      preserves docPageId and every canonical field", which drives the REAL
      exporter and importer rather than a stand-in payload. */
 
+  /* ── the Home legend filters the month grid ───────────────────────────────
+     Five rows, and they do NOT go through one collector: the four dot
+     categories are buildBuckets and the milestone bar is buildMilestoneLanes.
+     They are asserted in SEPARATE cases for that reason — a rule forgotten at
+     one of two surfaces is this repository's recurring bug, and a single
+     assertion lets the forgotten one hide behind a passing sibling.
+
+     The preference is a UI-only browser key. index.html's calendar is
+     documented read-only, so the GUARD case at the end asserts the whole
+     interaction leaves track_db byte-identical and adds exactly one key. */
+
+  const LEGEND_KEY = 'track_home_cal_hidden';
+
+  /* Everything on ONE day, in the month the calendar opens on. Days 15-22
+     exist in every month (see thisMonthDay). populatedSlot is anchored to
+     March 2026, so its fixtures are invisible here — every category this case
+     reads has to be seeded explicitly.
+
+     The day preview's own kinds are cleared: this case reads only what the
+     legend controls, and a leftover deadline chip would blur the assertion.
+     The goal task is the exception and is deliberate — it is what the
+     '["task"]' clamp variant needs something to fail to hide. */
+  const legendDay = thisMonthDay(15);
+  const legendDb = () => seedDb({
+    kolbs: [F.kolb(1, legendDay, { mmId: 10 })],
+    mgChanges: [],
+    linChanges: [F.linChange(4, legendDay, { items: [{ id: 1 }] })],
+    linDayTitles: {},
+    notes: [F.note('n-1', F.localTs(now.getFullYear(), now.getMonth() + 1, 15, 12, 0))],
+    sourceDumps: [F.dump('d-1', legendDay)],
+    goals: [F.task('g-1', {
+      title: 'Root goal',
+      milestones: [F.milestone('ms-1', thisMonthDay(14), thisMonthDay(16))],
+      children: [F.task('g-1a', { scheduledDate: legendDay, scheduledTime: '08:30', duration: 45 })]
+    })],
+    saEntries: [], mmEntries: [], sessions: [], mgSchedule: {},
+    calendarNotes: [], deadlines: []
+  });
+
+  const openLegend = async extra => {
+    const page = await open('index.html', { db: legendDb(), extra: extra || null });
+    await page.waitFor(function () {
+      return !!document.querySelector('[data-cal-legend="note"]');
+    }, { message: 'the Home legend toggles' });
+    return page;
+  };
+
+  /* CLICK_SEL returns false when the selector misses. Ignoring that would let
+     a missing control "pass" the click step and fail three assertions later
+     for the wrong reason — a named-assertion failure turned into a confusing
+     one, which this file already records as the thing to avoid. */
+  const clickLegend = async (page, sel) =>
+    assert.equal(await page.evaluate(CLICK_SEL, sel), true, 'the control exists: ' + sel);
+
+  /* Wait for the WRITE to land, never for the right answer to appear: a wrong
+     result must report itself on an assertion rather than time out. */
+  const legendStored = (page, key, want) => page.waitFor(function (a) {
+    var raw = localStorage.getItem(a[0]);
+    if (raw === null) return false;
+    try { return (JSON.parse(raw) || []).indexOf(a[1]) >= 0 === a[2]; } catch (e) { return false; }
+  }, { args: [[LEGEND_KEY, key, want]], message: 'the preference reaching ' + LEGEND_KEY });
+
+  /* The day cell's own title is the category labels, which reads far better in
+     a failure message than a list of normalised rgb() strings. */
+  const legendCell = page => page.evaluate(function (ds) {
+    var day = Number(ds.slice(-2));
+    var cells = Array.prototype.filter.call(
+      document.querySelectorAll('#cal-grid .cal-cell'),
+      function (e) { return !e.classList.contains('empty'); });
+    var c = cells[day - 1];
+    if (!c) return null;
+    return {
+      title: c.getAttribute('title') || '',
+      dots: c.querySelectorAll('.cal-dot').length,
+      msLines: document.querySelectorAll('#cal-grid .cal-ms-line').length,
+      msCells: document.querySelectorAll('#cal-grid .cal-cell.milestone').length
+    };
+  }, legendDay);
+
+  const legendPressed = page => page.evaluate(function () {
+    var out = {};
+    Array.prototype.forEach.call(document.querySelectorAll('[data-cal-legend]'), function (b) {
+      out[b.getAttribute('data-cal-legend')] = b.getAttribute('aria-pressed');
+    });
+    return out;
+  });
+
+  const selectLegendDay = page => page.evaluate(function (ds) {
+    var day = Number(ds.slice(-2));
+    var cells = Array.prototype.filter.call(
+      document.querySelectorAll('#cal-grid .cal-cell'),
+      function (e) { return !e.classList.contains('empty'); });
+    if (!cells[day - 1]) return false;
+    cells[day - 1].click();
+    return true;
+  }, legendDay);
+
+  await t.test('HOME: switching a legend category off removes its dots and its detail rows', async () => {
+    const page = await openLegend();
+    assert.equal(await selectLegendDay(page), true, 'the seeded day is clickable');
+
+    const before = await legendCell(page);
+    assert.equal(before.dots, 4, 'the seeded day starts with all four dot categories');
+
+    await clickLegend(page, '[data-cal-legend="note"]');
+    await legendStored(page, 'note', true);
+
+    // the assertion this case is NAMED for, first
+    const after = await legendCell(page);
+    assert.equal(after.dots, 3, 'the switched-off category no longer draws its dot');
+    assert.ok(!/Floating note/.test(after.title), 'and is gone from the cell tooltip');
+
+    // the day detail follows the same filtered bucket, with no extra code
+    const detailCats = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('#cal-detail .cal-detail-cat'),
+        function (e) { return e.textContent; });
+    });
+    assert.ok(!detailCats.some(s => /Floating note/.test(s)),
+      'and its group is gone from the open day detail');
+
+    // the other three did not go with it
+    assert.ok(/Kolb \/ MG change/.test(after.title), 'Kolb / MG change survives');
+    assert.ok(/LIN record/.test(after.title), 'LIN record survives');
+    assert.ok(/Source dump/.test(after.title), 'Source dump survives');
+
+    /* LAST, deliberately: a page that greys the chip and keeps drawing the
+       dots is the likeliest way to ship this wrong, and asserting the chip
+       first would let that page pass this case. */
+    assert.equal((await legendPressed(page)).note, 'false', 'the row reads as switched off');
+
+    // off AND on — a one-way switch is not a toggle
+    await clickLegend(page, '[data-cal-legend="note"]');
+    await legendStored(page, 'note', false);
+    assert.equal((await legendCell(page)).dots, 4, 'switching it back on restores the dot');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME: switching milestones off removes the period bars and the day highlight', async () => {
+    const page = await openLegend();
+    const before = await legendCell(page);
+    assert.ok(before.msLines > 0, 'the seeded milestone draws bars to begin with');
+
+    await clickLegend(page, '[data-cal-legend="milestone"]');
+    await legendStored(page, 'milestone', true);
+
+    // the assertion this case is NAMED for, first
+    const after = await legendCell(page);
+    assert.equal(after.msLines, 0, 'no milestone bars are drawn');
+    /* The cell tint comes from dayLanes.length, so it goes with the bars
+       rather than stranding a highlighted cell with nothing in it. */
+    assert.equal(after.msCells, 0, 'and no day is left tinted as a milestone day');
+
+    assert.equal(after.dots, 4, 'the milestone key did not leak into the dot categories');
+
+    // the control needed to undo this survives, bar and all
+    const still = await page.evaluate(function () {
+      var b = document.querySelector('[data-cal-legend="milestone"]');
+      return b ? { pressed: b.getAttribute('aria-pressed'), bar: !!b.querySelector('.cal-legend-bar') } : null;
+    });
+    assert.deepEqual(still, { pressed: 'false', bar: true }, 'the row stays, switched off, with its bar');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME: the legend choice survives a reload, and Show all restores it', async () => {
+    const page = await openLegend();
+    await clickLegend(page, '[data-cal-legend="note"]');
+    await legendStored(page, 'note', true);
+    await clickLegend(page, '[data-cal-legend="milestone"]');
+    await legendStored(page, 'milestone', true);
+
+    await page.reload();
+    await page.skipFirebase();
+    await page.waitFor(function () {
+      return !!document.querySelector('[data-cal-legend="note"]');
+    }, { message: 'the Home legend after a reload' });
+
+    // the assertion this case is NAMED for, first
+    const after = await legendCell(page);
+    assert.equal(after.dots, 3, 'the switched-off dot category is still hidden after a reload');
+    assert.equal(after.msLines, 0, 'and milestones are still hidden');
+
+    assert.deepEqual(await legendPressed(page), {
+      milestone: 'false', kolbmg: 'true', lin: 'true', note: 'false', dump: 'true'
+    }, 'every row reloads reading the state it was left in');
+
+    const resetOn = await page.evaluate(function () {
+      var b = document.querySelector('[data-cal-legend-reset]');
+      return b ? !b.disabled : null;
+    });
+    assert.equal(resetOn, true, 'Show all is available while something is hidden');
+
+    await clickLegend(page, '[data-cal-legend-reset]');
+    await page.waitFor(function (k) { return localStorage.getItem(k) === '[]'; },
+      { args: [LEGEND_KEY], message: 'Show all clearing the preference' });
+
+    const restored = await legendCell(page);
+    assert.equal(restored.dots, 4, 'Show all brings the dots back');
+    assert.ok(restored.msLines > 0, 'and the milestone bars');
+    assert.deepEqual(await legendPressed(page), {
+      milestone: 'true', kolbmg: 'true', lin: 'true', note: 'true', dump: 'true'
+    }, 'and every row reads as on again');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME: a corrupt or out-of-scope legend preference hides nothing and cannot white-screen', async () => {
+    /* '42' and '{}' are the white-screen class: an unhardened reader hands
+       shownFn a non-iterable, `new Set(42)` THROWS out of buildBuckets, out of
+       renderCalendar, out of renderSlots — taking the slot list with it.
+       'null' survives an unhardened reader by luck, so it is here to pin the
+       reader rather than the luck. '["task"]' is the clamp: a key with no
+       legend control must hide nothing, or the Home day preview loses its goal
+       task with nothing on screen to bring it back.
+
+       '["note",7,{}]' is deliberately the ONE value that still hides something.
+       The junk members are dropped WITHOUT switching `note` back on — a reader
+       that bailed to [] on the first bad member would look just as "safe" here
+       and would silently discard a real preference, so a uniform
+       "everything is shown" expectation across all five values would have let
+       that through. Each value therefore carries its own expectation. */
+    const corrupt = [
+      { raw: '42', dots: 4, hidden: [] },
+      { raw: '{}', dots: 4, hidden: [] },
+      { raw: 'null', dots: 4, hidden: [] },
+      { raw: '["task"]', dots: 4, hidden: [] },
+      { raw: '["note",7,{}]', dots: 3, hidden: ['note'] }
+    ];
+    for (const c of corrupt) {
+      /* Deliberately NOT openLegend: that waits for the legend, so a page whose
+         renderCalendar threw reports a bare "waitFor timed out" — which says the
+         control is unreachable and is indistinguishable from it never having
+         been built. renderSlots fills #slot-list BEFORE calling renderCalendar,
+         so waiting on the slot list proves the page script ran and lets the
+         white-screen fail as a NAMED assertion instead of a timeout. */
+      const page = await open('index.html', { db: legendDb(), extra: { [LEGEND_KEY]: c.raw } });
+      await page.waitFor(function () {
+        var el = document.getElementById('slot-list');
+        return !!el && el.children.length > 0;
+      }, { message: 'the Home page mounting under ' + c.raw });
+
+      assert.equal(await page.evaluate(function () {
+        return document.querySelectorAll('[data-cal-legend]').length;
+      }), 5, 'the calendar survived the stored value ' + c.raw + ' (it did not throw out of renderCalendar)');
+
+      // the assertion this case is NAMED for, first — and also the proof the page rendered
+      const cell = await legendCell(page);
+      assert.equal(cell && cell.dots, c.dots, 'dot categories drawn under ' + c.raw);
+      assert.ok(cell.msLines > 0, 'and the milestone bars, under ' + c.raw);
+
+      assert.deepEqual(realErrors(page), [], 'no page error under ' + c.raw);
+
+      const want = {};
+      ['milestone', 'kolbmg', 'lin', 'note', 'dump'].forEach(k => {
+        want[k] = c.hidden.includes(k) ? 'false' : 'true';
+      });
+      assert.deepEqual(await legendPressed(page), want, 'the rows read correctly under ' + c.raw);
+
+      /* The clamp: a stored key with no legend control must hide nothing, or
+         the day preview loses its goal task with nothing on screen to undo it. */
+      assert.equal(await selectLegendDay(page), true, 'the seeded day is clickable under ' + c.raw);
+      const blocks = await page.evaluate(function () {
+        return document.querySelectorAll('#cal-detail .cal-sched-block').length;
+      });
+      assert.ok(blocks > 0, 'the day preview still draws its goal task under ' + c.raw);
+
+      await page.close();
+    }
+  });
+
+  /* GUARD — must pass on both sides. Home's calendar is documented read-only,
+     and this is the assertion that keeps it that way while it grows its first
+     control. It is byte-identical, not a subset of keys: a comparison that
+     spelled out the fields would miss activeSlotId or a root key.
+
+     It deliberately does NOT assert track_db_pending is absent. skipFirebase()
+     leaves _uid null, so firebase-sync.js's setItem patch never fires for ANY
+     key and the assertion could not fail; a test that cannot fail is worse
+     than none. That claim rests on reading firebase-sync.js:336-345. */
+  await t.test('GUARD: filtering the Home legend writes nothing to track_db', async () => {
+    const page = await openLegend();
+    const before = await page.evaluate(function () {
+      return { db: localStorage.getItem('track_db'), keys: Object.keys(localStorage).sort() };
+    });
+
+    for (const k of ['milestone', 'kolbmg', 'lin', 'note', 'dump']) {
+      await clickLegend(page, '[data-cal-legend="' + k + '"]');
+      await legendStored(page, k, true);
+    }
+    assert.equal(await selectLegendDay(page), true, 'a day still opens with everything off');
+    await clickLegend(page, '[data-cal-legend-reset]');
+    await page.waitFor(function (key) { return localStorage.getItem(key) === '[]'; },
+      { args: [LEGEND_KEY], message: 'Show all clearing the preference' });
+
+    const after = await page.evaluate(function () {
+      return { db: localStorage.getItem('track_db'), keys: Object.keys(localStorage).sort() };
+    });
+
+    // the assertion this case is NAMED for, first
+    assert.equal(after.db, before.db, 'track_db is byte-identical after the whole interaction');
+
+    /* A DELTA, not an equality: whatever the theme or Firebase left in storage
+       before is not this case's business, but an accidental extra write is. */
+    assert.deepEqual(after.keys.filter(k => !before.keys.includes(k)), [LEGEND_KEY],
+      'exactly one browser key was added, and it is the view preference');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   /* ── the Documentations sidebar: full screen, and drag by finger ──────────
      The `⠿`/`⇅` handles were desktop-only for two INDEPENDENT reasons, and a
      fix for either one alone leaves them dead on a phone: they are hidden
@@ -6956,5 +7310,489 @@ test('browser suites', skipUnlessChrome, async t => {
 
     await grit.close();
     await night.close();
+  });
+
+  // ── 15. A pasted timetable, drawn as a read-only backdrop ────────────────
+  /* Three surfaces draw these blocks and progress.html carries its own copy of
+     the occupancy test, because it does not load calendar-core.js. That is the
+     duplication shape this repository has paid for before, so EVERY surface is
+     asserted separately — a single shared assertion would let a forgotten copy
+     hide behind a passing sibling. The fail-first evidence is two doctored
+     baselines whose failure sets are disjoint. */
+
+  /* The next Monday at or after today. The Progress week view runs
+     today..today+6 and is NOT Sunday-anchored, and the month calendars show
+     the current month — so the Monday of the calendar week is often in neither.
+     Written out here rather than imported so a fixture never depends on the
+     code under test. */
+  const nextDow = target => {
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() + ((target - d.getDay() + 7) % 7));
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  };
+  const MONDAY = nextDow(1);
+  const MON_DOW = 1;
+
+  const refWeekly = (over = {}) => Object.assign({
+    id: 'rs-w', dow: MON_DOW, time: '09:00', duration: 90, title: 'Mathematics',
+    from: '2020-01-01', until: '2099-12-31', docPageId: 'p-1', importId: 'imp-1'
+  }, over);
+  const refOneOff = (over = {}) => Object.assign({
+    id: 'rs-o', date: MONDAY, time: '13:00', duration: 60, title: 'Makeup lecture',
+    docPageId: 'p-1', importId: 'imp-1'
+  }, over);
+
+  const refDb = (entries, pageOver = {}) => seedDb({
+    refSchedules: entries,
+    calendarNotes: [], deadlines: [],
+    docPages: [F.docPage('p-1', Object.assign({
+      title: 'Term 1', blocks: [{ id: 'b-1', type: 'schedule' }]
+    }, pageOver))]
+  });
+
+  // Open a month calendar (Home or a Documentations block) on a given day.
+  const CLICK_CAL_DAY = function (ds) {
+    var want = Number(ds.slice(8));
+    var cells = document.querySelectorAll('.cal-cell');
+    for (var i = 0; i < cells.length; i++) {
+      var n = cells[i].querySelector('.cal-day-num');
+      if (n && Number(n.textContent) === want) { cells[i].click(); return true; }
+    }
+    return false;
+  };
+  const REF_IDS_ON = function (ds) {
+    var els = document.querySelectorAll('[data-ref-day="' + ds + '"]');
+    return els.length ? Array.prototype.map.call(els, function (e) {
+      return e.getAttribute('data-ref-id');
+    }) : false;
+  };
+
+  await t.test('PROGRESS draws a weekly class on the day it actually falls on', async () => {
+    /* data-ref-day is the COLUMN, and asserting it is the whole case. Every
+       column of a week view is in the DOM at once, so a block drawn on the
+       wrong day still has the right id at the right hour — only the column
+       tells them apart. That is the data-block-day lesson, and a version of
+       this case that checked ids alone passed against a doctored resolver. */
+    const page = await open('progress.html', { db: refDb([refWeekly(), refOneOff()]), hash: '#schedule' });
+
+    // The ONE-OFF renders whatever the weekly arm does, so this precondition
+    // holds on a broken tree too and the assertion below is what fires.
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the backdrop layer rendering at all' });
+    const onMonday = await page.evaluate(REF_IDS_ON, MONDAY);
+    assert.deepEqual((onMonday || []).slice().sort(), ['rs-o', 'rs-w'],
+      'both the weekly class and the one-off landed on ' + MONDAY);
+
+    // and nowhere else in the week: a weekly entry is not a daily one
+    const elsewhere = await page.evaluate(function (mon) {
+      return Array.prototype.map.call(document.querySelectorAll('[data-ref-day]'), function (e) {
+        return e.getAttribute('data-ref-day');
+      }).filter(function (d) { return d !== mon; });
+    }, MONDAY);
+    assert.deepEqual(elsewhere, [], 'no class was drawn on any other day of the week');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME draws the same class in the universal calendar', async () => {
+    const page = await open('index.html', { db: refDb([refWeekly(), refOneOff()]) });
+    await page.waitFor(function () { return !!document.querySelector('.cal-cell'); },
+      { message: 'the home calendar' });
+    assert.notEqual(await page.evaluate(CLICK_CAL_DAY, MONDAY), false, MONDAY + ' is in the grid');
+
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the Home backdrop layer rendering at all' });
+    const ids = await page.evaluate(REF_IDS_ON, MONDAY);
+    assert.deepEqual((ids || []).slice().sort(), ['rs-o', 'rs-w']);
+    // the read-only surfaces are inert by construction, not by a guard
+    assert.equal(await page.evaluate(function () {
+      return getComputedStyle(document.querySelector('.cal-sched-refs')).pointerEvents;
+    }), 'none', 'the Home backdrop layer takes no pointer events at all');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS draws the same class in a calendar block', async () => {
+    const page = await open('documentations.html', {
+      db: refDb([refWeekly(), refOneOff()], {
+        blocks: [{ id: 'b-1', type: 'schedule' }, { id: 'b-2', type: 'calendar', hidden: [], scope: 'page' }]
+      }),
+      hash: '?page=p-1'
+    });
+    await page.waitFor(function () { return !!document.querySelector('.cal-cell'); },
+      { message: 'the calendar block' });
+    assert.notEqual(await page.evaluate(CLICK_CAL_DAY, MONDAY), false, MONDAY + ' is in the grid');
+
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the Documentations backdrop layer rendering at all' });
+    const ids = await page.evaluate(REF_IDS_ON, MONDAY);
+    assert.deepEqual((ids || []).slice().sort(), ['rs-o', 'rs-w']);
+    assert.equal(await page.evaluate(function () {
+      return getComputedStyle(document.querySelector('.cal-sched-refs')).pointerEvents;
+    }), 'none');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a class is UNTICKABLE and UNDRAGGABLE, and a drag writes nothing', async () => {
+    /* The absence of a drag handler is the mechanism, so this asserts the
+       absence AND the consequence: dragging one leaves track_db byte-identical.
+       Byte-identical on the raw string, never a re-parse — the thing being
+       protected is the bytes. */
+    // A ONE-OFF entry: this case is about the element's shape, not about which
+    // days a weekly rule occupies, so it must not fail when that is broken.
+    const page = await open('progress.html', { db: refDb([refOneOff()]), hash: '#schedule' });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the backdrop' });
+
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    const shape = await page.evaluate(function (mon) {
+      var el = document.querySelector('[data-ref-day="' + mon + '"]');
+      var r = el.getBoundingClientRect();
+      // a real drag: down, three moves across and down, up
+      var fire = function (type, x, y) {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, buttons: 1 }));
+      };
+      fire('mousedown', r.left + 10, r.top + 5);
+      fire('mousemove', r.left + 60, r.top + 60);
+      fire('mousemove', r.left + 120, r.top + 160);
+      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 120, clientY: r.top + 160 }));
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: r.left + 120, clientY: r.top + 160 }));
+      return {
+        checkboxes: el.querySelectorAll('input[type="checkbox"]').length,
+        buttons: el.querySelectorAll('button').length
+      };
+    }, MONDAY);
+
+    assert.equal(shape.checkboxes, 0, 'nothing to tick — a class is not work the user chose');
+    assert.equal(shape.buttons, 0, 'no ✕ and no ⓘ: it is removed from Documentations, not here');
+
+    await sleep(600);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'a drag across the grid left track_db byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: a class never squeezes or removes a real block', async () => {
+    /* Passes on both sides by design. Reference blocks are returned in their
+       own array precisely so they never reach the overlap layout; if this ever
+       fails, the backdrop has started taking a surface away, which is the
+       "show both, always" rule. */
+    const note = { id: 'n-1', date: MONDAY, title: 'Real work', time: '09:00', blockDuration: 60 };
+    const withRef = await open('progress.html', {
+      // one-off again: the claim is about geometry, not about weekday resolution
+      db: seedDb({ refSchedules: [refOneOff({ time: '09:00', duration: 90 })], calendarNotes: [note], deadlines: [] }),
+      hash: '#schedule'
+    });
+    await withRef.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the backdrop' });
+    const geomWith = await withRef.evaluate(function () {
+      var el = document.querySelector('[data-block-id="n-1"]');
+      var r = el.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height) };
+    });
+    await withRef.close();
+
+    const without = await open('progress.html', {
+      db: seedDb({ refSchedules: [], calendarNotes: [note], deadlines: [] }),
+      hash: '#schedule'
+    });
+    await without.waitFor(function () { return !!document.querySelector('[data-block-id="n-1"]'); },
+      { message: 'the real block' });
+    const geomWithout = await without.evaluate(function () {
+      var el = document.querySelector('[data-block-id="n-1"]');
+      var r = el.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height) };
+    });
+    await without.close();
+
+    assert.deepEqual(geomWith, geomWithout,
+      'the real block is exactly the size it is with no timetable behind it');
+  });
+
+  await t.test('the popover is read-only, and makes a real note at the class hour', async () => {
+    // one-off, titled like the weekly one so the assertions below read the same
+    const page = await open('progress.html', {
+      db: refDb([refOneOff({ title: 'Mathematics', time: '09:00', duration: 90 })]), hash: '#schedule'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the backdrop' });
+
+    await page.evaluate(function (mon) {
+      document.querySelector('[data-ref-day="' + mon + '"]').click();
+    }, MONDAY);
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-popup]'); },
+      { message: 'the read-only popover' });
+
+    const text = await page.evaluate(function () {
+      return document.querySelector('[data-ref-popup]').innerText;
+    });
+    assert.match(text, /READ ONLY/, 'it says so');
+    assert.match(text, /Mathematics/);
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('[data-ref-popup] input, [data-ref-popup] textarea').length;
+    }), 0, 'nothing about the class is editable here');
+
+    const beforeRefs = await page.evaluate(function () {
+      return JSON.stringify(((JSON.parse(localStorage.getItem('track_db')).slots || [])[0] || {}).refSchedules);
+    });
+
+    await page.evaluate(function () { document.querySelector('[data-ref-make-note]').click(); });
+    await page.waitFor(function () {
+      return !!Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Add Note'; });
+    }, { message: 'the note composer, seeded from the class' });
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Add Note'; }).click();
+    });
+
+    const notes = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var ns = ((db.slots || [])[0] || {}).calendarNotes || [];
+      return ns.length ? ns : false;
+    }, { message: 'the note reaching track_db' });
+
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].title, 'Mathematics', 'seeded from the class');
+    assert.equal(notes[0].date, MONDAY, 'on the day the class was clicked, not its abstract weekday');
+    assert.equal(notes[0].time, '09:00');
+    assert.equal(notes[0].blockDuration, 90,
+      'and it covers the class rather than a default hour');
+
+    assert.equal(await page.evaluate(function () {
+      return JSON.stringify(((JSON.parse(localStorage.getItem('track_db')).slots || [])[0] || {}).refSchedules);
+    }), beforeRefs, 'progress.html wrote nothing to refSchedules — documentations.html owns it');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  // ── the paste modal ──────────────────────────────────────────────────────
+
+  const openSchedPaste = async (page, text) => {
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-paste]'); },
+      { message: 'the Paste a timetable button' });
+    await page.evaluate(function () { document.querySelector('[data-sched-paste]').click(); });
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-sched-input]'); },
+      { message: 'the paste textarea' });
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-paste-sched-input]'), value);
+    }, SET_REACT_INPUT, text);
+  };
+
+  await t.test('a pasted timetable reaches track_db with ONE arm per row', async () => {
+    /* The shape rule the whole format rests on: a weekday row stores `dow` plus
+       the range, a dated row stores `date` and no range, and neither ever
+       carries both. Every reader refuses an entry with both arms, so the one
+       place that mints a record is where that has to be got right. */
+    const page = await open('documentations.html', { db: refDb([]), hash: '?page=p-1' });
+    await openSchedPaste(page, [
+      '::: track-schedule',
+      '| Mon        | 09:00-10:30 | Mathematics    |',
+      '| 2026-09-14 | 13:00       | Makeup lecture |',
+      ':::'
+    ].join('\n'));
+
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-sched-preview]'); },
+      { message: 'the preview' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Add timetable'; }).click();
+    });
+
+    const stored = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var rs = ((db.slots || [])[0] || {}).refSchedules || [];
+      return rs.length ? rs : false;
+    }, { message: 'the timetable reaching track_db' });
+
+    assert.equal(stored.length, 2);
+    const weekly = stored.find(e => e.title === 'Mathematics');
+    const once = stored.find(e => e.title === 'Makeup lecture');
+
+    assert.equal(weekly.dow, 1, 'Mon is 1, the platform index');
+    assert.equal(weekly.date, undefined, 'a weekly row stores NO date');
+    assert.equal(weekly.duration, 90, 'the range became a duration');
+    assert.ok(weekly.from, 'and it carries the repeat window');
+
+    assert.equal(once.date, '2026-09-14');
+    assert.equal(once.dow, undefined, 'a dated row stores NO dow');
+    assert.equal(once.duration, 60, 'a bare start time falls back to the default length');
+    assert.equal(once.from, undefined, 'and takes no repeat window');
+
+    assert.equal(weekly.importId, once.importId, 'one paste is one import');
+    assert.equal(weekly.docPageId, 'p-1', 'owned by the page it was pasted into');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a malformed paste names its line and writes NOTHING', async () => {
+    // The Cancel path, which is the one that matters: the error shows, the
+    // preview is absent, and clicking the disabled button anyway leaves the
+    // stored bytes exactly as they were.
+    const page = await open('documentations.html', { db: refDb([]), hash: '?page=p-1' });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    await openSchedPaste(page, [
+      '| Mon | 09:00-10:30 | Mathematics |',
+      '| Tue | 13:00 |'
+    ].join('\n'));
+
+    const err = await page.waitFor(function () {
+      var el = document.querySelector('[data-paste-sched-errors]');
+      return el ? el.innerText : false;
+    }, { message: 'the parse error' });
+    assert.match(err, /Line 2/, 'the offending line is named');
+    assert.match(err, /exactly 3/);
+
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-paste-sched-preview]');
+    }), false, 'nothing is previewed');
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Add timetable'; }).click();
+    });
+    await sleep(400);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'track_db is byte-identical after clicking a disabled Add');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('an inverted repeat range is REFUSED — it would draw nothing at all', async () => {
+    /* The one range mistake worth refusing outright. Everything would look like
+       it worked and not a single class would ever be drawn, which is the
+       invisible-data failure this project does not accept. */
+    const page = await open('documentations.html', { db: refDb([]), hash: '?page=p-1' });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    await openSchedPaste(page, '| Mon | 09:00-10:30 | Mathematics |');
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-sched-from]'); },
+      { message: 'the repeat range, which only a weekday row asks for' });
+
+    await page.evaluate(function (setterSrc) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-paste-sched-from]'), '2026-12-19');
+      set(document.querySelector('[data-paste-sched-until]'), '2026-09-07');
+    }, SET_REACT_INPUT);
+
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-sched-range-error]'); },
+      { message: 'the inverted-range refusal' });
+
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Add timetable'; }).click();
+    });
+    await sleep(400);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'track_db is byte-identical');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('removing an import asks first, and Cancel keeps every class', async () => {
+    const page = await open('documentations.html', {
+      db: refDb([refWeekly(), refOneOff()]), hash: '?page=p-1'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-remove-import]'); },
+      { message: 'the remove-import control' });
+
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    // Cancel first — a prompt that displays and then deletes anyway is worse
+    // than none, so this is the half that matters.
+    const msg = await answering(page, false, CLICK_SOON_SEL, ['[data-sched-remove-import]']);
+    assert.match(msg, /2 classes/, 'the prompt says how much is going');
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'Cancel left track_db byte-identical');
+
+    // and then confirm, so the control is shown to work at all
+    await answering(page, true, CLICK_SOON_SEL, ['[data-sched-remove-import]']);
+    const left = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var rs = ((db.slots || [])[0] || {}).refSchedules;
+      return rs && rs.length === 0 ? 'gone' : false;
+    }, { message: 'the import being removed' });
+    assert.equal(left, 'gone');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a class outlives its page, and stays removable', async () => {
+    /* Deleting a documentation page does NOT delete what it authored — the day
+       note rule. Without an orphan section those classes would still be drawn
+       on three hour grids with no way to reach them, which is exactly the
+       unreachable-data outcome this project refuses. */
+    const page = await open('documentations.html', {
+      db: seedDb({
+        refSchedules: [refWeekly({ docPageId: 'p-gone' })],
+        calendarNotes: [], deadlines: [],
+        docPages: [F.docPage('p-1', { title: 'Term 1', blocks: [{ id: 'b-1', type: 'schedule' }] })]
+      }),
+      hash: '?page=p-1'
+    });
+
+    const orphanText = await page.waitFor(function () {
+      var el = document.querySelector('[data-sched-orphans]');
+      return el ? el.innerText : false;
+    }, { message: 'the orphaned-class section' });
+    assert.match(orphanText, /no longer exists/);
+    assert.match(orphanText, /Mathematics/, 'and the class itself is listed, not just counted');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the Timetable filter hides the backdrop and leaves real blocks alone', async () => {
+    const page = await open('documentations.html', {
+      db: refDb([refWeekly()], {
+        blocks: [{ id: 'b-2', type: 'calendar', hidden: ['ref'], scope: 'page' }]
+      }),
+      hash: '?page=p-1'
+    });
+    await page.waitFor(function () { return !!document.querySelector('.cal-cell'); },
+      { message: 'the calendar block' });
+    await page.evaluate(CLICK_CAL_DAY, MONDAY);
+    await sleep(400);
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('.cal-sched-ref').length;
+    }), 0, 'switched off, the backdrop is gone');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('refSchedules round-trips through export → import, both arms', async () => {
+    const page = await open('index.html', { db: refDb([refWeekly(), refOneOff()]) });
+    const exported = await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db'));
+      return JSON.stringify(db.slots[0]);
+    });
+    assert.match(exported, /refSchedules/);
+
+    const back = await page.evaluate(function (json) {
+      var slot = window.TrackSchema.normalizeSlot(JSON.parse(json));
+      return slot.refSchedules;
+    }, exported);
+    assert.equal(back.length, 2);
+    assert.equal(back.find(function (e) { return e.id === 'rs-w'; }).dow, 1);
+    assert.equal(back.find(function (e) { return e.id === 'rs-o'; }).date, MONDAY);
+
+    await page.close();
   });
 });

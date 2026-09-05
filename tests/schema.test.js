@@ -46,7 +46,7 @@ const CONTRACT = [
   'id', 'name', 'createdAt', 'sessions', 'mms', 'kolbs', 'mgChanges',
   'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
   'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-  'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos'
+  'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules'
 ];
 
 const LISTS = CONTRACT.filter(k => S.SLOT_FIELDS[k] === 'list');
@@ -59,7 +59,7 @@ test('module surface', () => {
     assert.equal(typeof S[name], 'function', name + ' is exported');
   }
   assert.equal(typeof S.SLOT_FIELDS, 'object');
-  assert.equal(S.SLOT_KEYS.length, 23);
+  assert.equal(S.SLOT_KEYS.length, 24);
   assert.ok(Object.isFrozen(S.SLOT_FIELDS), 'the field table is frozen — it is the schema, not a scratch object');
 });
 
@@ -442,7 +442,8 @@ test('the schedule-block keys survive normalizeSlot untouched', () => {
   const out = S.normalizeSlot({ calendarNotes: [note], deadlines: [dl] });
   assert.deepEqual(out.calendarNotes[0], note);
   assert.deepEqual(out.deadlines[0], dl);
-  assert.equal(Object.keys(S.SLOT_FIELDS).length, 23, 'the slot did NOT grow a field');
+  assert.equal(Object.keys(S.SLOT_FIELDS).length, CONTRACT.length,
+    'the block keys are item-level — they added no SLOT_FIELDS row of their own');
 
   // An un-migrated record rides through just as verbatim, which is what makes
   // importing a pre-choice export safe: normalizeSlot neither drops `startDate`
@@ -710,4 +711,84 @@ test('describeErrors renders a short list a person can read', () => {
   assert.equal(text.split('\n').length, 2);
   const many = S.describeErrors(Array.from({ length: 10 }, (_, i) => ({ message: 'e' + i })), 3);
   assert.match(many, /…and 7 more/, 'a long list is truncated rather than filling the screen');
+});
+
+// ── refSchedules: a pasted timetable ───────────────────────────────────────
+// Everything here WARNS. These values reach geometry and placement, never
+// traversal, so none can throw out of a render — the blockDate class exactly,
+// and deliberately not the `parts` class.
+
+test('a refSchedules entry rides through normalizeSlot verbatim, both arms', () => {
+  const weekly = { id: 'r1', dow: 1, time: '09:00', duration: 90, title: 'Maths',
+    from: '2026-09-07', until: '2026-12-19', docPageId: 'p-1', importId: 'i-1' };
+  const oneOff = { id: 'r2', date: '2026-09-14', time: '13:00', duration: 60, title: 'Makeup' };
+  const out = S.normalizeSlot({ refSchedules: [weekly, oneOff] });
+  assert.deepEqual(out.refSchedules, [weekly, oneOff]);
+});
+
+test('a slot with no refSchedules gets an empty list, not undefined', () => {
+  // The field is new, so every stored slot on earth is missing it. This is the
+  // only thing standing between an older workspace and `undefined.filter`.
+  const out = S.normalizeSlot({ goals: [] });
+  assert.deepEqual(out.refSchedules, []);
+  assert.equal(S.createEmptySlot().refSchedules.length, 0);
+});
+
+test('refSchedules must be a list, and its items must be objects', () => {
+  const wrong = S.validateSlot({ refSchedules: 'nope' });
+  assert.equal(wrong.ok, false);
+  assert.equal(S.hasFatalErrors(wrong.errors), true, 'a wrong kind is structural, as for every list field');
+
+  const stray = S.validateSlot({ refSchedules: [null] });
+  assert.equal(stray.ok, false);
+  assert.equal(S.hasFatalErrors(stray.errors), true, 'listItemErrors covers the new field for free');
+});
+
+test('an entry carrying BOTH a date and a dow is reported, never guessed at', () => {
+  // There is no defensible answer to which day such an entry occupies, so it
+  // is said out loud rather than resolved by whichever branch happens to run
+  // first. TrackCalendar.refOccupies refuses the same shape.
+  const r = S.validateSlot({ refSchedules: [{ id: 'r', date: '2026-09-14', dow: 1, time: '09:00', duration: 60 }] });
+  assert.equal(r.ok, false);
+  assert.equal(S.hasFatalErrors(r.errors), false, 'a warning: it draws nothing, it breaks nothing');
+  assert.match(r.errors[0].message, /one-off OR weekly, never both/);
+});
+
+test('an entry carrying NEITHER a date nor a dow is reported', () => {
+  const r = S.validateSlot({ refSchedules: [{ id: 'r', time: '09:00', duration: 60, title: 'x' }] });
+  assert.equal(r.ok, false);
+  assert.equal(S.hasFatalErrors(r.errors), false);
+  assert.match(r.errors[0].message, /neither a date nor a dow/);
+});
+
+test('a malformed dow, date, range, time or duration WARNS and stays editable', () => {
+  const bad = [
+    { id: 'a', dow: 7, time: '09:00', duration: 60 },
+    { id: 'b', dow: 1.5, time: '09:00', duration: 60 },
+    { id: 'c', dow: 'Monday', time: '09:00', duration: 60 },
+    { id: 'd', date: 'someday', time: '09:00', duration: 60 },
+    { id: 'e', dow: 1, from: 'nonsense', time: '09:00', duration: 60 },
+    { id: 'f', dow: 1, until: 42, time: '09:00', duration: 60 },
+    { id: 'g', dow: 1, time: '25:00', duration: 60 },
+    { id: 'h', dow: 1, time: '09:00', duration: 0 },
+    { id: 'i', dow: 1, time: '09:00', duration: 'ninety' }
+  ];
+  for (const item of bad) {
+    const r = S.validateSlot({ refSchedules: [item] });
+    assert.equal(r.ok, false, JSON.stringify(item) + ' should be reported');
+    assert.equal(S.hasFatalErrors(r.errors), false, JSON.stringify(item) + ' must only WARN');
+  }
+});
+
+test('an absent repeat window is not an error — an open-ended timetable is real', () => {
+  // A term whose end date is not known yet is an ordinary state, not damage.
+  const r = S.validateSlot({ refSchedules: [{ id: 'r', dow: 1, time: '09:00', duration: 60, title: 'Maths' }] });
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+});
+
+test('dow 0 is Sunday and is not mistaken for absent', () => {
+  // The classic falsy-zero trap: `if (item.dow)` would report every Sunday
+  // class as having no day at all.
+  const r = S.validateSlot({ refSchedules: [{ id: 'r', dow: 0, time: '09:00', duration: 60, title: 'Maths' }] });
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
 });

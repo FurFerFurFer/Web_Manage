@@ -7,9 +7,10 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="theme.js?v=1"></script>
   <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=6"></script>
-  <script src="calendar-core.js?v=6"></script>
+  <script src="schema.js?v=7"></script>
+  <script src="calendar-core.js?v=7"></script>
   <script src="doc-table-core.js?v=3"></script>
+  <script src="schedule-paste-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -17,7 +18,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles.css?v=7">
+  <link rel="stylesheet" href="styles.css?v=8">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -837,9 +838,13 @@
     const CAL_DATE_FMT = {weekday:'long', year:'numeric', month:'long', day:'numeric'};
 
     // read-only day timeline; a JSX port of renderCalDaySchedule in index.html
-    function CalDaySched({day}) {
+    function CalDaySched({day, ds}) {
       const TC = TrackCalendar;
-      if (!day.blocks.length) return <div className="cal-empty-msg">Nothing scheduled.</div>;
+      // refBlocks counts here: a day holding only a pasted timetable still has
+      // an hour grid worth drawing, and "nothing scheduled" over a day full of
+      // classes would be plainly wrong.
+      const refs = day.refBlocks || [];
+      if (!day.blocks.length && !refs.length) return <div className="cal-empty-msg">Nothing scheduled.</div>;
       const totalH = (TC.SCHED_END_HOUR - TC.SCHED_START_HOUR) * TC.SCHED_PX_PER_HOUR;
       const laid = day.blocks.map(b => {
         const parts = String(b.time).split(':');
@@ -862,6 +867,32 @@
               </React.Fragment>
             );
           })}
+          {/* The reference backdrop — a pasted timetable. Its own layer BEFORE
+              the real blocks so it paints behind, at full track width rather
+              than joining the overlap layout, so a class can never squeeze a
+              real block. .cal-sched-refs carries pointer-events:none, which is
+              what makes it untickable and undraggable by CONSTRUCTION rather
+              than by a guard someone has to remember. Read-only here; the
+              popover that turns a class into a real note is progress.html's. */}
+          <div className="cal-sched-refs">
+            {refs.map(b => {
+              const [rh, rm] = String(b.time).split(':').map(Number);
+              const top = ((rh || 0) + (rm || 0)/60 - TC.SCHED_START_HOUR) * TC.SCHED_PX_PER_HOUR;
+              const height = Math.max(16, (b.duration/60) * TC.SCHED_PX_PER_HOUR);
+              if (top < -height || top >= totalH) return null;
+              const meta = `${b.time} · ${TC.durLabel(b.duration)}`;
+              return (
+                <div key={b.id} className="cal-sched-ref"
+                  data-ref-day={ds} data-ref-id={b.entryId}
+                  title={`Timetable · ${b.title} · ${meta}`}
+                  style={{top: top+'px', height: height+'px',
+                    borderColor: b.color, background: b.color + '1a'}}>
+                  <div className="cal-sched-ref-title">{b.title}</div>
+                  <div className="cal-sched-ref-meta">{meta}</div>
+                </div>
+              );
+            })}
+          </div>
           {/* blocks live in their own layer so their percentage widths are
               measured against the track area, not the hour-label gutter */}
           <div className="cal-sched-blocks">
@@ -885,6 +916,381 @@
               );
             })}
           </div>
+        </div>
+      );
+    }
+
+
+    /* The short brief a person hands to an AI along with the picture of a
+       timetable. The full version, with worked examples, is SCHEDULE-PASTE.md
+       at the repository root — this is the copy that has to be reachable
+       without leaving the page.
+
+       Same six-part shape as TABLE_AI_BRIEF, because that shape has been
+       through a picture-reading AI and works: name the format, show it, say
+       what is NOT part of it, say how to read the grid, list the rules, and
+       forbid explanation. The one that earns its place most is "do not guess"
+       — a hallucinated 09:00 looks exactly like a real one. */
+    const SCHEDULE_AI_BRIEF = [
+      'Read this image of a timetable and reproduce it EXACTLY in this format:',
+      '',
+      '::: track-schedule',
+      '| Mon        | 09:00-10:30 | Mathematics    |',
+      '| Mon        | 10:45-12:00 | Physics        |',
+      '| Wed        | 13:00-16:00 | Chemistry lab  |',
+      '| 2026-09-14 | 09:00-10:30 | Makeup lecture |',
+      ':::',
+      '',
+      'Three cells per row, in this order: day, time, title.',
+      '',
+      'The day cell:',
+      '- Use a weekday name (Mon, Tue, Wed, Thu, Fri, Sat, Sun) when the class REPEATS every week.',
+      '- Use a YYYY-MM-DD date when it happens once on a specific day.',
+      '- If the timetable shows dates rather than weekday names, use the dates.',
+      '- One row per class per day. A class on both Monday and Thursday is TWO rows, never "Mon/Thu".',
+      '',
+      'The time cell:',
+      '- Write a range as 09:00-10:30, in 24-hour time.',
+      '- If only a start time is shown, write just that start time.',
+      '- Convert any 12-hour time to 24-hour: 1:30pm becomes 13:30.',
+      '- Never invent an end time. If the end is not shown, give only the start.',
+      '',
+      'The title cell:',
+      '- The name of the class as printed. Add a room or lecturer after it only if the picture shows one, like: Physics · R204',
+      '- Never leave a title empty.',
+      '',
+      'Read the grid before transcribing:',
+      '- Work out which column is which day and which row is which time slot first.',
+      '- A block spanning several time slots is ONE row with the full range, not one row per slot.',
+      '- An empty cell in the grid is a free period. Do not write a row for it.',
+      '- Ignore headers, legends, week numbers, and any text outside the timetable grid itself.',
+      '',
+      'Rules:',
+      '- One line per class. Separate the three cells with | pipes.',
+      '- EVERY row must have exactly three cells.',
+      '- Write \\| if a title really contains a pipe.',
+      '- If any day, time, or title is unclear, DO NOT GUESS. Ask for a higher-resolution image, or a close-up of the part that is unclear.',
+      '- Output only the block. Add no explanation, no heading, and no summary.'
+    ].join('\n');
+
+    /* One display shape for a schedule row, so the modal's preview and the
+       stored list on the page cannot drift apart — the same reasoning that
+       makes the table paste preview render through the editor's own TableGrid.
+       Takes EITHER a parser draft (which carries `day: {kind, ...}`) or a
+       stored entry (which carries `date` or `dow` directly). */
+    function schedRowView(row) {
+      const SP = window.TrackSchedulePaste;
+      const draft = row && row.day;
+      const dayLabel = draft
+        ? (row.day.kind === 'date' ? row.day.date : SP.DOW_LABELS[row.day.dow])
+        : (row.date ? row.date
+          : (SP.DOW_LABELS[row.dow] !== undefined ? SP.DOW_LABELS[row.dow] : '—'));
+      const dur = (typeof row.duration === 'number' && isFinite(row.duration) && row.duration > 0)
+        ? Math.floor(row.duration) : SP.DEFAULT_MINUTES;
+      const m = /^(\d{1,2}):(\d{2})$/.exec(String(row.time || ''));
+      let when = String(row.time || '—');
+      if (m) {
+        const end = Math.min(Number(m[1]) * 60 + Number(m[2]) + dur, 24 * 60 - 5);
+        when = String(row.time) + '–' + String(Math.floor(end / 60)).padStart(2, '0') + ':' + String(end % 60).padStart(2, '0');
+      }
+      return {dayLabel: dayLabel || '—', when, title: row.title || 'Class'};
+    }
+
+    /* The one renderer for a list of schedule rows. Used by the paste modal's
+       preview and by the block on the page, so what is previewed cannot differ
+       from what is stored. */
+    function SchedRowList({rows, onRemove}) {
+      return (
+        <table className="w-full border-collapse text-[11px]">
+          <tbody>
+            {rows.map((row, i) => {
+              const v = schedRowView(row);
+              return (
+                <tr key={row.id || i} className="border-b border-gray-800/60 last:border-0">
+                  <td className="whitespace-nowrap py-0.5 pr-2 font-mono text-gray-400">{v.dayLabel}</td>
+                  <td className="whitespace-nowrap py-0.5 pr-2 font-mono text-gray-400">{v.when}</td>
+                  <td className="w-full py-0.5 pr-2 text-gray-200">{v.title}</td>
+                  {onRemove && (
+                    <td className="py-0.5 text-right">
+                      <button onClick={()=>onRemove(row)} title="remove this class"
+                        className="px-1 text-gray-600 hover:text-red-400">✕</button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      );
+    }
+
+    /* Paste a timetable in as text. Modelled on PasteTableModal, down to the
+       derived-state-only rule: nothing here is stored until Insert, so Cancel
+       is a true cancel and a browser case asserts track_db is byte-identical
+       after clicking a disabled Insert.
+
+       What this modal has that the table one does not is the REPEAT RANGE. A
+       weekday row means "every Monday", and every-Monday-forever is rarely
+       what a term timetable means — so the range is asked for here, once, and
+       stored on each entry. The summary line says exactly what will be written
+       BEFORE it is written, because a paste that quietly covers the wrong
+       fifteen weeks is the expensive mistake in this feature. */
+    function PasteScheduleModal({onInsert, onClose, today}) {
+      const SP = window.TrackSchedulePaste;
+      const [text, setText] = useState('');
+      const [from, setFrom] = useState(today);
+      const [until, setUntil] = useState('');
+      const [copied, setCopied] = useState(false);
+
+      useEffect(() => {
+        const onKey = e => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, []);
+
+      const parsed = useMemo(() => SP.parseScheduleText(text), [text]);
+      const touched = text.trim().length > 0;
+      const weekly = parsed.ok ? parsed.rows.filter(r => r.day.kind === 'dow') : [];
+      // An inverted range occupies NO day at all, which is the one outcome
+      // worth refusing outright: the user pastes a timetable, everything looks
+      // like it worked, and nothing is ever drawn.
+      const rangeInverted = !!(from && until && from > until);
+      const canInsert = parsed.ok && !rangeInverted;
+
+      const copyBrief = () => {
+        const done = () => { setCopied(true); setTimeout(()=>setCopied(false), 1500); };
+        if (navigator.clipboard && navigator.clipboard.writeText)
+          navigator.clipboard.writeText(SCHEDULE_AI_BRIEF).then(done, ()=>{});
+      };
+
+      const dowSummary = () => {
+        const seen = [];
+        weekly.forEach(r => { if (seen.indexOf(r.day.dow) === -1) seen.push(r.day.dow); });
+        return seen.sort((a,b)=>a-b).map(d => SP.DOW_LABELS[d]).join(', ');
+      };
+
+      return (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60" onClick={onClose}>
+          <div data-paste-sched className="max-h-[86vh] w-[680px] max-w-[94vw] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-4"
+            onClick={e=>e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-bold tracking-widest text-gray-300">PASTE A TIMETABLE</span>
+              <button onClick={onClose} className="text-gray-500 hover:text-gray-200">✕</button>
+            </div>
+
+            <details className="mb-3 rounded border border-gray-800 bg-gray-950/60 p-2">
+              <summary className="cursor-pointer text-[11px] text-gray-400">
+                Show a picture of a timetable to an AI — here is what to ask it for
+              </summary>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[10px] leading-relaxed text-gray-400">{SCHEDULE_AI_BRIEF}</pre>
+              <button onClick={copyBrief}
+                className="mt-2 rounded bg-gray-800 px-2 py-1 text-[10px] text-gray-300 hover:text-white">
+                {copied ? '✓ copied' : 'Copy these instructions'}
+              </button>
+            </details>
+
+            <textarea value={text} onChange={e=>setText(e.target.value)} rows={8}
+              data-paste-sched-input
+              placeholder={'Paste the block here, fence and all.\n\n| Mon        | 09:00-10:30 | Mathematics |\n| Wed        | 13:00-16:00 | Chemistry   |\n| 2026-09-14 | 09:00-10:30 | Makeup      |'}
+              className="w-full rounded border border-gray-800 bg-gray-950 px-2 py-1 font-mono text-xs text-gray-200 outline-none focus:border-gray-600" />
+
+            {touched && !parsed.ok && (
+              <div data-paste-sched-errors className="mt-2 rounded border border-red-900/70 bg-red-950/30 p-2 text-[11px] text-red-300">
+                {parsed.errors.map((e, i) => (
+                  <div key={i}>{e.line ? 'Line ' + e.line + ': ' : ''}{e.message}</div>
+                ))}
+              </div>
+            )}
+
+            {parsed.ok && weekly.length > 0 && (
+              <div className="mt-3 rounded border border-gray-800 bg-gray-950/60 p-2">
+                <div className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Repeats between</div>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
+                  <input type="date" value={from} data-paste-sched-from
+                    onChange={e=>setFrom(e.target.value)}
+                    className="rounded border border-gray-800 bg-gray-950 px-1 py-0.5 text-gray-200" />
+                  <span>→</span>
+                  <input type="date" value={until} data-paste-sched-until
+                    onChange={e=>setUntil(e.target.value)}
+                    className="rounded border border-gray-800 bg-gray-950 px-1 py-0.5 text-gray-200" />
+                  <span className="text-gray-600">leave either blank for no limit</span>
+                </div>
+                {rangeInverted && (
+                  <div data-paste-sched-range-error className="mt-1 text-[11px] text-red-300">
+                    That range ends before it starts, so nothing would ever be drawn.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {parsed.ok && (
+              <div className="mt-3">
+                <div data-paste-sched-summary className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">
+                  {parsed.rows.length} {parsed.rows.length === 1 ? 'class' : 'classes'}
+                  {weekly.length > 0
+                    ? ' · repeats ' + dowSummary() + ' · ' + (from || 'no start') + ' → ' + (until || 'no end')
+                    : ' · on their own days'}
+                </div>
+                <div data-paste-sched-preview className="max-h-52 overflow-y-auto rounded border border-gray-800 p-1">
+                  <SchedRowList rows={parsed.rows} />
+                </div>
+              </div>
+            )}
+
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={onClose} className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:text-white">Cancel</button>
+              <button onClick={()=>canInsert && onInsert(parsed.rows, from, until)}
+                disabled={!canInsert}
+                title={canInsert ? 'Add this timetable' : 'Fix the errors above first'}
+                className={"rounded px-3 py-1 text-xs " + (canInsert
+                  ? "bg-cyan-700 text-white hover:bg-cyan-600"
+                  : "bg-gray-900 text-gray-700 cursor-not-allowed")}>
+                Add timetable
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* The page's window onto the timetable IT pasted. Stores nothing of its
+       own — the entries live in the slot field refSchedules, because
+       progress.html and index.html draw them and neither reads docPages.
+
+       Entries are scoped to the PAGE (docPageId), not to this block, so a page
+       carrying two schedule blocks shows the same list twice rather than
+       hiding half of it somewhere unreachable. They are grouped by importId so
+       one paste can be removed in one gesture.
+
+       It also lists ORPHANED imports — ones whose docPageId names no surviving
+       page. Deleting a page deliberately does NOT delete what it authored (the
+       day-note rule), and without this section those entries would still be
+       drawn on three hour grids with no way to remove them. */
+    function ScheduleBlock({block, page, docPages, slot, onMutate}) {
+      const SP = window.TrackSchedulePaste;
+      const [showPaste, setShowPaste] = useState(false);
+      const [copied, setCopied] = useState(false);
+
+      const all = Array.isArray(slot.refSchedules) ? slot.refSchedules.filter(e => e && typeof e === 'object') : [];
+      const pageIds = useMemo(() => new Set((docPages || []).map(p => p.id)), [docPages]);
+
+      const mine = all.filter(e => e.docPageId === page.id);
+      // An entry whose page is gone. `docPageId` absent is NOT orphaned — it
+      // simply predates ownership or was written by hand — so only a pointer
+      // that fails to resolve counts.
+      const orphans = all.filter(e => e.docPageId && !pageIds.has(e.docPageId));
+
+      const groups = useMemo(() => {
+        const by = new Map();
+        mine.forEach(e => {
+          const k = e.importId || '(none)';
+          if (!by.has(k)) by.set(k, []);
+          by.get(k).push(e);
+        });
+        return Array.from(by.entries());
+      }, [slot.refSchedules, page.id]);
+
+      const insert = (rows, from, until) => {
+        const importId = genId();
+        const createdAt = Date.now();
+        const made = rows.map(r => {
+          const e = {id: genId(), title: r.title, time: r.time, duration: r.duration,
+            docPageId: page.id, importId, createdAt};
+          // EXACTLY ONE arm. Writing both would be the one shape every reader
+          // refuses, so it is prevented at the only place that mints a record.
+          if (r.day.kind === 'date') { e.date = r.day.date; }
+          else {
+            e.dow = r.day.dow;
+            // Only written when there is a value: an absent bound means open,
+            // and '' is not a bound. Same absence-is-meaningful rule as a day
+            // note's `time`.
+            if (from) e.from = from;
+            if (until) e.until = until;
+          }
+          return e;
+        });
+        onMutate('refSchedules', prev => [...prev, ...made]);
+        setShowPaste(false);
+      };
+
+      const removeImport = (importId, n) => {
+        if (!window.confirm('Remove these ' + n + ' ' + (n === 1 ? 'class' : 'classes') +
+          ' from the schedule?\n\nThis cannot be undone.')) return;
+        onMutate('refSchedules', prev => prev.filter(e => !(e && e.importId === importId && e.docPageId === page.id)));
+      };
+      const removeOne = row => {
+        if (!window.confirm('Remove "' + (row.title || 'this class') + '" from the schedule?\n\nThis cannot be undone.')) return;
+        onMutate('refSchedules', prev => prev.filter(e => !(e && e.id === row.id)));
+      };
+      const removeOrphans = () => {
+        if (!window.confirm('Remove all ' + orphans.length + ' classes whose page no longer exists?\n\nThis cannot be undone.')) return;
+        const gone = new Set(orphans.map(e => e.id));
+        onMutate('refSchedules', prev => prev.filter(e => !(e && gone.has(e.id))));
+      };
+
+      const copyOut = entries => {
+        const done = () => { setCopied(true); setTimeout(()=>setCopied(false), 1500); };
+        if (navigator.clipboard && navigator.clipboard.writeText)
+          navigator.clipboard.writeText(SP.formatScheduleText(entries)).then(done, ()=>{});
+      };
+
+      const rangeLabel = entries => {
+        const w = entries.filter(e => e.dow !== undefined && e.dow !== null);
+        if (!w.length) return 'on their own days';
+        const from = w.find(e => e.from), until = w.find(e => e.until);
+        return 'repeats ' + ((from && from.from) || 'no start') + ' → ' + ((until && until.until) || 'no end');
+      };
+
+      return (
+        <div data-sched-block className="rounded border border-gray-800 bg-gray-950/40 p-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Timetable</span>
+            <button onClick={()=>setShowPaste(true)} data-sched-paste
+              className="rounded border border-gray-700 bg-gray-900 px-2 py-0.5 text-[11px] text-gray-300 hover:border-gray-500 hover:text-white">
+              🕘 Paste a timetable
+            </button>
+            {mine.length > 0 && (
+              <button onClick={()=>copyOut(mine)}
+                className="rounded border border-gray-800 px-2 py-0.5 text-[11px] text-gray-500 hover:text-gray-200">
+                {copied ? '✓ copied' : '⧉ copy as text'}
+              </button>
+            )}
+            <span className="text-[10px] text-gray-600">
+              drawn on every schedule as a read-only backdrop
+            </span>
+          </div>
+
+          {!mine.length && !orphans.length && (
+            <div className="py-2 text-[11px] text-gray-600">
+              Nothing here yet. Show a picture of your timetable to an AI, then paste what it gives you.
+            </div>
+          )}
+
+          {groups.map(([importId, entries]) => (
+            <div key={importId} data-sched-import={importId} className="mb-2 last:mb-0">
+              <div className="mb-0.5 flex items-center justify-between gap-2 text-[10px] text-gray-500">
+                <span>{entries.length} {entries.length === 1 ? 'class' : 'classes'} · {rangeLabel(entries)}</span>
+                <button onClick={()=>removeImport(importId, entries.length)} data-sched-remove-import
+                  title="remove this whole import"
+                  className="px-1 text-gray-600 hover:text-red-400">✕ remove all</button>
+              </div>
+              <SchedRowList rows={entries} onRemove={removeOne} />
+            </div>
+          ))}
+
+          {orphans.length > 0 && (
+            <div data-sched-orphans className="mt-2 rounded border border-amber-900/60 bg-amber-950/20 p-1.5">
+              <div className="mb-0.5 flex items-center justify-between gap-2 text-[10px] text-amber-400/80">
+                <span>{orphans.length} from a page that no longer exists — still drawn, removable here</span>
+                <button onClick={removeOrphans} className="px-1 text-amber-600 hover:text-red-400">✕ remove all</button>
+              </div>
+              <SchedRowList rows={orphans} onRemove={removeOne} />
+            </div>
+          )}
+
+          {showPaste && (
+            <PasteScheduleModal today={localToday()} onInsert={insert} onClose={()=>setShowPaste(false)} />
+          )}
         </div>
       );
     }
@@ -1490,7 +1896,7 @@
                     )}
                   </div>
                 )}
-                <CalDaySched day={day} />
+                <CalDaySched day={day} ds={selDs} />
               </div>
 
               {/* Day notes — this page may add them, and may edit the ones in its scope */}
@@ -1829,8 +2235,14 @@
         // read as "source page removed" wherever provenance is shown.
         const stranded = [...(_readP('calendarNotes', [])), ...(_readP('deadlines', []))]
           .filter(x => toDel.has(x.docPageId)).length;
+        // Timetable classes outlive the page for the same reason, but they are
+        // recovered from a DIFFERENT place — a schedule block's orphan section,
+        // not the Schedule — so they are counted and worded separately rather
+        // than folded into the sentence above.
+        const classes = _readP('refSchedules', []).filter(x => x && toDel.has(x.docPageId)).length;
         const msg = `Delete "${(page&&page.title)||'Untitled'}"${n ? ` and ${n} sub-page${n>1?'s':''}` : ''}? This cannot be undone.`
-          + (stranded ? `\n\n${stranded} scheduled item${stranded>1?'s':''} added from ${n?'these pages':'this page'} will stay on the schedule and lose ${stranded>1?'their':'its'} source page. ${stranded>1?'They':'It'} can then only be edited from the Schedule.` : '');
+          + (stranded ? `\n\n${stranded} scheduled item${stranded>1?'s':''} added from ${n?'these pages':'this page'} will stay on the schedule and lose ${stranded>1?'their':'its'} source page. ${stranded>1?'They':'It'} can then only be edited from the Schedule.` : '')
+          + (classes ? `\n\n${classes} timetable class${classes>1?'es':''} pasted here will stay on every schedule. ${classes>1?'They':'It'} can then only be removed from a Timetable block, which lists classes whose page is gone.` : '');
         if (!window.confirm(msg)) return;
         setDocPages(prev => prev.filter(p => !toDel.has(p.id)));
         if (toDel.has(activePageId)) setActivePageId(null);
@@ -2026,6 +2438,10 @@
         // everything and any category added to calendar-core.js later is on by
         // default for calendars that already exist
         if (type === 'calendar') { base.hidden = []; base.scope = 'subtree'; }
+        // A schedule block holds NO entries of its own — they live in the slot
+        // field refSchedules, because progress.html and index.html draw them
+        // and neither reads docPages. The block is the page's window onto what
+        // this page pasted, which is why it stores nothing but its type.
         return {...base, ...(extra||{})};
       }
       function addBlock(type, extra) {
@@ -2044,7 +2460,7 @@
       // prompt says what is actually at stake.
       const deleteBlock = id => {
         const KIND = { p:'text', h1:'heading', h2:'heading', h3:'heading', divider:'divider',
-          image:'image', link:'link', table:'table', calendar:'calendar' };
+          image:'image', link:'link', table:'table', calendar:'calendar', schedule:'timetable' };
         const b = ((activePage && activePage.blocks) || []).find(x => x.id === id);
         const kind = (b && KIND[b.type]) || 'block';
         if (!window.confirm(`Delete this ${kind} block?\n\nThis cannot be undone.`)) return;
@@ -2306,6 +2722,10 @@
                             onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)}
                             onOpenPage={setActivePageId} onMutate={mutateSlotArray} />
                         )}
+                        {b.type === 'schedule' && (
+                          <ScheduleBlock block={b} page={activePage} docPages={docPages} slot={slot}
+                            onMutate={mutateSlotArray} />
+                        )}
                       </BlockShell>
                     ))}
                   </div>
@@ -2314,7 +2734,7 @@
                   <div className="docs-addmenu mt-4 flex flex-wrap gap-1 border-t border-gray-800/70 pt-3 text-[11px]">
                     {/* 'dump' and 'tablepaste' are pseudo-types: neither is a block
                         kind, each opens a modal that ends in an ordinary addBlock. */}
-                    {[['h1','H1'],['h2','H2'],['h3','H3'],['p','Text'],['dump','⛁ Reference source dump'],['link','🔗 Link'],['table','▦ Table'],['tablepaste','▦ Paste table'],['image','🖼 Image'],['divider','― Divider'],['calendar','🗓 Calendar']].map(([t,l]) => (
+                    {[['h1','H1'],['h2','H2'],['h3','H3'],['p','Text'],['dump','⛁ Reference source dump'],['link','🔗 Link'],['table','▦ Table'],['tablepaste','▦ Paste table'],['image','🖼 Image'],['divider','― Divider'],['calendar','🗓 Calendar'],['schedule','🕘 Timetable']].map(([t,l]) => (
                       <button key={t} onClick={()=> t==='dump' ? openDumpModal() : t==='tablepaste' ? setShowPasteTable(true) : addBlock(t)}
                         className="rounded border border-gray-800 bg-gray-900 px-2 py-1 text-gray-400 hover:border-gray-600 hover:text-gray-200">
                         {l}

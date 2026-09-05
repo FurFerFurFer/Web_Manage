@@ -68,11 +68,12 @@ Active files:
 | `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `true-storage-core.js` | The one definition of the storage↔source-dump relationship (`window.TrackTrueStorage`): the pair matcher, the pure tag writers, and the parent/child tree |
 | `graph-layout.js` | The one radial canvas layout (`window.TrackGraphLayout`): `computeLayerLayout`, `applyRepulsion`, and the cycle guards that keep a parent cycle from blowing the stack on either canvas page |
+| `schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format (`window.TrackSchedulePaste`): `parseScheduleText`, `formatScheduleText`, and the day/time cell readers. Holds NO date code, which is why its suite runs once rather than swept |
 | `doc-table-core.js` | The one definition of a documentation table's shape (`window.TrackDocTable`): `mergeMap`, the pure merge writers, and the `::: track-table` paste format in both directions |
 | `notes-widget.js` | Per-slot floating notes |
 | `styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -86,7 +87,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=7`, `schema.js?v=6`, `calendar-core.js?v=6`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`, `doc-table-core.js?v=1`, `theme.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
+Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=8`, `schema.js?v=7`, `calendar-core.js?v=7`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`, `doc-table-core.js?v=3`, `schedule-paste-core.js?v=1`, `theme.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
 
 A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
 than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,
@@ -141,7 +142,8 @@ Current slot fields include:
   levelTemplates,
   docPages,
   trueStorages,
-  trueStoragePos
+  trueStoragePos,
+  refSchedules
 }
 ```
 
@@ -300,6 +302,15 @@ render phase — which is the same "Maximum update depth exceeded" crash by a di
 
 The `::: track-table` paste format is the other half of that file. Markers occupy **real cells** — `<<` for a cell merged leftward, `^^` for one merged upward — so the text stays rectangular and a row with the wrong cell count is **detected and refused against its line number**, never guessed at. That is the whole argument for the format, and `parseTableText` returns nothing half-parsed: `ok === false` means insert nothing. It is also lenient where leniency is free — the fence and the outer pipes are optional and a markdown separator row is skipped — so an ordinary markdown table pastes with no extra code.
 
+A `refSchedules` item is one line of a **pasted timetable** — reference data, never work. It carries `id`, `title`, `time`, `duration`, `docPageId`, `importId`, `createdAt`, and then **exactly one** of `date` (one-off) or `dow` + optional `from`/`until` (weekly, inclusive). Six rules follow, and the first two are the load-bearing ones:
+
+- **EXACTLY ONE ARM.** That single rule is what lets one paste format carry both a multi-week term timetable and a one-off day with no mode for the user to choose, which was the whole point of the feature. An entry carrying **both** arms, or **neither**, occupies NO day and is REFUSED rather than resolved by whichever branch runs first — there is no defensible answer to which day such a record belongs to, and inventing one would draw a class on a day the user never wrote down. `schema.js` reports the same shape as a warning. The one place that mints a record (`documentations.html`'s `ScheduleBlock.insert`) is where this has to be got right.
+- **The occupancy test has exactly ONE definition**, `TrackCalendar.refOccupies`, with the documented twin in `progress.html`, which does not load `calendar-core.js`. Never re-spell `entry.dow === d.getDay()` at a call site. The weekly arm compares the range as STRINGS (total for `YYYY-MM-DD`) and parses at `'T12:00:00'` for the weekday, per this project's standing local-day rule. The fail-first evidence for this feature is two doctored baselines whose failure sets are **exactly disjoint** — doctor `calendar-core.js` and only HOME and DOCUMENTATIONS fail; doctor `progress.html` and only PROGRESS does — which is the direct proof the twin is needed and that a forgotten copy cannot hide behind a passing sibling.
+- **REFERENCE DATA, NEVER WORK.** Nothing is tickable, nothing is draggable, and no reader may write `done`. The Progress block carries no `onMouseDown`, no `onTouchStart`, no resize handle, no checkbox and no `✕`; the Home and Documentations layers carry `pointer-events: none`. **That ABSENCE is the mechanism** — a guard inside the shared drag handler would be one more rule to remember, and this repository has already paid for that shape. A future change that gives these blocks a drag handler has to re-decide this on purpose.
+- **They are returned in their OWN array**, `buildDaySchedule(...).refBlocks`, never mixed into `blocks`. Load-bearing three times over: every existing consumer of `blocks` is untouched, `overlapInfo` never sees one so a class can never squeeze a real task's width, and each surface opts IN to drawing the backdrop rather than inheriting it by accident. A browser case measures a real block with and without a timetable behind it.
+- An **absent** range bound is open in that direction — a term with no end date yet is an ordinary state, not damage — and a **malformed** bound reads the same way, matching `blockDay`'s treatment of a malformed `blockDate`. The alternative (occupy nothing) would make the entry INVISIBLE, and this project does not trade reachability for a tidier rule. An offline case pins the decision.
+- Everything on the item is validated as a **warning**, alongside `blockDate`: these values reach geometry and placement, never traversal, so none can throw out of a render. `documentations.html` OWNS the key and is the only page that writes it; `progress.html` and `index.html` read it and never write it. Deleting a documentation page does **not** delete the classes it pasted (the day-note rule), so any Timetable block lists orphaned entries in their own section — without that they would be drawn on three hour grids with no way to reach them.
+
 A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may carry `tags` — each one naming a **pair**: a source-dump leaf (`dumpId`) and one MM linked inside it (`mmId`). Four rules follow, and the first is the load-bearing one:
 
 - The comparison that decides which storages belong to a pair has exactly **one** definition, `TrackTrueStorage.storagesForLink` in `true-storage-core.js`, and the tag record's shape has exactly one, `withTag`. `sir-ks02.html` draws an mmLink's content at **four** sites — the source-dump leaf card, the S&C tab for a leaf MM, the S&C tab for a non-leaf MM, and `DescendantSCNode` — and every one of them renders the shared `StorageTags` component through the single `renderStorageTags` helper. Never spell `t.dumpId === … && t.mmId === …` at a call site. This rule is written from a shipped bug in a different feature with the identical shape: the deadline caution predicate was spelled out at three sites, one dropped half of it, and the timeline mismarked every due day until it was found. `tests/browser.test.js` therefore asserts **negatively** at each surface — a chip must be absent under the other MM in the same dump, and absent under the same MM in another dump.
@@ -353,6 +364,7 @@ Every write of `track_db` must go through `TrackStorage.saveDB(db)`, never a bar
 Other current browser keys include:
 
 - `track_theme` — the appearance preference; see the rules below
+- `track_home_cal_hidden` — the Home calendar legend's switched-OFF categories; see the rules below
 - `track_db_ts` — when this device's data was last **confirmed** in the cloud, written only after the server accepts a write
 - `track_db_pending` — set while this device holds unsent edits, cleared on confirmation
 - `trackPriorityMatrix`
@@ -389,6 +401,30 @@ first two are the load-bearing ones:
   inputs across the app, and the failure looks like light scrollbars and light native
   pickers on a dark page.
 
+`track_home_cal_hidden` holds the Home calendar legend's filter, as a JSON array of the
+categories switched **OFF**. It is owned by `index.html` alone and read fresh on every
+`renderCalendar()`. Four rules follow, and the first two are the load-bearing ones:
+
+- It stores the switched-**OFF** set, per the contract in `calendar-core.js`'s `FILTERS`
+  comment, so absence and `[]` are the same state and a category added to `CATS` later is
+  on by default everywhere. **Never invert it to a shown set** — that would make every new
+  category invisible to every existing user, silently.
+- It is **clamped on read** to the keys the legend actually renders. That clamp is what
+  makes an unrecoverable state impossible: every key that can hide something has a visible
+  control that turns it back on. Drop it and a stray or hand-edited `"task"` reaches
+  `buildDaySchedule` and hides the Home day preview's goal tasks with nothing on screen to
+  undo it. Clamping on read also means a sixth legend row added later still honours what is
+  already stored.
+- Read it **fresh in `renderCalendar()`**, never into a module cache. The cross-tab listener
+  carries no payload and must not trust `e.newValue` — the same rule `track_theme` follows,
+  and the reason a cache would need a second place to be kept in step.
+- It is **not slot data**: not in `SLOT_FIELDS`, not exported, not imported, not synced.
+  `firebase-sync.js`'s `setItem` patch acts only on `track_db`, so writing it arms no upload
+  and marks nothing pending — do not "fix" that by routing it through `TrackStorage`. Both
+  ends are total on purpose (`JSON.parse` does not throw on `'null'` or `'42'`, and `getItem`
+  throws outright where site data is disabled): a view preference must never be able to
+  break the calendar.
+
 Firebase uploads the complete serialized database gzipped and split across `users/{uid}` (manifest) plus `users/{uid}/blob/{0..n-1}` (payload chunks), committed in one atomic batch. `users/{uid}/backup/v1` holds a one-time copy of the pre-migration legacy document. Readers verify chunk count, per-chunk generation, byte length, and checksum, and refuse a payload rather than partially applying it. See README "Current cloud shape".
 
 Three rules follow from this:
@@ -416,6 +452,7 @@ notes-widget.js
 true-storage-core.js
 graph-layout.js
 doc-table-core.js
+schedule-paste-core.js
 ```
 
 Inspect every applicable:
@@ -677,6 +714,7 @@ node --check notes-widget.js
 node --check true-storage-core.js
 node --check graph-layout.js
 node --check doc-table-core.js
+node --check schedule-paste-core.js
 ```
 
 Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
@@ -685,7 +723,7 @@ Then run the committed suite — it is the only automated check that sees the in
 node tests/run.js
 ```
 
-It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
 
 - Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
 - A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.
@@ -2214,6 +2252,98 @@ line at a bare width — do not. See the next section.
   through a 28px day-header button this repository has already had reachability trouble with, and
   a real device pass is owed. The cross-tab parent refusal above. The live Firebase project and
   print output, as ever; the picker is a modal and prints nothing.
+
+### The Home legend became the filter (2026-09-05)
+
+- **No data-contract change at all.** Nothing was added to `SLOT_FIELDS`, the hand-written
+  CONTRACT lists in `tests/schema.test.js`, `tests/browser.test.js` and `tests/lib/fixture.js`
+  needed no edit, and nothing here reaches `track_db` — the GUARD case asserts it byte-identical
+  across the whole interaction. The filtering machinery already existed: all three collectors in
+  `calendar-core.js` take `opts.hidden` and `documentations.html` was already a caller; Home
+  simply passed nothing, which its own comment said in as many words. `styles.css` changed, so
+  `?v=7 → ?v=8` in **all five** pages. This task adds **five** browser cases and no offline ones.
+- The new browser key is `track_home_cal_hidden`; its rules are in the data-contract section
+  above. The `home` segment is load-bearing rather than decorative — NOTES keeps a Progress
+  schedule filter as a live idea, and that surface must not inherit Home's choices.
+- **Only five of the thirteen categories are switchable here, and that is the user's decision,
+  not an oversight.** The legend has always drawn exactly these five, and the ask was to make the
+  legend clickable. The other eight stay unfiltered on Home.
+- **Fail-first: four doctored baselines, and their failure sets are NOT disjoint — which is worth
+  stating plainly, because every previous entry in this file got to claim disjointness and this
+  one cannot.** Each was a scratch tree of symlinks to the repository plus **one** `index.html`
+  with a single rule reversed. The runner executes the REPOSITORY's `tests/browser.test.js` and
+  points only the HTTP server at the doctored tree via `TRACK_TEST_ROOT`, which sidesteps the
+  realpath trap this file records (a symlinked `tests/` resolves through to the repo's own modules
+  and gives a false pass) by not copying `tests/` at all. It prints the served root and its md5
+  beside the repository's on every run, and **refuses to run a tree that is byte-identical to the
+  repository** — an earlier task here lost a run to a mis-set variable reading as all-green.
+
+  | tree | reversal | fails | passes |
+  | --- | --- | --- | --- |
+  | **A** | the three collector calls reverted to no-opts | dots, milestones, reload, corrupt | GUARD |
+  | **B** | `calReadHidden` replaced by a module cache initialised `[]` | reload, corrupt | dots, milestones, GUARD |
+  | **C** | the hidden set narrowed to the CATS keys on its way out | milestones, reload | dots, corrupt, GUARD |
+  | **D** | the read unhardened to `JSON.parse(getItem(k) \|\| '[]')` | corrupt | dots, milestones, reload, GUARD |
+
+  Every failure landed on the assertion its case is **named** for — no `waitFor` timeouts — which
+  is the property that matters more than disjointness. `D ⊂ B ⊂ A` and `C ⊂ A`, but **B and C
+  contain each other's complement**: B fails the corrupt case and passes milestones, C does the
+  reverse. So each of the three narrow cases is individually load-bearing — the dot case is the
+  only thing separating A from the rest, the milestone case the only thing separating C from B
+  and D, and the corrupt case the only thing separating D from C. The reload case alone would
+  catch A, B and C but never D. Never place any of the four doctored copies in the repository.
+- **The absence baseline was run first and deliberately not counted as evidence.** Against the
+  untouched tree all five cases died on the same `waitFor timed out — the Home legend toggles`,
+  which says the control does not exist and nothing about the behaviour each names. That is the
+  weak outcome this file already records from the TOUCH-sidebar work; the four trees above are
+  the actual evidence.
+- **A `waitFor` timeout was turned into a named assertion, and the case is materially better for
+  it.** The corrupt-value case first failed against tree D with a bare timeout — because a stored
+  `'42'` makes `new Set(42)` throw out of `buildBuckets` → `renderCalendar` → `renderSlots`, so
+  the legend is never built. True, but indistinguishable from "the control was never written".
+  `renderSlots` fills `#slot-list` **before** calling `renderCalendar`, so the case now waits on
+  the slot list — proving the page script ran — and then asserts the five toggles exist. Tree D
+  now fails with `the calendar survived the stored value 42 (it did not throw out of
+  renderCalendar)`, which names the mechanism. **Generalise it: when the symptom under test IS a
+  dead render, find the thing that renders BEFORE it and wait on that instead**, or the evidence
+  is a timeout that reads the same as a missing selector.
+- **A defect in this task's own test, found by reading the design rather than by running it.**
+  The corrupt-value case asserted all four dots present for every seeded value — including
+  `'["note",7,{}]'`, where the clamp correctly keeps `note` and the right answer is three dots.
+  Worse than a wrong number: a uniform "everything is shown" expectation would also have passed
+  against a reader that bailed to `[]` on the first bad member, silently discarding a real stored
+  preference. Each value now carries its own expectation, and `'["note",7,{}]'` is the one that
+  still hides something. It was independently confirmed by a concurrent full-suite run that
+  caught the old assertion at `3 !== 4` before the fix landed.
+- The clamp is the load-bearing half of the reader and is why the hidden set can be handed to
+  **all three** collectors rather than only the two that read these five keys. Without it a stray
+  or hand-edited `"task"` would reach `buildDaySchedule` and hide the Home day preview's goal
+  tasks with no control on screen to bring them back; with it, every key that can hide something
+  has a visible toggle. The corrupt-value case seeds exactly that and asserts the day preview
+  still draws its block.
+- The growth rings keep their explicit `buildBuckets(slot, y, m, null)` and gained a comment
+  saying why: they are the workspace's record, not a view of it. A future "make this consistent"
+  pass is the thing that comment exists to stop.
+- Keyboard focus is restored by hand after each toggle. `renderCalendar` does
+  `legend.innerHTML = ''`, so the button just pressed no longer exists — a regression this design
+  introduces rather than inherits, since the legend had no focusable children before.
+- **Not covered, and stated plainly.** Real touch hardware: the rows gained vertical padding for
+  a tap target and the legend wraps to two lines on a phone, but nothing was tapped on a real
+  device. Print output was not looked at — there are no `@media print` rules for `body.home` at
+  all, so the legend prints as it always has, now with buttons in place of spans. The live
+  Firebase project, as ever. The cross-tab branch is covered by code reading only: the committed
+  suite drives no second Home tab, so the claim that another tab's toggle re-renders this one
+  rests on the `storage` listener being the same one `track_db` already uses.
+- **Environment note.** Another session was landing a large "schedule paste" feature in this
+  repository throughout this task — `calendar-core.js`, `schema.js`, `progress.html`,
+  `documentations.html` and `tests/` all changed under it, and `tests/browser.test.js` changed on
+  disk mid-edit. Its work was preserved, and the dependencies this task relies on were re-checked
+  against the moved files rather than assumed: `CATS` is still the same four entries, and the
+  `ref` entry that feature added to `FILTERS` is deliberately not in `CATS`, so this legend is
+  unaffected. That session's own run reported `export → import preserves docPageId and every
+  canonical field` failing at `24 !== 23` — a 24th `SLOT_FIELDS` row landed without the
+  hand-written CONTRACT lists following it. That failure is that feature's to resolve and was
+  left alone.
 
 ### Confirmation on every destructive control (2026-08-18)
 
