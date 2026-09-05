@@ -1,11 +1,11 @@
 # Track World — Concept Draft
 
-**Status:** Working draft; not finalized and not authorized for implementation\
+**Status:** Working draft; implementation authorized, nothing built yet; the concept decisions below are not finalized\
 **Concept date:** 2026-09-05\
 **Initial platform:** The user's current computer; phone and iPad versions deferred\
 **Relationship to Track:** Proposed private game experience linked to the existing Track application
 
-![Selected Living Botanical Clock Plaza concept](../assets/images/living-botanical-clock-plaza.png)
+![Selected Living Botanical Clock Plaza concept](assets/images/living-botanical-clock-plaza.png)
 
 > This image is a visual-development reference, not a final production asset or an exact
 > screen specification. It establishes the preferred simplified anime rendering, the
@@ -716,15 +716,17 @@ contain:
 - A database schema.
 - A code-level task plan.
 - A committed budget or delivery schedule.
-- Authorization to implement the game.
 
-Those implementation commitments remain open. Section 24 records the feasibility review,
-budget constraints, and suggested checks to inform the remaining concept decisions.
+Those implementation commitments remain open. Building the game **is** authorized — see
+`AGENTS.md` — but that authorization settles none of the choices listed above, and does not
+authorize spending, installing, or any change to Track. Section 24 records the feasibility
+review, budget constraints, and suggested checks to inform the remaining concept decisions.
 
 ## 24. Feasibility review and next-session notes
 
 **Recorded:** 2026-09-05. Review recommendations below remain proposals unless explicitly
-identified as user decisions. They do not authorize implementation or spending.
+identified as user decisions. Implementation is authorized in general; these particular
+choices are not settled by that, and none of them authorizes spending.
 
 ### Settled direction and budget constraint
 

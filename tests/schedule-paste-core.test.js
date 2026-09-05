@@ -55,7 +55,7 @@ test('the module exports exactly the documented surface', () => {
   // Written out by hand on purpose: if an export is added or renamed, this is
   // the case that notices, the same way tests/schema.test.js pins SLOT_FIELDS.
   assert.deepEqual(Object.keys(T).sort(), [
-    'COLUMNS', 'DEFAULT_MINUTES', 'DOW_LABELS', 'MAX_ROWS',
+    'COLUMN_COUNTS', 'DEFAULT_MINUTES', 'DOW_LABELS', 'MAX_ROWS',
     'formatScheduleText', 'parseDayCell', 'parseScheduleText', 'parseTimeCell'
   ].sort());
 });
@@ -153,15 +153,83 @@ test('a time that is not a time is refused with the offending text quoted', () =
 // ── the load-bearing refusal ───────────────────────────────────────────────
 
 test('a row with the wrong cell count is REFUSED and the line is named', () => {
-  // The load-bearing case. Three cells is what makes a miscount detectable;
-  // guessing which one went missing is how a wrong schedule gets built that
-  // LOOKS right, and the user plans against it.
+  // The load-bearing case. A UNIFORM cell count is what makes a miscount
+  // detectable; guessing which cell went missing is how a wrong schedule gets
+  // built that LOOKS right, and the user plans against it.
   const r = T.parseScheduleText(lines('| Mon | 09:00-10:30 | Maths |', '| Tue | 13:00 |'));
   assert.equal(r.ok, false);
   assert.equal(r.rows.length, 0, 'nothing is returned half-parsed');
   assert.equal(r.errors.length, 1);
   assert.equal(r.errors[0].line, 2, 'the error points at the offending line of the pasted text');
-  assert.match(r.errors[0].message, /has 2 cells; every row needs exactly 3/);
+  assert.match(r.errors[0].message, /has 2 cells; every row needs 3/);
+});
+
+// ── the fourth cell: a detail, kept apart from the title ───────────────────
+
+test('a fourth cell is the DETAIL, and it is stored apart from the title', () => {
+  // The whole point of the column. Before it, a lecturer and a room had to be
+  // glued onto the title, so nothing could ever show the topic on its own.
+  const r = T.parseScheduleText(lines(
+    '| Mon        | 09:00-10:30 | Epithelial tissue | Dr Wanida · R305 |',
+    '| 2026-09-14 | 13:00-16:00 | Gross anatomy lab | Anatomy staff |'
+  ));
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.deepEqual(r.rows.map(x => [x.title, x.detail]), [
+    ['Epithelial tissue', 'Dr Wanida · R305'],
+    ['Gross anatomy lab', 'Anatomy staff']
+  ]);
+});
+
+test('a blank fourth cell stores NO detail at all — absence is the default', () => {
+  // The time / link rule, deliberately NOT the cautionDates: [] rule: no
+  // fallback sits behind `detail`, so '' must never be written. A four-column
+  // paste with an empty detail must produce the identical draft a
+  // three-column one would, or every stored entry gains a useless key.
+  const four = T.parseScheduleText(lines('| Mon | 09:00-10:30 | Maths |  |'));
+  const three = T.parseScheduleText(lines('| Mon | 09:00-10:30 | Maths |'));
+  assert.equal(four.ok, true, JSON.stringify(four.errors));
+  assert.equal(three.ok, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(four.rows[0], 'detail'), false,
+    'a blank detail cell must not write the key');
+  assert.deepEqual(four.rows, three.rows, 'a blank detail is byte-identical to no detail column');
+});
+
+test('a paste is uniformly 3 or uniformly 4, and a row that disagrees is NAMED', () => {
+  // This is what replaces "exactly three cells" as the load-bearing property.
+  // A dropped cell is still DETECTED, because it breaks uniformity — which is
+  // the whole reason the fourth column could be added at all.
+  const dropped = T.parseScheduleText(lines(
+    '| Mon | 09:00 | Maths   | Dr A |',
+    '| Tue | 13:00 | Physics |'
+  ));
+  assert.equal(dropped.ok, false);
+  assert.equal(dropped.rows.length, 0, 'nothing is returned half-parsed');
+  assert.equal(dropped.errors[0].line, 2);
+  assert.match(dropped.errors[0].message, /the rest of this paste has 4/);
+
+  // and the other way round — a stray extra cell in a three-column paste
+  const added = T.parseScheduleText(lines(
+    '| Mon | 09:00 | Maths   |',
+    '| Tue | 13:00 | Physics | Dr B |'
+  ));
+  assert.equal(added.ok, false);
+  assert.equal(added.errors[0].line, 2);
+  assert.match(added.errors[0].message, /the rest of this paste has 3/);
+});
+
+test('a cell count that is neither 3 nor 4 is refused whatever the paste', () => {
+  for (const [row, n] of [['| Mon | 09:00 |', 2], ['| Mon | 09:00 | a | b | c |', 5]]) {
+    const r = T.parseScheduleText(row);
+    assert.equal(r.ok, false, row + ' must not parse');
+    assert.match(r.errors[0].message, new RegExp('has ' + n + ' cells; every row needs 3'));
+    assert.match(r.errors[0].message, /or 4/, 'the message must name the legal shapes, not just the wrong one');
+  }
+});
+
+test('a detail may contain a pipe, escaped', () => {
+  const r = T.parseScheduleText(lines('| Mon | 09:00 | Maths | R12 \\| R13 |'));
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.equal(r.rows[0].detail, 'R12 | R13');
 });
 
 test('the reported line number counts the fence and blank lines the user can see', () => {
@@ -283,6 +351,54 @@ test('format -> parse -> format is stable, both arms', () => {
   // and again, so the second pass cannot drift from the first
   const second = T.parseScheduleText(T.formatScheduleText(stored));
   assert.deepEqual(second.rows, first.rows);
+});
+
+test('GUARD: formatScheduleText emits THREE columns when nothing carries a detail', () => {
+  // Passes on both sides of the detail column by design, and it is the guard
+  // for the whole absence half: `⧉ copy as text` must return byte-identical
+  // text for every import that predates the field, or an unchanged paste
+  // round-trips into a different shape than the one that was stored.
+  const text = T.formatScheduleText([
+    { id: 'a', dow: 1, time: '09:00', duration: 90, title: 'Mathematics' },
+    { id: 'b', date: '2026-09-14', time: '13:00', duration: 60, title: 'Makeup' }
+  ]);
+  for (const line of text.split('\n').filter(l => l.indexOf('|') !== -1)) {
+    assert.equal(line.split('|').length - 1, 4,
+      'three cells means four pipes, and no empty fourth column: ' + line);
+  }
+});
+
+test('formatScheduleText widens to four columns as soon as ONE entry has a detail', () => {
+  const text = T.formatScheduleText([
+    { id: 'a', dow: 1, time: '09:00', duration: 90, title: 'Mathematics', detail: 'Dr A · R12' },
+    { id: 'b', date: '2026-09-14', time: '13:00', duration: 60, title: 'Makeup' }
+  ]);
+  assert.match(text, /\| Mon\s+\| 09:00-10:30 \| Mathematics \| Dr A · R12 \|/);
+  // the detail-less row still fills its cell, so the paste stays uniform
+  assert.match(text, /\| 2026-09-14 \| 13:00-14:00 \| Makeup\s+\|\s+\|/);
+  const back = T.parseScheduleText(text);
+  assert.equal(back.ok, true, JSON.stringify(back.errors));
+  assert.equal(back.rows[0].detail, 'Dr A · R12');
+  assert.equal(Object.prototype.hasOwnProperty.call(back.rows[1], 'detail'), false,
+    'the padded blank cell comes back as no detail, not as an empty string');
+});
+
+test('format -> parse -> format is stable with details', () => {
+  const stored = [
+    { id: 'a', dow: 1, time: '09:00', duration: 90, title: 'Mathematics', detail: 'Dr A' },
+    { id: 'b', date: '2026-09-14', time: '13:00', duration: 60, title: 'Makeup' }
+  ];
+  const once = T.formatScheduleText(stored);
+  const parsed = T.parseScheduleText(once);
+  assert.equal(parsed.ok, true, JSON.stringify(parsed.errors));
+  assert.equal(T.formatScheduleText(stored), once, 'a second pass cannot drift from the first');
+});
+
+test('a detail containing a pipe survives the round trip', () => {
+  const text = T.formatScheduleText([{ dow: 1, time: '09:00', duration: 60, title: 'Maths', detail: 'R12 | R13' }]);
+  const back = T.parseScheduleText(text);
+  assert.equal(back.ok, true, JSON.stringify(back.errors));
+  assert.equal(back.rows[0].detail, 'R12 | R13');
 });
 
 test('a title containing a pipe survives the round trip', () => {

@@ -1528,6 +1528,17 @@ test('refOn sorts by time and gives every block a day-qualified id', () => {
   assert.equal(got[0].entryId, 'r-w', 'the underlying record is still reachable');
 });
 
+test('refOn carries the detail through, and an absent one reads as empty', () => {
+  // The detail is what the title used to have glued onto it. Every surface
+  // reads the block rather than the record, so it has to arrive on the block —
+  // and an absent detail must be '' rather than undefined, so a caller can
+  // concatenate it without printing the word "undefined" into a tooltip.
+  const slot = refSlot(weekly({ id: 'r-d', detail: 'Dr Ada · R204' }), oneOff());
+  const byId = Object.fromEntries(TC.refOn(slot, '2026-09-14').map(b => [b.entryId, b.detail]));
+  assert.equal(byId['r-d'], 'Dr Ada · R204');
+  assert.equal(byId['r-o'], '', 'an entry stored before the field existed carries no detail');
+});
+
 test('refOn drops an entry with no usable time rather than drawing it at midnight', () => {
   const slot = refSlot(weekly(), weekly({ id: 'r-bad', time: 'period 3' }));
   assert.deepEqual(TC.refOn(slot, '2026-09-14').map(b => b.entryId), ['r-w']);

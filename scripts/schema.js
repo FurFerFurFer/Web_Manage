@@ -375,6 +375,12 @@
           errors.push(validationError('refSchedules', at + ' has an invalid ' + k + ', found ' + describe(item[k]), false));
         }
       });
+      // The lecturer, room or mode, kept apart from the title. Absent on every
+      // entry stored before the paste format grew a fourth cell, which is why
+      // only a present value is checked and why nothing needed migrating.
+      if (item.detail !== undefined && item.detail !== null && typeof item.detail !== 'string') {
+        errors.push(validationError('refSchedules', at + ' has an invalid detail ' + describe(item.detail) + ', expected text', false));
+      }
       if (item.time !== undefined && !isTime(item.time)) {
         errors.push(validationError('refSchedules', at + ' has an invalid time ' + describe(item.time) + ', expected HH:MM', false));
       }

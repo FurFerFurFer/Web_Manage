@@ -7,8 +7,8 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=7"></script>
-  <script src="scripts/calendar-core.js?v=7"></script>
+  <script src="scripts/schema.js?v=8"></script>
+  <script src="scripts/calendar-core.js?v=8"></script>
   <link rel="stylesheet" href="styles/styles.css?v=9">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -764,7 +764,10 @@
         div.style.height = height + 'px';
         div.style.borderColor = b.color;
         div.style.background = b.color + '1a';
-        div.title = 'Timetable · ' + b.title + ' · ' + b.time + ' · ' + calDurLabel(b.duration);
+        // The block body stays title + time — a dense day must not become a
+        // wall of text — so the detail is reachable here.
+        div.title = 'Timetable · ' + b.title + (b.detail ? ' · ' + b.detail : '')
+          + ' · ' + b.time + ' · ' + calDurLabel(b.duration);
         const t = document.createElement('div');
         t.className = 'cal-sched-ref-title';
         t.textContent = b.title;

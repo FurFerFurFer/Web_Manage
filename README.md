@@ -34,7 +34,8 @@ The code is operational. Verification is syntax checking, the committed suite, a
 | `AGENTS.md` | Mandatory project rules and verification procedure for coding agents |
 | [`docs/TABLE-PASTE.md`](docs/TABLE-PASTE.md) | The user-facing spec for `::: track-table` — what to ask an AI shown a picture of a table |
 | [`docs/SCHEDULE-PASTE.md`](docs/SCHEDULE-PASTE.md) | The user-facing spec for `::: track-schedule` — what to ask an AI shown a picture of a timetable |
-| [`docs/TRACK-WORLD-CONCEPT-DRAFT.md`](docs/TRACK-WORLD-CONCEPT-DRAFT.md) | Draft visual and spatial concept for the Track world |
+| [`World/AGENTS.md`](World/AGENTS.md) | Mandatory rules for the Track World game project, which lives entirely in `World/` |
+| [`World/TRACK-WORLD-CONCEPT-DRAFT.md`](World/TRACK-WORLD-CONCEPT-DRAFT.md) | Draft visual and spatial concept for the Track world; implementation is authorized, nothing is built yet |
 
 When a proposed change is implemented:
 
@@ -112,8 +113,8 @@ The shared interface currently provides:
   makes a choice.
 - Persistence of the selected appearance across pages and browser tabs through `track_theme`.
 - A growth-ring texture on Home and a fine vertical grain on every application page,
-  both pure CSS. The concept artwork in `assets/images/` is documentation-only and is
-  not loaded by the application.
+  both pure CSS. The concept artwork in `World/assets/images/` belongs to the Track
+  World game project, is documentation-only, and is not loaded by the application.
 - A browser-tab icon on all five pages: concentric rings on the Grit evergreen,
   written as an inline `data:image/svg+xml` URI in each `<head>`. It ships no file,
   and declaring it is what stops the browser probing `/favicon.ico` — which is why
@@ -726,15 +727,31 @@ back. `🕘 Timetable` adds a block; `🕘 Paste a timetable` opens the dialog. 
 is the user-facing spec and the in-page `<details>` carries the same brief behind
 **Copy these instructions**.
 
-The format is three cells per row — day, time, title:
+The format is four cells per row — day, time, title, detail:
 
 ```
 ::: track-schedule
-| Mon        | 09:00-10:30 | Mathematics    |
-| Wed        | 13:00-16:00 | Chemistry lab  |
-| 2026-09-14 | 09:00-10:30 | Makeup lecture |
+| Mon        | 09:00-10:30 | Mathematics    | Dr Ada · R204 |
+| Wed        | 13:00-16:00 | Chemistry lab  | Lab 3         |
+| 2026-09-14 | 09:00-10:30 | Makeup lecture |               |
 :::
 ```
+
+**The title is the topic alone; everything else is the detail.** The block drawn on an hour
+grid is one line tall, so a title carrying `· Dr Ada · Room 305-306` loses the topic to
+truncation — the part actually being scanned for. Split, the title stays readable on the grid
+and the detail is reachable in the Timetable list's own column, in the Progress popover, and
+in the hover tooltip on all three grids. The block body itself stays title + time, so a dense
+day does not become a wall of text.
+
+The detail is **optional and its absence is the default**: a blank cell writes no key, a
+three-cell paste is still legal, and every paste and every stored entry that predates the
+column works untouched with nothing to migrate. What a paste may not do is **mix widths** —
+every row in one paste carries the same number of cells, and a row that disagrees is refused
+against its line number. Uniformity is what preserves the format's safety property now that a
+cell is optional: a dropped cell is still detected, because it makes its row disagree with the
+rest. `⧉ copy as text` emits the fourth column only when something carries a detail, so a
+detail-less import round-trips to the exact three columns it was pasted as.
 
 **One format carries both kinds of timetable, and that is the design.** The day cell takes
 either a weekday name or a `YYYY-MM-DD` date. A weekday row repeats on every matching day
@@ -745,8 +762,7 @@ start, which falls back to `DEFAULT_BLOCK_MINS`.
 
 Tolerances match the table format — the fence is optional, both ``` and `:::` are accepted,
 outer pipes are optional, and markdown separator and header rows are skipped, so an ordinary
-markdown table pastes with no extra work. A row with the wrong cell count is **refused against
-its line number**, and nothing is ever returned half-parsed.
+markdown table pastes with no extra work. Nothing is ever returned half-parsed.
 
 The blocks are drawn on **all three hour grids** — the Progress timeline, the Home calendar and
 any Documentations calendar block — as transparent dashed blocks in their own layer *behind*
@@ -1023,8 +1039,8 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
 | `styles/styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
-| `docs/` | User-facing paste specifications and design/concept documents |
-| `assets/images/` | Documentation and concept imagery; not runtime application assets |
+| `docs/` | User-facing paste specifications for the Track application |
+| `World/` | The Track World game project — its concept draft, its reference imagery, and its own `AGENTS.md`. Nothing in it is part of the Track runtime and nothing in it writes Track data |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
 | `README.md` | Current project and workflow documentation |
@@ -1062,11 +1078,13 @@ Track-website/
 │   └── styles.css
 ├── docs/
 │   ├── SCHEDULE-PASTE.md
-│   ├── TABLE-PASTE.md
-│   └── TRACK-WORLD-CONCEPT-DRAFT.md
-├── assets/
-│   └── images/
-│       └── living-botanical-clock-plaza.png
+│   └── TABLE-PASTE.md
+├── World/
+│   ├── AGENTS.md
+│   ├── TRACK-WORLD-CONCEPT-DRAFT.md
+│   └── assets/
+│       └── images/
+│           └── living-botanical-clock-plaza.png
 └── tests/
     ├── run.js
     ├── calendar-core.test.js

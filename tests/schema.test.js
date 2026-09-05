@@ -780,6 +780,26 @@ test('a malformed dow, date, range, time or duration WARNS and stays editable', 
   }
 });
 
+test('a non-string detail WARNS and stays editable, and an absent one is fine', () => {
+  // It reaches text rendering and nothing else — never traversal — so it
+  // cannot throw out of a render, which is why it sits with `time` and
+  // `duration` rather than with the fatal class.
+  const bad = S.validateSlot({ refSchedules: [{ id: 'r', dow: 1, time: '09:00', duration: 60, title: 'x', detail: 42 }] });
+  assert.equal(bad.ok, false, 'a non-string detail is reported');
+  assert.equal(S.hasFatalErrors(bad.errors), false, 'but it must only WARN');
+
+  const good = S.validateSlot({ refSchedules: [{ id: 'r', dow: 1, time: '09:00', duration: 60, title: 'x', detail: 'Dr Ada' }] });
+  assert.equal(good.ok, true, JSON.stringify(good.errors));
+  const absent = S.validateSlot({ refSchedules: [{ id: 'r', dow: 1, time: '09:00', duration: 60, title: 'x' }] });
+  assert.equal(absent.ok, true, 'absence is the default and is not damage');
+});
+
+test('GUARD: the detail is an item key, so the slot is still 24 fields', () => {
+  // If this ever fails, `detail` has become a SLOT_FIELDS row by mistake and
+  // the seven hand-written CONTRACT lists all need to follow it.
+  assert.equal(Object.keys(S.createEmptySlot()).length, 24);
+});
+
 test('an absent repeat window is not an error — an open-ended timetable is real', () => {
   // A term whose end date is not known yet is an ordinary state, not damage.
   const r = S.validateSlot({ refSchedules: [{ id: 'r', dow: 1, time: '09:00', duration: 60, title: 'Maths' }] });

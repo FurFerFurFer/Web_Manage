@@ -576,6 +576,11 @@
         id: String(entry.id) + '@' + ds,
         entryId: entry.id,
         title: entry.title || 'Class',
+        // The lecturer, room or mode — kept APART from the title, which is why
+        // the paste format has a fourth cell at all. Absent on every entry
+        // stored before the field existed, and '' rather than undefined so a
+        // caller may concatenate it without printing "undefined" in a tooltip.
+        detail: typeof entry.detail === 'string' ? entry.detail : '',
         time: span.time,
         duration: span.duration,
         color: REF_COLOR,

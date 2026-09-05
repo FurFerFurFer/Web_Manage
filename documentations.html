@@ -7,10 +7,10 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=7"></script>
-  <script src="scripts/calendar-core.js?v=7"></script>
+  <script src="scripts/schema.js?v=8"></script>
+  <script src="scripts/calendar-core.js?v=8"></script>
   <script src="scripts/doc-table-core.js?v=4"></script>
-  <script src="scripts/schedule-paste-core.js?v=1"></script>
+  <script src="scripts/schedule-paste-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -969,7 +969,9 @@
               return (
                 <div key={b.id} className="cal-sched-ref"
                   data-ref-day={ds} data-ref-id={b.entryId}
-                  title={`Timetable · ${b.title} · ${meta}`}
+                  // The block body stays title + time — a dense day must not
+                  // become a wall of text — so the detail is reachable here.
+                  title={`Timetable · ${b.title}${b.detail ? ' · ' + b.detail : ''} · ${meta}`}
                   style={{top: top+'px', height: height+'px',
                     borderColor: b.color, background: b.color + '1a'}}>
                   <div className="cal-sched-ref-title">{b.title}</div>
@@ -1020,13 +1022,13 @@
       'Read this image of a timetable and reproduce it EXACTLY in this format:',
       '',
       '::: track-schedule',
-      '| Mon        | 09:00-10:30 | Mathematics    |',
-      '| Mon        | 10:45-12:00 | Physics        |',
-      '| Wed        | 13:00-16:00 | Chemistry lab  |',
-      '| 2026-09-14 | 09:00-10:30 | Makeup lecture |',
+      '| Mon        | 09:00-10:30 | Mathematics    | Dr Ada · R204 |',
+      '| Mon        | 10:45-12:00 | Physics        | Dr Bell       |',
+      '| Wed        | 13:00-16:00 | Chemistry lab  | Lab 3         |',
+      '| 2026-09-14 | 09:00-10:30 | Makeup lecture |               |',
       ':::',
       '',
-      'Three cells per row, in this order: day, time, title.',
+      'Four cells per row, in this order: day, time, title, detail.',
       '',
       'The day cell:',
       '- Use a weekday name (Mon, Tue, Wed, Thu, Fri, Sat, Sun) when the class REPEATS every week.',
@@ -1041,8 +1043,14 @@
       '- Never invent an end time. If the end is not shown, give only the start.',
       '',
       'The title cell:',
-      '- The name of the class as printed. Add a room or lecturer after it only if the picture shows one, like: Physics · R204',
+      '- The TOPIC ONLY, as printed. "Epithelial tissue", "Gross anatomy lab: Forearm".',
+      '- Do NOT put the lecturer, the room, the department or the mode in here. Those go in the detail cell.',
       '- Never leave a title empty.',
+      '',
+      'The detail cell:',
+      '- Everything the grid shows about that class that is not the topic: lecturer, room, department, "recorded lecture".',
+      '- Separate several of them with · like: อ.วินิดา · ห้องปฏิบัติการ 305-306',
+      '- Leave it EMPTY (just | |) when the picture shows nothing but a topic. Never invent one.',
       '',
       'Read the grid before transcribing:',
       '- Work out which column is which day and which row is which time slot first.',
@@ -1051,9 +1059,10 @@
       '- Ignore headers, legends, week numbers, and any text outside the timetable grid itself.',
       '',
       'Rules:',
-      '- One line per class. Separate the three cells with | pipes.',
-      '- EVERY row must have exactly three cells.',
-      '- Write \\| if a title really contains a pipe.',
+      '- One line per class. Separate the cells with | pipes.',
+      '- EVERY row must have the SAME number of cells. Use four throughout, including the empty ones.',
+      '- Three cells per row is also accepted, if the timetable has no details at all — but then every row must have three.',
+      '- Write \\| if a title or a detail really contains a pipe.',
       '- If any day, time, or title is unclear, DO NOT GUESS. Ask for a higher-resolution image, or a close-up of the part that is unclear.',
       '- Output only the block. Add no explanation, no heading, and no summary.'
     ].join('\n');
@@ -1078,7 +1087,10 @@
         const end = Math.min(Number(m[1]) * 60 + Number(m[2]) + dur, 24 * 60 - 5);
         when = String(row.time) + '–' + String(Math.floor(end / 60)).padStart(2, '0') + ':' + String(end % 60).padStart(2, '0');
       }
-      return {dayLabel: dayLabel || '—', when, title: row.title || 'Class'};
+      // `detail` is '' rather than undefined when absent, so a caller may
+      // concatenate it into a tooltip without printing the word "undefined".
+      const detail = typeof row.detail === 'string' ? row.detail : '';
+      return {dayLabel: dayLabel || '—', when, title: row.title || 'Class', detail};
     }
 
     /* The one renderer for a list of schedule rows. Used by the paste modal's
@@ -1094,7 +1106,12 @@
                 <tr key={row.id || i} className="border-b border-gray-800/60 last:border-0">
                   <td className="whitespace-nowrap py-0.5 pr-2 font-mono text-gray-400">{v.dayLabel}</td>
                   <td className="whitespace-nowrap py-0.5 pr-2 font-mono text-gray-400">{v.when}</td>
-                  <td className="w-full py-0.5 pr-2 text-gray-200">{v.title}</td>
+                  <td className="py-0.5 pr-2 text-gray-200">{v.title}</td>
+                  {/* The detail gets its own column rather than being glued to
+                      the title, which is the whole point of the fourth cell:
+                      the topic stays readable on its own. Muted, because a
+                      lecturer and a room are context, not the thing itself. */}
+                  <td data-sched-detail className="w-full py-0.5 pr-2 text-gray-500">{v.detail}</td>
                   {onRemove && (
                     <td className="py-0.5 text-right">
                       <button onClick={()=>onRemove(row)} title="remove this class"
@@ -1281,6 +1298,12 @@
         const made = rows.map(r => {
           const e = {id: genId(), title: r.title, time: r.time, duration: r.duration,
             docPageId: page.id, importId, createdAt};
+          // The lecturer/room/mode, kept apart from the title. Written ONLY
+          // when there is one: absence is the default and '' is not a detail,
+          // the same absence-is-meaningful rule as a day note's `time`. The
+          // parser already omits the key for a blank cell, so this is the
+          // second half of that one rule rather than a new one.
+          if (r.detail) e.detail = r.detail;
           // EXACTLY ONE arm. Writing both would be the one shape every reader
           // refuses, so it is prevented at the only place that mints a record.
           if (r.day.kind === 'date') { e.date = r.day.date; }

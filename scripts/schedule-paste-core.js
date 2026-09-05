@@ -6,11 +6,17 @@
    parses. Three columns, one line per class:
 
        ::: track-schedule
-       | Mon        | 09:00-10:30 | Mathematics    |
-       | Mon        | 10:45-12:00 | Physics        |
-       | Wed        | 13:00-16:00 | Chemistry lab  |
-       | 2026-09-14 | 09:00-10:30 | Makeup lecture |
+       | Mon        | 09:00-10:30 | Mathematics    | Dr Ada · R204 |
+       | Mon        | 10:45-12:00 | Physics        | Dr Bell       |
+       | Wed        | 13:00-16:00 | Chemistry lab  | Lab 3         |
+       | 2026-09-14 | 09:00-10:30 | Makeup lecture |               |
        :::
+
+   The fourth cell is a DETAIL and it is optional: a paste may use three cells
+   throughout instead. It exists because everything that is not the topic —
+   the lecturer, the room, the mode — used to be glued onto the title, so the
+   title could never be shown on its own and an hour-grid block truncated the
+   topic away to make room for a room number.
 
    The day cell takes EITHER a weekday name or a concrete YYYY-MM-DD, and that
    single decision is what lets one format carry both cases the user actually
@@ -22,11 +28,21 @@
    Four rules, three of them lifted straight from doc-table-core.js because
    they have already been proven there:
 
-   1. EVERY ROW HAS EXACTLY THREE CELLS, and a row that does not is REFUSED
-      against its line number. This is the load-bearing property of the format.
-      An AI that drops a column produces an error naming the row, never a
+   1. EVERY ROW IN ONE PASTE HAS THE SAME NUMBER OF CELLS — three, or four
+      with a detail — and a row that disagrees is REFUSED against its line
+      number. This is the load-bearing property of the format. An AI that
+      drops a column produces an error naming the row, never a
       plausible-looking wrong schedule — and a wrong schedule is worse than no
       schedule, because it looks like it worked.
+
+      UNIFORMITY, not a fixed count, is what carries that property once a
+      fourth cell exists. A dropped cell is still detected because it makes
+      its row disagree with the rest, so nothing is given up by letting the
+      detail be optional — and every three-column paste written before the
+      detail existed stays legal, which is why no stored entry needed
+      migrating. The width is taken from the first row that HAS a legal count,
+      so a paste where every row is malformed still reports every row rather
+      than adopting the first mistake as the standard.
 
    2. NOTHING IS RETURNED HALF-PARSED. `ok === false` means insert nothing.
       Errors accumulate within a phase so a user fixing a paste sees every bad
@@ -57,7 +73,9 @@
 (function (global) {
   'use strict';
 
-  var COLUMNS = 3;
+  /* The legal widths, narrowest first. Three is day/time/title; four adds the
+     detail. Anything else is a miscount, whatever the rest of the paste does. */
+  var COLUMN_COUNTS = [3, 4];
 
   /* A runaway paste should be refused early rather than left to the quota
      guard. A term timetable is a few dozen lines; 500 is far above anything a
@@ -215,6 +233,7 @@
 
      Returns {ok, rows, errors}. A row is
          { day: {kind:'dow', dow} | {kind:'date', date}, time, duration, title }
+     plus `detail` WHEN THERE IS ONE — the key is absent otherwise, never '' —
      which is everything except the ids, the range and the ownership the page
      adds when it writes. `errors` carry the 1-based line number of the PASTED
      TEXT — captured before blank lines and fences are filtered out, so it
@@ -247,17 +266,32 @@
       return fail();
     }
 
-    /* The load-bearing check, and the whole argument for the format. A correct
-       row is always three cells, so an unequal row means something went
-       missing — and guessing which one is how a wrong schedule gets built that
-       LOOKS right. */
+    /* The load-bearing check, and the whole argument for the format. Every row
+       in a paste carries the same number of cells, so an unequal row means
+       something went missing — and guessing which one is how a wrong schedule
+       gets built that LOOKS right.
+
+       The width is the first LEGAL count seen, not simply the first count: a
+       paste in which every row is malformed must report every row rather than
+       adopt row one's mistake as the standard and call the rest wrong. When no
+       row is legal, three is assumed so the message names the ordinary shape. */
+    var width = 0;
+    for (var w = 0; w < kept.length; w++) {
+      if (COLUMN_COUNTS.indexOf(kept[w].cells.length) !== -1) { width = kept[w].cells.length; break; }
+    }
+    if (!width) width = COLUMN_COUNTS[0];
+
     kept.forEach(function (row) {
-      if (row.cells.length !== COLUMNS)
-        errors.push({
-          line: row.line,
-          message: 'This row has ' + row.cells.length + ' cell' + (row.cells.length === 1 ? '' : 's') +
-                   '; every row needs exactly ' + COLUMNS + ' — day, time, then title.'
-        });
+      var n = row.cells.length;
+      if (n === width) return;
+      var had = 'This row has ' + n + ' cell' + (n === 1 ? '' : 's') + '; ';
+      errors.push({
+        line: row.line,
+        message: COLUMN_COUNTS.indexOf(n) === -1
+          ? had + 'every row needs 3 — day, time, then title — or 4, with a detail after the title.'
+          : had + 'the rest of this paste has ' + width +
+            '. Use 3 cells (day, time, title) or 4 (day, time, title, detail), but the same number in every row.'
+      });
     });
     if (errors.length) return fail();
 
@@ -280,7 +314,15 @@
       }
 
       if (day !== null && !time.error && title) {
-        rows.push({ day: day, time: time.time, duration: time.duration, title: title });
+        var out = { day: day, time: time.time, duration: time.duration, title: title };
+        /* Written ONLY when there is something to write. Absence is the
+           default and '' is not a detail — the same absence-is-meaningful rule
+           as a day note's `time`, and deliberately not `cautionDates: []`,
+           because no fallback sits behind this field. A four-column paste with
+           a blank detail must therefore produce the identical draft a
+           three-column paste would. */
+        if (width > 3 && row.cells[3]) out.detail = row.cells[3];
+        rows.push(out);
       }
     });
     if (errors.length) return fail();
@@ -301,6 +343,13 @@
     var list = isList(entries) ? entries.filter(isMap) : [];
     if (!list.length) return '';
 
+    /* The detail column appears only when at least one entry carries one. That
+       is what keeps `⧉ copy as text` byte-identical for every import written
+       before the field existed: a detail-less list must round-trip to the same
+       three columns it was pasted as, not to four with a blank hanging off the
+       end. */
+    var wide = list.some(function (e) { return typeof e.detail === 'string' && e.detail.trim(); });
+
     var grid = list.map(function (e) {
       var day = DAY_RE.test(String(e.date || '')) ? String(e.date)
         : (DOW_LABELS[e.dow] || '?');
@@ -308,12 +357,16 @@
       var dur = (typeof e.duration === 'number' && isFinite(e.duration)) ? Math.floor(e.duration) : DEFAULT_MINUTES;
       var when = start === null ? String(e.time || '')
         : hhmm(start) + '-' + hhmm(Math.min(start + Math.max(1, dur), MAX_MINUTES));
-      return [day, when, escapeCell(e.title)];
+      var row = [day, when, escapeCell(e.title)];
+      // A detail-less row in a wide list still fills its cell, so the paste
+      // stays uniform and parses straight back in.
+      if (wide) row.push(escapeCell(e.detail == null ? '' : e.detail));
+      return row;
     });
 
     // Pad to a readable grid. Every writer trims, so this is cosmetic — but it
     // is what makes the text checkable against the picture by eye.
-    var widths = [0, 0, 0];
+    var widths = wide ? [0, 0, 0, 0] : [0, 0, 0];
     grid.forEach(function (row) {
       row.forEach(function (cell, c) { if (cell.length > widths[c]) widths[c] = cell.length; });
     });
@@ -339,7 +392,7 @@
     parseDayCell: parseDayCell,
     parseTimeCell: parseTimeCell,
     DOW_LABELS: DOW_LABELS,
-    COLUMNS: COLUMNS,
+    COLUMN_COUNTS: COLUMN_COUNTS,
     MAX_ROWS: MAX_ROWS,
     DEFAULT_MINUTES: DEFAULT_MINUTES
   };

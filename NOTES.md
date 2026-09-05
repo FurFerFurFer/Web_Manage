@@ -971,9 +971,11 @@ prompt at all, so those cases must be rewritten in the same change rather than a
 
 ## Track World: Computer Feasibility
 
-Use [the concept draft](docs/TRACK-WORLD-CONCEPT-DRAFT.md) as the source of the proposed
+The game project lives entirely in [`World/`](World/) and has its own
+[`World/AGENTS.md`](World/AGENTS.md), which governs any work on it. Use
+[the concept draft](World/TRACK-WORLD-CONCEPT-DRAFT.md) as the source of the proposed
 experience, computer-only initial scope, and limited subscription budget. Its
-[review notes](docs/TRACK-WORLD-CONCEPT-DRAFT.md#24-feasibility-review-and-next-session-notes)
+[review notes](World/TRACK-WORLD-CONCEPT-DRAFT.md#24-feasibility-review-and-next-session-notes)
 identify the unresolved risks and candidate next checks.
 
 - Resolve the engine and browser-versus-native delivery before a representative prototype.

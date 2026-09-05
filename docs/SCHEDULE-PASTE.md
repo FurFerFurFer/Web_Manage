@@ -55,20 +55,41 @@ either way.
 
 ```
 ::: track-schedule
-| Mon        | 09:00-10:30 | Mathematics    |
-| Mon        | 10:45-12:00 | Physics        |
-| Wed        | 13:00-16:00 | Chemistry lab  |
-| 2026-09-14 | 09:00-10:30 | Makeup lecture |
+| Mon        | 09:00-10:30 | Mathematics    | Dr Ada · R204 |
+| Mon        | 10:45-12:00 | Physics        | Dr Bell       |
+| Wed        | 13:00-16:00 | Chemistry lab  | Lab 3         |
+| 2026-09-14 | 09:00-10:30 | Makeup lecture |               |
 :::
 ```
 
-Three cells per row: **day**, **time**, **title**.
+Four cells per row: **day**, **time**, **title**, **detail**.
 
 | Cell | What goes in it |
 | --- | --- |
 | day | A weekday — `Mon`, `Tuesday`, `weds`, `Thurs`, `Fri`, `Sat`, `Sun` — **or** a date, `2026-09-14` |
 | time | A range, `09:00-10:30`, or just a start, `09:00` |
-| title | The name of the class. `\|` if the title really contains a pipe |
+| title | The **topic only**. `\|` if it really contains a pipe |
+| detail | The lecturer, room, department or mode. Leave it empty when there is none |
+
+### Why the topic and the detail are separate cells
+
+Because the block drawn on your schedule is one line tall and a few centimetres
+wide. Glue `· Dr Ada · Room 305-306, Building 3` onto the title and the topic —
+the only part you actually scan for — is the part that gets truncated away.
+
+Split, the title stays readable on the grid, and the detail is there when you
+want it: its own column in the Timetable list, a line in the popover when you
+click a class on the Progress timeline, and in the hover tooltip everywhere.
+
+### Three cells still works
+
+The detail is optional. A timetable that is nothing but topics can stay at three
+cells, and every paste written before this column existed still parses exactly as
+it did.
+
+What you cannot do is **mix them**. Every row in one paste has the same number of
+cells — that is what makes a dropped cell detectable instead of silently shifting
+a room number into a title.
 
 ### One format, both kinds of timetable
 
@@ -105,14 +126,14 @@ Copy this and send it with the picture. It is also inside the Paste dialog, behi
 >
 > ```
 > ::: track-schedule
-> | Mon        | 09:00-10:30 | Mathematics    |
-> | Mon        | 10:45-12:00 | Physics        |
-> | Wed        | 13:00-16:00 | Chemistry lab  |
-> | 2026-09-14 | 09:00-10:30 | Makeup lecture |
+> | Mon        | 09:00-10:30 | Mathematics    | Dr Ada · R204 |
+> | Mon        | 10:45-12:00 | Physics        | Dr Bell       |
+> | Wed        | 13:00-16:00 | Chemistry lab  | Lab 3         |
+> | 2026-09-14 | 09:00-10:30 | Makeup lecture |               |
 > :::
 > ```
 >
-> Three cells per row, in this order: day, time, title.
+> Four cells per row, in this order: day, time, title, detail.
 >
 > The day cell:
 > - Use a weekday name (Mon, Tue, Wed, Thu, Fri, Sat, Sun) when the class REPEATS every week.
@@ -127,8 +148,14 @@ Copy this and send it with the picture. It is also inside the Paste dialog, behi
 > - Never invent an end time. If the end is not shown, give only the start.
 >
 > The title cell:
-> - The name of the class as printed. Add a room or lecturer after it only if the picture shows one, like: Physics · R204
+> - The TOPIC ONLY, as printed. "Epithelial tissue", "Gross anatomy lab: Forearm".
+> - Do NOT put the lecturer, the room, the department or the mode in here. Those go in the detail cell.
 > - Never leave a title empty.
+>
+> The detail cell:
+> - Everything the grid shows about that class that is not the topic: lecturer, room, department, "recorded lecture".
+> - Separate several of them with · like: อ.วินิดา · ห้องปฏิบัติการ 305-306
+> - Leave it EMPTY (just | |) when the picture shows nothing but a topic. Never invent one.
 >
 > Read the grid before transcribing:
 > - Work out which column is which day and which row is which time slot first.
@@ -137,9 +164,10 @@ Copy this and send it with the picture. It is also inside the Paste dialog, behi
 > - Ignore headers, legends, week numbers, and any text outside the timetable grid itself.
 >
 > Rules:
-> - One line per class. Separate the three cells with | pipes.
-> - EVERY row must have exactly three cells.
-> - Write \\| if a title really contains a pipe.
+> - One line per class. Separate the cells with | pipes.
+> - EVERY row must have the SAME number of cells. Use four throughout, including the empty ones.
+> - Three cells per row is also accepted, if the timetable has no details at all — but then every row must have three.
+> - Write \\| if a title or a detail really contains a pipe.
 > - If any day, time, or title is unclear, DO NOT GUESS. Ask for a higher-resolution image, or a close-up of the part that is unclear.
 > - Output only the block. Add no explanation, no heading, and no summary.
 
@@ -147,12 +175,15 @@ Copy this and send it with the picture. It is also inside the Paste dialog, behi
 
 ## The one rule that matters
 
-**Every row has exactly three cells.**
+**Every row in one paste has the same number of cells.**
 
-That is what makes the format safe. If a row comes back with two cells or four, Track
-*knows* something went wrong and tells you which line — it never quietly builds a schedule
-with a class at the wrong hour. A wrong timetable is worse than no timetable, because you
-plan against it.
+That is what makes the format safe. If one row comes back with three cells while the rest
+have four, Track *knows* something went wrong and tells you which line — it never quietly
+builds a schedule with a lecturer's name sitting where the topic should be, or a class at
+the wrong hour. A wrong timetable is worse than no timetable, because you plan against it.
+
+Uniformity is what carries that guarantee now that the detail cell is optional. A dropped
+cell is still caught, because it makes its row disagree with every other row.
 
 ---
 
@@ -185,7 +216,8 @@ The dialog will not add a timetable it cannot read, and it says why:
 
 | Message | What happened |
 | --- | --- |
-| *This row has 2 cells; every row needs exactly 3* | A cell went missing. Ask the AI to redo it, or add the missing `\|`. |
+| *This row has 2 cells; every row needs 3 … or 4* | A cell went missing entirely. Ask the AI to redo it, or add the missing `\|`. |
+| *This row has 3 cells; the rest of this paste has 4* | One row lost its detail cell. Add an empty one — `\| \|` — or ask the AI to redo it. |
 | *Could not read "Someday" as a day* | The day cell is neither a weekday name nor a `YYYY-MM-DD` date. |
 | *Could not read "period 3" as a time* | The time cell is not `HH:MM`. Slot numbers are not times — ask for the actual clock times. |
 | *This block ends at 09:00, at or before it starts at 10:00* | The range is backwards, or the two times were swapped. |

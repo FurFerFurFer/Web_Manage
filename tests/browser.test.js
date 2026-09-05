@@ -7814,6 +7814,195 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* ── the detail cell ──────────────────────────────────────────────────────
+     A fourth cell keeps the lecturer, room or mode APART from the topic. It is
+     optional, so absence is the default and '' must never be written — and it
+     is read by two independent copies of the same helper, so every surface is
+     asserted separately below. A rule forgotten at one of several surfaces is
+     this repository's recurring bug, and a single shared assertion would let a
+     forgotten copy hide behind a passing sibling. */
+
+  const DETAIL_PASTE = [
+    '::: track-schedule',
+    '| ' + MONDAY + ' | 09:00-10:30 | Epithelial tissue | Dr Wanida · R305 |',
+    '| ' + MONDAY + ' | 13:00       | Makeup lecture    |                  |',
+    ':::'
+  ].join('\n');
+
+  const addSchedPaste = async page => {
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-sched-preview]'); },
+      { message: 'the preview' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'Add timetable'; }).click();
+    });
+    return page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var rs = ((db.slots || [])[0] || {}).refSchedules || [];
+      return rs.length ? rs : false;
+    }, { message: 'the timetable reaching track_db' });
+  };
+
+  await t.test('DOCUMENTATIONS stores a detail apart from the title, and a blank one not at all', async () => {
+    const page = await open('documentations.html', { db: refDb([]), hash: '?page=p-1' });
+    await openSchedPaste(page, DETAIL_PASTE);
+    const stored = await addSchedPaste(page);
+
+    assert.equal(stored.length, 2);
+    const withDetail = stored.find(e => e.title === 'Epithelial tissue');
+    const without = stored.find(e => e.title === 'Makeup lecture');
+
+    // The whole point of the column: the topic is no longer carrying a room.
+    assert.equal(withDetail.title, 'Epithelial tissue', 'the title is the topic ALONE');
+    assert.equal(withDetail.detail, 'Dr Wanida · R305');
+
+    /* The absence half, and it is the load-bearing one. `detail: ''` is not a
+       detail — no fallback sits behind this field, so it follows the `time` /
+       `link` rule and NOT the `cautionDates: []` rule. Asserting the key list
+       is what catches a writer that stores an empty string. */
+    assert.equal(Object.prototype.hasOwnProperty.call(without, 'detail'), false,
+      'a blank detail cell writes no key at all: ' + JSON.stringify(Object.keys(without)));
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS lists the detail in its own column, in the preview and on the page', async () => {
+    // The preview and the stored list render through ONE function, so this
+    // asserts both: what is previewed cannot differ from what is stored.
+    const page = await open('documentations.html', { db: refDb([]), hash: '?page=p-1' });
+    await openSchedPaste(page, DETAIL_PASTE);
+
+    const inPreview = await page.waitFor(function () {
+      var el = document.querySelector('[data-paste-sched-preview]');
+      if (!el) return false;
+      var cells = el.querySelectorAll('[data-sched-detail]');
+      return cells.length ? Array.prototype.map.call(cells, function (c) { return c.textContent; }) : false;
+    }, { message: 'the preview showing a detail column' });
+    assert.deepEqual(inPreview, ['Dr Wanida · R305', ''],
+      'the blank one draws an empty cell rather than being skipped');
+
+    await addSchedPaste(page);
+    const onPage = await page.waitFor(function () {
+      var rows = document.querySelectorAll('[data-sched-import] [data-sched-detail]');
+      return rows.length ? Array.prototype.map.call(rows, function (c) { return c.textContent; }) : false;
+    }, { message: 'the stored list showing a detail column' });
+    assert.deepEqual(onPage.slice().sort(), ['', 'Dr Wanida · R305']);
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROGRESS shows the detail in the read-only popover', async () => {
+    const page = await open('progress.html', {
+      db: refDb([refOneOff({ title: 'Epithelial tissue', detail: 'Dr Wanida · R305' })]), hash: '#schedule'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the backdrop' });
+    await page.evaluate(function (mon) {
+      document.querySelector('[data-ref-day="' + mon + '"]').click();
+    }, MONDAY);
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-popup]'); },
+      { message: 'the read-only popover' });
+
+    assert.equal(await page.evaluate(function () {
+      var el = document.querySelector('[data-ref-detail]');
+      return el ? el.textContent : null;
+    }), 'Dr Wanida · R305');
+    // still read-only: showing a detail must not have made one editable
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('[data-ref-popup] input, [data-ref-popup] textarea').length;
+    }), 0);
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* The tooltip, asserted on each of the three grids SEPARATELY. progress.html
+     carries its own copy of the block builder (it does not load
+     calendar-core.js), so doctoring one file must fail only its own surfaces —
+     which is the direct proof that neither copy can be forgotten. */
+  const REF_TOOLTIP = function (mon) {
+    var el = document.querySelector('[data-ref-day="' + mon + '"]');
+    return el ? el.getAttribute('title') : null;
+  };
+  const detailSeed = () => refDb([refOneOff({ title: 'Epithelial tissue', detail: 'Dr Wanida · R305' })]);
+
+  await t.test('PROGRESS carries the detail in the block tooltip', async () => {
+    const page = await open('progress.html', { db: detailSeed(), hash: '#schedule' });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the backdrop' });
+    const tip = await page.evaluate(REF_TOOLTIP, MONDAY);
+    assert.match(tip, /Epithelial tissue/);
+    assert.match(tip, /Dr Wanida · R305/, 'the detail is reachable without opening the popover');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME carries the detail in the block tooltip', async () => {
+    const page = await open('index.html', { db: detailSeed() });
+    await page.waitFor(function () { return !!document.querySelector('.cal-cell'); },
+      { message: 'the home calendar' });
+    assert.notEqual(await page.evaluate(CLICK_CAL_DAY, MONDAY), false, MONDAY + ' is in the grid');
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the Home backdrop' });
+    const tip = await page.evaluate(REF_TOOLTIP, MONDAY);
+    assert.match(tip, /Dr Wanida · R305/);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS carries the detail in the block tooltip', async () => {
+    const page = await open('documentations.html', {
+      db: refDb([refOneOff({ title: 'Epithelial tissue', detail: 'Dr Wanida · R305' })], {
+        blocks: [{ id: 'b-1', type: 'schedule' }, { id: 'b-2', type: 'calendar', hidden: [], scope: 'page' }]
+      }),
+      hash: '?page=p-1'
+    });
+    await page.waitFor(function () { return !!document.querySelector('.cal-cell'); },
+      { message: 'the calendar block' });
+    assert.notEqual(await page.evaluate(CLICK_CAL_DAY, MONDAY), false, MONDAY + ' is in the grid');
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the Documentations backdrop' });
+    const tip = await page.evaluate(REF_TOOLTIP, MONDAY);
+    assert.match(tip, /Dr Wanida · R305/);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: a three-column paste still works, and copies back out as three', async () => {
+    /* Passes on both sides of the detail column by design. Every paste written
+       before the fourth cell existed must keep working untouched, and `⧉ copy
+       as text` must give back the three columns it was pasted as rather than a
+       fourth blank one hanging off every row. */
+    const page = await open('documentations.html', { db: refDb([]), hash: '?page=p-1' });
+    await openSchedPaste(page, [
+      '| ' + MONDAY + ' | 09:00-10:30 | Mathematics |',
+      '| ' + MONDAY + ' | 13:00       | Physics     |'
+    ].join('\n'));
+    const stored = await addSchedPaste(page);
+
+    assert.equal(stored.length, 2);
+    for (const e of stored) {
+      assert.equal(Object.prototype.hasOwnProperty.call(e, 'detail'), false,
+        'a three-column paste stores no detail key: ' + JSON.stringify(Object.keys(e)));
+    }
+
+    const copied = await page.evaluate(function () {
+      var btn = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim().indexOf('copy as text') !== -1; });
+      if (!btn) return null;
+      return window.TrackSchedulePaste.formatScheduleText(
+        ((JSON.parse(localStorage.getItem('track_db')).slots || [])[0] || {}).refSchedules);
+    });
+    for (const line of copied.split('\n').filter(l => l.indexOf('|') !== -1)) {
+      assert.equal(line.split('|').length - 1, 4, 'three cells, four pipes: ' + line);
+    }
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('a malformed paste names its line and writes NOTHING', async () => {
     // The Cancel path, which is the one that matters: the error shows, the
     // preview is absent, and clicking the disabled button anyway leaves the
@@ -7831,7 +8020,11 @@ test('browser suites', skipUnlessChrome, async t => {
       return el ? el.innerText : false;
     }, { message: 'the parse error' });
     assert.match(err, /Line 2/, 'the offending line is named');
-    assert.match(err, /exactly 3/);
+    assert.match(err, /has 2 cells/, 'and what is actually wrong with it');
+    // The message names BOTH legal shapes, not just the one it is not. A user
+    // told only "needs 3" would not know the detail column exists.
+    assert.match(err, /needs 3/);
+    assert.match(err, /or 4/);
 
     assert.equal(await page.evaluate(function () {
       return !!document.querySelector('[data-paste-sched-preview]');

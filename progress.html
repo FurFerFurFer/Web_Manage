@@ -7,7 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=7"></script>
+  <script src="scripts/schema.js?v=8"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -422,8 +422,13 @@
         if (!refOccupies(entry, ds)) return;
         const span = refSpan(entry);
         if (!span) return;
+        // `detail` is the lecturer/room/mode, kept APART from the title — the
+        // reason the paste format has a fourth cell. '' rather than undefined
+        // so a caller may concatenate it into a tooltip safely.
         out.push({ id: String(entry.id) + '@' + ds, entryId: entry.id,
-          title: entry.title || 'Class', time: span.time, duration: span.duration, entry });
+          title: entry.title || 'Class',
+          detail: typeof entry.detail === 'string' ? entry.detail : '',
+          time: span.time, duration: span.duration, entry });
       });
       return out.sort((a, b) => a.time.localeCompare(b.time) || a.title.localeCompare(b.title));
     }
@@ -7846,7 +7851,10 @@
                         <div key={b.id}
                           data-ref-day={ds}
                           data-ref-id={b.entryId}
-                          title={`Timetable · ${b.title} · ${b.time}–${addMins(b.time, b.duration)}`}
+                          /* The block body stays title + time — a dense day
+                             must not become a wall of text — so the detail is
+                             reachable here and in the popover. */
+                          title={`Timetable · ${b.title}${b.detail ? ' · ' + b.detail : ''} · ${b.time}–${addMins(b.time, b.duration)}`}
                           style={{
                             top: top + 'px', height: height + 'px', left: '3px', right: '3px',
                             position: 'absolute', zIndex: 0,
@@ -8904,6 +8912,12 @@
                   </div>
                   <div className="p-3 space-y-1.5">
                     <div className="text-sm font-semibold text-gray-100">{entry.title || 'Class'}</div>
+                    {/* The lecturer, room or mode. Rendered only when there is
+                        one — absence is the default for every entry stored
+                        before the paste format grew its fourth cell. */}
+                    {typeof entry.detail === 'string' && entry.detail ? (
+                      <div data-ref-detail className="text-xs text-gray-300">{entry.detail}</div>
+                    ) : null}
                     <div className="text-xs text-gray-400">
                       {formatTime12(span.time)} – {formatTime12(addMins(span.time, span.duration))}
                     </div>
