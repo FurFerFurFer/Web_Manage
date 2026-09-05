@@ -650,9 +650,10 @@ Fixtures must be synthetic. A real personal export must never become test data.
 
 ### Goal
 
-Reduce cross-feature editing and make data ownership, page ownership, tests, and deployment
-configuration visible. A flat root is not itself a defect; extract only when a stable
-boundary reduces risk or enables testing.
+After Proposal 6 establishes a build, move the large inline page implementations into
+stable page, feature, data, and sync boundaries. Extract only when the boundary reduces
+risk or enables testing; do not create placeholder directories merely to resemble the
+target tree.
 
 ### Possible target structure
 
@@ -695,8 +696,6 @@ Track-website/
 │   │   ├── firebase.js
 │   │   └── conflicts.js
 │   └── styles/
-├── public/
-│   └── favicon.svg
 ├── tests/
 │   ├── unit/
 │   ├── browser/
@@ -970,65 +969,45 @@ mechanism. `tests/lib/cdp.js`'s `page.rejectDialogs` only answers **native** dia
 DOM-modal implementation makes every existing destructive-control case unable to see the
 prompt at all, so those cases must be rewritten in the same change rather than after it.
 
-## Proposal 16: Finish the Flexible Documentation Table
+## Track World: Computer Feasibility
 
-Documentation tables can now merge cells, be pasted in from the `::: track-table` format,
-carry a dragged width per column, wrap a long value, fill a downward merge with text, and
-move a whole row or column (see README, "Documentations"). Two capabilities remain, and
-neither is started.
+Use [the concept draft](docs/TRACK-WORLD-CONCEPT-DRAFT.md) as the source of the proposed
+experience, computer-only initial scope, and limited subscription budget. Its
+[review notes](docs/TRACK-WORLD-CONCEPT-DRAFT.md#24-feasibility-review-and-next-session-notes)
+identify the unresolved risks and candidate next checks.
 
-**Per-cell alignment.** Left/centre/right and top/middle/bottom. Cheap once cells can carry
-attributes, but they cannot today — `rows` is a grid of plain strings, and keeping it that way
-is what makes the existing data forward-compatible. Adding alignment means either a parallel
-list keyed by coordinate, like `merges`, or promoting cells to objects, which would break the
-`rows: [[string]]` contract and every stored table with it. Prefer the parallel list.
-
-**Configurable header rows.** Row 0 is styled as a header by index, in `TableBlock` and in the
-paste preview. Real tables have two-row headers, no header at all, or a header column instead.
-An optional `head: n` (and `headCol: n`) would cover it. Note the interaction with merges: a
-header cell spanning two columns is the common case that motivates this, and it already works
-geometrically — only the styling is index-based.
-
-Do these two together or not at all. Each one alone changes the format and the block shape,
-and two separate rounds of "the paste format grew a field" would cost two migrations of the
-AI-facing spec in `TABLE-PASTE.md` and two re-reads by anyone who had memorised it.
-
-Note that moving rows makes the header question sharper rather than milder: the styling is
-positional, so a row moved to the top *becomes* the header and a header moved down stops
-being one. That is currently documented as a consequence rather than fixed.
-
-Not proposed: pasting a table by dropping an image on the page and doing the recognition
-locally. That needs an OCR dependency and a model, both of which are out of scope for a
-repository with no build step and no package manifest. Handing the picture to an AI the user
-already has open is the deliberate alternative.
+- Resolve the engine and browser-versus-native delivery before a representative prototype.
+- Evaluate movement, coherent weather, and readable Track views on the existing computer
+  with synthetic data before expanding the world or recommending purchases.
+- Define game-state ownership and safe competing-note-edit recovery before real writes;
+  coordinate with Proposal 4 rather than assuming the current sync merges note edits.
+- Keep phone/iPad versions and mobile requirements deferred.
 
 ## Additional Small Ideas
 
-### Route the React pages' hard-coded UI accents through the theme
+### Finish routing the canvas pages' hard-coded UI accents through the theme
 
-`progress.html` (16 hex literals), `sir-ks02.html` (101) and `true-storage.html` (37) pass colour
-as inline `style` values and SVG attributes from JSX, where the `styles.css` remap layer cannot
-reach. Under Grit the effect is visible: the Progression donut, its percentage, the SIR pips, the
-MM progress bar, the today outline and the goal bar all still paint indigo on a green page.
+`progress.html` is **done** — see README "Appearance and accessibility". `sir-ks02.html` (101 hex
+literals) and `true-storage.html` (37) still pass colour as inline `style` values and SVG
+attributes from JSX, where the `styles.css` remap layer cannot reach.
 
-Two things make this a real task rather than a find-and-replace, and both are the reason it was
-left out of the Grit change:
+The chrome to convert is far smaller than progress.html's was — roughly 23 sites and 6, against
+~72 — while the risk of converting the wrong thing is far higher. That ratio is why they were
+split off rather than swept along:
 
-- **Separate the data from the chrome first.** `PALETTE` (`progress.html:1268`) is a categorical
-  palette for distinguishing goals, and `mm.color` is a value the user picked. Those must stay
-  theme-invariant, and a blanket substitution would destroy them. Only the accent *defaults* —
-  the `|| '#6366f1'` fallbacks and the fixed progress/today colours — should move.
-- **`var()` does not work in an SVG presentation attribute.** `stroke={color}` has to become
-  `style={{stroke: color}}` before a token can be used, so every site needs reading rather than
-  patching, in the two files whose geometry the browser suite measures.
+- **They are overwhelmingly DATA.** Roughly 78 of 101 and 31 of 37 are the `FILL_COLORS` swatch
+  picker, `PALETTE`, `STAGE_RING`/`STAGE_COLORS_SIR`, and the `#ef4444` / `#6b7280` category dots
+  that say what KIND of mind map a node is. Only ~23 and ~6 are chrome. A blanket substitution
+  would destroy a user's colour picker.
+- **They are the geometry-sensitive canvas pages**, and the remaining chrome is mostly in SVG
+  presentation attributes on the graph itself (`stroke="#374151"` edges, `fill="#0f172a"` node
+  bodies), which have to become `style={{}}` before a token can reach them.
+- **Two `styles.css` compensation rules already cover the worst of it** — `svg [fill="#0f172a"]`
+  and `[stroke="#1f2937"]` are patched per theme. Retiring those is part of this task, not a
+  separate one, and they must not be deleted before the JSX stops emitting those attributes.
 
-Worth doing, and worth doing on its own.
-
-
-### Add a favicon
-
-Add a small versioned favicon to remove `/favicon.ico` 404 noise. If the build structure is
-introduced first, place it under `public/`.
+The vocabulary to reuse is already in place: the five `--color-accent*` tokens and the `ACCENT`
+map pattern in `progress.html`. Do not introduce a second set.
 
 ### Keep run documentation aligned with build changes
 

@@ -30,7 +30,7 @@ const vm = require('node:vm');
 // something the browser never does.
 globalThis.window = globalThis;
 vm.runInThisContext(
-  fs.readFileSync(path.join(__dirname, '..', 'true-storage-core.js'), 'utf8'),
+  fs.readFileSync(path.join(__dirname, '..', 'scripts', 'true-storage-core.js'), 'utf8'),
   { filename: 'true-storage-core.js' }
 );
 const TS = globalThis.TrackTrueStorage;

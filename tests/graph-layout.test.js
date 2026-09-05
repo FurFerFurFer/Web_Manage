@@ -30,7 +30,7 @@ const vm = require('node:vm');
 // built on Array.isArray, and a fresh realm would break cross-realm arrays.
 globalThis.window = globalThis;
 vm.runInThisContext(
-  fs.readFileSync(path.join(__dirname, '..', 'graph-layout.js'), 'utf8'),
+  fs.readFileSync(path.join(__dirname, '..', 'scripts', 'graph-layout.js'), 'utf8'),
   { filename: 'graph-layout.js' }
 );
 const GL = globalThis.TrackGraphLayout;

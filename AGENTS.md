@@ -61,17 +61,19 @@ Active files:
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
 | `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, an explanation, and source-dump tags |
-| `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
-| `theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
-| `schema.js` | The canonical slot definition (`window.TrackSchema`): the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
-| `storage-guard.js` | The one `track_db` load boundary (`loadDB` — parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, both banners (`window.TrackStorage`) |
-| `firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
-| `true-storage-core.js` | The one definition of the storage↔source-dump relationship (`window.TrackTrueStorage`): the pair matcher, the pure tag writers, and the parent/child tree |
-| `graph-layout.js` | The one radial canvas layout (`window.TrackGraphLayout`): `computeLayerLayout`, `applyRepulsion`, and the cycle guards that keep a parent cycle from blowing the stack on either canvas page |
-| `schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format (`window.TrackSchedulePaste`): `parseScheduleText`, `formatScheduleText`, and the day/time cell readers. Holds NO date code, which is why its suite runs once rather than swept |
-| `doc-table-core.js` | The one definition of a documentation table's shape (`window.TrackDocTable`): `mergeMap`, the pure merge writers, and the `::: track-table` paste format in both directions |
-| `notes-widget.js` | Per-slot floating notes |
-| `styles.css` | Shared design tokens, themes, responsive styling, and component states |
+| `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
+| `scripts/theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
+| `scripts/schema.js` | The canonical slot definition (`window.TrackSchema`): the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
+| `scripts/storage-guard.js` | The one `track_db` load boundary (`loadDB` — parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, both banners (`window.TrackStorage`) |
+| `scripts/firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
+| `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship (`window.TrackTrueStorage`): the pair matcher, the pure tag writers, and the parent/child tree |
+| `scripts/graph-layout.js` | The one radial canvas layout (`window.TrackGraphLayout`): `computeLayerLayout`, `applyRepulsion`, and the cycle guards that keep a parent cycle from blowing the stack on either canvas page |
+| `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format (`window.TrackSchedulePaste`): `parseScheduleText`, `formatScheduleText`, and the day/time cell readers. Holds NO date code, which is why its suite runs once rather than swept |
+| `scripts/doc-table-core.js` | The one definition of a documentation table's shape (`window.TrackDocTable`): `mergeMap`, the pure merge writers, and the `::: track-table` paste format in both directions |
+| `scripts/notes-widget.js` | Per-slot floating notes |
+| `styles/styles.css` | Shared design tokens, themes, responsive styling, and component states |
+| `docs/` | User-facing paste specifications and design/concept documents |
+| `assets/images/` | Documentation and concept imagery; not runtime application assets |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
 | `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
@@ -87,11 +89,11 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded with a `?v=N` cache-busting query (`styles.css?v=8`, `schema.js?v=7`, `calendar-core.js?v=7`, `firebase-sync.js?v=2`, `storage-guard.js?v=2`, `notes-widget.js?v=2`, `true-storage-core.js?v=2`, `graph-layout.js?v=1`, `doc-table-core.js?v=3`, `schedule-paste-core.js?v=1`, `theme.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
+Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=9`, `scripts/schema.js?v=7`, `scripts/calendar-core.js?v=7`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-widget.js?v=2`, `scripts/true-storage-core.js?v=2`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=1`, `scripts/theme.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
 
 A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
 than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,
-which is *after* every page's `<link rel="stylesheet" href="styles.css">`, so a one-class
+which is *after* every page's `<link rel="stylesheet" href="styles/styles.css">`, so a one-class
 selector like `.docs-sidebar-full` merely **ties** `.w-60`/`.p-2`/`.hidden` and loses on source
 order. Double it (`.docs-sidebar.docs-sidebar-full`) or reach the element through a descendant
 or attribute selector; do not reach for `!important`, which the print block already uses for a
@@ -286,6 +288,48 @@ Four rules follow, and the first is the load-bearing one:
   `formatTableText` / `parseTableText`. That format is a transcription of a picture and
   has no business carrying widths.
 
+A `table` block may also carry `align` — per-cell alignment, `[{r, c, h, v}]` with `h` ∈
+`left|center|right` and `v` ∈ `top|middle|bottom`, either absent — and `head` / `headCol`,
+how many leading rows and columns draw as headers. Five rules follow, and the first two
+are the load-bearing ones:
+
+- **`align` is the `merges` shape exactly**: a parallel list keyed by coordinate, never a
+  promotion of cells to objects — `rows: [[string]]` is a contract every stored table and
+  both whole-block `deepEqual` browser cases rest on. Absence is the default and
+  `withAlign` deletes the key when the list empties; `alignAt` is the one reader, and no
+  call site spells an `align.find(…)`. An entry on a covered cell is KEPT, so unmerge
+  restores the alignment along with the text — rule 2 applied to a second field.
+- **The two positional funnels treat `align` DIFFERENTLY, on purpose.** `withRows`
+  re-normalises it against the new BOUNDS — a dropped row takes its alignment with it,
+  because a later row at that index is a different row whose text is not coming back.
+  `moveLine` remaps it against the new INDICES, exactly as it does `merges`. Sending a
+  move through `withRows` leaves every alignment on the coordinate it used to sit at,
+  silently decorating whatever moved in — rule 5's corruption in a second field. Doctored
+  baselines for the two directions fail exactly disjoint case sets.
+- **`head` absent means 1, `headCol` absent means 0** — what tables always drew — and
+  `withHead` DELETES a key at its default, so `head: 1` never becomes a second spelling of
+  absence. Both are clamped **on read** (`headOf`), never on write: a `head: 3` on a table
+  cut to two rows draws two and stays 3, so `+ row` restores it. That is the deliberate
+  difference from `merges`/`colWidths`, which clamp on write because a region pointing off
+  the grid is not drawable; a count carries no geometry. `withRows` therefore does not
+  touch these keys.
+- **`isHeaderCell` is the one definition of what draws bold**, feeding the editor grid and
+  the paste preview through the same `TableGrid` — it replaced a literal `ri === 0`
+  spelled at both sites. Headers are positional by declaration: a row moved to the top
+  BECOMES a header because "the first N rows are headers" is what the field means; per-row
+  identity flags would be the promote-to-objects shape again.
+- The paste format carries both: a pipe-less `head: N` / `headcol: N` directive line
+  inside the fence (any other pipe-less line is still refused, so outside text stays
+  caught), and a markdown separator row's colons set column alignment, expanded to one
+  `align` entry per **drawn** cell. A plain `|---|` row still says nothing, so every
+  pre-existing paste stores the identical bytes. `formatTableText` emits a separator row
+  only for a column whose drawn cells all agree; a lone off-column cell and the whole
+  vertical axis deliberately do not travel — `colWidths`' "transcription of a picture"
+  rule. `blockFromParse` (`documentations.html`) is the one place a parse becomes a block,
+  used by the preview and by Insert, which is what keeps the two from drifting. Neither
+  `align` nor the header counts are validated in `schema.js`, like every other block
+  field; `doc-table-core.js` reads them through helpers that cannot throw.
+
 A table cell is a growing **textarea**, not an `<input>`, because an input is single-line
 by construction and clipped anything longer than its column — on screen and in the printed
 PDF, since this page has no separate print DOM. It goes through the shared `AutoTextarea`,
@@ -343,6 +387,44 @@ A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may
 - `parentIds` and `tags` are deliberately **not** validated in `schema.js` beyond the object-item check every list field gets. `mms` carries the identical `parentIds` exposure and is not validated either, so gating one and not the other would invent an inconsistent rule. `true-storage-core.js` pays for that instead: every nested list is read through a helper that cannot throw, and `buildTree` terminates on a parent cycle.
 
 A storage's `link` is at most **one**, and clearing it **deletes the key** rather than storing `''` — the same absence-is-meaningful rule as a day note's `time`. A storage that never had a link and one whose link was cleared must be the same state.
+
+Colour in the React pages splits in two, and the split is the whole rule. **DATA** —
+`PALETTE`, `SA_COLORS`, `STAGE_COLORS_SIR`, `STAGE_COLORS_SCHED`, `STAGE_RING`,
+`FILL_COLORS`, `REF_COLOR`, the Eisenhower quadrant table, and every stored `mm.color` /
+`action.color` / `item.chipColor` — is categorical or user-chosen and must stay
+**theme-invariant**. **CHROME** is everything else, and in `progress.html` it resolves from
+the five `--color-accent*` tokens through the single `ACCENT` map declared beside `PALETTE`.
+Five rules follow, and the first two are the load-bearing ones:
+
+- **A token's Grit value IS what `styles.css` remaps the matching Tailwind class to**, and the
+  Grit utility rules point *at the tokens* rather than repeating a hex — one definition per
+  role and appearance. Without that, a `text-emerald-400` label and the `#10b981` bar beside it
+  are two different greens under Grit, which is the defect this work existed to remove. A
+  browser case asserts the token equals its class sibling for all five roles.
+- **`ACCENT` holds `var()` strings and never a hex, and both of its failure modes are
+  SILENT** — nothing reaches `realErrors`, so only a test can catch them. `var()` in an SVG
+  *presentation attribute* is dropped by Chrome and the paint falls back to `none`: the arc
+  simply vanishes. Pass colour to SVG through `style={{stroke}}` / `style={{fill}}`, never
+  `stroke=` / `fill=`. And `'var(--x)' + '22'` is an invalid declaration, silently
+  transparent — which is why the `mm.color || '#6366f1'`-style fallbacks stay **literal**:
+  their results feed `color + '22'` concatenations downstream.
+- The two appearances are **not** symmetrical, and Night is not merely "unchanged". Night kept
+  the emerald, amber and cyan the JSX always used because each already cleared 4.5:1 there;
+  indigo (`#6366f1`, 3.43:1) and violet (`#8b5cf6`, 3.62:1) did not, and moved one Tailwind
+  shade lighter to the values their class siblings already render. Accent contrast is asserted
+  in **both** appearances now, computed from the live tokens.
+- **Neutral chrome reuses existing tokens** rather than gaining accent ones: a ring track is
+  `--color-surface-strong`, an empty pip border `--color-border`, a muted value
+  `--color-text-muted`, on-surface text `--color-text`. Judge these by whether they stay
+  PERCEPTIBLE, not by 4.5:1 — a track that clears a text bar is not a track. Measured against
+  the surface they sit on, the Grit ring track went **13.09:1 → 1.27:1** (it was a near-black
+  ring drawn on a pale page — not a subtle track but a black donut) while Night moved
+  1.17 → 1.34, i.e. slightly *more* visible; the empty pip border went 9.23 → 1.73 on Grit and
+  1.66 → 1.73 on Night. The reading that actually matters for a donut is the arc against its
+  own track: **6.46:1 Grit, 4.27:1 Night**.
+- A goal's ring, bar and tab dot are `PALETTE[activeIdx]` and are **supposed** to be indigo for
+  the first goal. Never write a sweeping "nothing in this panel computes to indigo" assertion —
+  `PALETTE[0]` is `#6366f1`. Assert `[data-accent]`-hooked elements only.
 
 Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`. `progress.html`'s `uid()`, `documentations.html`'s `genId()`, `true-storage.html`'s `genId()` and `notes-widget.js`'s `generateId()` are delegates with a local fallback; do not reintroduce a page-local id shape. `sir-ks02.html` keeps its numeric `nid()` counter for its own records — which is also why a storage id must stay a string: a tag holds one id of each kind, and the two counters must never be able to collide. Never rewrite a stored id.
 
@@ -705,16 +787,16 @@ Do not begin a large refactor merely because the current files are large. Refact
 For changes affecting shared JavaScript:
 
 ```bash
-node --check theme.js
-node --check schema.js
-node --check storage-guard.js
-node --check calendar-core.js
-node --check firebase-sync.js
-node --check notes-widget.js
-node --check true-storage-core.js
-node --check graph-layout.js
-node --check doc-table-core.js
-node --check schedule-paste-core.js
+node --check scripts/theme.js
+node --check scripts/schema.js
+node --check scripts/storage-guard.js
+node --check scripts/calendar-core.js
+node --check scripts/firebase-sync.js
+node --check scripts/notes-widget.js
+node --check scripts/true-storage-core.js
+node --check scripts/graph-layout.js
+node --check scripts/doc-table-core.js
+node --check scripts/schedule-paste-core.js
 ```
 
 Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
@@ -2345,6 +2427,126 @@ line at a bare width — do not. See the next section.
   hand-written CONTRACT lists following it. That failure is that feature's to resolve and was
   left alone.
 
+### JSX accents routed through the theme (2026-09-05)
+
+- **No `track_db` change at all.** The slot stays at **24** fields, nothing was added to
+  `SLOT_FIELDS`, and the hand-written CONTRACT lists in `tests/schema.test.js`,
+  `tests/browser.test.js` and `tests/lib/fixture.js` needed no edit — nothing here is
+  persisted, and every case asserts `track_db` untouched by construction (they only read).
+  `styles.css` changed, so `?v=8 → ?v=9` in **all five** pages. The offline suites are
+  untouched and pass identically under all five swept timezones. This task adds **8** browser
+  cases and **10** `data-accent` hooks (9 literal, plus `today-cell` written conditionally);
+  scope was `progress.html` only, by the user's choice.
+- **The defect was measurable, not merely aesthetic, and measuring it first is what shaped the
+  fix.** On the three Grit surfaces the JSX literals ran from **1.43:1** (cyan `#22d3ee`)
+  through amber 1.60, emerald 1.89, violet 3.16 to indigo 3.34 — every one under the 4.5:1 bar
+  this repository already asserts for text. The sharpest single instance: the donut's `0%`
+  label rendered `rgb(226,232,240)` on a `#f1f3ee` surface, which is invisible rather than
+  merely wrong. **Measure before choosing a mechanism** — the numbers are what turned "route
+  these through the theme" into a per-role token table with a test that can fail.
+- **A correction that changed the plan mid-task, and it is the lesson worth carrying.** The
+  approved plan claimed Night needed no fix and would be byte-identical. That was checked
+  against the wrong surface set; re-measuring showed indigo at **3.43:1** and violet at
+  **3.62:1** on the *Night* surfaces too. Three hues genuinely passed and stayed byte-identical;
+  two did not and moved one Tailwind shade lighter. **A claim of "no change here" is a
+  measurement, not a default** — and it was the second measurement, not the first, that was
+  right.
+- **Fail-first, and the hooks landed as their own step.** The `data-accent` hooks went in
+  alone and `node tests/run.js` was run to **all 16 suites green** before one colour moved, so
+  no later failure could be blamed on a missing hook (the TOUCH-sidebar lesson). Then the cases
+  were run against the untouched tree: **6 of the 7 failed**, each on its own named assertion or
+  on `--color-accent-live is undefined` — never on a `waitFor`. The one that passed was the DATA
+  guard, which is what a guard is for.
+- **That first run also caught a defect in this task's own tests, and it is the reason to read
+  the message rather than the count.** A case written as `GUARD: under Night the donut arc
+  renders the indigo it always has` failed with `rgb(79, 70, 229)` where it expected
+  `rgb(99, 102, 241)` — because `DonutChart` picked `#4f46e5` below 50% and `#6366f1` above, and
+  the seed sat at one of three tasks done. A guard that fails against the tree it is supposed to
+  describe is not evidence of a bug; it is a wrong assertion. Combined with the Night contrast
+  correction above, the case was rewritten into `ACCENT: under Night the donut arc brightens to
+  the tuned indigo` and now names both discarded shades explicitly.
+- **Six doctored baselines, each a tree of symlinks plus ONE file.** The runner **prints the
+  served root and the doctored file's md5 beside the repository's, and REFUSES to run if they
+  are byte-identical** — it caught a mis-anchored doctoring attempt on its first use, which is
+  exactly the false all-green this file already records losing a run to. It also verifies the
+  symlink count, after a failed glob served a half-empty tree and every case failed for a
+  reason unrelated to the bug.
+
+  | doctored | fails, alone | on |
+  | --- | --- | --- |
+  | `progress.html` — `DonutChart`'s colour const reverted to the indigo literals | the donut case **and** the Night-arc case | `the donut arc strokes the accent token, not indigo` / `Night: the arc is the tuned indigo-400` |
+  | `progress.html` — **only** the donut ring track back to `stroke=` | the donut case | `the track ring is the surface-strong token` |
+  | `progress.html` — **only** the hero ring track back to `stroke=` | the hero-track case | `the hero track is the surface-strong token` |
+  | `styles/styles.css` — the **Grit** `--color-accent-study` deleted | the contrast case | `worst accent pair is --color-accent-study on --color-surface-muted at 2.03:1` |
+  | `styles/styles.css` — the Grit `.text-cyan-*` rule un-repointed to a stale hex | the class-sibling case | `rgb(31, 85, 96)` vs `rgb(42, 98, 112)` |
+  | `progress.html` — **only** the today outline back to `'1px solid #6366f1'` | the today-outline case | `the today outline is the accent token, not indigo (rgb(99, 102, 241))` |
+
+  The two ring-track baselines are the point: each fails its own copy's case while the other
+  passes, which is the direct proof that two copies of one literal are asserted **separately**
+  and neither can hide behind a passing sibling. Never place any of the six in the repository.
+- **Two cases separate value from relationship, and the Grit-token baseline proves it.** With
+  the Grit `--color-accent-study` deleted the token falls through to its Night value — so the
+  class rule, which now points *at the token*, moves with it and the **class-sibling case still
+  passes** while the contrast case fails. That is not luck; it is the single-definition property
+  working, and it is why both cases exist.
+- **One GUARD case passes on both sides by design.** `GUARD: the hero ring ARC keeps its goal
+  colour in BOTH themes` pins that `heroColor` is `PALETTE[activeIdx]` — a goal's identity, not
+  chrome — and it survived every baseline. It is the thing standing between this work and a
+  later "finish the job" sweep flattening the goal palette. Note the trap it exists to guard:
+  the hero arc is SUPPOSED to be indigo, because `PALETTE[0]` is `#6366f1`. Never write a
+  sweeping "nothing in this panel computes to indigo" assertion — assert `[data-accent]`
+  elements only.
+- Deliberately **not** converted, and the reason is one silent failure mode: the
+  `mm.color || '#6366f1'` fallbacks at six sites feed `color + '22'` / `col + '99'`
+  concatenations downstream, and `'var(--x)' + '22'` is an invalid declaration that renders
+  transparent with nothing in `realErrors`. They stay literal until their consumers are
+  audited. The `${tint}12` day-cell tint and the `#4f46e530` block tint are the same shape.
+- Also **not** converted, and this one is a judgement call rather than a hazard: the two SIR
+  session badges in the day-header strip are three-part triples
+  (`{backgroundColor:'#713f12', color:'#fde047', border:'1px solid #a16207'}` and its emerald
+  twin). Each is internally self-consistent and legible in both appearances because both halves
+  are specified — but a chip needs a `-soft` fill and a border token, and neither
+  `--color-warning-soft` nor a border partner exists. Converting them means widening the token
+  vocabulary, so it belongs with the two canvas pages, not bolted onto this pass.
+- **The completeness check that closed the pass** was a grep of `progress.html` for every
+  accent-family literal. All that remain are the DATA arrays, the six deferred
+  fallback-into-concatenation sites, the two alpha-concat literals and the SIR badges above —
+  i.e. exactly the "do NOT touch" list and nothing that was simply missed. Repeat that grep
+  before claiming this kind of sweep is finished; a converted site is easy to see and a
+  forgotten one is not.
+- **Environment note, and it is the 2026-08-26 diagnosis repeating exactly.** A full run
+  crawled — 146 browser subtests in 12 minutes where the whole suite normally takes 9.5 idle.
+  There was exactly ONE `tests/run.js` alive (mine) and the process count proved nothing;
+  `ps -eo pid,etimes,time,pcpu --sort=-pcpu` named the cause immediately: GNOME's
+  `tracker-extract` at **53.8%** with `tracker-miner-fs` behind it at 16.4%, indexing for
+  twelve minutes. **Read what is burning CPU, not how many test processes exist** — and skip
+  `ps`'s own row, which always reports ~100%.
+- **The repository was restructured by a concurrent session in the middle of this task** —
+  every module moved to `scripts/`, the stylesheet to `styles/`, the format docs to `docs/`.
+  All of this task's edits survived because `git mv` preserves content, and the `?v=9` bump
+  composed with the path change rather than colliding. But the baseline harness broke silently:
+  its `*.js` glob stopped matching at the top level and served a tree with no scripts, which
+  presented as *every case failing*. **A baseline that fails everything is a broken harness
+  until proven otherwise** — a real regression fails a subset.
+- **What was run.** `node tests/run.js` end to end **twice**, and only the second counts. The
+  first passed all 16 suites at 216 browser subtests — but the `md5sum -c` taken across it
+  showed `tests/browser.test.js` had changed while it ran, because this task edited a comment
+  and added its eighth case mid-run. The change was provably inert there (node had already
+  parsed the file), and it would have been easy to reason it away; it was re-run instead. The
+  final run: **all 16 suites pass** — calendar-core and schema under all five swept timezones
+  with identical results, true-storage-core, graph-layout, doc-table-core, schedule-paste-core,
+  cdp-cleanup, and **217 browser subtests, 0 failures**, with `md5sum -c` confirming the tree
+  **byte-identical across the whole run** and `git log --oneline -1` unchanged at both ends.
+  `node --check` passes on all ten modules in `scripts/`.
+- **Not covered, and stated plainly.** `sir-ks02.html` (101 literals) and `true-storage.html`
+  (37) are untouched and still paint their chrome from JSX — see NOTES. Four `[data-accent]`
+  hooks are in place but only some are asserted: `today-cell` is reached through
+  `progress.html#milestones` and covered, while `leaf-pip`, `ms-seg` and `mm-bar` need a view
+  or a seed this task did not build — `toLearn` + `mmTargets` was tried and still left
+  `mmProg.total` at 0 — so those three surfaces rest on code reading plus the shared `ACCENT`
+  map. Print output of the recoloured chrome was **not looked
+  at**. Real touch hardware and the live Firebase project are unverified as ever.
+
 ### A pasted timetable, drawn as a read-only backdrop (2026-09-05)
 
 - The slot went from **23 to 24 fields** — `refSchedules` is a real `SLOT_FIELDS` row, the
@@ -2445,6 +2647,95 @@ line at a bare width — do not. See the next section.
   Timetable row (the backdrop is switchable only from a Documentations calendar block), which
   follows from keeping `ref` out of `CATS` and is a real inconsistency between surfaces. The
   live Firebase project, as ever.
+
+### Aligned cells, and headers by declaration (2026-09-05)
+
+- **No `track_db` slot change at all.** The slot stays at **24** fields — `align`, `head`
+  and `headCol` are item-level keys inside a block inside the existing `docPages` list —
+  so the hand-written CONTRACT lists in `tests/schema.test.js`, `tests/browser.test.js`
+  and `tests/lib/fixture.js` needed no change. `styles.css` was **not** touched:
+  `text-left/center/right` and `align-top/middle/bottom` are Tailwind core utilities and
+  the header styling reuses the exact class string row 0 always had, so the only `?v=`
+  moved is `doc-table-core.js?v=3` → `?v=4` in `documentations.html`, its only loader
+  (the file has since moved to `scripts/` under the separate repository-layout work).
+  Offline cases in `tests/doc-table-core.test.js` go 73 → **103** (still run once, not
+  swept — no date code); this task adds **three** browser cases. Both halves of NOTES
+  Proposal 16 landed in ONE change, which was the proposal's own condition — the paste
+  spec migrated once, and `TABLE-PASTE.md`, the in-page `TABLE_AI_BRIEF` and the token
+  table were rewritten in the same edit.
+- **Fail-first, offline: 30 cases against the untouched tree — 28 failed, and the two
+  that passed are the point.** `GUARD: a table that was never aligned gains no align key
+  from withRows` and `GUARD: a table with no alignment gains no align key from a move`
+  assert an ABSENCE, which is trivially true before the feature exists — they became
+  meaningful only after it. Of the 28, most died on `T.alignAt is not a function`, which
+  is just what a new export looks like; the load-bearing failures were the ones landing on
+  real assertions against functions that already existed — `withRows` (the BOUNDS case),
+  `moveLine` (both INDICES cases), and the parse/format/round-trip cases. The
+  module-surface case caught the seven new exports, exactly as it is for.
+- **Fail-first: four doctored baselines, and both pairs of failure sets are exactly
+  DISJOINT.** Each was a scratch tree of symlinks plus ONE doctored `doc-table-core.js`;
+  offline baselines carried a REAL copy of `tests/` (the realpath trap), browser baselines
+  ran the repository's suite with only the HTTP server pointed at the tree; every runner
+  prints the root it serves and REFUSES a tree byte-identical to the repository:
+
+  | doctored | fails, alone | on |
+  | --- | --- | --- |
+  | `moveLine` skips the align remap (the `withRows` trap) | the INDICES case and the COLUMN-move case | `r: 0` where `r: 1` was expected |
+  | `withRows` never re-normalises align | the BOUNDS case | a dropped row's entry surviving |
+  | `isHeaderCell` reverted to the old `r === 0` literal | the header case and the paste case | `'110000' !== '111100'`, and the preview's `data-head` map |
+  | `withAlign` always writes, never deletes | the align case AND the PRE-EXISTING `a pasted table with nothing merged is stored with NO merges key` | `Object.keys` gaining `align` |
+
+  That last row is the finding worth keeping: the existing whole-shape guard
+  (`Object.keys === ['id','type','rows']`) failed against a doctored NEW field with no
+  edit to itself — the old case genuinely covers the new fields, rather than merely
+  coexisting with them.
+- **A defect in this task's own test, the padding-vs-meaning shape.** The separator-row
+  case asserted `/---:/` where the product emits `--:` for a narrow column — the dash
+  count is padding to the column's width, so the case pinned the RENDERING of a statement
+  rather than the statement. It asserts a re-parse of the emitted text now. Generalise:
+  when an output is padded for legibility, assert what it parses back to, never its
+  spelling.
+- **A tooling defect that reproduced the leak shape this file already records.** The
+  ONLY_PATTERN preload (rebuilt per the 2026-08-23 note; it turned a ~14-minute iteration
+  into ~30 seconds) first wrapped the TestContext in `Object.create(t)` — and
+  `t.after` reads a private field, so it threw `Cannot read private member #test`,
+  AFTER `Browser.launch()` and BEFORE the after-hook registration. Result: a node process
+  alive forever on a live CDP connection, killed by explicit PID. The fix is a Proxy that
+  binds every method to the REAL context. A wrapper around an object with private fields
+  must delegate `this`, not inherit.
+- **Every documented example still parses — 9 of them, 0 rejected** (8 in `TABLE-PASTE.md`
+  including the new two-row-header worked example, plus the block inside
+  `TABLE_AI_BRIEF`), fed through `parseTableText` from a task-owned script that cannot be
+  re-run from `node tests/run.js`. Its first run rejected example 1 — the checker had kept
+  the blockquote `> ` prefixes no rendered chat ever shows. The checker was wrong, not the
+  example; strip the quoting a reader never sees before feeding a parser.
+- What the browser cases assert beyond the reversals: an alignment write leaves `rows`,
+  `merges` and `colWidths` byte-identical in the same block (the seed carries all three);
+  toggling the last alignment off DELETES the key; the header cycle stores `head: 2` and
+  `head: 0` as real values and stores `head: 1` / `headCol: 0` as ABSENCE; `head: 0`
+  draws no header at all; a pasted `head: 2` plus a colon-carrying separator row reach
+  `track_db` expanded per drawn cell, with the PREVIEW asserted first — it renders the
+  same `blockFromParse` block Insert stores; and none of the six alignment buttons nor
+  either header cycler raises a dialog, pinning their place beside merge, unmerge and a
+  line move in the destructive-control rule's exemptions.
+- All **19** pre-existing table-section browser cases pass against the change (run
+  narrowed, then again in the full suite), which covers the two whole-block `deepEqual`
+  cases and the merge/move/width machinery the new fields ride beside.
+- **Environment note — the `f29f3cf` hazard, live again.** Another session was landing
+  the theme-accent work (`data-accent` hooks in `progress.html`, ACCENT browser cases)
+  throughout this task, and this task's first full-suite run was killed on purpose:
+  `formatTableText` was reworked to a single `normalizeAlign` pass WHILE the run was in
+  flight, and a run against code since edited is not a run. The md5-before/after
+  discipline is what made that visible rather than believed.
+- **Not covered, and stated plainly.** Real touch hardware: the alignment and header
+  buttons live in the same editor-body `.doc-chrome` strip as every other table control,
+  which has no `@media (hover: none)` fallback — so on a touch device they are unreachable
+  exactly as the merge and move buttons already were; that gap is pre-existing and this
+  change widens what it hides. Print output was reasoned, not printed: the blanket flatten
+  forces `color` and `background` only, so bold headers, `text-align` and
+  `vertical-align` all survive by construction — but nobody has printed an aligned or
+  two-row-header table. The live Firebase project, as ever. And `formatTableText` still
+  has no page call site, so the round trip is pinned offline and exercised by no UI.
 
 ### Confirmation on every destructive control (2026-08-18)
 

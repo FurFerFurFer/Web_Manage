@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Progress & Schedule</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
-  <script src="theme.js?v=1"></script>
-  <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=7"></script>
+  <script src="scripts/theme.js?v=1"></script>
+  <script src="scripts/storage-guard.js?v=2"></script>
+  <script src="scripts/schema.js?v=7"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="firebase-sync.js?v=2"></script>
+  <script src="scripts/firebase-sync.js?v=2"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles.css?v=8">
+  <link rel="stylesheet" href="styles/styles.css?v=9">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -1371,6 +1371,32 @@
 
     const SIR_INTERVALS = [1, 3, 7, 14, 30];
     const PALETTE = ["#6366f1","#ec4899","#f59e0b","#10b981","#3b82f6","#8b5cf6","#14b8a6","#f97316","#06b6d4","#a3e635"];
+
+    /* UI-accent defaults, resolved from the theme (styles.css). These are
+       CHROME, not data — PALETTE above and SA_COLORS / STAGE_COLORS_* /
+       mm.color / action.color / chipColor below are user-chosen or categorical
+       and must stay theme-invariant. Each token's Grit value equals what
+       styles.css remaps the matching Tailwind class to (the remap rules point
+       at the same tokens), so a literal and its class sibling cannot disagree.
+       Two rules keep these safe:
+       - they hold var() strings and NEVER a hex, so they work in a style={{}}
+         value and NEVER in an SVG presentation attribute — pass colour to SVG
+         through style={{stroke}}/style={{fill}}, where Chrome resolves var();
+       - never CONCATENATE one with an alpha suffix ('var(--x)' + '22' is an
+         invalid declaration, silently transparent). That is why the
+         `mm.color || '#6366f1'`-style fallbacks stay literal: their results
+         feed `color + '22'` concatenations downstream. */
+    const ACCENT = {
+      progress:  'var(--color-accent)',
+      done:      'var(--color-accent-done)',
+      pending:   'var(--color-accent-pending)',
+      study:     'var(--color-accent-study)',
+      live:      'var(--color-accent-live)',
+      track:     'var(--color-surface-strong)',
+      empty:     'var(--color-border)',
+      muted:     'var(--color-text-muted)',
+      onSurface: 'var(--color-text)',
+    };
     const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     const MILESTONE_CAL_START = "2026-01-01";
     const MILESTONE_CAL_END   = "2033-12-31";
@@ -1649,31 +1675,31 @@
       const cx   = 32, cy = 32;
       const circ = 2 * Math.PI * r;
       const fill = circ * pct;
-      const color = full ? '#10b981' : pct > 0.5 ? '#6366f1' : '#4f46e5';
+      const color = full ? ACCENT.done : ACCENT.progress;
 
       return (
         <svg width={64} height={64} viewBox="0 0 64 64" className="flex-shrink-0">
-          <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1e293b" strokeWidth={8} />
+          <circle data-accent="donut-track" cx={cx} cy={cy} r={r} fill="none" strokeWidth={8} style={{ stroke: ACCENT.track }} />
           {pct > 0 && (
             <circle
+              data-accent="donut-arc"
               cx={cx} cy={cy} r={r}
               fill="none"
-              stroke={color}
               strokeWidth={8}
               strokeLinecap="round"
               strokeDasharray={`${fill} ${circ - fill}`}
               transform={`rotate(-90 ${cx} ${cy})`}
-              style={{ transition: 'stroke-dasharray 0.5s ease' }}
+              style={{ stroke: color, transition: 'stroke-dasharray 0.5s ease' }}
             />
           )}
-          <text x={cx} y={cy - 5} textAnchor="middle" dominantBaseline="middle"
+          <text data-accent="donut-pct" x={cx} y={cy - 5} textAnchor="middle" dominantBaseline="middle"
             fontSize={11} fontWeight="bold" fontFamily="monospace"
-            fill={full ? '#10b981' : '#e2e8f0'}>
+            style={{ fill: full ? ACCENT.done : ACCENT.onSurface }}>
             {Math.round(pct * 100)}%
           </text>
-          <text x={cx} y={cy + 9} textAnchor="middle" dominantBaseline="middle"
+          <text data-accent="donut-sub" x={cx} y={cy + 9} textAnchor="middle" dominantBaseline="middle"
             fontSize={8} fontFamily="monospace"
-            fill={full ? '#6ee7b7' : '#6b7280'}>
+            style={{ fill: full ? ACCENT.done : ACCENT.muted }}>
             {done}/{total}
           </text>
         </svg>
@@ -1686,7 +1712,7 @@
       const pct     = total === 0 ? 0 : (done / total) * 100;
       const full    = done >= total && total > 0;
       const barH    = slim ? 'h-1' : 'h-1.5';
-      const color   = full ? '#10b981' : '#6366f1';
+      const color   = full ? ACCENT.done : ACCENT.progress;
 
       return (
         <div className="flex items-center gap-2 w-full">
@@ -1776,7 +1802,7 @@
       const { done, total } = countProgress(node, resolveLink);
       const pct = total === 0 ? 0 : Math.round((done / total) * 100);
       const full = done === total && total > 0;
-      const displayColor = full ? '#10b981' : goalColor;
+      const displayColor = full ? ACCENT.done : goalColor;
 
       function collectLeaves(n) {
         const resolved = resolveLinkedTask(n, goals);
@@ -1819,11 +1845,13 @@
             <div className="flex flex-wrap gap-1">
               {leaves.map((leaf, i) => (
                 <div key={leaf.id || i}
+                  data-accent="leaf-pip"
+                  data-accent-done={leaf.done ? '1' : '0'}
                   className="rounded-sm transition-all duration-300"
                   style={{
                     width: 14, height: 14,
                     backgroundColor: leaf.done ? displayColor : 'transparent',
-                    border: `1.5px solid ${leaf.done ? displayColor : '#374151'}`,
+                    border: `1.5px solid ${leaf.done ? displayColor : ACCENT.empty}`,
                     opacity: leaf.done ? 1 : 0.5,
                   }}
                 />
@@ -1953,8 +1981,10 @@
               <div className="absolute inset-0 flex pointer-events-none" style={{ gap: 1 }}>
                 {Array.from({ length: goalVal }, (_, i) => (
                   <div key={i} className="flex-1"
+                    data-accent="ms-seg"
+                    data-accent-filled={currentVal > i ? '1' : '0'}
                     style={{
-                      backgroundColor: currentVal > i ? (done ? '#10b981' : '#6366f1') : '#374151',
+                      backgroundColor: currentVal > i ? (done ? ACCENT.done : ACCENT.progress) : ACCENT.empty,
                       borderRadius: i === 0 ? '3px 0 0 3px' : i === goalVal - 1 ? '0 3px 3px 0' : 0,
                     }}
                   />
@@ -1982,7 +2012,7 @@
                       </div>
                     </div>
                   )}
-                  <div style={{ width: 2, height: 22, backgroundColor: '#6366f1', borderRadius: 1, opacity: 0.5 }} />
+                  <div style={{ width: 2, height: 22, backgroundColor: ACCENT.progress, borderRadius: 1, opacity: 0.5 }} />
                 </div>
               )}
 
@@ -2040,7 +2070,7 @@
                     <div style={{
                       width: isDragging ? 2 : 1,
                       height: 22,
-                      backgroundColor: met ? '#10b981' : '#22d3ee',
+                      backgroundColor: met ? ACCENT.done : ACCENT.live,
                       borderRadius: 1,
                       opacity: isHov || isDragging ? 1 : 0.75,
                     }} />
@@ -2804,15 +2834,15 @@
                     return (
                       <div className="flex-shrink-0 flex flex-col items-center mt-0.5" title="Auto-completes when MM targets are met">
                         <svg width={36} height={36} viewBox="0 0 36 36">
-                          <circle cx={18} cy={18} r={14} fill="none" stroke="#1e293b" strokeWidth={4}/>
+                          <circle cx={18} cy={18} r={14} fill="none" strokeWidth={4} style={{stroke: ACCENT.track}}/>
                           <circle cx={18} cy={18} r={14} fill="none"
-                            stroke={allMet ? '#10b981' : '#f59e0b'} strokeWidth={4}
+                            strokeWidth={4}
                             strokeLinecap="round"
                             strokeDasharray={`${(metCount/targets.length)*2*Math.PI*14} ${2*Math.PI*14}`}
                             transform="rotate(-90 18 18)"
-                            style={{transition:'stroke-dasharray 0.4s ease'}}/>
+                            style={{stroke: allMet ? ACCENT.done : ACCENT.pending, transition:'stroke-dasharray 0.4s ease'}}/>
                           <text x={18} y={18} textAnchor="middle" dominantBaseline="middle"
-                            fontSize={allMet?11:9} fill={allMet?'#10b981':'#f59e0b'} fontWeight="bold" fontFamily="monospace">
+                            fontSize={allMet?11:9} style={{fill: allMet?ACCENT.done:ACCENT.pending}} fontWeight="bold" fontFamily="monospace">
                             {allMet ? '✓' : `${metCount}/${targets.length}`}
                           </text>
                         </svg>
@@ -3439,7 +3469,7 @@
       const prog = countProgress(node, resolveLink);
       const pct  = prog.total ? Math.round(prog.done / prog.total * 100) : 0;
       const full = prog.done === prog.total && prog.total > 0;
-      const displayColor = full ? '#10b981' : goalColor;
+      const displayColor = full ? ACCENT.done : goalColor;
       const r = 52, circ = 2 * Math.PI * r;
 
       const isGoalLike      = !((node.children || []).some(c => c.isSubGoal));
@@ -3489,7 +3519,7 @@
       const uniqueTotal  = uniqueLeaves.length;
       const uniquePct    = uniqueTotal ? Math.round(uniqueDone / uniqueTotal * 100) : 0;
       const uniqueFull   = uniqueDone === uniqueTotal && uniqueTotal > 0;
-      const uniqueColor  = uniqueFull ? '#10b981' : goalColor;
+      const uniqueColor  = uniqueFull ? ACCENT.done : goalColor;
 
       // Per-subgoal MM targets helper
       function subGoalMmProg(sg) {
@@ -3555,13 +3585,13 @@
           <div className="flex items-center gap-6">
             <div className="relative flex-shrink-0">
               <svg width={130} height={130} viewBox="0 0 130 130">
-                <circle cx={65} cy={65} r={r} fill="none" stroke="#1e293b" strokeWidth={14}/>
-                <circle cx={65} cy={65} r={r} fill="none"
-                  stroke={heroColor} strokeWidth={14}
+                <circle data-accent="hero-track" cx={65} cy={65} r={r} fill="none" strokeWidth={14} style={{ stroke: ACCENT.track }}/>
+                <circle data-accent="hero-arc" cx={65} cy={65} r={r} fill="none"
+                  strokeWidth={14}
                   strokeLinecap="round"
                   strokeDasharray={`${(heroPct / 100) * circ} ${circ}`}
                   transform="rotate(-90 65 65)"
-                  style={{ transition: 'stroke-dasharray 0.6s ease' }}/>
+                  style={{ stroke: heroColor, transition: 'stroke-dasharray 0.6s ease' }}/>
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <span className="text-3xl font-black tabular-nums leading-none" style={{ color: heroColor }}>{heroPct}%</span>
@@ -3570,9 +3600,9 @@
             </div>
             <div className="flex flex-col gap-2.5 flex-1">
               <div className="flex gap-2">
-                <StatCard label="TOTAL"  value={heroProg.total}                         color="#6b7280" />
+                <StatCard label="TOTAL"  value={heroProg.total}                         color={ACCENT.muted} />
                 <StatCard label="DONE"   value={heroProg.done}                          color={heroColor} />
-                <StatCard label="LEFT"   value={heroProg.total - heroProg.done}         color={heroProg.total - heroProg.done === 0 ? '#10b981' : '#f59e0b'} />
+                <StatCard label="LEFT"   value={heroProg.total - heroProg.done}         color={heroProg.total - heroProg.done === 0 ? ACCENT.done : ACCENT.pending} />
               </div>
               <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
                 <div className="h-full rounded-full transition-all duration-500"
@@ -3592,19 +3622,19 @@
                     const sp = countProgress(sg, resolveLink);
                     const spPct = sp.total ? Math.round(sp.done / sp.total * 100) : 0;
                     const spFull = sp.done === sp.total && sp.total > 0;
-                    const spColor = spFull ? '#10b981' : goalColor;
+                    const spColor = spFull ? ACCENT.done : goalColor;
                     const sgMm = subGoalMmProg(sg);
                     return (
                       <div key={sg.id} className="flex items-center gap-4 px-3 py-2.5 rounded-xl bg-gray-900/40">
                         <div className="relative flex-shrink-0">
                           <svg width={70} height={70} viewBox="0 0 70 70">
-                            <circle cx={35} cy={35} r={rS} fill="none" stroke="#1e293b" strokeWidth={8}/>
+                            <circle cx={35} cy={35} r={rS} fill="none" strokeWidth={8} style={{stroke: ACCENT.track}}/>
                             <circle cx={35} cy={35} r={rS} fill="none"
-                              stroke={spColor} strokeWidth={8}
+                              strokeWidth={8}
                               strokeLinecap="round"
                               strokeDasharray={`${(spPct / 100) * circS} ${circS}`}
                               transform="rotate(-90 35 35)"
-                              style={{ transition: 'stroke-dasharray 0.5s ease' }}/>
+                              style={{ stroke: spColor, transition: 'stroke-dasharray 0.5s ease' }}/>
                           </svg>
                           <div className="absolute inset-0 flex items-center justify-center">
                             <span className="text-sm font-bold tabular-nums leading-none" style={{ color: spColor }}>{spPct}%</span>
@@ -3647,7 +3677,7 @@
                     <span className="flex-shrink-0 w-3 h-3 rounded-sm transition-all"
                       style={{
                         backgroundColor: leaf.completed ? uniqueColor : 'transparent',
-                        border: `1.5px solid ${leaf.completed ? uniqueColor : '#4b5563'}`,
+                        border: `1.5px solid ${leaf.completed ? uniqueColor : ACCENT.empty}`,
                       }} />
                     <span className={`text-xs flex-1 truncate ${leaf.completed ? 'line-through text-gray-600' : 'text-gray-300'}`}>
                       {leaf.title}
@@ -3670,7 +3700,8 @@
               {mmProg.total > 0 && (
                 <div className="h-2 bg-gray-800 rounded-full overflow-hidden mb-2">
                   <div className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${Math.round(mmProg.done/mmProg.total*100)}%`, backgroundColor: mmProg.done === mmProg.total ? '#10b981' : '#8b5cf6' }} />
+                    data-accent="mm-bar"
+                    style={{ width: `${Math.round(mmProg.done/mmProg.total*100)}%`, backgroundColor: mmProg.done === mmProg.total ? ACCENT.done : ACCENT.study }} />
                 </div>
               )}
               <div className="flex flex-col gap-1">
@@ -3734,7 +3765,7 @@
             }, { done: 0, total: 0 });
             const pct = progress.total ? Math.round(progress.done / progress.total * 100) : 0;
             const full = progress.total > 0 && progress.done >= progress.total;
-            const progressColor = progress.total === 0 ? '#6b7280' : full ? '#10b981' : '#06b6d4';
+            const progressColor = progress.total === 0 ? ACCENT.muted : full ? ACCENT.done : ACCENT.live;
             return {
               key: `${owner.id}|${m.id}`,
               group,
@@ -3842,7 +3873,7 @@
         const done = isLeaf
           ? !!task.completed
           : progress && progress.total > 0 && progress.done >= progress.total;
-        const markerColor = done ? '#10b981' : task.taskType === 'routine' ? '#f59e0b' : '#6b7280';
+        const markerColor = done ? ACCENT.done : task.taskType === 'routine' ? ACCENT.pending : ACCENT.muted;
         const textClass = done ? 'line-through text-gray-600' : !isLeaf ? 'text-gray-300 font-semibold' :
           isActive ? (task.taskType === 'routine' ? 'text-amber-400' : 'text-gray-200') :
           (task.taskType === 'routine' ? 'text-amber-500' : 'text-gray-400');
@@ -3903,10 +3934,11 @@
                 return (
                   <div key={ds}
                     ref={isToday ? todayCellRef : null}
+                    data-accent={isToday ? 'today-cell' : undefined}
                     className="min-h-[92px] p-1.5 flex flex-col cursor-default"
                     style={{
                       backgroundColor: active.length ? `${tint}12` : 'var(--color-app-bg)',
-                      outline: selectedActive ? `1px solid ${selectedItem.chipColor}` : isToday ? '1px solid #6366f1' : 'none',
+                      outline: selectedActive ? `1px solid ${selectedItem.chipColor}` : isToday ? `1px solid ${ACCENT.progress}` : 'none',
                       outlineOffset: '-1px',
                     }}>
                     <div className={`text-[10px] mb-1 flex-shrink-0 ${selectedActive ? 'text-white font-bold' : isToday ? 'text-indigo-300 font-bold' : active.length ? 'text-gray-300' : 'text-gray-600'}`}>
@@ -4003,16 +4035,16 @@
                                       <span className="w-5 text-[10px] text-gray-600 tabular-nums flex-shrink-0">{(item?.idx || 0) + 1}.</span>
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2 min-w-0">
-                                          <span className="text-xs font-semibold truncate" style={{ color: item?.chipColor || '#06b6d4' }}>{m.title}</span>
+                                          <span className="text-xs font-semibold truncate" style={{ color: item?.chipColor || ACCENT.live }}>{m.title}</span>
                                           {item?.blocks.length > 1 && <span className="text-[9px] text-gray-600 flex-shrink-0">{item.blocks.length} blocks</span>}
                                           <span className="text-[9px] text-gray-700 truncate">{dateLabel}</span>
                                         </div>
                                         <div className="h-1 bg-gray-800 rounded-full overflow-hidden mt-1">
                                           <div className="h-full rounded-full transition-all duration-500"
-                                            style={{ width: `${item?.pct || 0}%`, backgroundColor: item?.progressColor || '#6b7280' }} />
+                                            style={{ width: `${item?.pct || 0}%`, backgroundColor: item?.progressColor || ACCENT.muted }} />
                                         </div>
                                       </div>
-                                      <span className="text-[10px] font-mono tabular-nums flex-shrink-0" style={{ color: item?.progressColor || '#6b7280' }}>
+                                      <span className="text-[10px] font-mono tabular-nums flex-shrink-0" style={{ color: item?.progressColor || ACCENT.muted }}>
                                         {item?.progress.done || 0}/{item?.progress.total || 0}
                                       </span>
                                     </div>
@@ -4150,7 +4182,7 @@
 
       const activeGoal = goals.find(g => g.id === activeGoalId);
       const activeIdx  = goals.findIndex(g => g.id === activeGoalId);
-      const goalColor  = activeGoal ? PALETTE[activeIdx % PALETTE.length] : '#6366f1';
+      const goalColor  = activeGoal ? PALETTE[activeIdx % PALETTE.length] : ACCENT.progress;
 
       return (
         <div className="flex-1 flex flex-col min-h-0">
@@ -4239,7 +4271,7 @@
                     <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                     <span className="max-w-[130px] truncate">{g.title}</span>
                     {p.total > 0 && (
-                      <span className="text-[10px] tabular-nums font-mono" style={{ color: pct === 100 ? '#10b981' : color }}>
+                      <span className="text-[10px] tabular-nums font-mono" style={{ color: pct === 100 ? ACCENT.done : color }}>
                         {pct}%
                       </span>
                     )}
@@ -7243,7 +7275,7 @@
                             />
                             <div className="flex-1 min-w-0">
                               <div className={`text-xs font-semibold truncate leading-tight ${entry.done ? 'line-through opacity-60' : ''}`}
-                                style={{ color: entry.done ? '#6b7280' : action.color }}>
+                                style={{ color: entry.done ? ACCENT.muted : action.color }}>
                                 {action.emoji} {action.title}{saSuffixMap[entry.id] || ''}
                               </div>
                               {height >= 32 && (
@@ -7429,7 +7461,7 @@
                               style={{accentColor:col,marginTop:'3px',width:'12px',height:'12px'}}/>
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-semibold truncate leading-tight"
-                                style={{color:entry.done?'#6b7280':col}}>
+                                style={{color:entry.done?ACCENT.muted:col}}>
                                 ◎ {mm.name}{mmSuffixMap[entry.id] || ''}
                               </div>
                               {height >= 32 && (
@@ -7439,7 +7471,7 @@
                               )}
                               {activeMsTitle && (
                                 <div className="text-[10px] leading-tight font-bold truncate"
-                                  style={{color:'#22d3ee', opacity:0.85}}>
+                                  style={{color:ACCENT.live, opacity:0.85}}>
                                   {activeMsTitle}
                                 </div>
                               )}
@@ -7908,7 +7940,7 @@
                             )}
                             <div className="flex-1 min-w-0">
                               <div className={`text-xs font-semibold truncate leading-tight ${done ? 'line-through opacity-60' : ''}`}
-                                style={{ color: done ? '#6b7280' : col }}>
+                                style={{ color: done ? ACCENT.muted : col }}>
                                 {isNote ? '📌' : '⏰'} {label}
                               </div>
                               {height >= 32 && (
@@ -8689,7 +8721,7 @@
                       return (
                         <button key={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
                           className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? 'bg-cyan-950/50 hover:bg-cyan-900/50' : 'hover:bg-gray-800'}`}>
-                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: isActive ? '#22d3ee' : '#6b7280' }} />
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: isActive ? ACCENT.live : ACCENT.muted }} />
                           <span className={`flex-1 truncate ${isActive ? 'text-cyan-300' : 'text-gray-500'}`}>{mm.name}</span>
                           {msTitle && <span className="text-[9px] text-cyan-400 flex-shrink-0 truncate" style={{maxWidth:80}}>{msTitle}</span>}
                           {stg && <span className={`text-[9px] flex-shrink-0 ${isActive ? 'text-cyan-500' : 'text-gray-600'}`}>{stg}</span>}
@@ -9796,7 +9828,7 @@
                   <div className="w-28 h-1.5 bg-gray-800 rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${pct}%`, backgroundColor: pct === 100 ? '#10b981' : '#6366f1' }}
+                      style={{ width: `${pct}%`, backgroundColor: pct === 100 ? ACCENT.done : ACCENT.progress }}
                     />
                   </div>
                   <span className={`w-8 text-right tabular-nums ${pct === 100 ? 'text-emerald-400' : 'text-gray-600'}`}>
@@ -9885,6 +9917,6 @@
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
-  <script src="notes-widget.js?v=2"></script>
+  <script src="scripts/notes-widget.js?v=2"></script>
 </body>
 </html>

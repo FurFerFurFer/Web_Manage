@@ -42,7 +42,7 @@ const vm = require('node:vm');
 // quietly testing something the browser never does.
 globalThis.window = globalThis;
 vm.runInThisContext(
-  fs.readFileSync(path.join(__dirname, '..', 'schedule-paste-core.js'), 'utf8'),
+  fs.readFileSync(path.join(__dirname, '..', 'scripts', 'schedule-paste-core.js'), 'utf8'),
   { filename: 'schedule-paste-core.js' }
 );
 const T = globalThis.TrackSchedulePaste;
@@ -67,7 +67,7 @@ test('the module constructs no Date, which is why its suite is not swept', () =>
   // Comments are stripped first: this file's own prose explains at length why
   // it constructs no Date, and a check that read the prose would fail on the
   // explanation rather than on the code.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'schedule-paste-core.js'), 'utf8')
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'schedule-paste-core.js'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
   assert.equal(/new Date|Date\.now|getDay\(|toISOString|getTimezoneOffset/.test(src), false,

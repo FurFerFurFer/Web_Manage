@@ -4591,6 +4591,183 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+
+  /* ── per-cell alignment, and configurable headers ─────────────────────────
+     NOTES Proposal 16, both halves in one change so the paste spec migrated
+     once. The rules pinned here:
+
+     - `align` is a PARALLEL LIST keyed by coordinate, like `merges` — `rows`
+       stays [[string]], and toggling the last alignment off DELETES the key.
+     - `head` / `headCol` are stored only away from their defaults (1 and 0),
+       so a table nobody has touched keeps Object.keys ['id','type','rows'] —
+       the existing no-merges paste case is the guard for that half and now
+       guards all four fields at once.
+     - The editor grid and the paste preview draw headers and alignment from
+       ONE definition (isHeaderCell / alignAt through TableGrid); the pasted
+       text carries head directives and a markdown alignment separator row.
+     - None of these controls asks a question: the cell text is untouched and
+       the same click restores what it removed, so they sit beside merge,
+       unmerge and a line move in the destructive-control rule's exemptions. */
+
+  await t.test('aligning a cell stores the coordinate, and the same click takes it back out', async () => {
+    // Merges AND widths in the seed, so the case also proves withAlign spreads
+    // rather than rebuilding — the Preserve Unrelated Fields rule at block level.
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', {
+        title: 'Notes',
+        blocks: [{ id: 'b-1', type: 'table',
+          rows: [['H1', 'H2'], ['a', 'b'], ['c', 'd']],
+          merges: [{ r: 1, c: 0, rs: 2, cs: 1 }], colWidths: [40, 60] }]
+      })] }), hash: '?page=p-1' });
+    await page.waitFor(function () { return !!document.querySelector('.doc-table td textarea'); },
+      { message: 'the table' });
+    const before = page.dialogs.length;
+
+    await page.evaluate(function () {
+      document.querySelector('.doc-table td[data-cell="1,1"] textarea').click();
+    });
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'right' && !b.disabled; });
+    }, { message: 'the align buttons arming on the selected cell' });
+    await page.evaluate(CLICK_SOON_TEXT, 'right');
+
+    const stored = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return (b && b.align) ? b : false;
+    }, { message: 'the alignment reaching track_db' });
+    assert.deepEqual(stored.align, [{ r: 1, c: 1, h: 'right' }],
+      'one entry, keyed by coordinate — rows was not promoted to objects');
+    assert.deepEqual(stored.rows, [['H1', 'H2'], ['a', 'b'], ['c', 'd']],
+      'the cell text is untouched');
+    assert.deepEqual(stored.merges, [{ r: 1, c: 0, rs: 2, cs: 1 }],
+      'and the merge survived the write');
+    assert.deepEqual(stored.colWidths, [40, 60], 'as did the widths');
+
+    assert.match(await page.evaluate(function () {
+      return document.querySelector('.doc-table td[data-cell="1,1"] textarea').className;
+    }), /text-right/, 'the drawn cell follows the stored entry');
+
+    // The same button, pressed again, clears the axis — and clearing the last
+    // axis DELETES the key rather than storing [].
+    await page.evaluate(CLICK_SOON_TEXT, 'right');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return b && !('align' in b);
+    }, { message: 'the align key being deleted, not emptied' });
+
+    assert.equal(page.dialogs.length, before,
+      'alignment asks nothing — the text is untouched and the click restores itself');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the header count draws N rows and a left column, and 1/0 is stored as ABSENCE', async () => {
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', {
+        title: 'Notes',
+        blocks: [{ id: 'b-1', type: 'table', rows: [['H1', 'H2'], ['a', 'b'], ['c', 'd']] }]
+      })] }), hash: '?page=p-1' });
+    await page.waitFor(function () { return !!document.querySelector('.doc-table td textarea'); },
+      { message: 'the table' });
+    const before = page.dialogs.length;
+
+    const drawnHeads = () => page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('.doc-table td'),
+        function (td) { return td.getAttribute('data-head'); }).join('');
+    });
+    assert.equal(await drawnHeads(), '110000',
+      'absence means what the table always did — row 0 is the header');
+
+    // 1 -> 2: both top rows draw as headers, and head: 2 is a real stored value.
+    await page.evaluate(CLICK_SOON_TEXT, 'header rows: 1');
+    const at2 = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return (b && b.head === 2) ? b : false;
+    }, { message: 'head: 2 reaching track_db' });
+    assert.equal('headCol' in at2, false, 'the other axis was left alone');
+    assert.equal(await drawnHeads(), '111100', 'and both rows draw bold');
+
+    // 2 -> 3 -> 0 -> 1: the cycle wraps, head: 0 really means NO header, and
+    // arriving back at 1 DELETES the key rather than storing the default.
+    await page.evaluate(CLICK_SOON_TEXT, 'header rows: 2');
+    await page.evaluate(CLICK_SOON_TEXT, 'header rows: 3');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return b && b.head === 0;
+    }, { message: 'head: 0 reaching track_db' });
+    assert.equal(await drawnHeads(), '000000', 'head: 0 draws no header at all');
+
+    await page.evaluate(CLICK_SOON_TEXT, 'header rows: 0');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return b && !('head' in b);
+    }, { message: 'head: 1 being stored as absence — the key deleted' });
+
+    // The OTHER axis: one header column, drawn down the left.
+    await page.evaluate(CLICK_SOON_TEXT, 'header cols: 0');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var b = ((((db.slots || [])[0] || {}).docPages || [])[0] || {}).blocks[0];
+      return b && b.headCol === 1;
+    }, { message: 'headCol: 1 reaching track_db' });
+    assert.equal(await drawnHeads(), '111010', 'row 0 plus the left column');
+
+    assert.equal(page.dialogs.length, before, 'the header cycle asks nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a pasted head directive and alignment row reach track_db, and the preview drew them', async () => {
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [F.docPage('p-1', { title: 'Notes', blocks: [] })] }), hash: '?page=p-1' });
+
+    await openPasteModal(page, [
+      '::: track-table',
+      'head: 2',
+      '| Region | Q1 |',
+      '|:-------|---:|',
+      '| North  | 50 |',
+      '| South  | 45 |',
+      ':::'
+    ].join('\n'));
+    await page.waitFor(function () { return !!document.querySelector('[data-paste-table-preview]'); },
+      { message: 'the parsed preview' });
+
+    // The preview must ALREADY draw both — it renders the same block Insert
+    // stores, which is the whole reason blockFromParse has one definition.
+    assert.equal(await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-paste-table-preview] td'),
+        function (td) { return td.getAttribute('data-head') + ':' + td.getAttribute('data-align'); }).join(' ');
+    }), '1:left,- 1:right,- 1:left,- 1:right,- 0:left,- 0:right,-',
+      'two header rows, a left column and a right column, before anything is stored');
+
+    await clickInsert(page);
+    const blocks = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var p = (((db.slots || [])[0] || {}).docPages || [])[0];
+      return (p && p.blocks.length) ? p.blocks : false;
+    }, { message: 'the table reaching track_db' });
+
+    assert.equal(blocks[0].head, 2, 'the directive was stored');
+    assert.equal('headCol' in blocks[0], false, 'a directive not given is not stored');
+    assert.deepEqual(blocks[0].align, [
+      { r: 0, c: 0, h: 'left' }, { r: 0, c: 1, h: 'right' },
+      { r: 1, c: 0, h: 'left' }, { r: 1, c: 1, h: 'right' },
+      { r: 2, c: 0, h: 'left' }, { r: 2, c: 1, h: 'right' }
+    ], 'the separator row expanded to the per-cell field, one entry per drawn cell');
+    assert.deepEqual(blocks[0].rows, [['Region', 'Q1'], ['North', '50'], ['South', '45']],
+      'and neither line was stored as data');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('removing a storage tag asks, and Cancel keeps the pair', async () => {
     const page = await open('true-storage.html', { db: tagSeed(), hash: '?storage=ts-1' });
     await page.waitFor(function () { return !!document.querySelector('[data-tag-remove="tg-1"]'); },
@@ -7793,6 +7970,288 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(back.find(function (e) { return e.id === 'rs-w'; }).dow, 1);
     assert.equal(back.find(function (e) { return e.id === 'rs-o'; }).date, MONDAY);
 
+    await page.close();
+  });
+
+  // ── 16. JSX accent literals resolve from the theme ──────────────────────
+  /* The Grit remap layer reaches Tailwind classes and styles.css, never a hex
+     literal in an inline style object or an SVG presentation attribute — so
+     the donut, the ring tracks and their siblings stayed indigo-on-slate on a
+     green page, and some of it failed contrast outright (the donut's "0%" was
+     rgb(226,232,240) on a #f1f3ee surface, and the cyan active marker measured
+     1.43:1). progress.html now routes its UI-accent literals through one
+     ACCENT map of var(--color-accent*) values. DATA colours — PALETTE,
+     SA_COLORS, STAGE_COLORS_*, mm.color, action.color, chipColor — are
+     deliberately untouched, and the GUARD case below is what keeps a later
+     "finish the job" sweep from flattening them. The two Night cases pin the
+     other half of the decision: three hues stayed byte-identical there and two
+     did not, so Night is deliberately NOT "unchanged" and must not be
+     "restored" to the old literals wholesale. */
+
+  /* Resolve any CSS colour (a token's raw value, or a hex) to the browser's
+     rgb() spelling so computed styles compare as strings. An EMPTY input is
+     returned as null rather than resolved: an undefined token would otherwise
+     inherit the page's text colour and hand a contrast case a false pass. */
+  const RESOLVE_COLOR = function (value) {
+    if (!value) return null;
+    var probe = document.createElement('span');
+    document.body.appendChild(probe);
+    probe.style.color = value;
+    var out = getComputedStyle(probe).color;
+    probe.remove();
+    return out;
+  };
+
+  const ACCENT_TOKEN_RGB = function (resolveSrc, name) {
+    var resolve = new Function('return ' + resolveSrc)();
+    return resolve(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+  };
+
+  /* A goal with one of three tasks done, so the DonutChart draws its arc
+     (pct > 0) without being full — the state where the old code picked its
+     indigo shades. */
+  const accentGoalsDb = () => seedDb({
+    goals: [F.task('g-1', {
+      title: 'Root goal',
+      milestones: [F.milestone('ms-1', '2026-03-01', '2026-03-10')],
+      children: [
+        F.task('g-1a', { completed: true }),
+        F.task('g-1b'),
+        F.task('g-1c')
+      ]
+    })]
+  });
+
+  const READ_ACCENT_HOOKS = function () {
+    var out = {};
+    Array.prototype.forEach.call(document.querySelectorAll('[data-accent]'), function (el) {
+      var key = el.getAttribute('data-accent');
+      if (out[key]) return; // the first instance is the asserted one
+      var cs = getComputedStyle(el);
+      out[key] = { stroke: cs.stroke, fill: cs.fill, bg: cs.backgroundColor,
+        dash: el.getAttribute('stroke-dasharray') || cs.strokeDasharray || '' };
+    });
+    return out;
+  };
+
+  await t.test('ACCENT: the progression donut follows the theme under Grit', async () => {
+    const page = await open('progress.html', { db: accentGoalsDb(), extra: { track_theme: 'grit' } });
+    await page.waitFor(function () { return !!document.querySelector('[data-accent="donut-arc"]'); },
+      { message: 'the donut arc (a partially complete parent goal)' });
+
+    const seen = await page.evaluate(READ_ACCENT_HOOKS);
+    const tok = {};
+    for (const name of ['--color-accent', '--color-surface-strong', '--color-text', '--color-text-muted']) {
+      tok[name] = await page.evaluate(ACCENT_TOKEN_RGB, RESOLVE_COLOR.toString(), name);
+    }
+
+    // The claim this case is named for goes first (AGENTS.md: a case asserting
+    // N claims is proven for exactly the one that fired).
+    assert.equal(seen['donut-arc'].stroke, tok['--color-accent'],
+      'the donut arc strokes the accent token, not indigo (' + seen['donut-arc'].stroke + ')');
+    assert.notEqual(seen['donut-arc'].stroke, 'rgb(99, 102, 241)', 'the indigo literal is gone');
+    assert.notEqual(seen['donut-arc'].stroke, 'rgb(79, 70, 229)', 'both indigo shades are gone');
+    assert.equal(seen['donut-track'].stroke, tok['--color-surface-strong'],
+      'the track ring is the surface-strong token, not slate #1e293b');
+    assert.equal(seen['donut-pct'].fill, tok['--color-text'],
+      'the % text is the text token — the old #e2e8f0 was invisible on a Grit surface');
+    assert.equal(seen['donut-sub'].fill, tok['--color-text-muted'],
+      'the done/total sub-label is the muted text token');
+    assert.ok(seen['donut-arc'].dash && seen['donut-arc'].dash !== 'none',
+      'the arc still carries its dasharray — colour moved into style, geometry stayed put');
+
+    await page.close();
+  });
+
+  await t.test('ACCENT: the hero ring TRACK follows the theme under Grit', async () => {
+    const page = await open('progress.html', { db: accentGoalsDb(), extra: { track_theme: 'grit' } });
+    await page.waitFor(function () { return !!document.querySelector('[data-accent="hero-track"]'); },
+      { message: 'the hero progression ring' });
+
+    const seen = await page.evaluate(READ_ACCENT_HOOKS);
+    const surfaceStrong = await page.evaluate(ACCENT_TOKEN_RGB, RESOLVE_COLOR.toString(), '--color-surface-strong');
+    assert.equal(seen['hero-track'].stroke, surfaceStrong,
+      'the hero track is the surface-strong token, not slate (' + seen['hero-track'].stroke + ')');
+
+    await page.close();
+  });
+
+  await t.test('GUARD: the hero ring ARC keeps its goal colour in BOTH themes', async () => {
+    /* heroColor is PALETTE[activeIdx] — the goal's categorical identity, the
+       same value as its tab dot. It is DATA and must stay theme-invariant; a
+       sweep that "finishes the job" by tokenising it trips this case. Passes
+       on both sides of the accent change by design. */
+    const arcOf = async theme => {
+      const page = await open('progress.html', { db: accentGoalsDb(), extra: { track_theme: theme } });
+      await page.waitFor(function () { return !!document.querySelector('[data-accent="hero-arc"]'); },
+        { message: 'the hero arc' });
+      const stroke = (await page.evaluate(READ_ACCENT_HOOKS))['hero-arc'].stroke;
+      await page.close();
+      return stroke;
+    };
+    const grit = await arcOf('grit');
+    const night = await arcOf('dark');
+    assert.equal(grit, 'rgb(99, 102, 241)', 'Grit: the arc is PALETTE[0], untouched by the accent work');
+    assert.equal(night, grit, 'Night agrees — a goal colour is data, not chrome');
+  });
+
+  await t.test('ACCENT: under Night the donut arc brightens to the tuned indigo', async () => {
+    /* Night kept three of the five hues byte-identical, but indigo #6366f1
+       measured 3.43:1 and violet #8b5cf6 3.62:1 on the Night surfaces — below
+       the same bar Grit is held to — so those two moved one Tailwind shade
+       lighter (#818cf8, #a78bfa), the values their class siblings already
+       render in Night. The user chose this over byte-identical Night. This
+       case pins the rendered half of that decision. */
+    const page = await open('progress.html', { db: accentGoalsDb(), extra: { track_theme: 'dark' } });
+    await page.waitFor(function () { return !!document.querySelector('[data-accent="donut-arc"]'); },
+      { message: 'the donut arc under Night' });
+    const arc = (await page.evaluate(READ_ACCENT_HOOKS))['donut-arc'];
+    assert.equal(arc.stroke, 'rgb(129, 140, 248)', 'Night: the arc is the tuned indigo-400');
+    assert.notEqual(arc.stroke, 'rgb(79, 70, 229)', 'the old sub-50% shade is gone');
+    assert.notEqual(arc.stroke, 'rgb(99, 102, 241)', 'and so is the old over-50% shade');
+    await page.close();
+  });
+
+  await t.test("ACCENT: the milestone grid's today outline follows the theme under Grit", async () => {
+    /* The outline sits in the SAME inline style object as a `${tint}12`
+       background that must stay a literal hex — alpha-by-concatenation cannot
+       take a var() — so this pins that the two halves were told apart. */
+    const page = await open('progress.html', { db: accentGoalsDb(), hash: '#milestones', extra: { track_theme: 'grit' } });
+    await page.waitFor(function () { return !!document.querySelector('[data-accent="today-cell"]'); },
+      { message: "the milestone grid's today cell" });
+
+    const cell = await page.evaluate(function () {
+      var el = document.querySelector('[data-accent="today-cell"]');
+      var cs = getComputedStyle(el);
+      return { outline: cs.outlineColor, width: cs.outlineWidth, style: cs.outlineStyle };
+    });
+    const accent = await page.evaluate(ACCENT_TOKEN_RGB, RESOLVE_COLOR.toString(), '--color-accent');
+
+    assert.equal(cell.outline, accent,
+      'the today outline is the accent token, not indigo (' + cell.outline + ')');
+    assert.notEqual(cell.outline, 'rgb(99, 102, 241)', 'the indigo literal is gone');
+    assert.equal(cell.style, 'solid', 'and it is still a 1px solid outline, not dropped');
+    assert.equal(cell.width, '1px');
+
+    await page.close();
+  });
+
+  await t.test('ACCENT: every accent token clears 4.5:1 on the Grit surfaces', async () => {
+    /* The literals these tokens replace measured 1.43:1 (cyan) to 3.54:1
+       (indigo) on Grit. Computed from the live tokens, like the THEME contrast
+       case, so a palette tweak is checked instead of re-recorded. A missing
+       token reports itself as "undefined" rather than resolving to the
+       inherited text colour — which would pass the ratio and hide the gap. */
+    const MEASURE = function () {
+      var cs = getComputedStyle(document.documentElement);
+      var tok = function (n) { return cs.getPropertyValue(n).trim(); };
+      var probe = document.createElement('span');
+      document.body.appendChild(probe);
+      var rgb = function (v) {
+        probe.style.color = v;
+        var m = getComputedStyle(probe).color.match(/[\d.]+/g);
+        return m ? [+m[0], +m[1], +m[2]] : null;
+      };
+      var lum = function (c) {
+        var f = c.map(function (v) {
+          v = v / 255;
+          return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+      };
+      var ratio = function (a, b) {
+        var x = lum(a), y = lum(b);
+        return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+      };
+      var accents = ['--color-accent', '--color-accent-done', '--color-accent-pending',
+        '--color-accent-study', '--color-accent-live'];
+      var surfaces = ['--color-app-bg', '--color-surface', '--color-surface-muted'];
+      var worst = { ratio: 99, pair: null };
+      accents.forEach(function (a) {
+        var rawA = tok(a);
+        if (!rawA) { worst = { ratio: 0, pair: a + ' is undefined' }; return; }
+        surfaces.forEach(function (s) {
+          var x = rgb(rawA), y = rgb(tok(s));
+          if (!x || !y) { worst = { ratio: 0, pair: a + ' did not resolve' }; return; }
+          var r = ratio(x, y);
+          if (r < worst.ratio) worst = { ratio: r, pair: a + ' on ' + s };
+        });
+      });
+      probe.remove();
+      return worst;
+    };
+    const grit = await open('progress.html', { db: seedDb(), extra: { track_theme: 'grit' } });
+    const g = await grit.evaluate(MEASURE);
+    assert.ok(g.ratio >= 4.5,
+      'grit: worst accent pair is ' + g.pair + ' at ' + g.ratio.toFixed(2) + ':1');
+    await grit.close();
+
+    const night = await open('progress.html', { db: seedDb(), extra: { track_theme: 'dark' } });
+    const n = await night.evaluate(MEASURE);
+    assert.ok(n.ratio >= 4.5,
+      'night: worst accent pair is ' + n.pair + ' at ' + n.ratio.toFixed(2) + ':1');
+    await night.close();
+  });
+
+  await t.test('ACCENT: under Grit a JSX accent equals its Tailwind class sibling', async () => {
+    /* The remap layer already decides what indigo/emerald/violet/cyan become
+       under Grit for CLASSES. The tokens must resolve to those same values, or
+       a text-indigo-400 label and the bar beside it end up two different
+       greens. Night is exempt by design: there the classes keep Tailwind's
+       shade-400 values while the tokens keep the old shade-500 literals. */
+    const page = await open('progress.html', { db: seedDb(), extra: { track_theme: 'grit' } });
+    await page.waitFor(function () {
+      var el = document.querySelector('#root'); return !!el && el.children.length > 0;
+    }, { message: 'progress.html mounting' });
+    const pairs = await page.evaluate(function (resolveSrc) {
+      var resolve = new Function('return ' + resolveSrc)();
+      var cs = getComputedStyle(document.documentElement);
+      var tokenRgb = function (n) { return resolve(cs.getPropertyValue(n).trim()); };
+      var classRgb = function (cls) {
+        var probe = document.createElement('span');
+        probe.className = cls;
+        document.body.appendChild(probe);
+        var out = getComputedStyle(probe).color;
+        probe.remove();
+        return out;
+      };
+      return [
+        { token: '--color-accent',         cls: 'text-indigo-400',  t: tokenRgb('--color-accent'),         c: classRgb('text-indigo-400') },
+        { token: '--color-accent-done',    cls: 'text-emerald-400', t: tokenRgb('--color-accent-done'),    c: classRgb('text-emerald-400') },
+        { token: '--color-accent-pending', cls: 'text-amber-400',   t: tokenRgb('--color-accent-pending'), c: classRgb('text-amber-400') },
+        { token: '--color-accent-study',   cls: 'text-violet-400',  t: tokenRgb('--color-accent-study'),   c: classRgb('text-violet-400') },
+        { token: '--color-accent-live',    cls: 'text-cyan-400',    t: tokenRgb('--color-accent-live'),    c: classRgb('text-cyan-400') }
+      ];
+    }, RESOLVE_COLOR.toString());
+    for (const pair of pairs) {
+      assert.ok(pair.t, pair.token + ' is defined');
+      assert.equal(pair.t, pair.c,
+        pair.token + ' matches ' + pair.cls + ' under Grit (' + pair.t + ' vs ' + pair.c + ')');
+    }
+    await page.close();
+  });
+
+  await t.test('ACCENT: the Night tokens fix the two failing hues and keep the other three', async () => {
+    /* The user's decision, pinned: emerald, amber and cyan cleared 4.5:1 in
+       Night already and stay byte-identical; indigo and violet did not and
+       move one Tailwind shade lighter. A later retune that forgets the Night
+       block, or "restores" the old literals wholesale, trips this. */
+    const page = await open('progress.html', { db: seedDb(), extra: { track_theme: 'dark' } });
+    const tokens = await page.evaluate(function (resolveSrc) {
+      var resolve = new Function('return ' + resolveSrc)();
+      var cs = getComputedStyle(document.documentElement);
+      var read = function (n) { return resolve(cs.getPropertyValue(n).trim()); };
+      return {
+        accent: read('--color-accent'), done: read('--color-accent-done'),
+        pending: read('--color-accent-pending'), study: read('--color-accent-study'),
+        live: read('--color-accent-live')
+      };
+    }, RESOLVE_COLOR.toString());
+    assert.equal(tokens.accent, 'rgb(129, 140, 248)', 'Night accent is indigo-400 — #6366f1 measured 3.43:1');
+    assert.equal(tokens.study, 'rgb(167, 139, 250)', 'Night study is violet-400 — #8b5cf6 measured 3.62:1');
+    assert.equal(tokens.done, 'rgb(16, 185, 129)', 'Night done keeps the old emerald #10b981');
+    assert.equal(tokens.pending, 'rgb(245, 158, 11)', 'Night pending keeps the old amber #f59e0b');
+    assert.equal(tokens.live, 'rgb(34, 211, 238)', 'Night live keeps the old cyan #22d3ee');
     await page.close();
   });
 });

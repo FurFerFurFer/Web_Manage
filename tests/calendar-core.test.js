@@ -27,7 +27,7 @@ const F = require('./lib/fixture.js');
 // so a vm context would quietly test something the browser never does.
 globalThis.window = globalThis;
 vm.runInThisContext(
-  fs.readFileSync(path.join(__dirname, '..', 'calendar-core.js'), 'utf8'),
+  fs.readFileSync(path.join(__dirname, '..', 'scripts', 'calendar-core.js'), 'utf8'),
   { filename: 'calendar-core.js' }
 );
 const TC = globalThis.TrackCalendar;

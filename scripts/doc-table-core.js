@@ -66,7 +66,7 @@
       tear one, and why a merged region can only ever travel whole.
 
    The other half of this file is the paste format: the text an AI is asked to
-   emit when it is shown a picture of a table. See TABLE-PASTE.md, which is the
+   emit when it is shown a picture of a table. See docs/TABLE-PASTE.md, which is the
    copy handed to the AI. In brief:
 
        ::: track-table
@@ -119,8 +119,29 @@
 
   /* A markdown alignment row. Skipping it is what lets an ordinary markdown
      table — the thing an AI emits when the picture has no merged cells at all
-     — paste correctly with no extra code. */
+     — paste correctly with no extra code. Its COLONS are read as column
+     alignment, which is free: it is the standard markdown spelling and an AI
+     emits it out of habit. A plain |---|---| carries none and says nothing, so
+     every table that pasted before this still pastes identically. */
   var SEPARATOR_CELL_RE = /^:?-{2,}:?$/;
+
+  /* A directive line, carrying what the grid itself cannot say. It holds NO
+     pipe, which is what makes it unmistakable — every table row carries one,
+     the same property the fence rule already rests on. Only these two spellings
+     are consumed; any other pipe-less line is still the error it always was, so
+     a stray sentence of outside text is caught rather than swallowed. */
+  var DIRECTIVE_RE = /^\s*(head|headcol)\s*[:=]\s*(\d{1,3})\s*$/i;
+
+  /* Which way a separator cell points. `:---` left, `:--:` centre, `---:`
+     right, and a bare `---` says nothing at all. */
+  function separatorAlign(cell) {
+    var left = cell.charAt(0) === ':';
+    var right = cell.charAt(cell.length - 1) === ':';
+    if (left && right) return 'center';
+    if (right) return 'right';
+    if (left) return 'left';
+    return '';
+  }
 
   function isList(v) { return Array.isArray(v); }
   function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
@@ -241,6 +262,190 @@
       if (m.r === r && m.c === c) found = m;
     });
     return found;
+  }
+
+  // ── per-cell alignment ───────────────────────────────────────────────────
+
+  /* A table may carry an alignment per cell:
+
+         { …, align: [{ r, c, h, v }] }
+
+     `h` is 'left' | 'center' | 'right', `v` is 'top' | 'middle' | 'bottom', and
+     either may be absent meaning "inherit the surface's default for that axis".
+     An entry carrying neither says nothing and is dropped.
+
+     A PARALLEL LIST keyed by coordinate, exactly like `merges`, and deliberately
+     NOT a promotion of cells to objects. `rows` keeps its `[[string]]` contract,
+     so every table stored before this field existed keeps its shape byte for
+     byte, the paste format keeps its cell-is-a-string property, and the browser
+     cases that deepEqual a whole block keep meaning something. Promoting cells
+     would have broken all three at once, for a field that DECORATES a cell
+     rather than holding anything.
+
+     Rules 1 and 4 of the header comment govern it unchanged — absence is the
+     default and `withAlign` deletes the key, `alignAt` is the single reader —
+     and so does rule 2, which is worth saying out loud here: an entry on a
+     COVERED cell is KEPT. Merging hides that cell rather than clearing it, so
+     unmerging has to hand the alignment back along with the text, or unmerge is
+     a restore for one field and a recomputed guess for the other. */
+
+  var H_ALIGN = { left: true, center: true, right: true };
+  var V_ALIGN = { top: true, middle: true, bottom: true };
+
+  function rawAlignOf(block) {
+    if (!isMap(block) || !isList(block.align)) return [];
+    return block.align.filter(isMap);
+  }
+
+  function alignWord(v, table) {
+    return (typeof v === 'string' && table[v] === true) ? v : '';
+  }
+
+  /* The one place a stored alignment list is made safe to render. Drops a
+     coordinate off the grid, a value that is not one of the six words, and an
+     entry left saying nothing; first wins on a repeated coordinate, so the
+     result is deterministic rather than dependent on iteration luck. Cannot
+     throw — schema.js validates no block shape at all, by deliberate choice, and
+     this file pays for that. */
+  function normalizeAlign(block) {
+    var size = gridSize(block);
+    var R = size.rows, C = size.cols;
+    var out = [];
+    var taken = Object.create(null);
+
+    rawAlignOf(block).forEach(function (a) {
+      var r = intAt(a.r, -1), c = intAt(a.c, -1);
+      if (r < 0 || c < 0 || r >= R || c >= C) return;
+      if (taken[r + ',' + c]) return;
+
+      var h = alignWord(a.h, H_ALIGN);
+      var v = alignWord(a.v, V_ALIGN);
+      if (!h && !v) return;
+
+      taken[r + ',' + c] = true;
+      var e = { r: r, c: c };
+      if (h) e.h = h;
+      if (v) e.v = v;
+      out.push(e);
+    });
+
+    return out;
+  }
+
+  /* THE single definition of how a cell is aligned. Always an object, so a call
+     site reads `.h` and `.v` without branching, and '' on an axis means "the
+     surface decides". Never spell an `align.find(…)` instead. */
+  function alignAt(block, r, c) {
+    var found = { h: '', v: '' };
+    normalizeAlign(block).forEach(function (a) {
+      if (a.r === r && a.c === c) found = { h: a.h || '', v: a.v || '' };
+    });
+    return found;
+  }
+
+  /* The one writer of `align`, and the one home of its delete-when-empty rule.
+     Spreads the block rather than rebuilding it from a field list, so `merges`,
+     `colWidths` and any key a later version adds all survive. */
+  function withAlign(block, list) {
+    var next = Object.assign({}, block);
+    var norm = normalizeAlign(Object.assign({}, next, { align: isList(list) ? list : [] }));
+    if (norm.length) next.align = norm;
+    else delete next.align;
+    return next;
+  }
+
+  /* Sets ONE axis of ONE cell — or clears it, when the value asked for is
+     already the one stored. That is what lets the same three buttons apply and
+     remove an alignment without a separate "none" nobody would find.
+
+     Nothing is deleted in the sense the destructive-control rule means: the
+     cell's TEXT is untouched and pressing the button again puts the alignment
+     back, so like merge, unmerge and a line move this asks no question.
+
+     Refuses by returning the block unchanged, the contract mergeCells and
+     resizeColumn already use. */
+  function setAlign(block, r, c, axis, value) {
+    var size = gridSize(block);
+    if (!(r >= 0 && c >= 0 && r < size.rows && c < size.cols)) return block;
+
+    var vertical = axis === 'v';
+    var word = alignWord(value, vertical ? V_ALIGN : H_ALIGN);
+    var cur = alignAt(block, r, c);
+    var next = { h: cur.h, v: cur.v };
+    next[vertical ? 'v' : 'h'] = (word && word === (vertical ? cur.v : cur.h)) ? '' : word;
+
+    var kept = normalizeAlign(block).filter(function (a) {
+      return !(a.r === r && a.c === c);
+    });
+    if (next.h || next.v) {
+      var e = { r: r, c: c };
+      if (next.h) e.h = next.h;
+      if (next.v) e.v = next.v;
+      kept.push(e);
+      kept.sort(function (a, b) { return a.r - b.r || a.c - b.c; });
+    }
+    return withAlign(block, kept);
+  }
+
+  // ── header rows and columns ──────────────────────────────────────────────
+
+  /* How many leading rows and columns draw as headers:
+
+         { …, head: n, headCol: n }
+
+     ABSENCE IS THE DEFAULT, and here the default is what the table already did:
+     `head` absent means 1 — row 0 is a header, as it has been since tables
+     existed — and `headCol` absent means 0. `withHead` therefore DELETES a key
+     whose value is the default rather than storing it, so `head: 1` can never
+     become a second spelling of absence and a table nobody has touched keeps
+     `Object.keys` exactly ['id', 'type', 'rows'].
+
+     CLAMPED ON READ, never on write, and that is the deliberate difference from
+     `merges` and `colWidths`. A `head` of 3 on a table cut down to two rows
+     draws two and stays 3 in storage, so `+ row` puts the third back — the same
+     restore-not-guess reasoning that makes merging keep covered text. Those two
+     fields clamp on write because a region pointing off the end is not
+     drawable; a count carries no geometry, so nothing has to be. It is why
+     `withRows` does not touch these keys at all.
+
+     POSITIONAL, and deliberately so. Moving a row to the top MAKES it the
+     header, because "the first n rows are headers" is what a header row is. The
+     alternative is a flag per row, which is the promote-rows-to-objects shape
+     this file rejects for cells, for the same reason. */
+
+  function headOf(block) {
+    var size = gridSize(block);
+    var head = (isMap(block) && block.head !== undefined) ? intAt(block.head, 1) : 1;
+    var col = (isMap(block) && block.headCol !== undefined) ? intAt(block.headCol, 0) : 0;
+    return {
+      head: Math.max(0, Math.min(head, size.rows)),
+      headCol: Math.max(0, Math.min(col, size.cols))
+    };
+  }
+
+  /* THE single definition of what draws as a header, and the reason it lives
+     here rather than in the page: documentations.html renders a table TWICE, in
+     the editor grid and in the paste preview, and those two disagreeing is the
+     exact failure the preview exists to rule out. It used to be a literal
+     `ri === 0` spelled at both sites. */
+  function isHeaderCell(block, r, c) {
+    var h = headOf(block);
+    return r < h.head || c < h.headCol;
+  }
+
+  /* The one writer of both keys and the one home of their delete-at-default
+     rule. Either argument may be null to leave that key alone. */
+  function withHead(block, head, headCol) {
+    var next = Object.assign({}, block);
+    if (head !== null && head !== undefined) {
+      var h = Math.max(0, intAt(head, 1));
+      if (h === 1) delete next.head; else next.head = h;
+    }
+    if (headCol !== null && headCol !== undefined) {
+      var c = Math.max(0, intAt(headCol, 0));
+      if (c === 0) delete next.headCol; else next.headCol = c;
+    }
+    return next;
   }
 
   // ── column widths ────────────────────────────────────────────
@@ -385,7 +590,12 @@
     // column count from the new rows, so a dropped column drops its width and
     // a new one arrives at the average — without any of the four inline
     // + row / − row / + col / − col handlers having to know this field exists.
-    return withColWidths(next);
+    next = withColWidths(next);
+    // And the alignment, against the new BOUNDS: an entry on a row or column
+    // that no longer exists is dropped. `head` and `headCol` are deliberately
+    // NOT touched here — they are clamped on read instead, which is what makes
+    // a removed row reversible. See the header-rows section above.
+    return withAlign(next, normalizeAlign(next));
   }
 
   /* Whether `⇥ merge right` / `⇩ merge down` can act on the focused cell, and
@@ -587,8 +797,23 @@
         : { r: to, c: m.c, rs: m.rs, cs: m.cs };
     }).sort(function (a, b) { return a.r - b.r || a.c - b.c; });
 
+    // Alignment is keyed by coordinate, so it takes the same permutation the
+    // merges do — against the new INDICES, and never through withRows. Miss
+    // this and every alignment stays on the coordinate it used to sit at,
+    // silently decorating whichever cell moved in: the exact corruption rule 5
+    // exists to prevent, in a second field.
+    var nextAlign = normalizeAlign(block).map(function (a) {
+      var to = moved[col ? a.c : a.r];
+      if (to === undefined) return a;
+      var e = { r: col ? a.r : to, c: col ? to : a.c };
+      if (a.h) e.h = a.h;
+      if (a.v) e.v = a.v;
+      return e;
+    }).sort(function (a, b) { return a.r - b.r || a.c - b.c; });
+
     var next = Object.assign({}, block, { rows: nextRows });
     next = withMerges(next, nextMerges);
+    next = withAlign(next, nextAlign);
     // Widths are per COLUMN, so only a column move disturbs them — but both
     // branches go through the one writer, so the delete-when-empty rule keeps
     // its single home either way.
@@ -645,13 +870,17 @@
 
   /* Text in, block data out.
 
-     Returns {ok, rows, merges, errors}. `errors` carry the 1-based line number
+     Returns {ok, rows, merges, align, head, headCol, errors} — `align` already
+     expanded per drawn cell, `head`/`headCol` null when no directive was
+     given so withHead leaves the keys alone. `errors` carry the 1-based line number
      of the pasted text, so the modal can point at the offending row rather
      than saying "that did not work". Nothing is returned as partially-parsed:
      ok === false means insert nothing. */
   function parseTableText(text) {
     var errors = [];
-    var fail = function () { return { ok: false, rows: [], merges: [], errors: errors }; };
+    var fail = function () {
+      return { ok: false, rows: [], merges: [], align: [], head: null, headCol: null, errors: errors };
+    };
 
     if (typeof text !== 'string' || !text.trim()) {
       errors.push({ line: 0, message: 'Nothing to read — paste the block the AI gave you.' });
@@ -660,16 +889,27 @@
 
     var lines = text.replace(/\r\n?/g, '\n').split('\n');
     var kept = [];
+    var directives = Object.create(null);
     lines.forEach(function (line, i) {
       if (!line.trim()) return;
       if (FENCE_RE.test(line)) return;
+      var d = DIRECTIVE_RE.exec(line);
+      if (d) { directives[d[1].toLowerCase()] = parseInt(d[2], 10); return; }
       kept.push({ line: i + 1, cells: splitRow(line) });
     });
 
     // Drop markdown alignment rows wherever they appear, not just at index 1 —
     // this is tolerance, and a stricter rule would only reject tables that are
-    // otherwise perfectly readable.
-    kept = kept.filter(function (row) { return !isSeparatorRow(row.cells); });
+    // otherwise perfectly readable. The FIRST one carrying a colon also says
+    // how its columns line up on the way past; it is still dropped, because it
+    // was never data.
+    var colAlign = null;
+    kept = kept.filter(function (row) {
+      if (!isSeparatorRow(row.cells)) return true;
+      if (!colAlign && row.cells.some(function (c) { return c.indexOf(':') >= 0; }))
+        colAlign = row.cells.map(separatorAlign);
+      return false;
+    });
 
     if (!kept.length) {
       errors.push({ line: 0, message: 'No table rows found. Each row needs cells separated by | pipes.' });
@@ -787,7 +1027,27 @@
       if (rs > 1 || cs > 1) merges.push({ r: box.r, c: box.c, rs: rs, cs: cs });
     });
 
-    return { ok: true, rows: rows, merges: merges, errors: [] };
+    /* Column alignment expands to one entry per DRAWN cell, because the block's
+       field is per-cell by design — the editor aligns one cell at a time, so
+       storing the column case as what it MEANS beats inventing a second,
+       column-shaped field that only the parser would ever write. A covered cell
+       draws nothing, so it is skipped rather than decorated. */
+    var align = [];
+    if (colAlign) {
+      rows.forEach(function (row, r) {
+        row.forEach(function (_, c) {
+          var h = colAlign[c];
+          if (h && owner[r][c] === (r + ',' + c)) align.push({ r: r, c: c, h: h });
+        });
+      });
+    }
+
+    return {
+      ok: true, rows: rows, merges: merges, align: align,
+      head: directives.head === undefined ? null : directives.head,
+      headCol: directives.headcol === undefined ? null : directives.headcol,
+      errors: []
+    };
   }
 
   /* Block data back out to the paste format. Round-trips through
@@ -828,13 +1088,54 @@
       widths.push(w);
     }
 
-    var body = grid.map(function (row) {
-      return '| ' + row.map(function (cell, c) {
+    var line = function (cells) {
+      return '| ' + cells.map(function (cell, c) {
         return cell + new Array(Math.max(0, widths[c] - cell.length) + 1).join(' ');
       }).join(' | ') + ' |';
-    }).join('\n');
+    };
+    var body = grid.map(line);
 
-    return '::: track-table\n' + body + '\n:::';
+    /* Column alignment travels as a markdown separator row, and ONLY for a
+       column whose every drawn cell agrees. The field is per-cell while this
+       format is a transcription of a picture, so a lone centred cell in an
+       otherwise left column has no column-shaped spelling and does not travel —
+       the same call `colWidths` already makes by not travelling at all. Nor
+       does the vertical axis: a picture shows it, markdown has no word for it,
+       and inventing one would cost the AI brief more than the case is worth. */
+    var hAt = Object.create(null);
+    normalizeAlign(block).forEach(function (a) { if (a.h) hAt[a.r + ',' + a.c] = a.h; });
+    var lane = [];
+    var any = false;
+    for (var ci = 0; ci < size.cols; ci++) {
+      var agreed = null;
+      for (var ri = 0; ri < rows.length; ri++) {
+        if (!map[ri] || !map[ri][ci]) continue;          // covered — draws nothing
+        var h = hAt[ri + ',' + ci] || '';
+        if (agreed === null) agreed = h;
+        else if (agreed !== h) { agreed = ''; break; }
+      }
+      if (agreed) any = true;
+      lane.push(agreed || '');
+    }
+    if (any) {
+      body.splice(1, 0, line(lane.map(function (h, c) {
+        var w = Math.max(3, widths[c]);
+        var bar = new Array(w + 1).join('-');
+        if (h === 'center') return ':' + bar.slice(2) + ':';
+        if (h === 'right') return bar.slice(1) + ':';
+        if (h === 'left') return ':' + bar.slice(1);
+        return bar;
+      })));
+    }
+
+    // The directives, and only when they are not the default — the same
+    // delete-at-default rule withHead applies to storage, applied to the text.
+    var h2 = headOf(block);
+    var pre = [];
+    if (h2.head !== 1) pre.push('head: ' + h2.head);
+    if (h2.headCol !== 0) pre.push('headcol: ' + h2.headCol);
+
+    return '::: track-table\n' + pre.concat(body).join('\n') + '\n:::';
   }
 
   global.TrackDocTable = {
@@ -853,6 +1154,13 @@
     moveLine: moveLine,
     gridSize: gridSize,
     rowsOf: rowsOf,
+    alignAt: alignAt,
+    normalizeAlign: normalizeAlign,
+    withAlign: withAlign,
+    setAlign: setAlign,
+    headOf: headOf,
+    isHeaderCell: isHeaderCell,
+    withHead: withHead,
     colWidthsOf: colWidthsOf,
     normalizeColWidths: normalizeColWidths,
     withColWidths: withColWidths,

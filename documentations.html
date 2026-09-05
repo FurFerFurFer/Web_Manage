@@ -5,20 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Documentations</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
-  <script src="theme.js?v=1"></script>
-  <script src="storage-guard.js?v=2"></script>
-  <script src="schema.js?v=7"></script>
-  <script src="calendar-core.js?v=7"></script>
-  <script src="doc-table-core.js?v=3"></script>
-  <script src="schedule-paste-core.js?v=1"></script>
+  <script src="scripts/theme.js?v=1"></script>
+  <script src="scripts/storage-guard.js?v=2"></script>
+  <script src="scripts/schema.js?v=7"></script>
+  <script src="scripts/calendar-core.js?v=7"></script>
+  <script src="scripts/doc-table-core.js?v=4"></script>
+  <script src="scripts/schedule-paste-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="firebase-sync.js?v=2"></script>
+  <script src="scripts/firebase-sync.js?v=2"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles.css?v=8">
+  <link rel="stylesheet" href="styles/styles.css?v=9">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -411,6 +411,16 @@
        paste modal's preview. Both go through TrackDocTable.mergeMap — the ONE
        definition of which cells are drawn and how far they span — so the
        preview cannot disagree with what lands on the page. */
+    /* Alignment and header styling are resolved HERE, once, and handed to
+       whichever surface is drawing — the editor's textarea and the paste
+       preview's div. Each of those used to carry its own literal `ri === 0`,
+       and a preview that disagrees with what gets inserted is the exact failure
+       that preview exists to rule out. The SEMANTICS live in doc-table-core.js
+       (`alignAt`, `isHeaderCell`); only the class names are the renderer's. */
+    const H_CLASS = {left: 'text-left', center: 'text-center', right: 'text-right'};
+    const V_CLASS = {top: 'align-top', middle: 'align-middle', bottom: 'align-bottom'};
+    const HEAD_CLASS = 'font-bold text-gray-100 bg-gray-800/60';
+
     function TableGrid({block, cell, widths, resize}) {
       const DT = window.TrackDocTable;
       const rows = DT.rowsOf(block);
@@ -440,17 +450,26 @@
                 {row.map((text, ci) => {
                   const span = map[ri] && map[ri][ci];
                   if (!span) return null;   // covered by a merge — draw nothing
+                  // Horizontal alignment rides on the inner box with the header
+                  // styling; VERTICAL has to sit on the <td>, because that is
+                  // the element `vertical-align` positions content within.
+                  const al = DT.alignAt(block, ri, ci);
+                  const cls = (DT.isHeaderCell(block, ri, ci) ? HEAD_CLASS : 'text-gray-300')
+                    + (al.h ? ' ' + H_CLASS[al.h] : '');
                   // The boundary this cell's handle moves. A colSpan cell
                   // resizes the LAST column it covers, so every unmerged cell
                   // anywhere in the table offers a handle for its own edge and
                   // no boundary is left unreachable behind a merge.
                   const edge = ci + span.cs - 1;
                   return (
-                    <td key={ci} className="relative border border-gray-700 p-0 align-top"
+                    <td key={ci} className={"relative border border-gray-700 p-0 "
+                        + (V_CLASS[al.v] || V_CLASS.top)}
                       colSpan={span.cs} rowSpan={span.rs}
                       data-cell={ri + ',' + ci}
+                      data-align={(al.h || '-') + ',' + (al.v || '-')}
+                      data-head={DT.isHeaderCell(block, ri, ci) ? '1' : '0'}
                       data-span={span.rs + 'x' + span.cs}>
-                      {cell(text, ri, ci, span)}
+                      {cell(text, ri, ci, span, cls)}
                       {resize && edge + 1 < cols && (
                         <span data-col-handle={edge} title="Drag to resize this column"
                           onPointerDown={e => resize.start(e, edge)}
@@ -543,12 +562,47 @@
       // rather than a guess — which is exactly why neither of those asks first.
       // The row/column removals and the width reset below still do: those DO
       // drop text or clear a stored field.
-      const chromeBtn = (label, title, enabled, onClick) => (
+      const chromeBtn = (label, title, enabled, onClick, active) => (
         <button onClick={onClick} disabled={!enabled} title={title}
-          className={"rounded px-1.5 py-0.5 " + (enabled
-            ? "bg-gray-800 text-gray-400 hover:text-white"
-            : "bg-gray-900 text-gray-700 cursor-not-allowed")}>{label}</button>
+          className={"rounded px-1.5 py-0.5 " + (!enabled
+            ? "bg-gray-900 text-gray-700 cursor-not-allowed"
+            : active
+              ? "bg-sky-900 text-white ring-1 ring-sky-600"
+              : "bg-gray-800 text-gray-400 hover:text-white")}>{label}</button>
       );
+
+      /* The six alignment buttons, three per axis, acting on the selected cell.
+         The active one shows as pressed, and pressing it again clears that axis
+         — setAlign's toggle — so there is no separate "none" to hunt for.
+         Nothing is deleted or cleared in the destructive sense (the cell's text
+         is untouched, and the same click restores what it removed), so like
+         merge, unmerge and a line move these ask no question. */
+      const alSel = selValid ? DT.alignAt(block, sel.r, sel.c) : {h:'', v:''};
+      const alignBtn = (label, axis, value) => chromeBtn(label,
+        selValid
+          ? (alSel[axis] === value
+              ? 'Remove this alignment — the cell goes back to the default'
+              : 'Align the selected cell: ' + label)
+          : 'Click a cell first.',
+        selValid,
+        () => onChange(DT.setAlign(block, sel.r, sel.c, axis, value)),
+        selValid && alSel[axis] === value);
+
+      /* The two header counts, cycling 0 → 1 → … → max → 0. The CAP is a UI
+         choice, not a data rule — headOf clamps only to the grid, so a pasted
+         or hand-edited larger count still renders — chosen because real tables
+         stop at two or three header rows and an unbounded cycle is a worse
+         control than a capped one. */
+      const hd = DT.headOf(block);
+      const headBtn = (label, key, max) => chromeBtn(label + ': ' + hd[key],
+        max > 0
+          ? 'How many leading ' + (key === 'head' ? 'rows' : 'columns')
+            + ' draw as headers — click to cycle 0 to ' + max
+          : 'This table has nothing to make a header of.',
+        max > 0,
+        () => onChange(DT.withHead(block,
+          key === 'head' ? (hd.head >= max ? 0 : hd.head + 1) : null,
+          key === 'headCol' ? (hd.headCol >= max ? 0 : hd.headCol + 1) : null)));
 
       /* The four move buttons. One step per click, on the band holding the
          selected cell — so a merged region travels as one piece and a plain line
@@ -591,14 +645,14 @@
                 no percentage height against a table cell. */}
             <TableGrid block={block} resize={resize}
               widths={drag ? drag.widths : null}
-              cell={(text, ri, ci, span) => (
+              cell={(text, ri, ci, span, cls) => (
                 <AutoTextarea value={text} fill={span.rs > 1}
                   onChange={e=>setCell(ri,ci,e.target.value)}
                   // Click as well as focus: tabbing into a cell selects it, and so
                   // does clicking one that already had the caret.
                   onClick={()=>setSel({r:ri, c:ci})}
                   onFocus={()=>setSel({r:ri, c:ci})}
-                  className={"px-2 py-1 "+(ri===0?'font-bold text-gray-100 bg-gray-800/60':'text-gray-300')} />
+                  className={"px-2 py-1 " + cls} />
               )} />
           </div>
           <div className="doc-chrome mt-1 flex flex-wrap gap-1 text-[10px] opacity-0 transition-opacity group-hover:opacity-100">
@@ -636,13 +690,27 @@
             {moveBtn('↓ row', 'row',  1, 'row')}
             {moveBtn('← col', 'col', -1, 'column')}
             {moveBtn('→ col', 'col',  1, 'column')}
+            <span className="mx-1 w-px bg-gray-800" />
+            {/* Word labels on purpose, not arrows: ← and → already mean "move
+                this column" three buttons away, and a second arrow vocabulary
+                in the same strip would make one of them a misclick. */}
+            <span className="self-center px-0.5 text-gray-600">align</span>
+            {alignBtn('left',   'h', 'left')}
+            {alignBtn('centre', 'h', 'center')}
+            {alignBtn('right',  'h', 'right')}
+            {alignBtn('top',    'v', 'top')}
+            {alignBtn('middle', 'v', 'middle')}
+            {alignBtn('bottom', 'v', 'bottom')}
+            <span className="mx-1 w-px bg-gray-800" />
+            {headBtn('header rows', 'head',    Math.min(size.rows, 3))}
+            {headBtn('header cols', 'headCol', Math.min(size.cols, 2))}
           </div>
         </div>
       );
     }
 
     /* The short brief a person hands to an AI along with the picture. The full
-       version, with worked examples, is TABLE-PASTE.md at the repository root
+       version, with worked examples, is docs/TABLE-PASTE.md
        — this is the copy that has to be reachable without leaving the page. */
     const TABLE_AI_BRIEF = [
       'Read this image, separate any text outside the table, and reproduce the table EXACTLY in this format:',
@@ -674,12 +742,27 @@
       '- For a cell merged with the one to its LEFT, write <<',
       '- For a cell merged with the one ABOVE it, write ^^',
       '- A merged cell must fill a whole rectangle of rows and columns.',
+      '- If the number of header rows is not exactly one, write head: N on its own line inside the block, before the grid (head: 0 when there is no header at all).',
+      '- If the leftmost column or columns are headers, write headcol: N the same way.',
+      '- To record how columns are aligned, add one markdown separator row right below the header rows: :--- left, :--: centred, ---: right, --- unstated.',
       '- Write \\<< or \\^^ if a cell really contains those characters, and \\| for a pipe.',
       '- If any border, merge, or text is unclear, DO NOT GUESS. Ask for a higher-resolution full-table image plus overlapping close-up crops.',
       '- If outside text exists, write Outside text: before the block and list each distinct item with a dash. Then write Table paste: and the block.',
       '- If no outside text exists, output only the block.',
       '- Add no explanation beyond the outside-text list and the block.'
     ].join('\n');
+
+    /* The ONE place a parse result becomes a block, used by the preview and by
+       Insert alike — so what is previewed cannot drift from what is stored.
+       Three one-writer calls, each doing its own delete-at-default: an ordinary
+       markdown table with no merges, no alignment row and no head directive
+       comes out as exactly {rows}, the shape every table has always had. */
+    const blockFromParse = parsed => {
+      const DT = window.TrackDocTable;
+      let b = DT.withMerges({rows: parsed.rows}, parsed.merges);
+      b = DT.withAlign(b, parsed.align);
+      return DT.withHead(b, parsed.head, parsed.headCol);
+    };
 
     /* Paste a table in as text. A dedicated modal rather than a page-level
        paste handler, so there is no sniffing and no guessing about when a
@@ -747,9 +830,11 @@
                   {parsed.merges.length ? ' · ' + parsed.merges.length + ' merged' : ''}
                 </div>
                 <div data-paste-table-preview className="overflow-x-auto rounded border border-gray-800 p-1">
-                  <TableGrid block={{rows: parsed.rows, merges: parsed.merges}}
-                    cell={(t, ri) => (
-                      <div className={"px-2 py-1 " + (ri===0 ? 'font-bold text-gray-100 bg-gray-800/60' : 'text-gray-300')}>{t}</div>
+                  {/* The SAME block the Insert button stores, built by the same
+                      function — so a preview cannot drift from what lands. */}
+                  <TableGrid block={blockFromParse(parsed)}
+                    cell={(t, ri, ci, span, cls) => (
+                      <div className={"px-2 py-1 " + cls}>{t}</div>
                     )} />
                 </div>
               </div>
@@ -757,7 +842,7 @@
 
             <div className="mt-3 flex justify-end gap-2">
               <button onClick={onClose} className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:text-white">Cancel</button>
-              <button onClick={()=>parsed.ok && onInsert(parsed.rows, parsed.merges)}
+              <button onClick={()=>parsed.ok && onInsert(parsed)}
                 disabled={!parsed.ok}
                 title={parsed.ok ? 'Insert this table' : 'Fix the errors above first'}
                 className={"rounded px-3 py-1 text-xs " + (parsed.ok
@@ -922,8 +1007,8 @@
 
 
     /* The short brief a person hands to an AI along with the picture of a
-       timetable. The full version, with worked examples, is SCHEDULE-PASTE.md
-       at the repository root — this is the copy that has to be reachable
+       timetable. The full version, with worked examples, is docs/SCHEDULE-PASTE.md
+       — this is the copy that has to be reachable
        without leaving the page.
 
        Same six-part shape as TABLE_AI_BRIEF, because that shape has been
@@ -2757,11 +2842,13 @@
 
           {showPasteTable && (
             <PasteTableModal
-              onInsert={(rows, merges) => {
-                // withMerges, not a literal — it is what deletes the key when
-                // the pasted table has no merged cells, so an ordinary table
-                // is stored in exactly the shape it always was.
-                addBlock('table', window.TrackDocTable.withMerges({rows}, merges));
+              onInsert={parsed => {
+                // blockFromParse, not a literal — its three one-writer calls
+                // are what delete merges, align, head and headCol when the
+                // pasted table carries none, so an ordinary table is stored in
+                // exactly the shape it always was. It is also what the preview
+                // rendered, so this stores what was shown.
+                addBlock('table', blockFromParse(parsed));
                 setShowPasteTable(false);
               }}
               onClose={()=>setShowPasteTable(false)} />
@@ -2772,6 +2859,6 @@
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
-  <script src="notes-widget.js?v=2"></script>
+  <script src="scripts/notes-widget.js?v=2"></script>
 </body>
 </html>

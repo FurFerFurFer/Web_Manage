@@ -63,6 +63,9 @@ Copy everything in this box, and attach your picture:
 > - For a cell merged with the one to its LEFT, write `<<`
 > - For a cell merged with the one ABOVE it, write `^^`
 > - A merged cell must fill a whole rectangle of rows and columns.
+> - If the number of header rows is not exactly one, write `head: N` on its own line inside the block, before the grid (`head: 0` when there is no header at all).
+> - If the leftmost column or columns are headers, write `headcol: N` the same way.
+> - To record how columns are aligned, add one markdown separator row right below the header rows: `:---` left, `:--:` centred, `---:` right, `---` unstated.
 > - Write `\<<` or `\^^` if a cell really contains those characters, and `\|` for a pipe.
 > - If any border, merge, or text is unclear, DO NOT GUESS. Ask for a higher-resolution full-table image plus overlapping close-up crops.
 > - If outside text exists, write `Outside text:` before the block and list each distinct item with a dash. Then write `Table paste:` and the block.
@@ -125,6 +128,9 @@ separate items. This preserves all visible text without falsifying the table's g
 | `^^` | this cell is absorbed by the cell **above** — a row span |
 | `\<<` `\^^` | a cell whose text really is `<<` or `^^` |
 | `\|` inside a cell | a literal pipe |
+| `head: N` | the first N rows are header rows — on its own line, no pipes. Omitted, one row is; `head: 0` means none |
+| `headcol: N` | the first N columns are header columns. Omitted, none are |
+| `\|:---\|:--:\|---:\|` | a markdown separator row: these columns are left, centre, right. Still skipped as data — only its colons are read |
 
 ### The one rule that matters
 
@@ -144,7 +150,8 @@ plausible.
 - **Outer pipes are optional.** `a | b` and `| a | b |` are the same row.
 - **Blank lines are ignored.**
 - **A markdown separator row (`|---|---|`) is skipped**, so a plain markdown table with no
-  merged cells pastes correctly as-is.
+  merged cells pastes correctly as-is. One carrying colons (`|:---|---:|`) is still skipped
+  as data, but its colons set the column alignment on the way past.
 
 ---
 
@@ -179,6 +186,23 @@ Row 2: `Quarter` continues downward, so its cell is `^^`.
 
 The result is a two-row header with `Quarter` tall on the left and `Sales` wide on the
 right.
+
+### A two-row header, with aligned number columns
+
+```
+::: track-table
+head: 2
+| Quarter | Sales |  <<     |
+| ^^      | Units | Revenue |
+|:--------|------:|--------:|
+| Q1      | 1,204 | £48,160 |
+| Q2      | 1,530 | £61,200 |
+:::
+```
+
+`head: 2` makes both top rows draw as headers instead of only the first. The separator row
+says the first column is left-aligned and the two number columns are right-aligned — and is
+itself dropped, exactly as it would be in plain markdown.
 
 ### A total row spanning everything
 
@@ -234,8 +258,13 @@ The table is an ordinary Track table from that point on. Hover it and the contro
 - Click a cell, then `↑ row` `↓ row` `← col` `→ col` — move that whole row or column one
   step. A merged region moves as one piece, and a plain row beside one steps clear over
   the whole thing rather than into the middle of it, so one press is always one line.
-  Nothing is dropped, so these do not ask. The first row is still drawn as the header, so
-  a row moved to the top **becomes** the header.
+  Nothing is dropped, so these do not ask. Headers are positional — the first `header rows: N`
+  rows are the headers, whatever they hold — so a row moved to the top **becomes** one.
+- Click a cell, then `left` / `centre` / `right` / `top` / `middle` / `bottom` — align that
+  one cell. The pressed button shows as active; pressing it again puts the cell back to the
+  default. Nothing is deleted, so these do not ask.
+- `header rows: N` / `header cols: N` — how many leading rows and columns draw as headers.
+  Click to cycle; 0 means no header at all.
 - `⇔ auto width` — put every column back to an equal share. This one asks, because it
   clears widths you dragged.
 

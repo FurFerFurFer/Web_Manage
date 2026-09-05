@@ -18,7 +18,7 @@ Status reviewed: 2026-08-06
 - `index.html`, `progress.html`, `sir-ks02.html` and `documentations.html` are the active pages.
 - Development currently happens on `master`; the inspected history contains no merge commits.
 - There is still no build step and no package manifest, but there **is** now a committed test suite: `node tests/run.js`. It uses Node's built-in `node:test` and a hand-rolled DevTools-protocol driver, so it adds no dependencies. See "Running the tests".
-- The standalone scripts `theme.js`, `schema.js`, `storage-guard.js`, `calendar-core.js`, `firebase-sync.js`, `notes-widget.js`, `true-storage-core.js`, and `graph-layout.js` pass `node --check`.
+- The standalone scripts in `scripts/` pass `node --check`.
 - React pages currently compile JSX in the browser through Babel.
 - Data is stored locally first and can optionally be synchronized through Firebase.
 - Every page provides two persistent appearances — **Grit** and **Night** — with a shared accessible switch.
@@ -32,8 +32,9 @@ The code is operational. Verification is syntax checking, the committed suite, a
 | `README.md` | Current product behavior, architecture, data layout, project progress, and active workflow |
 | `NOTES.md` | Ideas, risks to address, possible changes, target architecture, and roadmap |
 | `AGENTS.md` | Mandatory project rules and verification procedure for coding agents |
-| `TABLE-PASTE.md` | The user-facing spec for `::: track-table` — what to ask an AI shown a picture of a table |
-| `SCHEDULE-PASTE.md` | The user-facing spec for `::: track-schedule` — what to ask an AI shown a picture of a timetable |
+| [`docs/TABLE-PASTE.md`](docs/TABLE-PASTE.md) | The user-facing spec for `::: track-table` — what to ask an AI shown a picture of a table |
+| [`docs/SCHEDULE-PASTE.md`](docs/SCHEDULE-PASTE.md) | The user-facing spec for `::: track-schedule` — what to ask an AI shown a picture of a timetable |
+| [`docs/TRACK-WORLD-CONCEPT-DRAFT.md`](docs/TRACK-WORLD-CONCEPT-DRAFT.md) | Draft visual and spatial concept for the Track world |
 
 When a proposed change is implemented:
 
@@ -111,12 +112,26 @@ The shared interface currently provides:
   makes a choice.
 - Persistence of the selected appearance across pages and browser tabs through `track_theme`.
 - A growth-ring texture on Home and a fine vertical grain on every application page,
-  both pure CSS — this repository ships no image assets.
+  both pure CSS. The concept artwork in `assets/images/` is documentation-only and is
+  not loaded by the application.
+- A browser-tab icon on all five pages: concentric rings on the Grit evergreen,
+  written as an inline `data:image/svg+xml` URI in each `<head>`. It ships no file,
+  and declaring it is what stops the browser probing `/favicon.ico` — which is why
+  the suite's ~165 "no page errors" assertions stay clean.
 - A slower motion curve (`--motion-slow`, `--ease-growth`) reserved for signature
   moments. Anything a user is waiting on stays on `--motion-fast`.
-- Measured text contrast: every text role clears 4.5:1 against the app background,
-  surface and muted surface **in both appearances**, and `tests/browser.test.js`
-  asserts it per appearance rather than leaving it as a claim.
+- Measured contrast: every text role **and** every accent role clears 4.5:1
+  against the app background, surface and muted surface **in both appearances**,
+  and `tests/browser.test.js` asserts it per appearance, computed from the live
+  tokens rather than left as a claim.
+- Five accent tokens — `--color-accent` (in progress), `--color-accent-done`,
+  `--color-accent-pending`, `--color-accent-study` (mind maps and "to learn") and
+  `--color-accent-live` (the active marker). `progress.html` paints its donut,
+  ring tracks, pips, bars and markers through them via its one `ACCENT` map, so a
+  hex literal in JSX — which the Tailwind remap layer cannot reach — no longer
+  disagrees with the class beside it. The Grit utility rules point at the same
+  tokens, giving one definition per role and appearance. Goal, action and
+  mind-map colours are **data** and stay theme-invariant.
 - Visible keyboard focus, reduced-motion handling, and 44px primary touch targets.
 - Responsive Home cards and horizontally scrollable app navigation on narrow screens.
 - A full-screen Universal calendar on every device, with its day detail as a side column above 720px and a bottom sheet at or below it.
@@ -531,13 +546,15 @@ still cleaned up without requiring a slot write.
 - **A `⛶` button at the top of the sidebar expands it to fill the viewport**, with 16px rows, 44px controls and a wider indent. Picking a page selects it *and* exits, so it is one tap in, one tap to a page, out; `✕` and `Escape` also exit. It is `position: fixed` at `z-index: 50`, which covers the page header and the theme toggle while staying under the notes widget and the storage/sync banners, and its bottom padding clears the notes-widget button so the last row stays tappable.
 - A Favorites sidebar section toggled per page from either of two star buttons that share the same `favorite` field: the small one revealed on hover in the sidebar page row, and a large touch-sized one at the right end of the page's toolbar row.
 - A per-page emoji icon chosen from a picker grid or typed freely.
-- Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove/move rows and columns, merged cells, first row styled as header), images, and label + url link blocks rendered exactly like source-dump links.
+- Block-based editing: H1/H2/H3/paragraph text, dividers, tables (editable cells, add/remove/move rows and columns, merged cells, per-cell alignment, a configurable number of header rows and columns), images, and label + url link blocks rendered exactly like source-dump links.
 - **Tables can merge cells.** Click a cell, then `⇥ merge right` or `⇩ merge down` in the block's hover chrome; `⤫ unmerge` splits it back. A button is disabled with an explanatory tooltip when the operation would run off the grid or absorb a region that is already merged. Merging **hides** the covered cells and never clears them, so unmerging restores what was typed — which is why neither control asks for confirmation, while `− row` and `− col` still do. Removing a row or column a merged cell reached into **clamps** that cell to fit rather than deleting it.
 - **Table columns are draggable.** Hover a table and every internal column boundary grows a handle; drag it and the column takes width from its neighbour, so the table always fills its line and can never be pushed off the page. Widths are stored per table as **percentages**, not pixels, so they hold up when the sidebar is collapsed or thrown full screen and they print at the proportions on screen. `⇔ auto width` puts every column back to an equal share and asks first, being the one control here that clears a stored field. A table nobody has resized stores no widths at all and is drawn with equal columns.
 - **Table cells wrap.** A cell is a growing textarea rather than a one-line input, so a value longer than its column runs onto a second line and the row gets taller — visible on screen and in the exported PDF, where a long value used to be silently cut off at the column edge.
 - **A cell merged downward fills with text.** A cell spanning several rows is as tall as all of them, and its text box is now that tall too, so a click anywhere in it puts the caret in the text and typing runs down into the space. It used to be one line pinned to the top of the cell, with everything below it unclickable — visible space that could hold nothing. The height is computed rather than declared: Chrome resolves neither `height: 100%` nor `min-height: 100%` against a table cell, so `AutoTextarea` floors its own measured content height at the cell's, and re-measures when a **neighbouring** row grows and makes the merged cell taller.
-- **A whole row or column can be moved.** Click a cell, then `↑ row`, `↓ row`, `← col` or `→ col`. One press is one step, and the step is a **band**: a merged region travels as a single piece, and a plain row next to a two-row merge steps clear over the whole thing rather than into the middle of it, so a click always moves something by a whole line however the table is spanned. `merges` and `colWidths` are remapped with the cells, so a merged region keeps the text it was holding and a resized column keeps its width. The selection follows the line it moved, so pressing the same button twice moves the same row twice. At either end the button is disabled and its tooltip says which end — and when a merge glues the whole axis together, as a full-width `| Total | << | << |` footer does to every column, the tooltip says *that* instead, because "already the first column" would be true of a one-column table and useless here. Reordering **inside** a merged region is not offered: the region would keep its extent while its visible cell started showing text that had been hidden, which looks like loss even though nothing is lost. Unmerge first. Nothing is deleted and moving back undoes it exactly, so — like merge and unmerge — these ask no confirmation, while `− row` and `− col` still do. Note that the header styling is positional: a row moved to the top **becomes** the bold header row.
-- **A table can be pasted in as text**, through `▦ Paste table` in the block menu. It accepts the `::: track-table` pipe-grid format, in which `<<` marks a cell merged with the one to its left and `^^` one merged with the cell above; the fence and the outer pipes are optional and a markdown separator row is skipped, so an ordinary markdown table pastes correctly too. The dialog previews the parse through the same renderer the page uses and **refuses** a table whose rows disagree on cell count, whose markers point off the grid, or whose merged region is not a rectangle, naming the offending line. Nothing is inserted while an error is showing. The dialog also carries a copyable, structure-first brief to hand an AI with the image: it makes the complete table authoritative for border geometry, close-up crops authoritative for small text, forbids inferring a merge from alignment or an empty cell, and asks for a clearer image instead of guessing when a border or character is ambiguous. Text beyond the table's outside border is kept out of the grid and returned as a separate `Outside text` list, so a nearby heading, caption, or note cannot become an invented merged row. `TABLE-PASTE.md` is the longer version with image-quality guidance and worked examples.
+- **A whole row or column can be moved.** Click a cell, then `↑ row`, `↓ row`, `← col` or `→ col`. One press is one step, and the step is a **band**: a merged region travels as a single piece, and a plain row next to a two-row merge steps clear over the whole thing rather than into the middle of it, so a click always moves something by a whole line however the table is spanned. `merges` and `colWidths` are remapped with the cells, so a merged region keeps the text it was holding and a resized column keeps its width. The selection follows the line it moved, so pressing the same button twice moves the same row twice. At either end the button is disabled and its tooltip says which end — and when a merge glues the whole axis together, as a full-width `| Total | << | << |` footer does to every column, the tooltip says *that* instead, because "already the first column" would be true of a one-column table and useless here. Reordering **inside** a merged region is not offered: the region would keep its extent while its visible cell started showing text that had been hidden, which looks like loss even though nothing is lost. Unmerge first. Nothing is deleted and moving back undoes it exactly, so — like merge and unmerge — these ask no confirmation, while `− row` and `− col` still do. Note that the header styling is positional: a row moved into the `header rows: N` band **becomes** a bold header row.
+- **Cells can be aligned, one at a time.** Click a cell, then `left` / `centre` / `right` or `top` / `middle` / `bottom` in the hover chrome. The active button shows as pressed, and pressing it again puts that axis back to the default — there is no separate "none". Alignment is stored beside the grid, keyed by coordinate like `merges`, so the cell text itself never changes shape; it survives a row or column being moved (it travels with its cell) and is dropped when its row or column is removed. An alignment on a cell hidden by a merge is kept, so unmerging restores it along with the text. Nothing here deletes anything, so none of these ask for confirmation.
+- **The header is configurable.** `header rows: N` and `header cols: N` in the chrome cycle how many leading rows and columns draw bold — `0` for a table with no header, `2` for a two-row header, and a header column down the left for the first time. Absence means what tables always did (one header row), and setting a count back to its default deletes the key rather than storing it. The counts are positional on purpose: move a row to the top and it *becomes* the header, because "the first N rows are headers" is what a header row means — that used to be an undocumented consequence of the fixed row-0 styling and is now the declared rule. A count larger than the table (after `− row`) is clamped when drawn but kept in storage, so `+ row` restores it.
+- **A table can be pasted in as text**, through `▦ Paste table` in the block menu. It accepts the `::: track-table` pipe-grid format, in which `<<` marks a cell merged with the one to its left and `^^` one merged with the cell above; the fence and the outer pipes are optional and a markdown separator row is skipped, so an ordinary markdown table pastes correctly too. A separator row carrying colons (`|:---|--:|`) additionally sets those columns' alignment on the way past, and a pipe-less `head: N` / `headcol: N` line inside the fence sets the header counts — both optional, and an ordinary markdown table still stores exactly the shape it always did. The dialog previews the parse — headers and alignment included — through the same renderer the page uses, Insert stores the very block the preview rendered (`blockFromParse` has one definition for both), and it **refuses** a table whose rows disagree on cell count, whose markers point off the grid, or whose merged region is not a rectangle, naming the offending line. Nothing is inserted while an error is showing. The dialog also carries a copyable, structure-first brief to hand an AI with the image: it makes the complete table authoritative for border geometry, close-up crops authoritative for small text, forbids inferring a merge from alignment or an empty cell, and asks for a clearer image instead of guessing when a border or character is ambiguous. Text beyond the table's outside border is kept out of the grid and returned as a separate `Outside text` list, so a nearby heading, caption, or note cannot become an invented merged row. `TABLE-PASTE.md` is the longer version with image-quality guidance and worked examples.
 - A **Reference source dump** popup that shows the active slot's source-dump tree fully expanded — every nesting level and every leaf `{label, url}` link visible at once — and inserts a picked link as a link block carrying `dumpRef: {dumpId, linkId, urlId}` provenance. The block shows a "from: <dump title>" badge that degrades to "source removed" if the source is later deleted.
 - Images chosen from disk are downscaled (max dimension 1000px) and stored as compressed JPEG data-URIs inside the page, so they export, import, and cloud-sync with the slot. There is no size gate on inserting one: cloud sync gzips and chunks the workspace, so images no longer threaten it. The header instead shows a plain workspace-size readout plus a cloud sync state (`✓ synced`, `↻ syncing…`, `⚠ sync failed`, `⚠ conflict`, or `· local only`), read from `window.TrackSync`. The size turns amber only past ~4 MB, which tracks the browser's own `localStorage` quota rather than any cloud limit.
 - **Calendar blocks** — see below.
@@ -592,7 +609,9 @@ Each `docPages` entry is:
     { id, type: 'image', src /* jpeg data-URI */, alt },
     { id, type: 'table',
       rows: [[string]],              // rectangular; a covered cell KEEPS its text
-      merges: [{r, c, rs, cs}] },    // OPTIONAL — absent means nothing spans
+      merges: [{r, c, rs, cs}],      // OPTIONAL — absent means nothing spans
+      align: [{r, c, h, v}],         // OPTIONAL — per-cell alignment, keyed like merges
+      head: n, headCol: n },         // OPTIONAL — header counts; absent = 1 row, 0 cols
     { id, type: 'link', label, url, dumpRef: {dumpId, linkId, urlId}|null, addedAt },
     { id, type: 'divider' },
     { id, type: 'calendar',
@@ -611,12 +630,26 @@ its text, which is what makes unmerging a restore rather than a recomputed guess
 after a row or column changes, and `parseTableText` / `formatTableText` are the paste
 format in both directions.
 
+A table block's `align` follows the `merges` shape exactly: a parallel list keyed by
+coordinate, absent by default, its key deleted when the last entry clears — never a
+promotion of cells to objects, which would have broken `rows: [[string]]` and every stored
+table with it. `h` is `left|center|right`, `v` is `top|middle|bottom`, either may be
+absent, and an entry saying neither is dropped. `alignAt` is the one reader, `withAlign`
+the one writer, `setAlign` the per-axis toggle. `head` and `headCol` are the header
+counts, stored only away from their defaults (`1` and `0`) and **clamped on read, never on
+write** — the deliberate difference from `merges`, which makes `− row` then `+ row` a
+restore; `headOf` resolves them and `isHeaderCell` is the one definition of what draws
+bold, feeding the editor grid and the paste preview through the same `TableGrid`.
+
 `moveLine` is the one **positional** writer, and it is deliberately not another caller
 of `withRows`. That funnel re-normalises merges against the new *bounds*, which is right
 for a row added or dropped and wrong for a move: the bounds do not change, the indices
 do — sent through it, every merge would keep its old `r`/`c` and silently take over
-whichever content had moved into those coordinates. `moveLine` remaps them instead, and
-permutes `colWidths` alongside the cells on a column move.
+whichever content had moved into those coordinates. `moveLine` remaps them instead — `align` under the same
+permutation — and permutes `colWidths` alongside the cells on a column move.
+`withRows` conversely re-normalises `align` against the new bounds (an entry whose row
+went is dropped with it, since a later row at that index is a different row) while
+leaving `head`/`headCol` untouched for the read-time clamp to handle.
 
 What it moves is a **band**, defined once by `lineBands`: a merge spanning more than one
 line glues the boundaries inside it, and a band is a maximal run with no unglued boundary
@@ -979,17 +1012,19 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, timetable blocks, PDF export |
 | `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, explanation, and source-dump tags |
-| `calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry, the deadline rules, and `refOccupies` — the one test for which days a pasted timetable entry falls on (`window.TrackCalendar`) |
-| `theme.js` | Initial appearance selection, the Grit/Night switch, persistence, and cross-tab updates. Holds the one normaliser that aliases the superseded `light` and maps an appearance to a `color-scheme` keyword |
-| `schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
-| `storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
-| `firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
-| `notes-widget.js` | Floating per-slot notes widget |
-| `true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
-| `graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
-| `schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
-| `doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
-| `styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
+| `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry, the deadline rules, and `refOccupies` — the one test for which days a pasted timetable entry falls on (`window.TrackCalendar`) |
+| `scripts/theme.js` | Initial appearance selection, the Grit/Night switch, persistence, and cross-tab updates. Holds the one normaliser that aliases the superseded `light` and maps an appearance to a `color-scheme` keyword |
+| `scripts/schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
+| `scripts/storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
+| `scripts/firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
+| `scripts/notes-widget.js` | Floating per-slot notes widget |
+| `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
+| `scripts/graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
+| `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
+| `scripts/doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
+| `styles/styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
+| `docs/` | User-facing paste specifications and design/concept documents |
+| `assets/images/` | Documentation and concept imagery; not runtime application assets |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
 | `README.md` | Current project and workflow documentation |
@@ -998,7 +1033,8 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 
 ## Current Repository Shape
 
-The active source remains intentionally small at the file level:
+The build-free source is grouped by responsibility while the public HTML entry-page URLs
+remain at the repository root:
 
 ```text
 Track-website/
@@ -1010,16 +1046,27 @@ Track-website/
 ├── sir-ks02.html
 ├── documentations.html
 ├── true-storage.html
-├── calendar-core.js
-├── theme.js
-├── schema.js
-├── storage-guard.js
-├── firebase-sync.js
-├── notes-widget.js
-├── true-storage-core.js
-├── graph-layout.js
-├── styles.css
 ├── firestore.rules
+├── scripts/
+│   ├── calendar-core.js
+│   ├── doc-table-core.js
+│   ├── firebase-sync.js
+│   ├── graph-layout.js
+│   ├── notes-widget.js
+│   ├── schedule-paste-core.js
+│   ├── schema.js
+│   ├── storage-guard.js
+│   ├── theme.js
+│   └── true-storage-core.js
+├── styles/
+│   └── styles.css
+├── docs/
+│   ├── SCHEDULE-PASTE.md
+│   ├── TABLE-PASTE.md
+│   └── TRACK-WORLD-CONCEPT-DRAFT.md
+├── assets/
+│   └── images/
+│       └── living-botanical-clock-plaza.png
 └── tests/
     ├── run.js
     ├── calendar-core.test.js
@@ -1467,7 +1514,7 @@ Read the documentation roles:
 Use `rg` before editing. For a state field, search all pages and shared scripts:
 
 ```bash
-rg -n "fieldName" index.html progress.html sir-ks02.html firebase-sync.js notes-widget.js
+rg -n "fieldName" index.html progress.html sir-ks02.html scripts/
 ```
 
 Classify whether the change affects:
@@ -1505,14 +1552,16 @@ Do not perform a large unrelated cleanup in the same change.
 For shared standalone scripts:
 
 ```bash
-node --check theme.js
-node --check schema.js
-node --check storage-guard.js
-node --check calendar-core.js
-node --check firebase-sync.js
-node --check notes-widget.js
-node --check true-storage-core.js
-node --check graph-layout.js
+node --check scripts/theme.js
+node --check scripts/schema.js
+node --check scripts/storage-guard.js
+node --check scripts/calendar-core.js
+node --check scripts/firebase-sync.js
+node --check scripts/notes-widget.js
+node --check scripts/true-storage-core.js
+node --check scripts/graph-layout.js
+node --check scripts/doc-table-core.js
+node --check scripts/schedule-paste-core.js
 ```
 
 Then the committed suite, which is the fastest way to find out whether a change
@@ -1912,7 +1961,6 @@ The following describe the project today:
 - There is an automated test suite (`node tests/run.js`) but no CI: nothing runs it but a person. It covers `calendar-core.js` thoroughly and the pages at the level of mounting, persistence contracts, and the specific regressions listed in "Running the tests" — it does not cover touch or drag interaction, the signed-in Firebase path, or most of the UI.
 - Firebase rules and deployment configuration are not versioned here.
 - The two main React pages are large monoliths.
-- A missing favicon currently produces a harmless local `404`.
 
 Detailed possible corrections, priorities, and target architecture are maintained in [NOTES.md](NOTES.md).
 

@@ -43,7 +43,7 @@ const vm = require('node:vm');
 // it — quietly testing something the browser never does.
 globalThis.window = globalThis;
 vm.runInThisContext(
-  fs.readFileSync(path.join(__dirname, '..', 'doc-table-core.js'), 'utf8'),
+  fs.readFileSync(path.join(__dirname, '..', 'scripts', 'doc-table-core.js'), 'utf8'),
   { filename: 'doc-table-core.js' }
 );
 const T = globalThis.TrackDocTable;
@@ -57,10 +57,12 @@ test('the module exports exactly the documented surface', () => {
   // Written out by hand on purpose: if an export is added or renamed, this is
   // the case that notices, the same way tests/schema.test.js pins SLOT_FIELDS.
   assert.deepEqual(Object.keys(T).sort(), [
-    'MAX_COLS', 'MAX_ROWS', 'MIN_COL_PCT', 'canMerge', 'canMoveLine', 'colWidthsOf',
-    'formatTableText', 'gridSize', 'lineBands', 'mergeAt', 'mergeCells', 'mergeMap',
-    'moveLine', 'normalizeColWidths', 'normalizeMerges', 'parseTableText',
-    'resizeColumn', 'rowsOf', 'unmergeCell', 'withColWidths', 'withMerges', 'withRows'
+    'MAX_COLS', 'MAX_ROWS', 'MIN_COL_PCT', 'alignAt', 'canMerge', 'canMoveLine',
+    'colWidthsOf', 'formatTableText', 'gridSize', 'headOf', 'isHeaderCell',
+    'lineBands', 'mergeAt', 'mergeCells', 'mergeMap', 'moveLine', 'normalizeAlign',
+    'normalizeColWidths', 'normalizeMerges', 'parseTableText', 'resizeColumn',
+    'rowsOf', 'setAlign', 'unmergeCell', 'withAlign', 'withColWidths', 'withHead',
+    'withMerges', 'withRows'
   ].sort());
 });
 
@@ -747,4 +749,287 @@ test('the round trip survives a 2x2 block and the escapes', () => {
 test('formatTableText emits the fenced form and an empty table yields nothing', () => {
   assert.equal(T.formatTableText({ rows: [] }), '');
   assert.match(T.formatTableText({ rows: [['a', 'b'], ['c', 'd']] }), /^::: track-table\n/);
+});
+
+// ── per-cell alignment ─────────────────────────────────────────────────────
+//
+// The field is a PARALLEL LIST keyed by coordinate, like `merges`, rather than
+// a promotion of cells to objects. Three things follow and each has a case
+// below: `rows` never changes shape, absence stays the default, and the two
+// positional funnels have to treat it differently — `withRows` against the new
+// BOUNDS, `moveLine` against the new INDICES. That last pair is the one worth
+// getting wrong slowly: sent through the wrong funnel, every alignment stays on
+// the coordinate it used to sit at and silently decorates whatever moved in.
+
+test('alignAt reads {h,v} for an aligned cell and empty strings for a plain one', () => {
+  const b = { rows: [['a', 'b'], ['c', 'd']], align: [{ r: 0, c: 1, h: 'center', v: 'middle' }] };
+  assert.deepEqual(T.alignAt(b, 0, 1), { h: 'center', v: 'middle' });
+  assert.deepEqual(T.alignAt(b, 0, 0), { h: '', v: '' },
+    'never null — a call site reads .h and .v without branching');
+});
+
+test('normalizeAlign drops what it cannot draw, and keeps the first of a repeat', () => {
+  const b = {
+    rows: [['a', 'b'], ['c', 'd']],
+    align: [
+      { r: 0, c: 1, h: 'center' },
+      { r: 0, c: 1, h: 'right' },       // repeat — first wins
+      { r: 9, c: 0, h: 'left' },        // off the grid
+      { r: 1, c: 0, h: 'sideways' },    // not one of the six words
+      { r: 1, c: 1 },                   // says nothing at all
+      'not an object'
+    ]
+  };
+  assert.deepEqual(T.normalizeAlign(b), [{ r: 0, c: 1, h: 'center' }]);
+});
+
+test('normalizeAlign cannot throw on a hand-edited or synced block', () => {
+  assert.deepEqual(T.normalizeAlign({ rows: [['a', 'b']], align: 'nope' }), []);
+  assert.deepEqual(T.normalizeAlign(null), []);
+  assert.deepEqual(T.normalizeAlign({ rows: [['a', 'b']], align: [null, 42] }), []);
+});
+
+test('withAlign DELETES the key when the list empties', () => {
+  const b = T.withAlign({ rows: [['a', 'b']], align: [{ r: 0, c: 0, h: 'right' }] }, []);
+  assert.equal('align' in b, false, 'absence is the default — no empty list is stored');
+  assert.deepEqual(Object.keys(b), ['rows']);
+});
+
+test('withAlign preserves keys it has never heard of, merges and widths included', () => {
+  const b = T.withAlign(
+    { id: 'b-1', type: 'table', rows: [['a', 'b'], ['c', 'd']], merges: [{ r: 0, c: 0, rs: 1, cs: 2 }], colWidths: [60, 40], future: 1 },
+    [{ r: 1, c: 1, h: 'right' }]);
+  assert.deepEqual(b.merges, [{ r: 0, c: 0, rs: 1, cs: 2 }]);
+  assert.deepEqual(b.colWidths, [60, 40]);
+  assert.equal(b.future, 1);
+});
+
+test('setAlign sets one axis, leaves the other, and toggles the same value off', () => {
+  const rows = [['a', 'b'], ['c', 'd']];
+  let b = T.setAlign({ rows }, 0, 1, 'h', 'center');
+  assert.deepEqual(b.align, [{ r: 0, c: 1, h: 'center' }]);
+
+  b = T.setAlign(b, 0, 1, 'v', 'bottom');
+  assert.deepEqual(b.align, [{ r: 0, c: 1, h: 'center', v: 'bottom' }],
+    'the other axis is untouched');
+
+  b = T.setAlign(b, 0, 1, 'h', 'center');
+  assert.deepEqual(b.align, [{ r: 0, c: 1, v: 'bottom' }],
+    'pressing the active button again clears that axis');
+
+  b = T.setAlign(b, 0, 1, 'v', 'bottom');
+  assert.equal('align' in b, false, 'and clearing the last axis drops the key entirely');
+});
+
+test('setAlign NEVER touches rows — alignment decorates a cell, it does not hold data', () => {
+  const rows = [['a', 'b'], ['c', 'd']];
+  const b = T.setAlign({ rows }, 1, 0, 'h', 'right');
+  assert.deepEqual(b.rows, [['a', 'b'], ['c', 'd']]);
+  assert.deepEqual(rows, [['a', 'b'], ['c', 'd']], 'and the input was not mutated');
+});
+
+test('setAlign returns the block UNCHANGED for a cell that is not there', () => {
+  const b = { rows: [['a', 'b']] };
+  assert.equal(T.setAlign(b, 5, 0, 'h', 'right'), b);
+});
+
+test('an alignment on a COVERED cell is kept, so unmerge restores it', () => {
+  // Rule 2: merging hides the covered cell rather than clearing it. Alignment
+  // has to survive the same way, or unmerge is a restore for the text and a
+  // recomputed guess for everything else.
+  let b = T.setAlign({ rows: [['a', 'b'], ['c', 'd']] }, 0, 1, 'h', 'right');
+  b = T.mergeCells(b, 0, 0, 'right');
+  assert.deepEqual(T.normalizeAlign(b), [{ r: 0, c: 1, h: 'right' }], 'hidden, not dropped');
+  b = T.unmergeCell(b, 0, 0);
+  assert.deepEqual(T.alignAt(b, 0, 1), { h: 'right', v: '' });
+});
+
+test('withRows drops an alignment whose row or column has gone — the BOUNDS rule', () => {
+  const b = {
+    rows: [['a', 'b'], ['c', 'd']],
+    align: [{ r: 0, c: 0, h: 'left' }, { r: 1, c: 1, h: 'right' }]
+  };
+  const cut = T.withRows(b, [['a', 'b']]);
+  assert.deepEqual(cut.align, [{ r: 0, c: 0, h: 'left' }]);
+});
+
+test('GUARD: a table that was never aligned gains no align key from withRows', () => {
+  const b = T.withRows({ id: 'b-1', type: 'table', rows: [['a', 'b']] }, [['a', 'b'], ['', '']]);
+  assert.equal('align' in b, false);
+  assert.deepEqual(Object.keys(b), ['id', 'type', 'rows']);
+});
+
+test('moveLine REMAPS alignment onto the new indices — the INDICES rule', () => {
+  // The trap this case exists for: sent through withRows, the entry would keep
+  // r: 0 and decorate whichever row moved into the top instead of travelling
+  // with the row it belongs to.
+  const b = {
+    rows: [['top', 'x'], ['mid', 'y'], ['low', 'z']],
+    align: [{ r: 0, c: 0, h: 'center' }]
+  };
+  const moved = T.moveLine(b, 'row', 0, 1);
+  assert.deepEqual(moved.rows, [['mid', 'y'], ['top', 'x'], ['low', 'z']]);
+  assert.deepEqual(moved.align, [{ r: 1, c: 0, h: 'center' }],
+    'the alignment followed its row rather than staying on row 0');
+});
+
+test('a COLUMN move remaps the c of an alignment and leaves its r alone', () => {
+  const b = {
+    rows: [['a', 'b', 'c'], ['d', 'e', 'f']],
+    align: [{ r: 1, c: 0, h: 'right', v: 'bottom' }]
+  };
+  const moved = T.moveLine(b, 'col', 0, 1);
+  assert.deepEqual(moved.align, [{ r: 1, c: 1, h: 'right', v: 'bottom' }]);
+});
+
+test('GUARD: a table with no alignment gains no align key from a move', () => {
+  const b = T.moveLine({ id: 'b-1', type: 'table', rows: [['a', 'b'], ['c', 'd']] }, 'row', 0, 1);
+  assert.equal('align' in b, false);
+});
+
+// ── header rows and columns ────────────────────────────────────────────────
+//
+// Absence is the default and the default is what the table already drew: row 0
+// a header, no header column. So `head: 1` and `headCol: 0` are DELETED rather
+// than stored, or they become a second spelling of absence and the browser case
+// asserting Object.keys === ['id','type','rows'] stops meaning anything.
+
+test('headOf defaults to the behaviour the table already had', () => {
+  assert.deepEqual(T.headOf({ rows: [['a', 'b'], ['c', 'd']] }), { head: 1, headCol: 0 });
+});
+
+test('headOf CLAMPS to the grid on read, and leaves storage alone', () => {
+  // Clamped on read rather than on write, so `− row` then `+ row` puts the
+  // header back — the restore-not-guess rule that already governs merges.
+  const b = { rows: [['a', 'b']], head: 3, headCol: 9 };
+  assert.deepEqual(T.headOf(b), { head: 1, headCol: 2 });
+  assert.equal(b.head, 3, 'the stored value is untouched');
+});
+
+test('headOf reads a hand-edited or synced value without throwing', () => {
+  assert.deepEqual(T.headOf({ rows: [['a', 'b'], ['c', 'd']], head: 'lots' }), { head: 1, headCol: 0 });
+  assert.deepEqual(T.headOf({ rows: [['a', 'b'], ['c', 'd']], head: -4 }), { head: 0, headCol: 0 });
+  assert.deepEqual(T.headOf(null), { head: 0, headCol: 0 });
+});
+
+test('isHeaderCell covers header ROWS and header COLUMNS', () => {
+  const b = { rows: [['a', 'b', 'c'], ['d', 'e', 'f'], ['g', 'h', 'i']], head: 2, headCol: 1 };
+  assert.equal(T.isHeaderCell(b, 0, 2), true, 'inside the header rows');
+  assert.equal(T.isHeaderCell(b, 2, 0), true, 'inside the header column');
+  assert.equal(T.isHeaderCell(b, 2, 1), false, 'and a plain body cell is not');
+});
+
+test('isHeaderCell with head: 0 gives a table with NO header at all', () => {
+  const b = { rows: [['a', 'b'], ['c', 'd']], head: 0 };
+  assert.equal(T.isHeaderCell(b, 0, 0), false);
+});
+
+test('withHead DELETES a key whose value is the default', () => {
+  let b = T.withHead({ id: 'b-1', type: 'table', rows: [['a', 'b'], ['c', 'd']] }, 2, 1);
+  assert.equal(b.head, 2);
+  assert.equal(b.headCol, 1);
+
+  b = T.withHead(b, 1, 0);
+  assert.equal('head' in b, false, 'head: 1 is the default, so it is absence');
+  assert.equal('headCol' in b, false);
+  assert.deepEqual(Object.keys(b), ['id', 'type', 'rows']);
+});
+
+test('withHead leaves an axis alone when it is given null', () => {
+  const b = T.withHead(T.withHead({ rows: [['a', 'b'], ['c', 'd']] }, 2, null), null, 1);
+  assert.equal(b.head, 2);
+  assert.equal(b.headCol, 1);
+});
+
+test('GUARD: withRows does not touch head, so a removed row is reversible', () => {
+  const b = { rows: [['a', 'b'], ['c', 'd'], ['e', 'f']], head: 3 };
+  const cut = T.withRows(b, [['a', 'b']]);
+  assert.equal(cut.head, 3, 'still stored');
+  assert.equal(T.headOf(cut).head, 1, 'but only one row can draw as one');
+  assert.equal(T.headOf(T.withRows(cut, b.rows)).head, 3, 'and putting the rows back restores it');
+});
+
+// ── the paste format carries both ──────────────────────────────────────────
+
+test('a head directive is read, and a pipe-less line that is not one still errors', () => {
+  const r = T.parseTableText(lines('head: 2', '| a | b |', '| c | d |'));
+  assert.equal(r.ok, true);
+  assert.equal(r.head, 2);
+
+  const bad = T.parseTableText(lines('Some caption the AI should not have pasted', '| a | b |', '| c | d |'));
+  assert.equal(bad.ok, false, 'a stray line is still caught rather than swallowed');
+});
+
+test('headcol is read too, and both are case- and spacing-tolerant', () => {
+  const r = T.parseTableText(lines('HeadCol:1', '  head : 0  ', '| a | b |', '| c | d |'));
+  assert.equal(r.ok, true);
+  assert.equal(r.head, 0);
+  assert.equal(r.headCol, 1);
+});
+
+test('a markdown alignment row sets the column alignment it names', () => {
+  const r = T.parseTableText(lines('| a | b | c |', '|:---|:--:|---:|', '| d | e | f |'));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.rows, [['a', 'b', 'c'], ['d', 'e', 'f']], 'the row is still not data');
+  assert.deepEqual(r.align, [
+    { r: 0, c: 0, h: 'left' }, { r: 0, c: 1, h: 'center' }, { r: 0, c: 2, h: 'right' },
+    { r: 1, c: 0, h: 'left' }, { r: 1, c: 1, h: 'center' }, { r: 1, c: 2, h: 'right' }
+  ], 'expanded to the cells it covers, because the field is per-cell');
+});
+
+test('GUARD: a plain separator row carries no colon and still changes nothing', () => {
+  // Every table that pasted before this feature has to paste identically.
+  const r = T.parseTableText(lines('| Name | Score |', '|------|-------|', '| Ada | 9 |'));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.align, []);
+  assert.equal(r.head, null);
+  assert.equal(r.headCol, null);
+});
+
+test('column alignment does not decorate a cell that is covered by a merge', () => {
+  const r = T.parseTableText(lines('| a | b |', '|---:|---:|', '| big | << |'));
+  assert.equal(r.ok, true);
+  assert.equal(r.align.some(a => a.r === 1 && a.c === 1), false,
+    'nothing is drawn there, so nothing is stored for it');
+});
+
+test('formatTableText emits the directives, and only when they are not the default', () => {
+  const plain = T.formatTableText({ rows: [['a', 'b'], ['c', 'd']] });
+  assert.equal(/head/.test(plain), false, 'a default table says nothing about headers');
+
+  const out = T.formatTableText({ rows: [['a', 'b'], ['c', 'd']], head: 2, headCol: 1 });
+  assert.match(out, /head: 2/);
+  assert.match(out, /headcol: 1/);
+});
+
+test('formatTableText writes a separator row only for a column that AGREES', () => {
+  // Asserted through a re-parse rather than against a dash count: the dashes are
+  // padding to the column's width, so `--:` and `-------:` are the same
+  // statement and only what it MEANS is worth pinning.
+  const agreed = T.parseTableText(T.formatTableText({
+    rows: [['a', 'b'], ['c', 'd']],
+    align: [{ r: 0, c: 1, h: 'right' }, { r: 1, c: 1, h: 'right' }]
+  }));
+  assert.deepEqual(agreed.align, [{ r: 0, c: 1, h: 'right' }, { r: 1, c: 1, h: 'right' }],
+    'the whole column is right-aligned, so the row can say so');
+
+  const split = T.parseTableText(T.formatTableText({
+    rows: [['a', 'b'], ['c', 'd']],
+    align: [{ r: 0, c: 1, h: 'right' }]
+  }));
+  assert.deepEqual(split.align, [],
+    'one cell out of two has no column-shaped spelling, so it does not travel');
+});
+
+test('the round trip carries head and column alignment', () => {
+  const b = {
+    rows: [['Region', 'Q1'], ['North', '50'], ['South', '45']],
+    head: 2,
+    align: [{ r: 0, c: 1, h: 'right' }, { r: 1, c: 1, h: 'right' }, { r: 2, c: 1, h: 'right' }]
+  };
+  const back = T.parseTableText(T.formatTableText(b));
+  assert.equal(back.ok, true);
+  assert.deepEqual(back.rows, b.rows);
+  assert.equal(back.head, 2);
+  assert.deepEqual(back.align, b.align);
 });

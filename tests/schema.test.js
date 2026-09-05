@@ -33,7 +33,7 @@ const F = require('./lib/fixture.js');
 // this file fail them, quietly testing something the browser never does.
 globalThis.window = globalThis;
 for (const file of ['storage-guard.js', 'schema.js']) {
-  vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), { filename: file });
+  vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'scripts', file), 'utf8'), { filename: file });
 }
 const S = globalThis.TrackSchema;
 
