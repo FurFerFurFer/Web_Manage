@@ -74,7 +74,7 @@ open-decision sections until they are built.
 
 ## Non-Negotiable Rules
 
-### Track data is not this project's to write
+### Track owns the data and the mutation boundary
 
 The Track application owns `track_db`. Section 18 of the concept draft lists fourteen
 data-safety guardrails and they are binding on any future implementation, not aspirational.
@@ -85,10 +85,20 @@ The load-bearing ones, restated because they are the ones an implementation forg
 - The game never silently reschedules an item, never carries an unfinished item into a new
   date at midnight, and never turns tomorrow into today at the evening preview.
 - Ordinary movement, collision, proximity, weather, and platforming never modify Track data.
-- The only write capability confirmed in the concept is **personal notebook notes**.
-  Everything else — task completion, SIR, deadlines, calendar entries, and all structural
-  goal editing — is deferred or excluded. Do not design around a write the concept has not
-  granted.
+- Confirmed in-world writes are **personal notebook notes** and **full MM interaction from
+  a selected star in the Memory Grove**, as chosen on 2026-09-06. Section 10 of the draft
+  defines the MM scope: applicable existing MM identity/structure, MG, Kolb, +Lin/SIR,
+  comment/link, and source-content actions. Direct task/to-learn completion, general
+  calendar/deadline editing, and structural goal editing remain deferred or excluded.
+- Full MM interaction is a confirmed requirement, not permission for scene code to write
+  `track_db` directly. Each action must use a scoped Track-owned command with explicit
+  slot/record identity, validation, appropriate confirmation, acknowledgment, and recovery.
+  Multi-record effects must be applied together and retries must not duplicate them.
+  Camera motion, star selection, and inspection remain read-only. Missing command safety
+  is unfinished implementation, not a reason to silently drop a confirmed MM feature.
+- This concept decision does not authorize live mutations, runtime changes, or cloud
+  deployment during documentation work. Those still follow the separately scoped Track
+  workflow below and the root project's applicable approval gates.
 - Unknown, failed, or pending synchronization is shown as such. Presentation must never
   imply a successful data change before Track has accepted it.
 
