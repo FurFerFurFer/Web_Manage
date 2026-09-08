@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#264d45">
+  <title>Clockgarden · Track World demo</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles/demo.css?v=2">
+  <script defer src="scripts/storage-isolation.js?v=1"></script>
+  <script defer src="vendor/babylonjs-9.25.0/babylon.js?v=1"></script>
+  <script defer src="/track-core/schema.js?v=7"></script>
+  <script defer src="/track-core/calendar-core.js?v=7"></script>
+  <script defer src="scripts/demo-core.js?v=2"></script>
+  <script defer src="scripts/scene.js?v=2"></script>
+  <script defer src="scripts/app.js?v=2"></script>
+</head>
+<body>
+  <canvas id="world" tabindex="0" aria-label="Clockgarden. Use W A S D or arrow keys to walk, Shift to run, Space to jump, Q and E to turn the camera. Drag to look and scroll to zoom."></canvas>
+  <div class="world-vignette" aria-hidden="true"></div>
+  <header class="identity"><span class="world-mark" aria-hidden="true">✧</span><div><span>Track World</span><strong>Clockgarden</strong></div></header>
+  <div class="day-bud"><button id="today-bud" data-panel="today" aria-label="Open Today"><svg viewBox="0 0 40 48" aria-hidden="true"><path d="M20 38C5 34 4 20 20 4c16 16 15 30 0 34Z"/><path d="M20 39C5 41 1 32 2 27c11-1 16 4 18 12Zm0 0c15 2 19-7 18-12-11-1-16 4-18 12Z"/><path d="M20 13v32"/></svg><span><strong>Today</strong><small id="clock-label">Demo clock · 17:40</small></span></button></div>
+  <main>
+    <section id="welcome" class="welcome" aria-labelledby="welcome-title">
+      <span class="demo-label">First playable study</span>
+      <h1 id="welcome-title">A little room<br>to wander.</h1>
+      <p>Follow the stone path. Watch the weather turn.<br>Bring a thought back to your notebook.</p>
+      <button id="enter" class="primary" disabled>Preparing the garden…</button>
+      <p class="welcome-note">Synthetic Track data. Drafts last until reload.<br>Simple shapes stand in for the final artwork.</p>
+    </section>
+    <section id="panel" class="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" hidden>
+      <div class="panel-heading"><div><span id="panel-kicker">Your garden companion</span><h1 id="panel-title">Today</h1></div><button id="close-panel" class="icon-button" aria-label="Close panel">×</button></div>
+      <div id="panel-content" class="panel-content"></div>
+      <div class="panel-footer">Synthetic demo · movement rests while you read</div>
+    </section>
+    <div id="load-error" role="alert" hidden><h2>The garden needs attention</h2><p id="error-message"></p><p>Use the local demo server. If WebGL is unavailable, enable browser hardware acceleration and reload.</p><button id="read-without-world">Open notebook</button> <button id="retry">Reload demo</button></div>
+  </main>
+  <div id="interaction" class="interaction" hidden></div>
+  <div class="bottom-ui">
+    <div class="location"><span id="place-name">Clockgarden approach</span><small id="weather-label">Clear skies</small></div>
+    <nav class="toolbelt" aria-label="Garden companions">
+      <button data-panel="today"><span aria-hidden="true">◷</span>Today<kbd>T</kbd></button>
+      <button data-panel="notebook"><span aria-hidden="true">▤</span>Notebook<kbd>N</kbd></button>
+      <button data-panel="memory"><span aria-hidden="true">✧</span>Mind maps<kbd>M</kbd></button>
+      <button data-panel="weather"><span aria-hidden="true">☂</span>Weather<kbd>V</kbd></button>
+      <button data-panel="help" aria-label="Controls and demo information">?</button>
+    </nav>
+    <div class="control-hint">WASD move <span>Shift run</span> <span>Space jump</span><br>Drag to look <span>Q / E turn</span> <span>Wheel zoom</span></div>
+  </div>
+  <div id="announcement" class="sr-only" aria-live="polite"></div>
+  <noscript>This demo needs JavaScript to draw the garden.</noscript>
+</body>
+</html>

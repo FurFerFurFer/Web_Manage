@@ -3288,6 +3288,21 @@ test('browser suites', skipUnlessChrome, async t => {
     // whose records are nested one level deeper than anything else on it.
     const page = await open('index.html', {
       db: seedDb({
+        // The four quest keys ride the same unknown-key path, and their mind-map
+        // ids are NUMBERS — the type real data uses — so this also proves the
+        // round trip does not stringify them on the way through.
+        goals: [
+          F.task('g-1', {
+            title: 'Root goal',
+            milestones: [F.milestone('ms-1', '2026-03-01', '2026-03-10')],
+            toLearn: [10, 11], questLearn: [10], starLearn: [10],
+            quest: true, star: false,
+            children: [F.task('g-1a', {
+              scheduledDate: '2026-03-10', scheduledTime: '08:30', duration: 45,
+              quest: true, star: true
+            })]
+          })
+        ],
         calendarNotes: [
           F.calNote('cn-sched', '2026-03-10', { time: '09:00', blockDuration: 90, blockOff: true }),
           F.calNote('cn-doc', '2026-03-10', { docPageId: 'p-1', title: 'Written from a page' })
@@ -3365,6 +3380,16 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(sched.parts,
       [{ id: 'pt-1', title: 'Outline', date: '2026-03-08', time: '08:00', blockDuration: 45, done: false }],
       'and the whole nested parts list, record for record, including a part\'s own day');
+    // the four quest keys, which no allow-list names either
+    const qGoal = imported.goals.find(g => g.id === 'g-1');
+    assert.equal(qGoal.quest, true, 'the quest flag round-tripped');
+    assert.equal(qGoal.star, false, 'including a star stored as an explicit false');
+    assert.deepEqual(qGoal.questLearn, [10],
+      'and the quested mind map, still a NUMBER rather than a stringified id');
+    assert.deepEqual(qGoal.starLearn, [10], 'and its star');
+    assert.equal(qGoal.children.find(k => k.id === 'g-1a').star, true,
+      'a nested node kept its flags too');
+
     assert.equal(imported.calendarNotes.find(n => n.id === 'cn-sched').blockOff, true,
       'blockOff round-tripped — the one key that decides whether an item is on the grid');
     assert.equal(imported.calendarNotes.find(n => n.id === 'cn-sched').blockDuration, 90,
@@ -8446,5 +8471,766 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(tokens.pending, 'rgb(245, 158, 11)', 'Night pending keeps the old amber #f59e0b');
     assert.equal(tokens.live, 'rgb(34, 211, 238)', 'Night live keeps the old cyan #22d3ee');
     await page.close();
+  });
+
+  /* ── QUEST: the flags must travel with toLearn ──────────────────────────
+     THREE sites in progress.html move a parent's toLearn/mmTargets/milestones
+     into a new sub-goal and blank the parent's. questLearn/starLearn are in the
+     same key space and must travel with them.
+
+     Miss one and the failure is silent and expensive: TrackQuest.questLearnOf
+     gates on toLearn membership, so a flag left on a node whose toLearn was
+     emptied does not merely dangle — the quest DISAPPEARS. A curated entry lost
+     as a side effect of adding a sub-goal, with no error anywhere.
+
+     Three cases rather than one because that failure has THREE independent
+     doors. A single case would let two of them stay open behind a passing
+     sibling — this repository's recurring bug, and the reason the baselines for
+     these are three disjoint singletons.
+
+     Mind-map ids are NUMBERS here (sir-ks02.html mints them from nid()), which
+     is what production stores. A string-id fixture would pass against a module
+     that drops every real toLearn entry. */
+
+  // toLearn 10 and 11 are the two mms F.populatedSlot already seeds.
+  const questGoal = (id, over = {}) => Object.assign({
+    id, title: 'Quest goal ' + id, children: [], completed: false, createdAt: 1,
+    scheduledDate: null, toLearn: [10, 11], mmTargets: { 10: { stage: 2 } },
+    milestones: [], questLearn: [10], starLearn: [10]
+  }, over);
+
+  const findNodeById = function (nodes, id) {
+    for (var i = 0; i < (nodes || []).length; i++) {
+      if (nodes[i] && nodes[i].id === id) return nodes[i];
+      var hit = findNodeById(nodes[i] && nodes[i].children, id);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  // The one assertion all three share: the flags arrived on the new sub-goal
+  // and left NO ghost behind. Spelled once so a fourth transfer site added
+  // later can reuse it rather than re-deriving what "transferred" means.
+  const assertTransferred = (parent, label) => {
+    assert.ok(parent, label + ': the parent goal is still there');
+    const sub = (parent.children || []).filter(c => c.isSubGoal)[0];
+    assert.ok(sub, label + ': a sub-goal was created');
+    assert.deepEqual(sub.toLearn, [10, 11], label + ': toLearn moved down');
+    assert.deepEqual(sub.questLearn, [10], label + ': the QUEST moved down with it');
+    assert.deepEqual(sub.starLearn, [10], label + ': and so did its star');
+    assert.deepEqual(parent.toLearn, [], label + ": the parent's toLearn was blanked");
+    assert.equal('questLearn' in parent, false, label + ': no questLearn ghost on the parent');
+    assert.equal('starLearn' in parent, false, label + ': no starLearn ghost on the parent');
+  };
+
+  await t.test('QUEST: adding a sub-goal carries the quest flags down with toLearn', async () => {
+    const page = await open('progress.html', {
+      db: seedDb({ goals: [questGoal('qg-1')] }), hash: '#progress'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-add-subgoal="qg-1"]'); },
+      { message: 'the + sub-goal control' });
+
+    await page.evaluate(function () { document.querySelector('[data-add-subgoal="qg-1"]').click(); });
+    await page.waitFor(function () {
+      return !!document.querySelector('input[placeholder="Sub-goal name…"]');
+    }, { message: 'the sub-goal name input' });
+
+    await page.evaluate(function (setter) {
+      var set = new Function('return ' + setter)();
+      var input = document.querySelector('input[placeholder="Sub-goal name…"]');
+      set(input, 'Fingerstyle');
+      // The `add` button beside the input, not the task-kid one elsewhere.
+      Array.prototype.find.call(input.parentElement.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'add'; }).click();
+    }, SET_REACT_INPUT);
+
+    // Wait for the WRITE TO LAND, never for the right answer: a wrong transfer
+    // would otherwise time out here and report "unreachable" instead of wrong.
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var g = ((db.slots || [])[0] || {}).goals || [];
+      return !!(g[0] && (g[0].children || []).length);
+    }, { message: 'the sub-goal reaching track_db' });
+
+    const slot = await page.evaluate(READ_SLOT);
+    assertTransferred(slot.goals[0], 'addSubGoalAndMigrateTasks');
+    await page.close();
+  });
+
+  await t.test('QUEST: nesting a goal into a goal carries the quest flags down', async () => {
+    const page = await open('progress.html', {
+      db: seedDb({ goals: [questGoal('qg-1'), questGoal('qg-2', { toLearn: [], questLearn: [], starLearn: [], mmTargets: {} })] }),
+      hash: '#progress'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-goal-tab="qg-2"]'); },
+      { message: 'the goal tab bar' });
+
+    // dragstart and drop go in SEPARATE evaluates: dragstart only sets state,
+    // and a drop fired in the same synchronous block reads the pre-render value.
+    assert.equal(await page.evaluate(function () {
+      var tab = document.querySelector('[data-goal-tab="qg-2"]');
+      if (!tab) return 'no source tab';
+      window.__qdt = new DataTransfer();
+      tab.dispatchEvent(new DragEvent('dragstart',
+        { bubbles: true, cancelable: true, dataTransfer: window.__qdt }));
+      return 'ok';
+    }), 'ok');
+    await sleep(150);
+
+    /* dragover gets its own evaluate too, and that is not belt-and-braces here.
+       onDragOver calls setDragTabTarget, and onDrop READS that state — fired in
+       the same synchronous block the drop sees the pre-render null and bails
+       without nesting. This case timed out on exactly that.
+
+       The band matters as well: the handler only NESTS between 30% and 70% of
+       the target's width and reorders outside it, so aim at the centre or the
+       case silently tests reordering instead. */
+    assert.equal(await page.evaluate(function () {
+      var target = document.querySelector('[data-goal-tab="qg-1"]');
+      if (!target) return 'no target tab';
+      var r = target.getBoundingClientRect();
+      target.dispatchEvent(new DragEvent('dragover', {
+        bubbles: true, cancelable: true, dataTransfer: window.__qdt,
+        clientX: r.left + r.width / 2, clientY: r.top + r.height / 2
+      }));
+      return 'ok';
+    }), 'ok');
+    await sleep(150);
+
+    assert.equal(await page.evaluate(function () {
+      var target = document.querySelector('[data-goal-tab="qg-1"]');
+      if (!target) return 'no target tab';
+      var r = target.getBoundingClientRect();
+      target.dispatchEvent(new DragEvent('drop', {
+        bubbles: true, cancelable: true, dataTransfer: window.__qdt,
+        clientX: r.left + r.width / 2, clientY: r.top + r.height / 2
+      }));
+      return 'ok';
+    }), 'ok');
+
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var g = ((db.slots || [])[0] || {}).goals || [];
+      return g.length === 1;
+    }, { message: 'the nest reaching track_db' });
+
+    const slot = await page.evaluate(READ_SLOT);
+    assertTransferred(slot.goals[0], 'nestGoalIntoGoal');
+    await page.close();
+  });
+
+  await t.test('QUEST: nesting a sub-goal into a sub-goal carries the quest flags down', async () => {
+    const page = await open('progress.html', {
+      db: seedDb({
+        goals: [{
+          id: 'qg-1', title: 'Root', children: [
+            questGoal('sub-a', { isSubGoal: true, title: 'Holds the quest' }),
+            questGoal('sub-b', { isSubGoal: true, title: 'Dragged', toLearn: [], questLearn: [], starLearn: [], mmTargets: {} })
+          ],
+          completed: false, createdAt: 1, scheduledDate: null,
+          toLearn: [], mmTargets: {}, milestones: []
+        }]
+      }),
+      hash: '#progress'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-subgoal-handle="sub-b"]'); },
+      { message: 'the sub-goal drag handle' });
+
+    assert.equal(await page.evaluate(function () {
+      var handle = document.querySelector('[data-subgoal-handle="sub-b"]');
+      if (!handle) return 'no handle';
+      window.__qdt = new DataTransfer();
+      handle.dispatchEvent(new DragEvent('dragstart',
+        { bubbles: true, cancelable: true, dataTransfer: window.__qdt }));
+      return 'ok';
+    }), 'ok');
+    await sleep(150);
+
+    assert.equal(await page.evaluate(function () {
+      var target = document.querySelector('[data-goal-node="sub-a"]');
+      if (!target) return 'no target';
+      ['dragover', 'drop'].forEach(function (type) {
+        target.dispatchEvent(new DragEvent(type,
+          { bubbles: true, cancelable: true, dataTransfer: window.__qdt }));
+      });
+      return 'ok';
+    }), 'ok');
+
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var g = ((db.slots || [])[0] || {}).goals || [];
+      var a = ((g[0] || {}).children || []).filter(function (c) { return c.id === 'sub-a'; })[0];
+      return !!(a && (a.children || []).length);
+    }, { message: 'the sub-goal nest reaching track_db' });
+
+    const slot = await page.evaluate(READ_SLOT);
+    const subA = findNodeById(slot.goals, 'sub-a');
+    assertTransferred(subA, 'nestSubGoalIntoSubGoal');
+    await page.close();
+  });
+
+  await t.test('QUEST: un-linking a mind map re-scopes the quest flags with toLearn', async () => {
+    /* updateGoalToLearn is the ONE writer of toLearn, which is why the re-scope
+       lives there rather than in ToLearnRow's remove handler. A flag left
+       pointing at an unlinked mind map would let re-linking it silently
+       resurrect a quest the user removed. */
+    const page = await open('progress.html', {
+      db: seedDb({ goals: [questGoal('qg-1', { questLearn: [10, 11], starLearn: [11] })] }),
+      hash: '#progress'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-goal-node="qg-1"]'); },
+      { message: 'the goal node' });
+
+    // Drive the product function through the page rather than a UI hunt: the
+    // remove control is behind hover state and a confirm, and what is under
+    // test is the writer, not the chrome that reaches it.
+    await page.evaluate(function () {
+      window.__q = window.TrackQuest;
+      var scoped = Object.assign({}, { id: 'x', toLearn: [10], questLearn: [10, 11], starLearn: [11] });
+      window.__res = Object.assign({}, window.__q.withoutLearnFlags(scoped), window.__q.learnFlagsOf(scoped));
+    });
+    const res = await page.evaluate(function () { return window.__res; });
+    assert.deepEqual(res.questLearn, [10], 'the flag for the dropped mm went with it');
+    assert.equal('starLearn' in res, false, 'starLearn emptied, so the key went entirely');
+    await page.close();
+  });
+
+  /* ── QUEST: the tab ─────────────────────────────────────────────────────
+     Assertions are per SURFACE and per RULE. The Progress tab and the Home
+     panel read the same TrackQuest module, so doctoring the module fails both
+     by design — the disjointness that proves each surface is independently
+     load-bearing has to come from doctoring the SURFACES, one page at a time. */
+
+  const questNode = (id, over = {}) => Object.assign({
+    id, title: id, children: [], completed: false, createdAt: 1, scheduledDate: null,
+    toLearn: [], mmTargets: {}, milestones: []
+  }, over);
+
+  // Guitar → two quest tasks, a quest routine, a non-quest sibling, one quested
+  // mind map; plus a whole branch with no quest in it at all.
+  const QUEST_TREE = () => [
+    questNode('root', {
+      title: 'Guitar', toLearn: [10, 11], mmTargets: { 10: { stage: 2 } },
+      questLearn: [10], starLearn: [10],
+      children: [
+        questNode('t1', { title: 'Travis picking', quest: true, star: true }),
+        questNode('t2', { title: 'Thumb independence', quest: true }),
+        questNode('r1', { title: 'Daily warmup', quest: true, taskType: 'routine' }),
+        questNode('t3', { title: 'Not a quest' })
+      ]
+    }),
+    questNode('other', { title: 'Questless goal', children: [questNode('t9', { title: 'nope' })] })
+  ];
+
+  const openQuest = async (goals = QUEST_TREE()) => {
+    const page = await open('progress.html', { db: seedDb({ goals }), hash: '#quest' });
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-tab]'); },
+      { message: 'the QUEST tab' });
+    return page;
+  };
+  const attrs = function (name) {
+    return Array.prototype.map.call(document.querySelectorAll('[' + name + ']'),
+      function (e) { return e.getAttribute(name); });
+  };
+
+  await t.test('QUEST: the tab prunes to quest branches and keeps ancestors as context', async () => {
+    const page = await openQuest();
+    const rows = await page.evaluate(attrs, 'data-quest-row');
+    assert.deepEqual(rows, ['root', 't1', 't2', 'r1'],
+      'the questless sibling and the whole questless branch are gone; the ancestor stays');
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-learn-row'), ['root:10'],
+      'the quested mind map hangs off its own goal, and the unquested one does not');
+    // The ancestor is CONTEXT: it carries no controls, because a tick there
+    // would complete work the user never selected.
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-quest-row="root"] [data-quest-star-toggle="root"]');
+    }), false, 'a context ancestor has no star control');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('QUEST: a starred parent is ONE row in the starred list, not its subtree', async () => {
+    /* "If the parent is chosen include all child but only show the parent."
+       The whole rule is a single `return` inside starRollup. */
+    const page = await openQuest([questNode('g', {
+      title: 'Guitar', quest: true, star: true,
+      children: ['a', 'b', 'c'].map(k => questNode(k, { title: k, quest: true, star: true }))
+    })]);
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-star-row'), ['g'],
+      'one row for the parent — its starred descendants are what that row stands for');
+    await page.close();
+  });
+
+  await t.test('QUEST: ticking a leaf writes completed and disturbs nothing else', async () => {
+    const page = await openQuest();
+    await page.evaluate(function () { document.querySelector('[data-quest-tick="t1"]').click(); });
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var g = ((db.slots || [])[0] || {}).goals || [];
+      var kids = (g[0] || {}).children || [];
+      return kids.some(function (k) { return k.id === 't1' && k.completed; });
+    }, { message: 'the tick reaching track_db' });
+
+    const slot = await page.evaluate(READ_SLOT);
+    const t1 = slot.goals[0].children.filter(k => k.id === 't1')[0];
+    assert.equal(t1.completed, true);
+    assert.equal(t1.quest, true, 'still a quest');
+    assert.equal(t1.star, true, 'still starred');
+    assert.deepEqual(slot.goals[0].toLearn, [10, 11], 'the goal\'s toLearn is untouched');
+    assert.deepEqual(slot.goals[0].questLearn, [10], 'and so are its quest flags');
+    await page.close();
+  });
+
+  await t.test('QUEST: a parent row and a to-learn row carry NO checkbox', async () => {
+    /* Both absences are the mechanism. toggleLeaf refuses a non-leaf, so a
+       checkbox on a parent would render, click and do nothing; and MM
+       completion is COMPUTED, never stored, so a to-learn cannot be ticked at
+       all. A future change that "makes the rows uniform" trips this. */
+    const page = await openQuest();
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-tick'), ['t1', 't2', 'r1'],
+      'only the three leaf quests are tickable');
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-quest-learn-row="root:10"] input[type=checkbox]');
+    }), false, 'a to-learn row has no checkbox');
+    await page.close();
+  });
+
+  await t.test('QUEST: a routine ticks in the tab ONLY, and never touches track_db', async () => {
+    /* The user's rule: a routine quest can be ticked, it resets at the end of
+       the day, and it does not affect the real tick. So the tick goes to its
+       own browser key — not routineDates, not any slot field. */
+    const page = await openQuest();
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    await page.evaluate(function () { document.querySelector('[data-quest-routine-tick="r1"]').click(); });
+    await page.waitFor(function () {
+      return !!localStorage.getItem('track_quest_routine_ticks');
+    }, { message: 'the routine tick reaching its browser key' });
+
+    const stored = JSON.parse(await page.evaluate(function () {
+      return localStorage.getItem('track_quest_routine_ticks');
+    }));
+    assert.deepEqual(stored.ids, ['r1']);
+    assert.equal(stored.slotId, 'slot-test-1');
+    assert.match(stored.day, /^\d{4}-\d{2}-\d{2}$/, 'a local calendar day, stored for the expiry');
+
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
+      before, 'track_db is BYTE-IDENTICAL — the real routine tick was not touched');
+    const slot = await page.evaluate(READ_SLOT);
+    const r1 = slot.goals[0].children.filter(k => k.id === 'r1')[0];
+    assert.equal('routineDates' in r1, false, 'no routineDates was invented');
+    await page.close();
+  });
+
+  await t.test('QUEST: a routine tick from YESTERDAY reads as unticked — the daily reset', async () => {
+    /* Expiry is structural, not scheduled: one stored day covers the whole set,
+       so there is no timer and no cleanup job to go wrong. */
+    const page = await open('progress.html', {
+      db: seedDb({ goals: QUEST_TREE() }), hash: '#quest',
+      extra: { track_quest_routine_ticks: JSON.stringify(
+        { slotId: 'slot-test-1', day: '2020-01-01', ids: ['r1'] }) }
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-tab]'); },
+      { message: 'the QUEST tab' });
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-quest-routine-tick="r1"]').checked;
+    }), false, 'a tick stored under another day does not survive into today');
+    await page.close();
+  });
+
+  await t.test('QUEST: un-questing writes false, deletes nothing, and leaves the star DORMANT', async () => {
+    /* The restore property. Un-questing suppresses the star rather than
+       clearing it, so re-questing puts back exactly what the user chose — the
+       same reasoning that makes unmerge a restore rather than a guess. */
+    const page = await openQuest();
+    await page.evaluate(function () {
+      var row = document.querySelector('[data-quest-row="t1"]');
+      Array.prototype.find.call(row.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '✕'; }).click();
+    });
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var kids = (((db.slots || [])[0] || {}).goals || [{}])[0].children || [];
+      return kids.some(function (k) { return k.id === 't1' && k.quest === false; });
+    }, { message: 'the un-quest reaching track_db' });
+
+    let slot = await page.evaluate(READ_SLOT);
+    let t1 = slot.goals[0].children.filter(k => k.id === 't1')[0];
+    assert.equal(t1.quest, false, 'written as false, not deleted');
+    assert.ok('quest' in t1, 'the key is still present');
+    assert.equal(t1.star, true, 'the star is DORMANT, not cleared');
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-star-row'), ['root:10'],
+      'and it has left the starred list, because isStarred gates on quest membership');
+
+    // …and re-questing restores it, which is the half a "tidying" writer breaks.
+    await page.evaluate(function () { document.querySelector('[data-quest-add]').click(); });
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-pick="t1"]'); },
+      { message: 'the picker' });
+    await page.evaluate(function () { document.querySelector('[data-quest-pick="t1"]').click(); });
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var kids = (((db.slots || [])[0] || {}).goals || [{}])[0].children || [];
+      return kids.some(function (k) { return k.id === 't1' && k.quest === true; });
+    }, { message: 'the re-quest reaching track_db' });
+    slot = await page.evaluate(READ_SLOT);
+    t1 = slot.goals[0].children.filter(k => k.id === 't1')[0];
+    assert.equal(t1.star, true, 're-questing RESTORED the star the user chose');
+    await page.close();
+  });
+
+  await t.test('QUEST: un-questing raises NO dialog', async () => {
+    /* Deliberately exempt from the confirm rule, beside merge/unmerge and a
+       line move: it writes false, deletes nothing, and is undone by pressing
+       the same control. A "clear all quests" button would NOT be exempt. */
+    const page = await openQuest();
+    const before = page.dialogs.length;
+    await page.evaluate(function () {
+      var row = document.querySelector('[data-quest-row="t2"]');
+      Array.prototype.find.call(row.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '✕'; }).click();
+    });
+    await sleep(800);
+    assert.equal(page.dialogs.length, before, 'no confirm was raised for an un-quest');
+    await page.close();
+  });
+
+  await t.test('QUEST: the picker offers a ZERO-LEAF goal and its mind maps', async () => {
+    /* The decisive difference from the schedule picker, which drops a zero-leaf
+       node because there is nothing there to schedule. A goal whose only
+       content is linked mind maps is exactly a quest target. */
+    const page = await openQuest([questNode('lonely', {
+      title: 'Only mind maps', toLearn: [10, 11], mmTargets: {}
+    })]);
+    await page.evaluate(function () { document.querySelector('[data-quest-add]').click(); });
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-pick]'); },
+      { message: 'the picker' });
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-pick'),
+      ['lonely', 'lonely:10', 'lonely:11'],
+      'the zero-leaf goal AND both of its linked mind maps are pickable');
+
+    await page.evaluate(function () { document.querySelector('[data-quest-pick="lonely:11"]').click(); });
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var g = ((db.slots || [])[0] || {}).goals || [];
+      return !!(g[0] && g[0].questLearn);
+    }, { message: 'the pick reaching track_db' });
+    const slot = await page.evaluate(READ_SLOT);
+    assert.deepEqual(slot.goals[0].questLearn, [11], 'a numeric mind-map id was stored');
+    assert.equal('quest' in slot.goals[0], false, 'picking a to-learn did not quest its goal');
+    await page.close();
+  });
+
+  await t.test('QUEST: dragging arranges the quest view and leaves the GOAL TREE alone', async () => {
+    /* The user's explicit choice: quest order is the Quest tab's own view, and
+       dragging must not restructure their goals. Both halves are asserted —
+       the rendered order changes AND `children` is byte-identical. */
+    const page = await openQuest([questNode('root', {
+      title: 'Guitar', quest: true,
+      children: ['a', 'b', 'c'].map(k => questNode(k, { title: k, quest: true }))
+    })]);
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-drag="c"]'); },
+      { message: 'the arrange handles' });
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-row'), ['root', 'a', 'b', 'c'],
+      'starts in goal-tree order, with nothing stored');
+
+    // dragstart, dragover and drop in SEPARATE evaluates: dragover sets React
+    // state that drop reads, so a drop in the same block sees the pre-render
+    // value — the lesson the priority-matrix and nest-goal cases already record.
+    await page.evaluate(function () {
+      var h = document.querySelector('[data-quest-drag="c"]');
+      window.__qdt = new DataTransfer();
+      h.dispatchEvent(new DragEvent('dragstart',
+        { bubbles: true, cancelable: true, dataTransfer: window.__qdt }));
+    });
+    await sleep(150);
+    for (const type of ['dragover', 'drop']) {
+      await page.evaluate(function (t) {
+        var row = document.querySelector('[data-quest-row="a"]');
+        var r = row.getBoundingClientRect();
+        // Above the midpoint means "before" — aim high, or this lands after.
+        row.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true,
+          dataTransfer: window.__qdt, clientY: r.top + 2 }));
+      }, type);
+      await sleep(150);
+    }
+
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var kids = (((db.slots || [])[0] || {}).goals || [{}])[0].children || [];
+      return kids.some(function (k) { return typeof k.questOrder === 'number'; });
+    }, { message: 'the arrangement reaching track_db' });
+
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-row'), ['root', 'c', 'a', 'b'],
+      'the quest view reads in the chosen order');
+    const slot = await page.evaluate(READ_SLOT);
+    assert.deepEqual(slot.goals[0].children.map(k => k.id), ['a', 'b', 'c'],
+      'the GOAL TREE did not move — dragging a quest is not a structural edit');
+    assert.deepEqual(slot.goals[0].children.map(k => k.questOrder), [1, 2, 0],
+      'the order is a per-node key written across the whole group');
+    await page.close();
+  });
+
+  await t.test('QUEST: an unarranged group stores no order at all', async () => {
+    /* Absence is the default. A workspace nobody has dragged in must carry no
+       questOrder anywhere — the same "clearing writes nothing" property the
+       merges and colWidths cases guard for their own fields. */
+    const page = await openQuest();
+    const slot = await page.evaluate(READ_SLOT);
+    const anyOrder = JSON.stringify(slot.goals).indexOf('questOrder') >= 0;
+    assert.equal(anyOrder, false, 'no questOrder key exists until something is dragged');
+    await page.close();
+  });
+
+  await t.test('QUEST: a starred parent says how many quests it stands for', async () => {
+    const page = await openQuest([questNode('root', {
+      title: 'Guitar', quest: true, star: true,
+      toLearn: [10], mmTargets: {}, questLearn: [10],
+      children: [
+        questNode('a', { quest: true }),
+        questNode('b', { quest: true }),
+        questNode('c') // not a quest — must NOT be counted
+      ]
+    })]);
+    assert.equal(await page.evaluate(function () {
+      var el = document.querySelector('[data-quest-star-count="root"]');
+      return el ? el.textContent : null;
+    }), '4 quests', 'itself + its quested to-learn + its two quested children');
+    await page.close();
+  });
+
+  await t.test('QUEST: a starred LEAF shows no count, because 1 is noise', async () => {
+    const page = await openQuest([questNode('root', {
+      children: [questNode('a', { quest: true, star: true })]
+    })]);
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-star-row]'); },
+      { message: 'the starred row' });
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-quest-star-count]');
+    }), false, 'a row standing only for itself says nothing');
+    await page.close();
+  });
+
+  await t.test('GUARD: a quest edit writes no key progress.html does not own', async () => {
+    const page = await openQuest();
+    const before = await page.evaluate(function () {
+      var s = JSON.parse(localStorage.getItem('track_db')).slots[0];
+      var out = {};
+      ['mms', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
+        'sessions', 'kolbs', 'notes', 'pos', 'levelTemplates'].forEach(function (k) {
+          out[k] = JSON.stringify(s[k]);
+        });
+      return out;
+    });
+    await page.evaluate(function () { document.querySelector('[data-quest-star-toggle="t2"]').click(); });
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var kids = (((db.slots || [])[0] || {}).goals || [{}])[0].children || [];
+      return kids.some(function (k) { return k.id === 't2' && k.star === true; });
+    }, { message: 'the star reaching track_db' });
+    const after = await page.evaluate(function () {
+      var s = JSON.parse(localStorage.getItem('track_db')).slots[0];
+      var out = {};
+      ['mms', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
+        'sessions', 'kolbs', 'notes', 'pos', 'levelTemplates'].forEach(function (k) {
+          out[k] = JSON.stringify(s[k]);
+        });
+      return out;
+    });
+    assert.deepEqual(after, before, 'every foreign key is byte-identical');
+    await page.close();
+  });
+
+  /* ── QUEST: the Home panel ──────────────────────────────────────────────
+     Read-only, vanilla, below the universal calendar. It reads the SAME
+     TrackQuest module the Progress tab does, so these assertions are what make
+     each surface independently load-bearing: a doctored index.html must fail
+     here and nowhere else. */
+
+  await t.test('HOME: the quest panel draws the same pruned tree and rollup', async () => {
+    const page = await open('index.html', { db: seedDb({ goals: QUEST_TREE() }) });
+    await page.waitFor(function () { return !!document.querySelector('.quest-panel'); },
+      { message: 'the Home quest panel' });
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-row'), ['root', 't1', 't2', 'r1'],
+      'the same prune as the Progress tab — one module, two surfaces');
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-learn-row'), ['root:10']);
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-star-row'), ['root:10', 't1']);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME: the quest panel is READ-ONLY and writes nothing', async () => {
+    /* Home's write set is "the slot list itself". A tick or a star here would
+       make index.html a writer of `goals`, which progress.html owns. */
+    const page = await open('index.html', { db: seedDb({ goals: QUEST_TREE() }) });
+    await page.waitFor(function () { return !!document.querySelector('.quest-panel'); },
+      { message: 'the Home quest panel' });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('.quest-panel input, .quest-panel button').length;
+    }), 0, 'no input and no button inside the panel — the only control is a link out');
+    await page.evaluate(function () {
+      var rows = document.querySelectorAll('[data-quest-row]');
+      for (var i = 0; i < rows.length; i++) rows[i].click();
+    });
+    await sleep(300);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
+      before, 'clicking every row left track_db byte-identical');
+    await page.close();
+  });
+
+  await t.test('HOME: an empty workspace draws the empty line, not stale rows', async () => {
+    /* renderQuests is called from BOTH renderSlots exits — the normal path and
+       the no-slots early return. Missing the second leaves the previous
+       workspace's quests on screen. */
+    const page = await open('index.html', { db: { slots: [], activeSlotId: null } });
+    await page.waitFor(function () { return !!document.getElementById('slot-list'); },
+      { message: 'the slot list (proving the page script ran)' });
+    await sleep(200);
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-row'), [],
+      'no rows survive an empty workspace');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME: a routine quest ticked in Progress reads as ticked here', async () => {
+    const page = await open('index.html', {
+      db: seedDb({ goals: QUEST_TREE() }),
+      extra: { track_quest_routine_ticks: JSON.stringify(
+        { slotId: 'slot-test-1', day: 'TODAY', ids: ['r1'] }) }
+    });
+    // Seeded with a placeholder day, then rewritten to the browser's own local
+    // day: the fixture cannot know the test machine's timezone, and a UTC day
+    // would be the wrong day west of Greenwich for part of every day.
+    await page.evaluate(function () {
+      var d = new Date();
+      var day = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+        '-' + String(d.getDate()).padStart(2, '0');
+      localStorage.setItem('track_quest_routine_ticks',
+        JSON.stringify({ slotId: 'slot-test-1', day: day, ids: ['r1'] }));
+    });
+    await page.reload();
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-row="r1"]'); },
+      { message: 'the routine quest row' });
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-quest-row="r1"]').className.indexOf('is-done') >= 0;
+    }), true, 'the quest-local tick shows here too');
+    // …and it is still not slot data.
+    const slot = await page.evaluate(READ_SLOT);
+    const r1 = slot.goals[0].children.filter(k => k.id === 'r1')[0];
+    assert.equal('routineDates' in r1, false, 'nothing was written to the routine itself');
+    await page.close();
+  });
+
+  await t.test('HOME: the chosen order and the starred count are mirrored', async () => {
+    /* Both come free from questTree/starRollup, which is the point: Home
+       re-derives nothing, so the two surfaces cannot disagree. Seeded through
+       stored questOrder rather than a drag, because Home has no drag — it is
+       read-only, and that is asserted separately. */
+    const page = await open('index.html', {
+      db: seedDb({ goals: [questNode('root', {
+        title: 'Guitar', quest: true, star: true, toLearn: [10], mmTargets: {}, questLearn: [10],
+        children: [
+          questNode('a', { quest: true, questOrder: 1 }),
+          questNode('b', { quest: true, questOrder: 2 }),
+          questNode('c', { quest: true, questOrder: 0 })
+        ]
+      })] })
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-row]'); },
+      { message: 'the Home quest rows' });
+    assert.deepEqual(await page.evaluate(attrs, 'data-quest-row'), ['root', 'c', 'a', 'b'],
+      'the same order the Progress tab would draw');
+    assert.equal(await page.evaluate(function () {
+      var el = document.querySelector('[data-quest-star-count="root"]');
+      return el ? el.textContent : null;
+    }), '5 quests', 'and the same count');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME: a goal title is TEXT, never markup', async () => {
+    /* The Progress tab is React and escapes by construction; this panel builds
+       an innerHTML string, so it is the one surface where a title could become
+       markup. That difference is the whole reason this case exists — and it
+       guards a maintenance hazard as much as a bug, since a future edit that
+       interpolates one more value without esc() would be silent. */
+    const payload = '<img src=x onerror="window.__pwned=1">';
+    const page = await open('index.html', {
+      db: seedDb({ goals: [questNode('root', {
+        title: payload, quest: true, star: true,
+        children: [questNode('t1', { title: 'He said "hi" & <b>bold</b>', quest: true })]
+      })] })
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-quest-row]'); },
+      { message: 'the Home quest rows' });
+    const r = await page.evaluate(function () {
+      return {
+        pwned: !!window.__pwned,
+        injected: document.querySelectorAll('.quest-panel img, .quest-panel b').length,
+        titles: Array.prototype.map.call(
+          document.querySelectorAll('.quest-panel .quest-title'), function (e) { return e.textContent; })
+      };
+    });
+    assert.equal(r.pwned, false, 'the payload did not execute');
+    assert.equal(r.injected, 0, 'and produced no elements');
+    assert.ok(r.titles.indexOf(payload) >= 0, 'it is shown verbatim as text');
+    assert.ok(r.titles.indexOf('He said "hi" & <b>bold</b>') >= 0,
+      'quotes and ampersands survive the escaping unmangled');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME: the panel uses the SHARED local-day helper, not a copy', async () => {
+    /* index.html already loads calendar-core.js, so a second local-day helper
+       here would be the duplication that becomes a UTC-day bug one edit later.
+       Asserted structurally, because a behavioural check would need the machine
+       to be in a timezone where the two disagree. */
+    const src = await open('index.html', { db: seedDb() });
+    const usesShared = await src.evaluate(function () {
+      return typeof window.TrackCalendar === 'object' &&
+        typeof window.TrackCalendar.toDateStr === 'function';
+    });
+    assert.equal(usesShared, true, 'TrackCalendar.toDateStr is available on Home');
+    await src.close();
+
+    const page = await open('index.html', { db: seedDb() });
+    const body = await page.evaluate(async function (url) {
+      var r = await fetch(url); var text = await r.text();
+      // Comments stripped FIRST, and then only renderQuests is read. This file
+      // explains in prose why it avoids a UTC day, and an earlier version of
+      // this case failed on that explanation rather than on any code — the
+      // same trap schedule-paste-core.test.js already records. The rest of the
+      // page is deliberately out of scope: its export-filename date is
+      // pre-existing and is not what this case is about.
+      var src = text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+      var i = src.indexOf('function renderQuests');
+      var j = src.indexOf('function renderSlots');
+      return (i >= 0 && j > i) ? src.slice(i, j) : null;
+    }, '/index.html');
+
+    assert.ok(body, 'found the renderQuests body');
+    assert.equal(/questLocalDay/.test(body), false,
+      'no page-local day helper — use TrackCalendar.toDateStr');
+    assert.equal(/toISOString/.test(body), false,
+      'and no UTC day inside the quest panel');
+    assert.ok(/TrackCalendar\.toDateStr/.test(body),
+      'the shared local-day helper is the one it calls');
+    await page.close();
+  });
+
+  await t.test('HOME: a corrupt routine-tick value cannot break the panel', async () => {
+    /* JSON.parse does not throw on 'null' or '42', so a hand-rolled try/catch
+       around it is not a check. A view preference must never break Home. */
+    for (const raw of ['42', 'null', '{', '[]', '{"ids":7}']) {
+      const page = await open('index.html', {
+        db: seedDb({ goals: QUEST_TREE() }), extra: { track_quest_routine_ticks: raw }
+      });
+      await page.waitFor(function () { return !!document.getElementById('slot-list'); },
+        { message: 'the slot list (proving the page script ran)' });
+      assert.deepEqual(await page.evaluate(attrs, 'data-quest-row'), ['root', 't1', 't2', 'r1'],
+        'the panel survived the stored value ' + raw);
+      assert.deepEqual(realErrors(page), []);
+      await page.close();
+    }
   });
 });

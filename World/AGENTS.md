@@ -14,28 +14,32 @@ and the conflict is reported rather than resolved silently.
 
 ## Status
 
-**Implementation is authorized. Nothing has been built yet.**
+**The first synthetic Babylon.js browser demo exists.** See [README.md](README.md) for
+what runs and [NOTES.md](NOTES.md) for unfinished work. On 2026-09-06 the user chose
+Babylon.js and explicitly approved its pinned 9.25.0 dependency; the user primarily
+directs Codex and playtests.
 
-Those are two separate facts and both matter. The barrier is gone; the starting point has
-not moved:
-
-- No engine has been chosen. No engine has been installed.
-- No code, project scaffold, asset pipeline, or build exists.
+- Source, fixtures, an isolated loopback server and behavior tests exist under `World/`.
+- The engine is vendored locally with its license, notice and integrity receipt. There
+  is no package manager, build system or production asset pipeline.
 - No hosting, cloud service, store account, or subscription has been purchased or enabled.
-- No benchmark has been run on the target hardware.
-- The feasibility review in the concept draft records **proposals**, not approved decisions.
+- Headless behavior checks are not a sustained target-hardware graphics benchmark.
+- The concept draft distinguishes selected demo direction from other proposals.
 
-So building may begin, and it begins from zero with the open decisions still open. A
-prototype, a scaffold, synthetic-data plumbing, and throwaway experiments inside `World/`
-no longer need to be asked for twice. Choosing the engine, committing to an art approach,
-spending money, installing anything, and touching Track's runtime remain stop-and-ask
-steps — see "Stop for direction" below.
+Ordinary demo work within the agreed boundary does not need to be asked for twice.
+Changing the engine, committing to an art approach, spending money, installing additional
+dependencies, and touching Track's runtime remain stop-and-ask steps — see "Stop for
+direction" below. Do not ask again for the chosen Babylon.js
+browser direction; a change of engine or delivery would be a new decision.
 
 ## Directory Contents
 
 | Path | Responsibility |
 | --- | --- |
 | `AGENTS.md` | This file: mandatory agent procedure and safety rules for the game project |
+| `README.md` | Current demo, run/test commands, controls and evidence limits |
+| `NOTES.md` | Unfinished proof gates and future work only |
+| `index.html`, `scripts/`, `styles/`, `tools/`, `tests/`, `vendor/` | Isolated synthetic browser demo; file responsibilities are in README |
 | `TRACK-WORLD-CONCEPT-DRAFT.md` | The concept of record: intent, principles, world structure, Track-concept mapping, guardrails, open decisions, and the feasibility review |
 | `assets/images/` | Visual-development reference imagery. **Not production assets** and not runtime application assets |
 
@@ -72,6 +76,9 @@ Create `World/README.md` in the same change that lands the first thing it can de
 not before it, and never as a place to hold plans. Plans belong in the draft's
 open-decision sections until they are built.
 
+The three-file split now exists. Keep actual run/test behavior in README and remaining
+work in NOTES; the concept draft remains the authority for product direction.
+
 ## Non-Negotiable Rules
 
 ### Track owns the data and the mutation boundary
@@ -103,6 +110,13 @@ The load-bearing ones, restated because they are the ones an implementation forg
   imply a successful data change before Track has accepted it.
 
 ### Work in `World/` does not edit the Track application
+
+The demo's `storage-isolation.js` must load before the vendored engine: Babylon performs
+a storage capability probe during import. Keep it in document-local memory, never let
+it obtain native storage, and retain the browser test that traps native storage access
+while preserving a synthetic sentinel. Shared `schema.js` and `calendar-core.js` are
+loaded read-only through the demo server; no bootstrap or synchronization script may
+be exposed or loaded there.
 
 A task scoped to this directory changes files in this directory. Editing `index.html`,
 `progress.html`, `sir-ks02.html`, `documentations.html`, `true-storage.html`, `scripts/`,
@@ -154,6 +168,16 @@ assumption is wrong: Firestore and Cloud Storage are different products with dif
 billing, and budget alerts do not cap charges.
 
 Read-only research and local inspection are allowed.
+
+## Ultra escalation rule
+
+The user requires an explicit warning when work becomes advanced or would go beyond the
+agreed plan. Before continuing that part, explain the specific complexity or scope change
+and ask the user to switch to **Ultra**. Pause the affected work until the user confirms
+the switch or gives another direction; do not claim to have changed the model or setting.
+A switch does not authorize expanded scope, installations, spending, or Track runtime
+changes. Routine work within the agreed demo boundary may continue while it remains
+straightforward.
 
 ## Required Workflow
 

@@ -8,6 +8,7 @@
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=8"></script>
+  <script src="scripts/quest-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -15,7 +16,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=9">
+  <link rel="stylesheet" href="styles/styles.css?v=11">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -667,15 +668,23 @@
         if (g.id === parentId) {
           const existingTasks    = (g.children || []).filter(c => !c.isSubGoal);
           const existingSubGoals = (g.children || []).filter(c =>  c.isSubGoal);
+          // questLearn/starLearn are in the same key space as mmTargets and
+          // MUST travel with toLearn. TrackQuest.questLearnOf gates on toLearn
+          // membership, so leaving them behind does not strand the quest — it
+          // silently DELETES it, as a side effect of adding a sub-goal.
           const newSubGoal = {
             ...subGoal,
             children:  [...existingTasks],
             toLearn:   [...(g.toLearn   || [])],
             mmTargets: { ...(g.mmTargets || {}) },
             milestones: [...(g.milestones || [])],
+            ...TrackQuest.learnFlagsOf(g),
           };
           return {
-            ...g,
+            // withoutLearnFlags, not a spread: a spread can add a key but
+            // cannot delete one, and `questLearn: []` is not the same stored
+            // state as no key at all.
+            ...TrackQuest.withoutLearnFlags(g),
             children:  [...existingSubGoals, newSubGoal],
             toLearn:   [],
             mmTargets: {},
@@ -1194,9 +1203,12 @@
               toLearn: [...(g.toLearn || [])],
               mmTargets: { ...(g.mmTargets || {}) },
               milestones: [...(g.milestones || [])],
+              // The quest flags travel with toLearn — see
+              // addSubGoalAndMigrateTasks for why leaving them deletes a quest.
+              ...TrackQuest.learnFlagsOf(g),
             };
             return {
-              ...g,
+              ...TrackQuest.withoutLearnFlags(g),
               children: [originalSubGoal, { ...dragged, isSubGoal: true }],
               toLearn: [],
               mmTargets: {},
@@ -1258,8 +1270,11 @@
                 toLearn: [...(n.toLearn || [])],
                 mmTargets: { ...(n.mmTargets || {}) },
                 milestones: [...(n.milestones || [])],
+                // The quest flags travel with toLearn — see
+                // addSubGoalAndMigrateTasks for why leaving them deletes a quest.
+                ...TrackQuest.learnFlagsOf(n),
               };
-              return { ...n, children: [defaultSubGoal, { ...dragged, isSubGoal: true }], toLearn: [], mmTargets: {}, milestones: [] };
+              return { ...TrackQuest.withoutLearnFlags(n), children: [defaultSubGoal, { ...dragged, isSubGoal: true }], toLearn: [], mmTargets: {}, milestones: [] };
             }
             return { ...n, children: [...(n.children || []), { ...dragged, isSubGoal: true }] };
           }
@@ -1448,12 +1463,24 @@
         .map(mm => ({ mm, children: buildChildren(mm.id) }));
     }
 
+    // The ONE writer of toLearn, which is why the quest flags are re-scoped
+    // here rather than in ToLearnRow's remove handler. questLearn/starLearn are
+    // parallel lists keyed into toLearn, so an id this write drops is dead — and
+    // leaving it stored would let re-linking the same mind map silently
+    // resurrect a quest the user removed.
+    //
+    // learnFlagsOf reads through questLearnOf, which gates on the node's OWN
+    // toLearn — so applying it to the node that already carries the NEW list
+    // returns exactly the surviving flags, and omits a key that emptied.
+    // withoutLearnFlags clears the old keys first, because a spread can add a
+    // key but cannot delete one.
     function updateGoalToLearn(goals, goalId, mmIds) {
-      return goals.map(g =>
-        g.id === goalId
-          ? { ...g, toLearn: mmIds }
-          : { ...g, children: updateGoalToLearn(g.children || [], goalId, mmIds) }
-      );
+      return goals.map(g => {
+        if (g.id !== goalId)
+          return { ...g, children: updateGoalToLearn(g.children || [], goalId, mmIds) };
+        const scoped = { ...g, toLearn: mmIds };
+        return { ...TrackQuest.withoutLearnFlags(scoped), ...TrackQuest.learnFlagsOf(scoped) };
+      });
     }
 
     function updateGoalMmTargets(goals, goalId, mmTargets) {
@@ -2639,6 +2666,7 @@
           {node.isSubGoal && (
             <span
               draggable
+              data-subgoal-handle={node.id}
               onDragStart={e => { e.dataTransfer.setData('application/subgoal-id', node.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); }}
               title="Drag to promote to ultimate goal"
               className="text-gray-600 hover:text-violet-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 cursor-grab select-none">⠿</span>
@@ -2817,6 +2845,7 @@
       if (isGoalLike) {
         return (<>
           <div
+            data-goal-node={node.id}
             className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`} ${subGoalDragOver ? 'ring-2 ring-violet-500' : taskDragOver ? 'ring-2 ring-indigo-500' : ''} ${arrangeDragOver === 'before' ? 'border-t-2 border-green-500' : arrangeDragOver === 'after' ? 'border-b-2 border-green-500' : ''}`}
             style={!inDetailView && depth === 0 && goalColor ? { borderTopColor: goalColor, borderTopWidth: 3 } : undefined}
             onDragOver={e => { const types = e.dataTransfer.types; if (types.includes('application/arrange-id')) { e.preventDefault(); e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setArrangeDragOver(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'); } else if (node.isSubGoal && types.includes('application/subgoal-id')) { e.preventDefault(); e.stopPropagation(); setSubGoalDragOver(true); } else if (types.includes('application/task-id')) { e.preventDefault(); e.stopPropagation(); setTaskDragOver(true); } }}
@@ -2907,7 +2936,7 @@
               <div className="flex items-center justify-between px-4 py-1.5">
                 <span className="text-[10px] tracking-widest text-gray-600">SUB-GOALS</span>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setAddingSubGoal(v => !v)}
+                  <button onClick={() => setAddingSubGoal(v => !v)} data-add-subgoal={node.id}
                     className="text-[10px] text-gray-600 hover:text-violet-400 transition-colors">+ sub-goal</button>
                   <button onClick={() => setPickingGoalLink(v => !v)}
                     className="text-[10px] text-gray-600 hover:text-violet-400 transition-colors">^ link</button>
@@ -3052,6 +3081,7 @@
         const subGoalChildren = (node.children || []).filter(c => c.isSubGoal);
         return (<>
           <div
+            data-goal-node={node.id}
             className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`} ${subGoalDragOver && node.isSubGoal ? 'ring-2 ring-violet-500' : ''}`}
             style={!inDetailView && depth === 0 && goalColor ? { borderTopColor: goalColor, borderTopWidth: 3 } : undefined}
             onDragOver={e => { if (node.isSubGoal && e.dataTransfer.types.includes('application/subgoal-id')) { e.preventDefault(); e.stopPropagation(); setSubGoalDragOver(true); } }}
@@ -3112,7 +3142,7 @@
               <div className="flex items-center justify-between px-4 py-1.5">
                 <span className="text-[10px] tracking-widest text-gray-600">SUB-GOALS</span>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setAddingSubGoal(v => !v)}
+                  <button onClick={() => setAddingSubGoal(v => !v)} data-add-subgoal={node.id}
                     className="text-[10px] text-gray-600 hover:text-violet-400 transition-colors">+ sub-goal</button>
                   <button onClick={() => setPickingGoalLink(v => !v)}
                     className="text-[10px] text-gray-600 hover:text-violet-400 transition-colors">^ link</button>
@@ -4224,6 +4254,7 @@
                   )}
                   <button
                     draggable
+                    data-goal-tab={g.id}
                     onDragStart={e => {
                       setDragTabFromIdx(idx);
                       e.dataTransfer.setData('application/ultimate-goal-id', g.id);
@@ -9624,6 +9655,316 @@
       return n;
     }
 
+    // ── Quest ─────────────────────────────────────────────────────────────────
+    /* A quest is a POINTER to work that already exists — a goal-tree node, or a
+       mind map linked under a goal through toLearn. Every rule about what that
+       means lives in TrackQuest (scripts/quest-core.js), which index.html reads
+       too; nothing here re-spells one.
+
+       Three deliberate ABSENCES in this panel, each of which is the mechanism
+       rather than an oversight:
+
+       - A non-leaf row has NO checkbox. toggleLeaf refuses a non-leaf via
+         isCountableLeaf, so a checkbox there would render, click and do nothing.
+       - A to-learn row has NO checkbox. MM completion is COMPUTED, never stored
+         (isMMTargetMet), so there is nothing to tick.
+       - A context ancestor — a row kept only because a quest sits beneath it —
+         has no controls at all. A tick there would complete work the user never
+         selected.
+
+       Un-questing and un-starring ask nothing. They write false, delete nothing,
+       leave the star dormant, and are undone by pressing the same control, so
+       they sit beside merge/unmerge and a line move in the destructive-control
+       rule's exemptions rather than needing a confirm. */
+
+    function questRoutineTicks(slotId) {
+      try { return TrackQuest.routineTicks(localStorage.getItem(TrackQuest.ROUTINE_TICK_KEY), slotId, toDateStr(new Date())); }
+      catch { return []; }
+    }
+
+    function QuestPanel({ goals, setGoals, mms, sirDoneMap, slotId }) {
+      const [picking, setPicking] = useState(false);
+      const [dragOverId, setDragOverId] = useState(null);
+      const [search, setSearch]   = useState('');
+      // A routine's quest tick is NOT slot data: it never writes routineDates,
+      // so it never touches the real completion, and it resets at end of day.
+      const [ticks, setTicks] = useState(() => questRoutineTicks(slotId));
+      const today = toDateStr(new Date());
+
+      // The displayed tick has to follow the displayed SLOT. Another tab can
+      // switch the active workspace, and this component is not remounted for
+      // that — so the initialiser alone would leave the previous slot's ids in
+      // state. No wrong row can render ticked (node ids do not collide across
+      // slots) and the WRITE is always correct, because toggleRoutineTick
+      // re-reads the stored value rather than trusting this cache. It is the
+      // read that would go stale, and this is the same "move slot identity with
+      // the data snapshot" rule the page's autosaves already follow.
+      useEffect(() => { setTicks(questRoutineTicks(slotId)); }, [slotId]);
+
+      function toggleRoutineTick(id, on) {
+        let raw = null;
+        try { raw = localStorage.getItem(TrackQuest.ROUTINE_TICK_KEY); } catch { raw = null; }
+        // The day is read HERE, not from the render-time `today`. A tab left
+        // open across midnight would otherwise file the tick under yesterday:
+        // the checkbox would look ticked, and the value would be gone on the
+        // next load, because routineTicks expires anything not stamped today.
+        const next = TrackQuest.withRoutineTick(raw, slotId, toDateStr(new Date()), id, on);
+        // Its own browser key, never track_db — so this arms no cloud upload and
+        // marks nothing pending. Both ends are total; a view preference must
+        // never be able to break the page.
+        try { localStorage.setItem(TrackQuest.ROUTINE_TICK_KEY, JSON.stringify(next)); } catch {}
+        setTicks(next.ids);
+      }
+
+      const tree    = TrackQuest.questTree(goals, mms || []);
+      const rollup  = TrackQuest.starRollup(goals, mms || []);
+      const counts  = TrackQuest.countQuests(goals);
+
+      function rowLabel(entry) {
+        const n = entry.node;
+        if (n.isSubGoal) return 'sub-goal';
+        if ((n.children || []).length) return 'goal';
+        return n.taskType === 'routine' ? 'routine' : 'task';
+      }
+
+      function LearnRow({ owner, row }) {
+        /* Three states, not two, and the same ones ToLearnRow draws: `·` for a
+           mind map with no target set at all, `○` for one short of its target, `✓`
+           for one that has met it. isMMTargetMet returns TRUE when there is no
+           target, so it must be gated on hasTarget or every untargeted mind map
+           reads as done. MM completion is computed, never stored — which is why
+           this row has no checkbox. */
+        const tgt = (owner.mmTargets || {})[row.mmId] || null;
+        const hasTarget = !!(tgt && (tgt.stage || tgt.level || (tgt.milestones || []).length > 0));
+        const met = hasTarget && row.mm && isMMTargetMet(row.mm, tgt, sirDoneMap);
+        return (
+          <div data-quest-learn-row={owner.id + ':' + row.mmId}
+            className="flex items-center gap-2 py-1 pl-2 border-l border-gray-800/60">
+            <span className={`text-[10px] w-3 ${met ? 'text-emerald-400' : hasTarget ? 'text-amber-400' : 'text-gray-700'}`}>
+              {!hasTarget ? '·' : met ? '✓' : '○'}
+            </span>
+            <span className={`flex-1 text-xs ${row.mm ? 'text-cyan-300' : 'text-gray-600 italic'}`}>
+              {row.mm ? row.mm.name : 'mind map removed'}
+            </span>
+            <span className="text-[9px] text-gray-700 tracking-widest">TO LEARN</span>
+            <button data-quest-star-toggle={owner.id + ':' + row.mmId}
+              onClick={() => setGoals(prev => TrackQuest.withStarLearn(prev, owner.id, row.mmId, !row.star))}
+              title={row.star ? 'Remove star' : 'Star this quest'}
+              className={`text-xs px-1 ${row.star ? 'text-amber-300' : 'text-gray-700 hover:text-amber-400'}`}>★</button>
+            <button onClick={() => setGoals(prev => TrackQuest.withQuestLearn(prev, owner.id, row.mmId, false))}
+              title="Remove from quests"
+              className="text-xs px-1 text-gray-700 hover:text-red-400">✕</button>
+          </div>
+        );
+      }
+
+      /* `siblings` is the rendered group this row belongs to, which is what a
+         drag reorders. It is passed down rather than re-derived, because the
+         group is the PRUNED set TrackQuest.questTree produced — re-deriving it
+         from node.children at the call site would order a different list than
+         the one on screen. */
+      function QuestRow({ entry, siblings }) {
+        const n = entry.node;
+        const leaf = isCountableLeaf(n);
+        const routine = n.taskType === 'routine';
+        const done = routine ? ticks.indexOf(n.id) >= 0 : !!n.completed;
+        const prog = leaf ? null : countProgress(n, id => findNode(goals, id));
+        const sibIds = (siblings || []).map(s => s.node.id);
+
+        function dropHere(e) {
+          const movedId = e.dataTransfer.getData('application/quest-order-id');
+          // Only a sibling of THIS row may land here. A drag from another goal
+          // is inert rather than an error — quest order is per group, and the
+          // user chose that dragging must not restructure the goal tree.
+          if (!movedId || movedId === n.id || sibIds.indexOf(movedId) < 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          const before = e.clientY < rect.top + rect.height / 2;
+          const next = TrackQuest.reorderIds(sibIds, movedId, n.id, before);
+          setGoals(prev => TrackQuest.withQuestOrder(prev, next));
+          setDragOverId(null);
+        }
+
+        return (
+          <div>
+            <div data-quest-row={n.id}
+              style={{ paddingLeft: (entry.depth * 14) + 'px' }}
+              onDragOver={e => {
+                if (!e.dataTransfer.types.includes('application/quest-order-id')) return;
+                e.preventDefault();
+                setDragOverId(n.id);
+              }}
+              onDragLeave={() => setDragOverId(id => (id === n.id ? null : id))}
+              onDrop={dropHere}
+              className={`flex items-center gap-2 py-1 ${entry.quest ? '' : 'opacity-50'} ${
+                dragOverId === n.id ? 'ring-1 ring-amber-500/70 rounded' : ''}`}>
+
+              {entry.quest && sibIds.length > 1 ? (
+                <span
+                  draggable
+                  data-quest-drag={n.id}
+                  onDragStart={e => {
+                    e.dataTransfer.setData('application/quest-order-id', n.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.stopPropagation();
+                  }}
+                  onDragEnd={() => setDragOverId(null)}
+                  title="Drag to arrange among its siblings — quest order only, your goals do not move"
+                  className="text-gray-700 hover:text-amber-400 text-[10px] px-0.5 cursor-grab select-none">⇅</span>
+              ) : <span className="w-3" />}
+
+              {entry.quest && leaf ? (
+                <input type="checkbox" checked={done}
+                  data-quest-tick={n.id}
+                  data-quest-routine-tick={routine ? n.id : undefined}
+                  onChange={() => routine
+                    ? toggleRoutineTick(n.id, !done)
+                    : setGoals(prev => toggleLeaf(prev, n.id))}
+                  title={routine
+                    ? 'Quest only — resets at the end of ' + today + ', and never marks the routine itself done'
+                    : 'Mark complete'}
+                  className={`w-3 h-3 ${routine ? 'accent-amber-500' : 'accent-emerald-500'}`} />
+              ) : <span className="w-3" />}
+
+              <span className={`flex-1 text-xs ${done ? 'line-through text-gray-600' : entry.quest ? 'text-gray-200' : 'text-gray-500'}`}>
+                {n.title || 'Untitled'}
+              </span>
+
+              {routine && entry.quest && (
+                <span className="text-[9px] text-amber-500/80 tracking-widest" title="Ticks here are quest-only and reset daily">DAILY</span>
+              )}
+              <span className="text-[9px] text-gray-700 tracking-widest">{rowLabel(entry).toUpperCase()}</span>
+              {prog && prog.total > 0 && (
+                <span className="text-[10px] text-gray-600 font-mono">{prog.done}/{prog.total}</span>
+              )}
+
+              {entry.quest ? (<>
+                <button data-quest-star-toggle={n.id}
+                  onClick={() => setGoals(prev => TrackQuest.withStar(prev, n.id, !entry.star))}
+                  title={entry.star ? 'Remove star' : 'Star this quest'}
+                  className={`text-xs px-1 ${entry.star ? 'text-amber-300' : 'text-gray-700 hover:text-amber-400'}`}>★</button>
+                <button onClick={() => setGoals(prev => TrackQuest.withQuest(prev, n.id, false))}
+                  title="Remove from quests"
+                  className="text-xs px-1 text-gray-700 hover:text-red-400">✕</button>
+              </>) : <span className="w-10" />}
+            </div>
+
+            {entry.learn.map(row => <LearnRow key={row.mmId} owner={n} row={row} />)}
+            {entry.children.map(kid => <QuestRow key={kid.node.id} entry={kid} siblings={entry.children} />)}
+          </div>
+        );
+      }
+
+      /* The picker deliberately does NOT reuse the schedule picker's renderer.
+         Two of that one's four filters are wrong here: it drops a complete node
+         (a ticked quest must stay visible to untick or un-quest) and it drops a
+         zero-leaf node — which is exactly a goal whose only content is linked
+         mind maps, the case this feature exists for. Sharing would mean a
+         renderer carrying four behaviour flags. */
+      function PickRow({ entry }) {
+        const n = entry.node;
+        const hit = !search || (n.title || '').toLowerCase().includes(search.toLowerCase());
+        const kids = entry.children.map(kid => <PickRow key={kid.node.id} entry={kid} />).filter(Boolean);
+        const learn = entry.learn.filter(row =>
+          !search || (row.mm && row.mm.name.toLowerCase().includes(search.toLowerCase())));
+        if (!hit && !kids.length && !learn.length) return null;
+        return (
+          <div>
+            {hit && (
+              <div style={{ paddingLeft: (entry.depth * 14) + 'px' }} className="flex items-center gap-2 py-0.5">
+                <button data-quest-pick={n.id}
+                  onClick={() => setGoals(prev => TrackQuest.withQuest(prev, n.id, !entry.quest))}
+                  className={`text-xs w-4 ${entry.quest ? 'text-emerald-400' : 'text-gray-600 hover:text-emerald-400'}`}>
+                  {entry.quest ? '✓' : '+'}
+                </button>
+                <span className="flex-1 text-xs text-gray-300">{n.title || 'Untitled'}</span>
+                <span className="text-[9px] text-gray-700 tracking-widest">{rowLabel(entry).toUpperCase()}</span>
+              </div>
+            )}
+            {learn.map(row => (
+              <div key={row.mmId} style={{ paddingLeft: ((entry.depth + 1) * 14) + 'px' }}
+                className="flex items-center gap-2 py-0.5">
+                <button data-quest-pick={n.id + ':' + row.mmId}
+                  onClick={() => setGoals(prev => TrackQuest.withQuestLearn(prev, n.id, row.mmId, !row.quest))}
+                  className={`text-xs w-4 ${row.quest ? 'text-emerald-400' : 'text-gray-600 hover:text-emerald-400'}`}>
+                  {row.quest ? '✓' : '+'}
+                </button>
+                <span className="flex-1 text-xs text-cyan-300">{row.mm ? row.mm.name : 'mind map removed'}</span>
+                <span className="text-[9px] text-gray-700 tracking-widest">TO LEARN</span>
+              </div>
+            ))}
+            {kids}
+          </div>
+        );
+      }
+
+      const pickTree = picking ? TrackQuest.questTree(goals, mms || [], { prune: false }) : [];
+
+      return (
+        <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full" data-quest-tab>
+          <div className="flex items-center gap-3 mb-5">
+            <div className="text-gray-700 tracking-widest text-xs flex-1">
+              QUEST — a side list you change whenever you like
+            </div>
+            <button data-quest-add onClick={() => { setPicking(v => !v); setSearch(''); }}
+              className="text-xs px-3 py-1 bg-emerald-800 hover:bg-emerald-700 text-white rounded">
+              {picking ? 'done' : '+ quest'}
+            </button>
+          </div>
+
+          {picking && (
+            <div className="mb-6 border border-gray-800 rounded-lg p-3 bg-gray-900/60">
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                data-quest-search placeholder="Search goals and mind maps…"
+                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none placeholder-gray-600 mb-2" />
+              {pickTree.length === 0
+                ? <div className="text-xs text-gray-600 py-2">No goals yet — add one in PROGRESS first.</div>
+                : pickTree.map(entry => <PickRow key={entry.node.id} entry={entry} />)}
+            </div>
+          )}
+
+          {rollup.length > 0 && (
+            <div className="mb-6">
+              <div className="text-[10px] text-amber-500/80 tracking-widest mb-2">
+                ★ STARRED — {rollup.length}
+              </div>
+              {rollup.map(row => (
+                <div key={row.kind === 'learn' ? row.node.id + ':' + row.mmId : row.node.id}
+                  data-quest-star-row={row.kind === 'learn' ? row.node.id + ':' + row.mmId : row.node.id}
+                  className="flex items-center gap-2 py-1 pl-2 border-l-2 border-amber-500/40">
+                  <span className="text-amber-300 text-xs">★</span>
+                  <span className="flex-1 text-xs text-gray-200">
+                    {row.kind === 'learn'
+                      ? (row.mm ? row.mm.name : 'mind map removed')
+                      : (row.node.title || 'Untitled')}
+                  </span>
+                  {/* Only when the row stands for more than itself: a starred
+                      leaf saying "1 quest" is noise, not information. */}
+                  {row.count > 1 && (
+                    <span data-quest-star-count={row.node.id}
+                      title="Quests this one row stands for"
+                      className="text-[10px] text-gray-600 font-mono">{row.count} quests</span>
+                  )}
+                  {row.kind === 'learn' && <span className="text-[9px] text-gray-700 tracking-widest">TO LEARN</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="text-[10px] text-gray-700 tracking-widest mb-2">
+            QUESTS — {counts.nodes + counts.learn}
+          </div>
+          {tree.length === 0
+            ? <div className="text-xs text-gray-600 py-4">
+                Nothing here yet. Press <span className="text-emerald-500">+ quest</span> and pick
+                anything from your goals — a goal, a task, or a mind map you are learning.
+              </div>
+            : tree.map(entry => <QuestRow key={entry.node.id} entry={entry} siblings={tree} />)}
+        </div>
+      );
+    }
+
     // ── App ───────────────────────────────────────────────────────────────────
 
     function App() {
@@ -9789,6 +10130,17 @@
               MILESTONES
             </button>
             <button
+              onClick={() => setTab('quest')}
+              data-tab-quest
+              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
+                tab === 'quest'
+                  ? 'border-amber-500 text-amber-300'
+                  : 'border-transparent text-gray-600 hover:text-gray-400'
+              }`}
+            >
+              QUEST
+            </button>
+            <button
               onClick={() => setTab('schedule')}
               className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
                 tab === 'schedule'
@@ -9868,6 +10220,17 @@
                 goals={goals} setGoals={setGoals}
                 selectedMilestone={selectedMilestone}
                 setSelectedMilestone={setSelectedMilestone}
+              />
+            </div>
+          )}
+
+          {/* Tab: QUEST */}
+          {tab === 'quest' && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <QuestPanel
+                goals={goals} setGoals={setGoals}
+                mms={mms} sirDoneMap={sirDoneMap}
+                slotId={loadedSlotId}
               />
             </div>
           )}

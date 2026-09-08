@@ -124,6 +124,43 @@ test('createEmptySlot produces every canonical field, in table order, and nothin
     'a fresh slot serializes identically whichever page built it');
 });
 
+test('GUARD: the five quest keys add NO slot field and raise no validation error', () => {
+  /* quest / star / questLearn / starLearn / questOrder are item-level keys on a
+     goal node inside the existing `goals` list, not SLOT_FIELDS rows. This case
+     is the direct proof of that claim: a slot whose goals carry all five still
+     normalizes to exactly the contract, and validateSlot reports nothing.
+
+     They are deliberately NOT validated. The two booleans are safe under `!!`,
+     and the two lists are read only through TrackQuest's total readers, which
+     cannot throw — so a check here would only invent a way to block a whole
+     database over a field nothing traverses. Same reasoning as `parentIds`
+     and `tags` on trueStorages. */
+  const quested = S.normalizeSlot({
+    id: 's-q', name: 'Quests', createdAt: '2026-09-07',
+    goals: [{
+      id: 'g-1', title: 'Guitar', children: [
+        { id: 't-1', title: 'Travis picking', children: [], quest: true, star: true }
+      ],
+      toLearn: [10, 11], mmTargets: {}, milestones: [],
+      quest: true, star: false, questLearn: [10], starLearn: [10], questOrder: 2
+    }]
+  });
+  assert.deepEqual(Object.keys(quested), CONTRACT,
+    'no SLOT_FIELDS row was added — the slot is still exactly 24 fields');
+  assert.equal(CONTRACT.length, 24);
+  assert.deepEqual(S.validateSlot(quested), { ok: true, errors: [] },
+    'the quest keys raise no validation error');
+
+  // …and they survive normalization on the unknown-key path, byte for byte.
+  const goal = quested.goals[0];
+  assert.equal(goal.quest, true);
+  assert.equal(goal.star, false);
+  assert.deepEqual(goal.questLearn, [10]);
+  assert.deepEqual(goal.starLearn, [10]);
+  assert.equal(goal.questOrder, 2, 'including the chosen sibling order');
+  assert.equal(goal.children[0].star, true, 'a nested node keeps its flags too');
+});
+
 test('createEmptySlot gives a list to every list field and a plain object to every map field', () => {
   const slot = S.createEmptySlot({ name: 'Default' });
   for (const key of LISTS) {

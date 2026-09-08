@@ -70,12 +70,13 @@ Active files:
 | `scripts/graph-layout.js` | The one radial canvas layout (`window.TrackGraphLayout`): `computeLayerLayout`, `applyRepulsion`, and the cycle guards that keep a parent cycle from blowing the stack on either canvas page |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format (`window.TrackSchedulePaste`): `parseScheduleText`, `formatScheduleText`, and the day/time cell readers. Holds NO date code, which is why its suite runs once rather than swept |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape (`window.TrackDocTable`): `mergeMap`, the pure merge writers, and the `::: track-table` paste format in both directions |
+| `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`): the membership readers, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Holds NO date code — the day is a parameter — which is why its suite runs once rather than swept |
 | `scripts/notes-widget.js` | Per-slot floating notes |
 | `styles/styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `docs/` | User-facing paste specifications for the Track application |
 | `World/` | The Track World game project — concept draft, its reference imagery, and its own `AGENTS.md`, which governs every change inside that directory. Nothing there is part of the Track runtime, and nothing there may write Track data |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -89,7 +90,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=9`, `scripts/schema.js?v=7`, `scripts/calendar-core.js?v=7`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-widget.js?v=2`, `scripts/true-storage-core.js?v=2`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=1`, `scripts/theme.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
+Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=11`, `scripts/schema.js?v=7`, `scripts/calendar-core.js?v=7`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-widget.js?v=2`, `scripts/true-storage-core.js?v=2`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=1`, `scripts/quest-core.js?v=2`, `scripts/theme.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
 
 A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
 than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,
@@ -362,6 +363,23 @@ A `refSchedules` item's `detail` is the lecturer, room, department or mode — e
 - `formatScheduleText` emits the fourth column **only when at least one entry carries a detail**. That is what keeps `⧉ copy as text` byte-identical for an import that predates the field; widening unconditionally would round-trip an unchanged paste into a different shape than the one stored.
 - **The block body on an hour grid stays title + time.** The detail is reachable from the Timetable list's own column, the Progress popover, and the tooltip on all three grids — never inside the block, where a dense day would become a wall of text. The block builders have the usual two copies (`refOn` in `calendar-core.js`, `refBlocksFor` in `progress.html`), and `detail` is `''` rather than `undefined` on both so a call site may concatenate it into a tooltip without printing the word "undefined". `tests/browser.test.js` asserts each of the three grids **separately**, and the fail-first evidence is two doctored baselines whose failure sets are disjoint.
 
+A **goal node** may carry five optional quest keys — `quest` and `star` (booleans), `questLearn` / `starLearn` (lists of mind-map ids inside that node's `toLearn`), and `questOrder` (a number). They are item-level keys inside the existing `goals` list, so the slot stays at **24** fields and **nothing was migrated**: absence is already correct for every stored node. `scripts/quest-core.js` (`window.TrackQuest`) is the one definition; `progress.html` authors them and `index.html` reads them. Eight rules follow, and the first two are the load-bearing ones:
+
+- **The flags TRAVEL with `toLearn`, at four sites.** Three of them move a parent's `toLearn`/`mmTargets`/`milestones` into a new sub-goal and blank the parent's — `addSubGoalAndMigrateTasks`, `nestGoalIntoGoal`, `nestSubGoalIntoSubGoal` — and the fourth, `updateGoalToLearn`, is the ONE writer of `toLearn` and re-scopes the flags to whatever list it is handed. Because `questLearnOf` gates on `toLearn` membership, a flag left behind does not merely dangle: **the quest DISAPPEARS**, as a side effect of an unrelated edit, with no error anywhere. Never spell the transfer by hand — `learnFlagsOf` spreads the flags IN and `withoutLearnFlags` returns a copy with them DELETED, because a spread can add a key but cannot remove one. Three browser cases cover the three sites separately, and their doctored baselines are exactly disjoint singletons: that failure has three independent doors, and one case would let two stay open behind a passing sibling.
+- **Ids are of TWO types and both must be accepted.** A goal node's id is a string from `TrackStorage.newId()`; a mind map's id is a **NUMBER** from `sir-ks02.html`'s `nid()` counter, so `toLearn`, `questLearn` and `starLearn` hold numbers in real data. `TrackQuest.isId` accepts both, everywhere. A string-only test drops every linked mind map and the whole feature reads as "no quests" with nothing in `realErrors` — and a string-id fixture cannot see it, which is why the offline suite carries numeric-id cases specifically.
+- **The booleans write `true`/`false` and are NEVER deleted; the two lists DELETE when they empty.** Two different rules on purpose. The booleans are read through `!!`, so absent, `false` and `undefined` are one state and there is no third state to protect — the `done` and `blockOff` rule. The lists have no fallback behind them — the `merges` / `colWidths` / `align` rule. A change that made them uniform would break one of them.
+- **`isStarred` gates on quest membership**, so un-questing SUPPRESSES the star and deletes nothing, and re-questing restores exactly what the user chose. `withQuest` must never touch `star`, and `withQuestLearn` must never touch `starLearn`. A writer that "tidies" either has destroyed the thing re-questing puts back — the `cautionDates` rule in a second field.
+- **`toLearn` stays a flat list of bare ids.** Promoting it to `[{mmId, quest}]` is the same mistake as promoting a table's `rows: [[string]]` to objects, and it would break `updateGoalToLearn`, `expandAnchorToLearn` (which runs on EVERY load), `getMMDescendants`, `buildToLearnTree`, `MMPickerModal` and the `deduplicateToLearn` migration — with no `schemaVersion` to hang a migration on.
+- **What cannot be ticked is an ABSENCE, not a guard.** A non-leaf row and a to-learn row carry no checkbox at all: `toggleLeaf` refuses a non-leaf via `isCountableLeaf`, so one there would render, click and do nothing, and MM completion is COMPUTED (`isMMTargetMet`) rather than stored. A context ancestor carries no controls either. Milestone nodes are omitted from Quest entirely and their children promoted one level, matching `renderPickerTreeNode`.
+- **`questOrder` is a THIRD absence rule, and not interchangeable with the other two.** It is a number whose absence is meaningful and is the default: no key means "wherever the goal tree puts it". It is written 0..n-1 across a group the user actually dragged, so an unarranged workspace stores none of it, and an unarranged sibling sorts AFTER the arranged ones rather than jumping to the front. It is a plain node key, so unlike `questLearn` it needs no transfer helper — it rides the ordinary `{...n}` spread. **`withQuestOrder` must never touch `children`**: quest order is the Quest tab's own view, and the user chose that dragging a quest is not a structural edit to their goals. A doctored baseline that permutes `children` fails on that assertion alone.
+- These keys are deliberately **not** validated in `schema.js`. The booleans are safe under `!!`, and the lists are read only through total readers that cannot throw, so a check would only invent a way to block a whole database over a field nothing traverses — the `parentIds` / `tags` reasoning. An offline guard case asserts a slot carrying all four still normalizes to exactly the 24 canonical fields.
+
+A routine quest's tick is **not slot data**. It lives in `track_quest_routine_ticks`, holding `{slotId, day, ids}`, beside `track_home_cal_hidden` and under the same rules. Three follow:
+
+- **It never writes `routineDates`.** The user's rule: a routine can be ticked in Quest, the tick does not affect the real tick, and it resets at the end of the day. A browser case asserts `track_db` is byte-identical across the interaction.
+- **Expiry is STRUCTURAL, not scheduled.** One stored `day` covers the whole set, so a day that is not today reads as empty — no timer, no cleanup job, no midnight edge case. A `slotId` mismatch reads as empty too, so switching workspaces cannot show another slot's ticks.
+- **The day is a PARAMETER**, computed by the page with its local-day helper and passed in. That is what keeps `quest-core.js` free of date code and its suite in the unswept list, and a structural case greps the module (comments stripped first) to prove it.
+
 A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may carry `tags` — each one naming a **pair**: a source-dump leaf (`dumpId`) and one MM linked inside it (`mmId`). Four rules follow, and the first is the load-bearing one:
 
 - The comparison that decides which storages belong to a pair has exactly **one** definition, `TrackTrueStorage.storagesForLink` in `true-storage-core.js`, and the tag record's shape has exactly one, `withTag`. `sir-ks02.html` draws an mmLink's content at **four** sites — the source-dump leaf card, the S&C tab for a leaf MM, the S&C tab for a non-leaf MM, and `DescendantSCNode` — and every one of them renders the shared `StorageTags` component through the single `renderStorageTags` helper. Never spell `t.dumpId === … && t.mmId === …` at a call site. This rule is written from a shipped bug in a different feature with the identical shape: the deadline caution predicate was spelled out at three sites, one dropped half of it, and the timeline mismarked every due day until it was found. `tests/browser.test.js` therefore asserts **negatively** at each surface — a chip must be absent under the other MM in the same dump, and absent under the same MM in another dump.
@@ -454,6 +472,7 @@ Other current browser keys include:
 
 - `track_theme` — the appearance preference; see the rules below
 - `track_home_cal_hidden` — the Home calendar legend's switched-OFF categories; see the rules below
+- `track_quest_routine_ticks` — a routine quest's day-scoped tick, `{slotId, day, ids}`; see the rules below
 - `track_db_ts` — when this device's data was last **confirmed** in the cloud, written only after the server accepts a write
 - `track_db_pending` — set while this device holds unsent edits, cleared on confirmation
 - `trackPriorityMatrix`
@@ -542,6 +561,7 @@ true-storage-core.js
 graph-layout.js
 doc-table-core.js
 schedule-paste-core.js
+quest-core.js
 ```
 
 Inspect every applicable:
@@ -672,9 +692,13 @@ Two further rules:
   that does nothing still demand an answer.
 
 Not every `✕` is in scope. Pure-dismiss controls — closing a modal, cancelling a
-form — stay one click. So do three deliberate exclusions, each pinned by a browser
+form — stay one click. So do four deliberate exclusions, each pinned by a browser
 case: the four detach `⊗` chips, the two MG schedule `✓` toggle-offs
-(`progress.html`), and the emoji icon `Clear` (`documentations.html`). Do not
+(`progress.html`), the emoji icon `Clear` (`documentations.html`), and the Quest
+tab's un-quest `✕` and un-star `★` (`progress.html`) — those two write `false`,
+delete nothing, leave the star dormant, and are undone by pressing the same
+control, so they belong beside merge/unmerge and a line move rather than under
+this rule. A "clear all quests" button would NOT be exempt. Do not
 "make it uniform" without re-deciding those on purpose.
 
 `tests/lib/cdp.js` answers dialogs automatically and accepts by default; set
@@ -804,6 +828,7 @@ node --check scripts/true-storage-core.js
 node --check scripts/graph-layout.js
 node --check scripts/doc-table-core.js
 node --check scripts/schedule-paste-core.js
+node --check scripts/quest-core.js
 ```
 
 Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
@@ -2743,6 +2768,156 @@ line at a bare width — do not. See the next section.
   `vertical-align` all survive by construction — but nobody has printed an aligned or
   two-row-header table. The live Firebase project, as ever. And `formatTableText` still
   has no page call site, so the round trip is pinned offline and exercised by no UI.
+
+### Quest — a curated side list off the goal tree (2026-09-07)
+
+- **No `SLOT_FIELDS` row, and that is the design rather than a saving.** `quest`, `star`,
+  `questLearn` and `starLearn` are item-level keys on a goal node inside the existing
+  `goals` list, so the slot stays at **24** fields, the hand-written CONTRACT lists in
+  `tests/schema.test.js`, `tests/browser.test.js` and `tests/lib/fixture.js` needed no edit,
+  and **nothing was migrated** — absence is already correct for every stored node. Export
+  and import carry them on `normalizeSlot`'s unknown-key path with neither side naming them.
+  A new offline guard in `tests/schema.test.js` asserts exactly that and is the direct proof.
+  One new offline suite, `tests/quest-core.test.js` (**44** cases), registered in
+  `UNSWEPT_FILES`: suites 16 → **17**. Final run: **all 17 suites pass** — calendar-core
+  (107) and schema (65) under all five swept timezones with identical results,
+  true-storage-core (24), graph-layout (21), doc-table-core (103),
+  schedule-paste-core (35), quest-core (54), cdp-cleanup (13), and **251 browser
+  subtests, 0 failures**, with `md5sum -c` confirming the tree byte-identical across
+  the whole run and `git log --oneline -1` unchanged at both ends. `styles.css` changed, so `?v=9 → ?v=10` in all five
+  pages; `quest-core.js?v=1` is loaded by `progress.html` and `index.html` only.
+- **A real defect the fixtures nearly hid, and the most useful thing in this entry.** Ids in
+  this application come from **two** counters and are not the same type: a goal node's id is
+  a string from `TrackStorage.newId()`, a mind map's is a **NUMBER** from `sir-ks02.html`'s
+  `nid()`. The module's first draft filtered every id list with a string-only test, which
+  drops every real `toLearn` entry — the whole feature reading as "no quests" with nothing in
+  `realErrors`. The 42 offline cases all passed, because they seeded `'mm1'`. It was found by
+  checking `tests/lib/fixture.js` against the product before writing browser cases, not by
+  running anything. **Generalise it: when a suite invents its own ids, check their TYPE
+  against the code that mints them** — a convenient fixture can make an entire class of bug
+  invisible. `isId` accepts both now and two numeric-id cases pin it.
+- **Fail-first, offline: six doctored `quest-core.js` baselines, each one rule reversed.**
+  Failure sets, in case order: the star gate → {5, 13}; delete-instead-of-`false` → {12};
+  lists never deleting → {9, 16, 21}; `starRollup` descending past a starred ancestor →
+  {32, 35}; the `toLearn` membership gate → {6, 9, 10}; `routineTicks` ignoring the stored
+  day → {37, 41}. Every failure landed on the assertion its case is named for. Five of the
+  six are pairwise disjoint; the two learn-list baselines share case 9 — the broad numeric-id
+  regression case — but **neither set contains the other**, which is the property that
+  matters. The builder copies `tests/` for real rather than symlinking it (`require` and
+  `__dirname` resolve through the realpath and would load the repository's own module), and
+  it prints both md5s and refuses a tree byte-identical to the repository.
+- **Fail-first, browser: three transfer baselines that are EXACTLY DISJOINT SINGLETONS.**
+  Each served a tree of symlinks plus one `progress.html` with the whole transfer deleted
+  from one site — `addSubGoalAndMigrateTasks`, `nestGoalIntoGoal`, `nestSubGoalIntoSubGoal`.
+  Each failed exactly one case and passed the other two, on a real assertion
+  (`the QUEST moved down with it`, `undefined` vs `[10]`) rather than a timeout. That is the
+  direct proof the three sites need three separate cases: the failure has three independent
+  doors, and one case would let two stay open behind a passing sibling.
+- **Fail-first, browser: three SURFACE baselines, all pairwise disjoint.** The
+  `refSchedules` evidence shape does not apply here and saying so matters — it proves
+  `progress.html` needs a *twin* because it cannot load `calendar-core.js`, whereas
+  `progress.html` **can** load `quest-core.js`, so there is no twin and doctoring the module
+  fails both surfaces by design. Disjointness therefore had to come from doctoring the
+  surfaces: a `progress.html` whose tab stops pruning failed the Progress prune case **alone**;
+  one whose starred list re-spells the walk at the call site failed the rollup case **alone**;
+  an `index.html` whose panel stops pruning failed **only** Home cases. Never place any of the
+  twelve doctored copies in the repository.
+- **Two defects in this task's own tests, both caught by reading the message.** An
+  incoherent `assert.equal(x, y ? undefined : undefined, 'sanity')` line, which failed
+  against correct code; and `validateSlot` asserted to return a bare array when it returns
+  `{ok, errors}`. Neither was a product finding.
+- **TWO REAL BUGS found by a review pass AFTER the suite was already green, which is the
+  part of this entry worth carrying forward.** All 17 suites passed, and both of these
+  were still there. Neither was reachable by any case that existed at the time.
+  - **A duplicated local-day helper.** `index.html` grew a private `questLocalDay()` even
+    though the page already loads `calendar-core.js`, which exports `toDateStr` and has it
+    pinned by a module-surface case. Two rules at once — no duplicate helpers, and one
+    definition of a local day. Found by grepping the file for `getFullYear()` and asking
+    what else was already there, not by running anything.
+  - **A midnight rollover.** `today` was computed at render and closed over by the tick
+    handler, so a tab left open past midnight filed the tick under YESTERDAY. The doctored
+    baseline shows it is worse than a wrong label: the stored day stayed `2026-09-08` and
+    the ids became `["r1","r2"]` — **yesterday's ticks carried forward into the new day**,
+    which is the exact opposite of the reset the feature promises. The day is read inside
+    the writer now.
+  Each was pinned by a check, and each check was run against a tree with only that fix
+  reverted: the failure sets are disjoint singletons. **Generalise it: a green suite means
+  the cases you wrote pass, not that the feature is right** — the second read of the code,
+  against the file's existing helpers, is a different instrument from the test run.
+- A third check earned nothing and is worth naming as a trap rather than a finding: an
+  assertion that `index.html` holds no `toISOString` anywhere failed on the file's own
+  PROSE (a comment explaining why not to use one) and on the pre-existing export-filename
+  date recorded in NOTES Proposal 3. Comments are stripped first now and the scan is
+  scoped to `renderQuests`. That is the same trap `schedule-paste-core.test.js` already
+  documents, hit again — **strip comments before grepping source for a construct you also
+  write about, and scope the scan to the code you actually control.**
+- Adversarial and scale passes found nothing further: a script payload and an
+  entity-bearing title in a goal name are escaped on Home (the one surface that builds an
+  `innerHTML` string rather than letting React escape) and pinned by a case; four malformed
+  goal shapes white-screen neither page; 2040 nodes and a 900-level chain both render
+  without a stack overflow. `taskType` was checked for the reverse hazard — a quested task
+  becoming an omitted milestone node — and only ever converts milestone→task, so a stored
+  quest cannot be made unreachable through the UI.
+- **A test that failed for the right reason only after a fix this file already documents.**
+  The nest-goal case first timed out: `onDragOver` sets React state and `onDrop` READS it, so
+  a drop fired in the same synchronous block sees the pre-render value and bails. The
+  dragover needs its own `evaluate` and a settle — the same lesson the priority-matrix case
+  records, in a second shape. It also has to aim at the **centre** of the tab, since the
+  handler nests between 30% and 70% of the width and reorders outside it; a careless
+  coordinate would have silently tested reordering.
+- **A near-miss worth recording because the discipline is what caught it.** The Home panel's
+  smoke check reported horizontal overflow. Measuring `.cal-panel` the same way showed
+  byte-identical geometry (`left: -7, width: 780` for both) — the 8px delta is the
+  pre-existing scrollbar artifact `.cal-panel`'s own comment describes, absorbed by
+  `body { overflow-x: hidden }`. The check was measuring `documentElement` rather than
+  `body`. **Build the control that differs in one variable before believing a regression.**
+- `body.home` was **not** given bottom padding. The quest panel repeats `.cal-panel`'s
+  full-bleed trick instead, so the page still ends flush and the four other pages are
+  untouched; the only edit to `body.home` is its comment, whose subject changed.
+- **Not covered, and stated plainly.** Real touch hardware: the tab is a 7th button in a row
+  that has cost this repository reachability trouble twice, and the picker's `+`/`✓` targets
+  are small; nothing was tapped on a real device. Print output of the Home panel was **not
+  looked at** — `body.home` has no `@media print` rules at all, so it prints as the rest of
+  Home does. The cross-tab branch rests on code reading: the suite drives no second Home tab,
+  so the claim that another tab's routine tick re-renders this one follows from the `storage`
+  listener being the one `track_db` already uses. The live Firebase project, as ever. And
+  `buildToLearnTree`'s missing cycle guard was found during this work and deliberately **not**
+  fixed — it is recorded in NOTES, and `quest-core.js` sidesteps it by hanging to-learn rows
+  flat rather than walking mind-map parents.
+- **Two follow-up behaviours the user asked for after the first review**, both landing in the
+  same shape as the rest: a per-node `questOrder` (drag to arrange WITHIN a goal, never
+  across one, and never touching the goal tree) and a count on the collapsed starred row.
+  Still no `SLOT_FIELDS` row — the slot stays at **24** and the offline schema guard was
+  widened to five keys. Offline cases 44 → **54**; browser subtests 244 → **251**; `quest-core.js?v=1 → ?v=2` and
+  `styles.css?v=10 → ?v=11` in all five pages.
+- **The order baselines fail on DIFFERENT named assertions inside ONE case, which is why the
+  case makes two claims rather than one.** Doctoring `questTree` to ignore `questOrder`
+  trips *the quest view reads in the chosen order*; doctoring `withQuestOrder` to permute
+  `children` as well trips *the GOAL TREE did not move — dragging a quest is not a
+  structural edit*. The second is the direct guard on the user's decision that quest order
+  is a view and not a restructuring, and nothing else in the suite would have caught it.
+  A third baseline pinning the count to 1 fails the count case and the Home mirror.
+- **The contention signature is that a DIFFERENT pair fails each run**, and that is worth
+  more than any single re-run. Two consecutive full runs failed two cases each and the sets
+  were disjoint: `malformed track_db (json string)`/`(json array)` the first time, then
+  `GUARD: the desktop mouse drag still files a priority chip`/`TOUCH: tapping empty grid
+  space un-arms a schedule block`. This file already warns that twice is not a flake you
+  may wave away — but that rule is about the SAME case failing twice, which is the opposite
+  signature. What settles it here is that **every one of the four died before reaching its
+  own assertion**, on `CDP connection closed` during navigation or a `progress.html
+  mounting` timeout, and all passed in isolation. The second pair deserved the extra look
+  because a drag handler had just been added — and the causal check is decisive: that
+  handler lives in the QUEST tab, which does not render while the SCHEDULE tab is shown, and
+  neither case ever got as far as a drag.
+- **Environment note, and it is the documented contention symptom again.** A full run
+  failed exactly two cases — `malformed track_db (json string)` and `(json array)` — on
+  `CDP connection closed` and a `progress.html mounting` timeout, with load average 3.0,
+  51 live Chrome processes and GNOME's `tracker-extract` holding **10.5 hours** of
+  cumulative CPU. All 17 cases in that section passed on an isolated re-run, and the
+  causal check is what settles it: both failures are `progress.html` mounting, while the
+  edits under suspicion were an `index.html` render path and a handler that only runs on a
+  click inside the Quest tab. Read `pcpu`/`time`, never the process count, and skip
+  `ps`'s own row, which always reports ~100%.
 
 ### Confirmation on every destructive control (2026-08-18)
 

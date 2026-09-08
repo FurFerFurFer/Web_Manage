@@ -1,13 +1,14 @@
 # Track World — Concept Draft
 
-**Status:** Working draft; implementation authorized, nothing built yet; the concept decisions below are not finalized\
+**Status:** First synthetic Babylon.js demo implemented; see [README](README.md) for current behavior and [NOTES](NOTES.md) for remaining proof; unchosen concept decisions remain open\
 **Concept date:** 2026-09-05\
+**Plan review:** 2026-09-08; full information and unpaused panels confirmed; fantasy weather accepted if real-weather integration is too complicated; other next-demo choices remain open\
 **Initial platform:** The user's current computer; phone and iPad versions deferred\
 **Relationship to Track:** Proposed private game experience linked to the existing Track application
 
 **Planning companion within this draft:** [Section 25 — workflow, tool research, delivery gates, and remaining decisions](#25-proposed-workflow-and-tool-plan).
 
-**Next work:** [Three-step sequence](#next-work-sequence) · [Picture placements and briefs](#picture-reference-package).
+**Next work:** [Current baseline and revised sequence](#next-work-sequence) · [Picture placements and briefs](#picture-reference-package).
 
 ![Selected Living Botanical Clock Plaza concept](assets/images/living-botanical-clock-plaza.png)
 
@@ -57,6 +58,10 @@ The game should be enjoyable to inhabit even when the user does not want to comp
 anything. Overdue work may be visible, but it must not damage the world, drain resources,
 create guilt-driven failure states, or remove past achievements.
 
+**User clarification (2026-09-08):** the character is not in danger. Dramatic weather and
+traversal are experiences, not threats requiring defensive play. Opening information does
+not require a protective pause, evacuation, or survival mechanic.
+
 ### 3.3 Convenient before diegetically pure
 
 Physical locations give information meaning, but essential information must also be
@@ -80,6 +85,16 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
 
 - The world is explored from a third-person perspective.
 - The initial controls use keyboard and mouse on the user's computer.
+- **Movement decision (2026-09-07):** **Breath of the Wild** is the selected reference for
+  the whole movement system, retaining the user's "exact copy" target.
+- **Floating-island traversal (2026-09-07):** go upward using the existing "slingshot"
+  idea referenced by the user, then glide to the floating islands. Launch and glide
+  implementation and tuning remain unfinished.
+- **Avatar decision (2026-09-07):** use a fixed character first. Its appearance remains
+  open; customization is not required for the initial character.
+- **Touchpad requirement (2026-09-06):** tap-and-drag camera control must work while
+  moving. The user likes double-tap dragging to rotate, but reports that rotation suddenly
+  stops during movement; the cause has not been diagnosed.
 - The Memory Grove has a dedicated sky-view camera for seeing the KS03 multiverse as
   stars. Grounded stargazing keeps the character safely still while the user pans and
   zooms overhead; closing restores the ordinary camera (Section 5.7).
@@ -95,6 +110,16 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
 - The notebook stows automatically during climbing, vaulting, swimming, or any movement
   that naturally needs both hands, then returns without requiring inventory management.
 
+**Movement clarification still needed:** the selected reference and the user's "exact
+copy" target remain intact, but the draft does not yet say whether stamina, exhaustion,
+or weather-dependent traversal restrictions belong to that target. Do not infer those
+mechanics from the reference name or remove them without a decision. Before implementation,
+turn the target into a comparison sheet covering starts/stops, turning, camera response,
+jumping/landing, climbing, swimming, launch and glide. Record observable differences and
+have the user judge the feel on the same route; a passing walk/jump test cannot establish
+reference fidelity. The separately requested slingshot needs its own launch behavior and
+controls defined, rather than assuming the reference name specifies it.
+
 <a id="ref-avatar-notebook"></a>
 
 > **Planned reference R5 — Avatar and notebook poses.** Place the provisional front/side/back
@@ -108,16 +133,17 @@ they must not be assumed, designed around, or allowed to dominate the relaxing p
 ## 5. World structure
 
 **Confirmed slot mapping:** each Track workspace slot has a separate world, with its own
-sanctuary, Clockgarden, goal regions, and history. The user explicitly switches worlds;
-slots do not become territories inside one shared world. The detailed switching interface
+garden home, sanctuaries, Clockgarden, goal regions, and history. The user explicitly switches
+worlds; slots do not become territories inside one shared world. The detailed switching interface
 and draft-handling flow remain to be designed.
 
-### 5.1 Personal sanctuary
+### 5.1 Garden home and sanctuaries
 
-The sanctuary is the user's calm personal home. It should feel private, restorative, and
-distinct from productivity infrastructure. It is not the schedule location.
+**User decision (2026-09-07):** the user's home is a garden, separate from the sanctuaries.
+The home should feel private and restorative. Its detailed layout and the identities of
+the separate sanctuaries remain open.
 
-The sanctuary may provide convenient access to important information and world travel, but
+The garden home may provide convenient access to important information and world travel, but
 its identity should remain personal rather than becoming a calendar lobby.
 
 ### 5.2 Schedule location
@@ -125,9 +151,9 @@ its identity should remain personal rather than becoming a calendar lobby.
 The schedule has its own physical and thematic location. The current preferred direction is
 the **Verdant Astral Clockgarden**, centered on a walkable **Clock Plaza**.
 
-The Clockgarden must be clearly separate from the sanctuary even if the two are close enough
-for convenient travel. It represents time, recurrence, planning, and the movement of the day
-rather than rest or personal identity.
+The Clockgarden must be clearly separate from the garden home and sanctuaries, with
+convenient travel between them. It represents time, recurrence, planning, and the movement
+of the day rather than rest or personal identity.
 
 ### 5.3 Goal regions
 
@@ -157,6 +183,9 @@ must not be treated as automatically equivalent to completed goals.
 routes may cross mountains, plains, or waters, according to the character of each region.
 The journey between places is part of the world experience.
 
+**User decision (2026-09-07):** include floating islands, reached through a slingshot-style
+upward launch followed by gliding. Island layout and launch locations remain open.
+
 This choice establishes the feel of the geography, without fixing the overall landmass
 shape, world size, or technical loading boundaries. A compact gateway hub is no longer the
 assumed world layout. Persistent completed regions must still fit into the growing world
@@ -185,6 +214,9 @@ anywhere through the notebook or map.
 Inside that specific location, a dedicated look camera reveals the entire current slot's
 **KS03 multiverse as stars in the sky**. The grove and the celestial view form one place;
 this does not add a separate observatory location.
+
+**Demo feedback (2026-09-06):** the required "MM in sky" feature is missing from the
+demo. Ground-level stars and a separate mind-map panel do not fulfill this requirement.
 
 - The grove gives spaced reviews a botanical setting, with due information also available
   through Today and the notebook from anywhere.
@@ -411,13 +443,15 @@ At midnight:
 
 ## 8. Reminder behavior
 
-When a scheduled time or important deadline arrives during play, the game uses three gentle
-signals:
+**User decision (2026-09-07):** reminders use visual cues and gentle sounds.
+When a scheduled time or important deadline arrives during play:
 
 1. The compact notification control pulses.
-2. A brief readable message appears and fades.
-3. The Clock Plaza or relevant regional echo produces a recognizable visual and audible
-   signal.
+2. The Clock Plaza or relevant regional echo produces a recognizable visual cue and
+   gentle sound.
+
+A separate brief fading message remains a presentation proposal. Exact sound design and
+reminder grouping remain open.
 
 These signals reinforce each other. Environmental signals are never the only notification
 channel, because weather, camera direction, distance, visual ability, or muted audio could
@@ -435,7 +469,8 @@ Confirmed behavior:
 
 - It is carried in the character's right hand during ordinary movement.
 - It can be opened anywhere using a dedicated button or keybind.
-- Opening it places the character in a safe reading/writing state.
+- Opening it gives reading/writing controls focus while the game continues running.
+  The character is not in danger; opening a panel does not pause the world (2026-09-08).
 - Personal notes can be viewed and edited from anywhere.
 - Notebook note changes synchronize with the Track notes widget, including Track edits
   made on other authorized devices.
@@ -582,14 +617,17 @@ informational surprises.
 Confirmed sources of variety:
 
 - Different goal regions with their own themes and traversal character.
-- Real local time, climate, weather, and seasonal changes.
+- Real local time and varied weather/seasonal atmosphere, including the authorized fantasy
+  alternative in Section 14 when real-weather integration is too complicated.
 - Temporary world events that alter atmosphere or experience without punishment.
 - Naturally varied platforming and routes.
 
-Possible relaxing activities such as gardening, photography, gliding, climbing trials, or
+Possible relaxing activities such as gardening, photography, climbing trials, or
 other calm interactions remain a feasibility and value question. They should be considered
 only if they make the world more enjoyable without creating a second obligation system or
 distracting from Track.
+
+Gliding is confirmed traversal for reaching floating islands (Sections 4 and 5.5).
 
 ## 14. Whole-world environmental fluidity
 
@@ -630,12 +668,41 @@ Rain and recent rain should influence:
 
 ### Seasons and local climate
 
-The world should reflect the user's local climate rather than automatically imposing a
-generic four-season model. Seasonal character may affect vegetation, rainfall, water levels,
-light, atmosphere, and regional materials.
+When following real weather, the world should reflect the user's local climate rather than
+automatically imposing a generic four-season model. Seasonal character may affect
+vegetation, rainfall, water levels, light, atmosphere, and regional materials.
 
-The source of location/climate information, privacy treatment, manual overrides, and the
-behavior when climate information is unavailable remain undecided.
+**Weather direction, clarified 2026-09-08:** real-life weather was the selected default,
+with selectable custom weather. The user now explicitly accepts completely random,
+fantastical weather **if connecting real-life weather is too complicated**. This authorizes
+an alternative to the integration requirement; it does not claim that integration has been
+assessed as too complicated or that an unconditional source switch has already been chosen.
+Location, provider, permissions and unavailable-feed behavior matter only if the live
+connection is pursued. Choosing the fantasy alternative needs no location or weather feed.
+
+### Fantasy weather and occurrences
+
+The user invited imaginative extremes: **wild snowfall, heaven-like weather, intense rain,
+floods, and other fantasy occurrences**. These can depart entirely from the local climate.
+The source decision above is conditional; the permission to explore this creative range
+is explicit. Candidate treatments, with exact visuals still to be tested:
+
+| Occurrence | World experience |
+| --- | --- |
+| Impossible snowfall | Huge slow snowflakes, luminous snowdrifts, frost-blue foliage and snow tracing the plaza rings, even in a normally tropical region |
+| Heavenly skies | Vast pearl-and-gold clouds, soft shafts of light, floating petals and radiant mist around the islands |
+| Fantastic downpour | Broad curtains of rain, sweeping cloud fronts, overflowing channels and a strong shared wind across vegetation and water |
+| A passing flood | Water rises through the low garden and makes familiar paths look like a temporary lagoon, then recedes; landmarks and information remain available |
+| Aurora or star shower | Ribbons of colored sky light and drifting star-like particles; atmospheric lights remain distinguishable from selectable MM stars |
+| Petal tide | Streams of luminous petals flow through the landscape and gather around water and terraces |
+
+Randomness chooses what arrives and how it develops; it does not require discontinuous
+sky changes or unrelated effects firing independently. Let an occurrence arrive, develop
+and pass through the shared environment system. Exact frequency, duration and transition
+rules remain tuning work. Snow, floods and storms never damage the character, destroy
+goal landmarks, demand maintenance, or create tasks. The notebook, Today and MM information
+remain readable and available throughout. Fantasy atmosphere never changes Track dates,
+the truthful local-time readout, or the meaning of a deadline warning.
 
 ### Gradual transitions
 
@@ -718,6 +785,14 @@ Botanical Codex**.
 
 ### Readability contract
 
+- **Demo feedback (2026-09-06):** the notes, mind maps, and Today data/information formats
+  do not fit the user's Track website. They need to match Track's actual information
+  structure; the demo's simplified panels are not an accepted format reference.
+- **User decision (2026-09-08): full information.** Present the complete applicable
+  information in the opened panel, rather than requiring a summary-to-full-details step.
+  Sections, tabs and scrolling may organize long content; they must not omit fields or
+  replace the full MM feature scope with a simplified preview. Keep Track's meanings and
+  terminology. This chooses content completeness, not an exact pixel copy of Track's layout.
 - Text-bearing surfaces remain calm, opaque enough, and high contrast.
 - Decorative vines, veins, droplets, and glow stay away from the text.
 - Information is distinguished by shape and icon as well as color.
@@ -735,6 +810,12 @@ Botanical Codex**.
   deliberately.
 - The expanded state should leave the character and important world context visible.
 - A close action must be obvious.
+- **User decision (2026-09-06):** selecting another bottom tab switches directly to that
+  panel, without requiring the current panel to be closed first. The current extra close
+  step was reported as inconvenient.
+- **User decision (2026-09-08): panels do not pause the game.** Weather, scenery, character
+  simulation, time and updates continue while information is open. Input focus belongs to
+  the panel so typing and clicking controls cannot also steer the character or camera.
 - Presentation can adapt to computer window sizes without changing its botanical identity.
 
 <a id="ref-interface-states"></a>
@@ -784,7 +865,9 @@ connected to the Verdant Clockgarden.
   not a published minimum specification or a guarantee of frame rate.
 - Fit visual density, rendering resolution, and effects to this computer. Measure a
   representative playable scene before committing to graphics quality or performance.
-- The engine and browser-versus-native delivery remain open decisions.
+- **First-demo decision (2026-09-06):** Babylon.js in the desktop browser. The user
+  primarily directs Codex and playtests. Production suitability remains subject to the
+  measured scene; exact dependencies require their own approval.
 
 ### Deferred device work
 
@@ -855,9 +938,12 @@ environmental echo, and readable interface—must remain balanced.
 
 ### 19.6 Whole-world fluidity versus scope
 
-Coherent local weather across sky, light, water, vegetation, particles, surfaces, audio, and
+Coherent weather across sky, light, water, vegetation, particles, surfaces, audio, and
 distant scenery is a defining feature, but it is also broader than a cosmetic day/night
-cycle. The concept must not promise a static world with a changing backdrop.
+cycle. This applies to both real-weather mapping and the authorized fantasy alternative.
+The concept must not promise a static world with a changing backdrop. Random fantasy
+selection can remove weather-service integration work, but snow, floods and other visual
+effects still need their own implementation and performance proof.
 
 ### 19.7 Computer performance and future device support
 
@@ -886,6 +972,7 @@ be defined before implementation so synchronization cannot overwrite either side
 - Punitive decay, lost resources, or permanent damage caused by overdue work.
 - Requiring a visit to a fixed location before personal notes can be edited.
 - Combat or survival as the initial defining gameplay loop.
+- Pausing the game or requiring a protective relocation merely to open an information panel.
 - An extra currency, XP, collectible reward track, or reward-based cosmetic unlock system.
 
 ### Deferred rather than rejected
@@ -897,7 +984,7 @@ be defined before implementation so synchronization cannot overwrite either side
 - Optional relaxing side activities.
 - Combat or survival as a later optional layer.
 - Exact fantasy setting and lore.
-- Player avatar identity and customization.
+- The fixed avatar's appearance and any later customization; a fixed character first is selected.
 - Phone and iPad versions, including touch controls, mobile layouts, and feature parity.
 - Detailed landmass layout, gateway routing and unlock rules, and emergency-return behavior.
 - Memory Grove camera tuning, full MM detail organization, hierarchy-size/projection
@@ -921,7 +1008,47 @@ The sky projects the existing KS03 arrangement, uses each MM's color, and makes 
 parent stars larger. SIR signals appear both in the grove and on the corresponding stars;
 the restrained botanical/petal-ring treatment follows the user's delegated design choice.
 
+**Proposed, not settled (2026-09-07): a Quest panel.** Track gained a Quest feature on
+2026-09-07 — a curated side list the user assembles from their existing goal tree and its
+linked mind maps, with a starred subset. See [the root README](../README.md). The user asked for it to
+appear in this world as a quest tab, with the starred subset in the default popup. That
+request is recorded here as a **proposal**; nothing below is a decision, and no game code
+has been written for it.
+
+- **Shape.** A `Quest` entry joins the existing toolbelt beside Today, Notebook, Mind maps
+  and Weather, opening the single panel with the quest tree drawn in goal hierarchy. The
+  bottom-centre contextual popup (`#interaction`) shows the **starred rollup** — one line per
+  topmost starred ancestor, never its descendants, because that row already stands for the
+  whole subtree.
+- **Read-only, without exception.** *The game displays; it does not decide.* Direct
+  task/to-learn completion is deferred by the data rule in `AGENTS.md`, so no quest may be
+  ticked, added, starred or removed from inside the world. That includes the routine tick,
+  which in Track is a day-scoped view preference rather than real completion — drawing it as
+  if it were progress would be the second conflicting truth Section 18 forbids.
+- **Synthetic data only, today.** This world reads two pure Track modules through the demo
+  server and builds a synthetic slot; it holds no connection to a real `track_db`, by binding
+  rule and enforced test. A Quest panel built now would show fixture quests. Real ones need
+  the read adapter sketched in Section 25.6, which does not exist. Exposing
+  [`scripts/quest-core.js`](../scripts/quest-core.js) as a third read-only module would be the natural mechanism, and
+  that is a change to the demo server's allow-list, not to Track.
+- **No reward layer.** Section 11 already rejects XP, currency, collectible tracks and
+  reward-based unlocks, and Section 12 rejects punishment. "Quest" here is the user's word
+  for a curated list, not a quest *system*: no acceptance, no turn-in, no completion reward.
+  A future reader taking the game meaning of the word would contradict a settled decision.
+- **Open questions this proposal does not answer.** Whether the quest tree belongs in a panel
+  at all or should be sited in the world (the garden home, or markers on the related
+  task/to-learn family in question 7); and whether the default popup should show the starred
+  rollup permanently or only on approach to something related. The current Quest readers
+  take one slot's goals and MMs. Under the settled one-world-per-slot rule, this proposal
+  shows that world's quests; a missing linked MM remains identifiable as missing, never
+  resolved by looking for the same ID in another slot. Cross-slot quest aggregation would
+  be additional scope, not an unresolved requirement of this panel.
+
 ### Concept-critical
+
+**Resolved by the 2026-09-08 clarification:** panels provide full information and keep the
+game running; the character is not in danger. Random fantasy weather is an authorized
+alternative if real-weather integration is too complicated. See Sections 3, 14 and 16.
 
 1. The explicit interface for switching between separate slot worlds, including handling
    an open notebook draft and returning to the prior world's saved location.
@@ -950,23 +1077,33 @@ the restrained botanical/petal-ring treatment follows the user's delegated desig
 ### Art and content
 
 11. The wider fantasy setting, history, cultures, and tone.
-12. The sanctuary identity.
+12. The garden home's detailed layout and the separate sanctuaries' identities.
 13. The visual and interface identity of each additional functional place.
 14. The degree of regional art-direction variation.
-15. The avatar's appearance, customization, and relationship to the notebook.
+15. The fixed avatar's appearance and relationship to the notebook; any later customization.
+    A fixed character first is confirmed.
 
 ### Device and accessibility
 
-16. Computer delivery: browser or native, and a practical graphics/performance target.
-17. Keyboard and mouse movement, camera, platforming assistance, and notebook text entry.
+16. Practical graphics/performance target and production suitability after the first
+    Babylon.js browser demo; the first-demo delivery choice is settled in Section 17.
+17. Breath of the Wild movement tuning; slingshot launch and glide controls; keyboard/mouse
+    and touchpad controls, camera, platforming assistance, and notebook text entry.
     Review the proposed panel/input state matrix in Section 25.5 before implementing forms.
 18. Reduced-motion alternatives for environmental fluidity and interface unfolding.
 19. Contrast and non-color signals across every weather and region.
-20. Location/climate permission, privacy, fallback, and manual override behavior.
+20. Whether to pursue the real-weather connection or use the authorized random fantasy
+    alternative if that connection is too complicated. Location/provider/privacy/feed
+    fallback decisions apply only to the live branch; fantasy event tuning applies to the
+    alternative. Section 14 records the user's conditional choice.
 
 Phone and iPad support is deferred as described in Section 17.
 
 ## 22. Concept acceptance checks
+
+These are acceptance checks for the full intended experience. An incremental synthetic demo
+reports which checks it covers and which remain unfinished; it does not claim complete
+concept delivery by passing only movement or screenshot checks.
 
 The concept remains internally consistent only if future versions can answer yes to all of
 the following:
@@ -975,6 +1112,9 @@ the following:
   current computer?
 - Can the user discover today's important information without traveling anywhere?
 - Can the user open the notebook and edit personal notes from anywhere?
+- Do opened panels provide complete applicable information without a required summary step?
+- Does the game keep running behind every panel while text input and UI navigation avoid
+  issuing gameplay commands, with no danger to the character?
 - Does the Memory Grove's dedicated sky camera represent the current slot's full KS03
   multiverse, including mind maps without due reviews, without changing Track data?
 - Can the user pan/zoom while grounded, read the star overlay in daylight and bad weather,
@@ -1002,6 +1142,8 @@ the following:
   a damaged world?
 - When weather changes, does the whole environment respond coherently rather than only the
   sky?
+- If the fantasy alternative is used, can snow, heavenly skies, downpours and floods vary
+  the experience without damage, obligations, hidden information or false calendar signals?
 - Can every ornate information surface remain readable against every region and weather
   state?
 - Do differently themed locations preserve familiar information behavior?
@@ -1013,7 +1155,7 @@ the following:
 
 Sections 1–22 record the concept. The document does **not** establish approved commitments for:
 
-- An engine or framework choice.
+- Production engine suitability beyond the selected Babylon.js browser demo.
 - A production repository architecture.
 - A network or synchronization implementation.
 - A production database schema.
@@ -1058,9 +1200,9 @@ choices are not settled by that, and none of them authorizes spending.
   deferred or excluded. Computer-only gameplay still needs safe handling of Track edits
   made from other tabs or devices.
 - Separate worlds per slot, natural landscape paths, and regional/landmark gateways are
-  now confirmed in Section 5. Detailed layout and gateway rules remain open, as do the
-  engine and browser-versus-native delivery. Godot was researched as a candidate; it was
-  not selected or installed.
+  now confirmed in Section 5. Detailed layout and gateway rules remain open. Babylon.js
+  browser delivery was selected for the first demo on 2026-09-06; Godot remains an
+  alternative if measured results justify revisiting that choice.
 - **Memory Grove decision (2026-09-06):** SIR has a botanical home with a special look
   camera revealing the current slot's entire KS03 multiverse as stars. Related markers
   are the tentative task/to-learn direction, and no extra reward system is planned.
@@ -1131,10 +1273,12 @@ choices are not settled by that, and none of them authorizes spending.
    simulation should not be assumed necessary. Climbing, vaulting, swimming, camera
    behaviour, and book stowing each add animation/interaction work. The concept image is
    not a usable 3D asset set or evidence of real-time performance.
-7. **Reminder intensity and reading safety.** Many simultaneous gentle signals can still
+7. **Reminder intensity and input focus.** Many simultaneous gentle signals can still
    become stressful. Quiet/rest controls, grouping, and a catch-up summary are suggested.
-   Background/locked-screen alerts are outside the current "during play" promise. Define
-   what safely opening the notebook mid-jump or in water means without stopping real time.
+   Background/locked-screen alerts are outside the current "during play" promise. The user
+   settled unpaused panels and no character danger on 2026-09-08. Test input focus and
+   continued simulation during a jump, climb, glide or swim; a panel must not require a
+   protective landing first or turn typed keys into movement.
 8. **Other unresolved meanings.** Decide which Track calculation defines goal/milestone
    completion, which explicit relationships permit regional echoes, whether local time
    follows the device or a chosen home timezone, and what "private" promises. Live Firebase
@@ -1142,22 +1286,25 @@ choices are not settled by that, and none of them authorizes spending.
 
 ### Suggested starting point when work resumes
 
-First resolve the computer delivery choice and the smallest representative prototype.
-The proposed test is one small scene on the current computer, using synthetic Track data,
-to assess camera/movement, a coherent weather transition, a readable Today view, and notebook
-interaction. Measure sustained performance before committing to a larger world or purchases.
+The original recommendation was one small synthetic scene testing camera/movement,
+coherent weather, Today and notebook interaction. Babylon.js browser delivery is now chosen
+and that first increment exists. Resume with the recorded demo feedback and the revised
+[near-term sequence](#next-work-sequence), rather than repeating engine selection or treating
+the initial demo as a passed feasibility gate. Measure sustained performance before
+committing to a larger world or purchases.
 Safe competing-edit recovery needs separate proof before enabling real notebook or MM
 writes, including the complete write set of each MM action.
 
-No game implementation, device benchmark, live-cloud test, installation, or deployment was
-performed in this conversation. The work here was concept/source review, hardware inspection,
-pricing research, and documentation. The next session should start from these open decisions
-rather than treating the feasibility recommendations as approved implementation choices.
+At the initial feasibility review, no game implementation, device benchmark, live-cloud
+test, installation or deployment had been performed. That review was concept/source review,
+hardware inspection, pricing research and documentation. The subsequent first demo is
+documented in [README](README.md); unchosen review recommendations remain proposals.
 
 ## 25. Proposed workflow and tool plan
 
 **Initial research:** 2026-09-05. **Capability and clarity review:** 2026-09-06.
-**Status:** Draft clarified; delivery choices and new tool adoption remain proposals.
+**Status:** Babylon.js browser delivery is selected for the first demo (2026-09-06).
+Other tool adoption and production delivery commitments remain proposals.
 Concept decisions subsequently confirmed in Sections 5–6 and 10–11 are identified below.
 
 This plan uses the full concept, including Section 24's feasibility findings, and checks
@@ -1171,7 +1318,8 @@ and regional/landmark gateways**. Separately loading landscape sections remains 
 implementation proposal to test within that geography. Test this on the existing
 Ryzen 5 5500U Linux computer before committing to production. Keep native
 Godot as the strongest alternative if measured browser limitations or the preference for
-a scene editor outweigh the integration advantage. Neither engine is selected or installed.
+a scene editor outweigh the integration advantage. Babylon.js browser delivery is now
+selected for the first demo; the Blender production pipeline is still proposed.
 
 Two proofs should proceed independently: **the experience is worth inhabiting**, and
 **the Track connection preserves data**. A visual success cannot substitute for the second.
@@ -1188,12 +1336,12 @@ defaults. Unmarked defaults remain proposals and do not close Section 21's decis
 | Initial delivery | Desktop browser on Linux, WebGL 2 baseline | Direct reuse of Track's JavaScript and accessible HTML information surfaces |
 | Target | Existing Ryzen 5 5500U, integrated Radeon, about 14 GiB usable RAM | Hardware already identified; no upgrade justified without a benchmark |
 | Performance | Start at 1280×720 internal rendering, target sustained 30 fps; scale upward only with headroom | A test target, not a measured result or final specification |
-| World organization | **Confirmed:** one separate world per Track slot; separate sanctuary, Clockgarden, regions, and history. Reusable art and save architecture remain implementation proposals | Keeps each slot's identity and information distinct |
+| World organization | **Confirmed:** one separate world per Track slot, with a garden home, separate sanctuaries, Clockgarden, goal regions, and per-world history. Reusable art and save architecture remain implementation proposals | Keeps each slot's identity and information distinct |
 | Geography and travel | **Confirmed:** natural paths across mountains, plains, or waters, with regional/landmark gateways for fast travel; detailed layout and loading remain open | Gives journeys a place in the landscape while providing travel shortcuts |
 | SIR and KS03 | **Confirmed:** grounded Memory Grove view projects KS03 layout with glowing MM colors and larger higher-level parents; matched grove/star SIR cues; always-readable overlay and full MM interaction including MGs | Gives review and knowledge structure a shared botanical/celestial place with recognizable geography and complete MM access |
 | Task/to-learn markers | **Tentative user choice:** related marker family, distinct shapes, region-adapted materials; exact symbols remain open | Supports recognition across regions without separate object systems for every kind of item |
 | Data access | **Confirmed:** personal-note editing and full MM interaction; activate each write family only after its shared Track command and recovery checks pass | Matches Sections 9–10 |
-| Climate | Manual broad climate profile first; optional coarse-location live weather later | Works without accounts, location disclosure, or network availability |
+| Climate | **Confirmed conditional direction:** real weather with custom control; completely random fantasy weather is authorized if the live connection is too complicated | Location/provider questions apply only to the live branch; fantasy events need no weather feed but still need coherent rendering |
 | Time | Device-local calendar/time first, explicitly visible in settings | Matches the current application; home-timezone support needs a separate date contract |
 | Cost | US$0 mandatory additional monthly subscriptions | Free tools first; optional purchases need a specific demonstrated gap |
 | Content | Reusable authored terrain and traversal modules, adapted to stable goal identities | Arbitrary goal trees do not generate enjoyable level design on their own |
@@ -1213,15 +1361,15 @@ and total production effort matter more here than feature count.
 
 | Candidate | Strength for Track World | Main cost or uncertainty | Recommendation |
 | --- | --- | --- | --- |
-| **Babylon.js + HTML/CSS UI** | Scene graph, cameras, collisions, animation, audio, picking, particles, glTF and WebGL/WebGPU support in one JavaScript engine | Traversal feel, cel shading, level authoring and streaming still need implementation; browser GPU behavior must be measured | **First prototype candidate**; use WebGL 2 initially. [Capabilities](https://www.babylonjs.com/specifications/), [Apache-2.0 source](https://github.com/BabylonJS/Babylon.js) |
+| **Babylon.js + HTML/CSS UI** | Scene graph, cameras, collisions, animation, audio, picking, particles, glTF and WebGL/WebGPU support in one JavaScript engine | Traversal feel, cel shading, level authoring and streaming need their proof gates; browser GPU behavior must be measured | **Selected for the first demo, 2026-09-06**; WebGL 2 initially. [Capabilities](https://www.babylonjs.com/specifications/), [Apache-2.0 source](https://github.com/BabylonJS/Babylon.js) |
 | **Godot native + GDScript** | Integrated scene/animation editor and game workflow; native delivery avoids a browser render loop | Native code cannot simply read browser localStorage or reuse `window.TrackCalendar`; needs a defined bridge and additional testing | **Primary alternative**. Compare Compatibility and Mobile renderers on the laptop; do not assume Forward+ is needed. [Renderer comparison](https://docs.godotengine.org/en/stable/tutorials/rendering/renderers.html), [MIT license](https://godotengine.org/license/) |
 | **Godot web export** | Keeps the Godot editor while delivering through a browser | Web export uses Compatibility; JavaScript bridging, canvas text entry and asset loading still need proof | Secondary option if editor workflow wins. It does not automatically combine all native and browser advantages. [Renderer constraints](https://docs.godotengine.org/en/stable/tutorials/rendering/renderers.html) |
 | **Three.js + optional React Three Fiber/Drei** | Flexible custom visual work and a strong React-oriented ecosystem | Three.js is a rendering library; more game systems must be assembled. Fiber introduces version coupling with React | Alternative for a team already fluent in this stack, not an automatic choice because Track uses React. [Three.js game guide](https://threejs.org/manual/en/game.html), [Fiber compatibility](https://r3f.docs.pmnd.rs/getting-started/introduction) |
 | **Unity** | Established full game-editor option with documented Linux support | Additional editor/toolchain and Track-bridge work; no project-specific advantage established over the shortlisted options | Reserve for demonstrated team expertise or an essential compatible asset/tool. Check the chosen version's support requirements. [Unity Linux requirements](https://docs.unity3d.com/6000.0/Documentation/Manual/system-requirements.html) |
 | **Unreal Engine** | Full native game-development option with Linux support | Epic flags Linux Vulkan's sensitivity to low VRAM; this integrated-GPU target needs conservative renderer choices | Not the initial recommendation for this small stylized world; this is a fit judgment, not a claim that Unreal cannot run. [Linux development guidance](https://dev.epicgames.com/documentation/unreal-engine/linux-development-quickstart-for-unreal-engine) |
 
-Babylon's integrated systems make it the first candidate, not proof that it will run faster
-than Godot. Build one representative scene after engine direction is given. If it misses
+Babylon's integrated systems support the selected demo workflow; they do not prove it will
+run faster than Godot. Measure the representative scene on the actual laptop. If it misses
 the agreed target, profile it, simplify expensive effects, and run the same scene/route/data
 load in Godot only if the remaining problem appears platform-specific. Do not build two full
 games in parallel or switch engines to avoid fixing an oversized scene.
@@ -1252,7 +1400,7 @@ installed, and installing a skill does not approve engines, accounts or dependen
 
 | Job | Preferred tool | When and how to use it | Cost / constraint |
 | --- | --- | --- | --- |
-| Game runtime | Babylon.js, matching-version glTF loaders | P1 onward if selected; pin exact engine/loader versions together | Apache-2.0; no engine subscription; link in §25.2 |
+| Game runtime | Babylon.js, matching-version glTF loaders when needed | Engine 9.25.0 is already selected and vendored for the demo; additional loaders remain a separate dependency choice and must match | Apache-2.0; no engine subscription; link in §25.2 |
 | Movement/collision | Babylon's collision facilities first; evaluate its Havok character-controller path if capsule/slope behavior requires it | P1 movement spike; compare slopes, steps, landing and moving-platform behavior before choosing | Do not add a second physics backend speculatively. Audit the exact optional Havok distribution/license before adoption. [Engine features](https://www.babylonjs.com/specifications/), [Havok package source](https://github.com/BabylonJS/havok) |
 | Native alternative | Godot and its built-in scene, animation and profiling tools | Only after delivery choice or a failed browser feasibility gate | No required subscription; bridge effort remains |
 | 3D authoring | **Blender** | Blockout, modular terrain, avatar, rig, animations, simple collision meshes, texture baking, GLB export | Free/open source; authored output and third-party asset licenses remain distinct. [License](https://www.blender.org/about/license/), [glTF export](https://docs.blender.org/manual/en/5.1/addons/import_export/scene_gltf2.html) |
@@ -1276,7 +1424,7 @@ installed, and installing a skill does not approve engines, accounts or dependen
 | Cross-tab mutation coordination | Browser **Web Locks**, proposed Track prerequisite | All participating writers acquire the same lock before fresh read/compare/write | Secure-context, same-origin coordination only; not a cross-device lock. [API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Locks_API) |
 | Existing optional synchronization | **Firebase Auth + Firestore** | Reuse after the conflict protocol is strengthened; no second world writer to the current manifest | Existing integration; live rules and real devices still need verification. [Pricing](https://firebase.google.com/pricing) |
 | Sync/rules verification | **Firebase Local Emulator Suite**, conditional | Before a changed cloud protocol/rules release, after approving CLI/runtime dependencies | Synthetic emulator project, never a production test target. [Rules testing](https://firebase.google.com/docs/firestore/security/test-rules-emulator) |
-| Real weather | **Open-Meteo**, optional | Cached coarse-location weather feeding the same environment controller as manual mode | Free endpoint is noncommercial and limited, with attribution and no uptime guarantee. [Terms](https://open-meteo.com/en/terms), [Pricing](https://open-meteo.com/en/pricing) |
+| Real weather, if pursued | **Open-Meteo**, candidate provider; provider choice remains open | Assess only for the live-weather branch; the authorized fantasy alternative needs no provider | Historical service finding, to recheck before use: free endpoint is noncommercial and limited, with attribution and no uptime guarantee. [Terms](https://open-meteo.com/en/terms), [Pricing](https://open-meteo.com/en/pricing) |
 | Planning/reference development | This Markdown draft, existing imagegen and UI/UX skills | Reference variations and interactive proofs when specifically useful; no runtime dependency | Existing tool access does not imply unlimited generation or approve new spending |
 | Game accessibility review | **Microsoft Xbox Accessibility Guidelines** alongside WCAG and local UI/UX guidance | P1 camera comfort and P2/P3 reading/motion reviews; use relevant guidance without changing the confirmed third-person concept | Reference material, not an installed plug-in or a compliance claim. [Guidelines](https://learn.microsoft.com/en-us/gaming/accessibility/xbox-accessibility-guidelines/117) |
 
@@ -1365,47 +1513,52 @@ the public CLI form is
 | Create the first MM / leave a deleted selection | Proposed: overlay Create MM → draft → explicit Track command → select only after acknowledgment; accepted deletion returns to the overlay | Empty slots require no star or dummy MM first; failed/remote deletion never permits writes against a missing identity |
 | Travel between places | Follow natural landscape paths, or reach a regional/landmark gateway and choose a destination | Gateway routing and unlock rules remain open; information access never depends on reaching one |
 | Return to history | Enter a completed region → see retained landmarks and truthful current status | Reopened/corrected state is visible; missing records do not fabricate completion or erase a visit automatically |
-| Read the notebook | Open anywhere → enter safe reading state → select notes, schedule, reviews or goals | Escape closes the panel predictably; real local time and reminder evaluation continue |
+| Read the notebook | Open anywhere → focus the full information panel → select notes, schedule, reviews or goals while the game keeps running | Escape closes predictably; typing cannot steer the character; opening never waits for a protective landing or pauses the world |
 | Edit a personal note | Select explicit slot/note → edit a draft → Save → local acknowledgment → separate cloud status | Conflicts preserve both versions; quota refusal preserves draft and offers export; no false “synced” label |
 | Open an empty notebook | Proposed: show empty state → capture an unlinked scratch draft or navigate to Track to create a note → keep draft/export available | No placeholder note creation; scratch storage is not a Track save; any later assignment to an existing note is explicit and uses the scoped save flow |
 | Use an MM feature | Select the star → choose its existing MM/MG/Kolb/+Lin/SIR/comment/source action → draft or review the effect → save/confirm → show Track's accepted result | Preserve type rules and related-record effects; conflicts keep recoverable alternatives; cancellation writes nothing; no generic interaction or camera event commits |
 | Act on Track information outside confirmed writes | Inspect → use an explicit “Open in Track” navigation where a supported target exists | No generic interaction, collection or traversal event completes a real item |
-| Receive reminders | One grouped message + notification pulse + optional world/audio response | Muted audio, camera direction, quiet mode and weather cannot hide the persistent readable list |
+| Receive reminders | Visual cues + gentle sounds; exact grouping and any additional brief message remain proposals | Muted audio, camera direction, quiet mode and weather cannot hide the persistent readable list |
 | Cross 20:00 | Keep today's view → add a clearly labeled approaching-tomorrow section when its trigger is met | Tomorrow never becomes today; previews cause no storage writes |
 | Cross midnight / resume play | Recompute the local day → show dated unfinished actionable items and history → summarize missed signals | No date movement, no burst of replayed sounds, no false overdue status on information-only notes |
 | Switch slot | Preserve/resolve current note or MM drafts → save game checkpoint → explicitly adopt the new slot | Pending callbacks remain bound to their original slot/record identities; no draft crosses subjects |
-| Change weather/settings | Choose manual state or optional live feed → transition the whole environment gradually | Failed network uses cached/manual state with its source shown; no Track mutation |
+| Change weather/settings | Follow real weather with custom control, or use random fantasy occurrences if the live connection is too complicated → transition the whole environment together | Clearly identify the source/mode; no character danger, information obstruction or Track mutation; unavailable-feed policy is needed only for the live branch |
 | Leave and return | Persist compact game state and pending draft → reopen → reconcile against current Track | A save failure is visible; export/recovery does not overwrite Track from a stale game snapshot |
 
-**Reading safety proposal:** opening the notebook immediately releases pointer lock and
-suppresses movement controls. Pause the local avatar/environment simulation in place for
-the initial single-player version, including midair and swimming states; keep the wall
-clock, data updates and notification scheduler running. Show live weather updates on resume
-through interpolation. If a paused location becomes invalid after a region update, offer
-a safe checkpoint return before resuming. This is a proposed resolution of the open safety
-question, to compare with automatic safe landing during the movement proof.
+**Confirmed panel behavior (2026-09-08):** opening a panel does not pause the game. The
+character is not in danger, so information access needs no protective freeze, automatic
+evacuation or wait for landing. Weather, scenery, ordinary character simulation, real local
+time, data updates and reminder evaluation continue.
+
+**Input implementation proposal within that decision:** release pointer lock, clear held
+gameplay inputs and give the panel keyboard/pointer focus. Suppress new movement/camera
+commands while the UI owns input; do not stop the simulation loop. A grounded character
+can idle and an airborne character continues its normal non-dangerous motion. Exact passive
+climbing/gliding/swimming behavior needs movement testing, not a new choice about pausing.
+Closing restores appropriate focus/control without saving or discarding a draft implicitly.
 
 The proposed keys are WASD, mouse camera, Space for jump, E for inspect, N for notebook,
 T for Today, and Escape for close/release. Make them remappable; ignore gameplay shortcuts
 while typing, composing IME text or navigating a dialog. Key choice remains adjustable.
 
-**Panel/input state proposal:** apply the following alongside the notebook reading-safety
-proposal. It is a design to test, not a settled choice of pause behavior for every surface.
-Wall-clock time, accepted data refreshes and grouped reminder evaluation continue in every
-row; reminders never steal focus. Gameplay shortcuts remain disabled during text/IME input.
+**Panel/input state matrix:** unpaused play is confirmed; focus and passive movement details
+below are implementation treatments to test within that decision. World simulation,
+wall-clock time, accepted data refreshes and grouped reminder evaluation continue in every
+row. Reminders never steal focus. Gameplay shortcuts remain disabled during text/IME input.
 
 | Surface | Avatar / camera input | Local simulation and environment | Close / return behavior |
 | --- | --- | --- | --- |
 | Ordinary play | Movement and normal third-person camera active | Runs normally | Opening a reading surface captures the previous input/focus state |
-| Today and ordinary item details | Suppress movement; release pointer lock; focus readable controls | Pause avatar and environmental animation as in the notebook proposal | Close restores the previous surface; re-enter pointer lock only through deliberate interaction |
-| Notebook list/editor or scratch capture | Suppress movement; release pointer lock; text/IME and UI navigation own input | Pause avatar/environment, including midair/swimming; reconcile current time/weather on resume | Preserve any pending draft; Escape/Close never implies Save or discard |
-| Grounded KS03 sky | Avatar stationary; pan/zoom/select belong to the graph camera | Environment remains live at current time/weather | Close restores the ordinary camera; activation while airborne needs the separate safety choice |
+| Today and ordinary item details | Clear held movement commands; release pointer lock; focus readable controls | Character simulation and environment keep running; no danger or panel-triggered relocation | Close restores the previous surface; re-enter pointer lock only through deliberate interaction |
+| Notebook list/editor or scratch capture | Clear held movement commands; release pointer lock; text/IME and UI navigation own input | Character simulation and environment keep running, including ordinary airborne/water behavior | Preserve any pending draft; Escape/Close never implies Save or discard |
+| Grounded KS03 sky | Avatar remains at the stargazing position; pan/zoom/select belong to the graph camera | Environment and character idle animation remain live at current time/weather | Close restores the ordinary camera; the transition into the grounded viewpoint still needs tuning |
 | Selected-MM detail or action form | Avatar stationary; UI owns input; graph pan/zoom suspended while the detail/form has focus | Keep the grove's live environment behind a stable opaque reading surface | Return to the selected-star context, or empty overlay if its record disappeared; preserve pending work |
-| Confirmation or conflict dialog | Only the top dialog receives input; no camera/movement commands | Inherit the underlying surface's simulation state | Escape cancels the pending action or closes the resolution view without discarding alternatives; restore focus to its invoker or a valid fallback |
+| Confirmation or conflict dialog | Only the top dialog receives input; no camera/movement commands | Game continues as behind the underlying panel | Escape cancels the pending action or closes the resolution view without discarding alternatives; restore focus to its invoker or a valid fallback |
 
 Test nested dialogs and repeated open/close paths, not only each panel in isolation. A
-resume from a now-invalid position uses the safe-checkpoint proposal above. The R6 interface
-and recovery sheets should show these input and draft transitions before implementation.
+remote region/terrain update still cannot remove the surface supporting the player; that
+world-stability rule is independent of opening a panel. The R6 interface and recovery
+sheets should show continuous world motion alongside these input and draft transitions.
 
 ### 25.6 Data architecture and ownership
 
@@ -1422,7 +1575,7 @@ flowchart LR
     C --> G[Track-owned conflict and save boundary]
     G --> T
     W --> S[Separate game-state store]
-    E[Manual or cached live weather] --> V[One environment controller]
+    E[Custom or live weather; random fantasy alternative] --> V[One environment controller]
     V --> W
 ```
 
@@ -1434,7 +1587,7 @@ There is deliberately no movement-to-Track-write connection.
 | Projected calendar rows, badges and world signals | Recomputable in-memory view | One canonical item/occurrence identity can have several representations |
 | Position, region visits, template assignment, cosmetic preference, safe checkpoint | Separate versioned game store, keyed by account/profile + slot ID | Save at meaningful checkpoints with a bounded debounce, never each frame; export separately |
 | Pending note/MM draft or operation, base version, local/recovered alternatives | Durable recovery journal with explicit privacy/export treatment | Remains recoverable until acknowledged/resolved; is not a second authoritative Track database |
-| Weather response and cache metadata | Game-only cache/settings | Cached age, location precision and manual override remain explicit |
+| Weather mode, occurrence state and any live-feed cache | Game-only state/settings | Distinguish fictional events from fetched weather; cache age and location precision apply only to the live branch; no per-frame Track writes |
 | Models, textures, sounds, shaders | Versioned application assets | Never embedded in Track JSON or uploaded by Track's whole-database sync |
 
 IndexedDB is a candidate for game-only persistence because it supports structured storage
@@ -1502,13 +1655,16 @@ same result in the existing Track surface and World; do not introduce a third ca
 completion algorithm. Whole-slot import's remaining nested-ID work also matters: world
 identity must be namespaced by slot, not assume IDs are globally unique across imports.
 
-Proposed game folders, to create only with the approved prototype:
+Possible later folder organization, not the current demo layout or a required refactor.
+The runnable demo already uses `scripts/`, `styles/`, `tests/`, `tools/` and `vendor/`, as
+documented in [README](README.md). Introduce these additional boundaries only when the
+implementation needs them:
 
 ```text
 World/
   TRACK-WORLD-CONCEPT-DRAFT.md   concept and proposed decisions
-  README.md                    only once runnable work exists
-  NOTES.md                     remaining work once implementation starts
+  README.md                    existing current behavior and commands
+  NOTES.md                     existing unfinished work and proof gates
   src/
     adapter/                   Track read interface and scoped note/MM commands
     domain/                    identity, presentation policy, world-state validation
@@ -1679,7 +1835,8 @@ fixed simulation step and capped catch-up after stalls. Falls return to a safe p
 no data change, currency loss or failure debt.
 
 First prove walking/running/jumping, stairs/slopes, camera collision and safe notebook
-entry. Then add the concept's climbing, vaulting and swimming as separate complete features:
+entry. Then add the concept's climbing, vaulting, swimming, gliding and slingshot launch
+as separate complete features:
 entry detection → animation → collision state → exit/recovery → book stow/return. The first
 slice may omit those advanced actions only if labeled incomplete; they must not silently
 disappear from the full concept's delivery backlog.
@@ -1745,9 +1902,12 @@ Do not upload personal Track content to asset, image or audio services.
 ### 25.10 One coherent environment system
 
 Use one environment state with local time, sun phase, wind direction/strength, gust phase,
-cloudiness, precipitation, humidity, surface wetness, haze and climate profile. Every scene
-system samples it; individual effects do not fetch their own weather or run unrelated
-random transitions. Wetness has memory, so rain stopping does not instantly dry the world.
+cloudiness, precipitation, humidity, surface wetness, haze and climate profile. For the
+fantasy alternative, extend it with the active occurrence, transition phase and any snow
+coverage or flood level needed by that occurrence. These are proposed game-only fields,
+not additions to Track's schema. Every scene system samples the shared state; individual
+effects do not fetch their own weather or run unrelated random transitions. Wetness has
+memory, so rain stopping does not instantly dry the world.
 
 | System | First coherent implementation | Lower-cost fallback |
 | --- | --- | --- |
@@ -1761,19 +1921,32 @@ random transitions. Wetness has memory, so rain stopping does not instantly dry 
 | Haze/distance | Fog and distant palette follow rain/humidity/time | Distance fog; no mandatory volumetric effect |
 | Audio | Crossfade rain/wind/water/ambient layers from the same state | Fewer voices; preserve mute and separate notification volume |
 | Interface edges | Subtle edge light/droplets/motion | Static botanical outline; reading surface always stable |
-| Climate/season | Manual regional profile, later optional live weather and locally appropriate seasonal variation | Local cached/manual profile; no automatic four-season assumption |
+| Climate/season | Real-weather/custom mapping, or the authorized random fantasy branch with snow, heavenly skies, downpours, floods and other occurrences | A local event selector needs no weather service; retain coherent response at lower effect density |
 
 Start with **clear afternoon → windy rain → wet evening → gradual drying**, plus a
 night/day test. The transition must be visible across all relevant systems in the same
 scene. Reduce density or fidelity together when needed; keeping only an animated sky
 does not pass the concept's environmental requirement.
 
-Live weather is optional in the first playable proof. Proposed polling is at most once per
-30 minutes while active, with shared caching, request timeout/backoff and a manual override.
-Use a user-selected broad location, show what is sent, and do not request GPS automatically.
-Weather is an input to an artistic mapping, not a promise of physically accurate local
-simulation. The free Open-Meteo service has usage limits and attribution requirements;
-respect all published limits, not just the daily cap. [Terms](https://open-meteo.com/en/terms).
+**Source branch:** the user authorizes random fantasy weather if connecting real weather
+is too complicated (Section 14). Record which branch the implementation takes and why;
+the current clear/rain controls alone do not fulfill either a live feed or the requested
+fantasy variety. No external provider is necessary for the fantasy branch.
+
+**Fantasy implementation proposal:** one local event selector chooses an occurrence and
+its development from the Section 14 palette. Keep a seed/override available to synthetic
+tests so a reported snowfall, flood or transition can be replayed. The world looks random
+to the player while checks can reproduce it. Event progression continues with panels open.
+Use bounded particles, material snow masks, shared lighting and controlled water levels
+before considering expensive simulation. A flood can change the visible waterline without
+requiring a fluid solver or a drowning/damage system. Test traversal and access where water
+crosses a path; a visually simple flood still needs that check.
+
+**Only if the live branch is pursued:** polling at most once per 30 minutes while active,
+shared caching, request timeout/backoff, and a user-selected broad location remain proposals.
+Settle location disclosure and fallback before connecting a provider. The existing
+[Open-Meteo terms reference](https://open-meteo.com/en/terms) must be rechecked before use;
+no live-service assumption is needed to implement fictional occurrences.
 
 ### 25.11 Interface and accessibility production workflow
 
@@ -1820,22 +1993,30 @@ phase produces evidence that makes the next decision reviewable.
 
 | Phase | Work and tools | Deliverable / exit check | Depends on |
 | --- | --- | --- | --- |
-| **P0 — Decide the proof** | Confirm engine candidate, prototype boundary, tentative performance target and asset approach; record decisions in affected concept sections | One-page prototype brief, synthetic fixture list, dependency list with versions/licenses and exact install effects | User direction for commitments under World/AGENTS |
+| **P0 — Define the next increment** | Retain selected Babylon.js delivery and approved dependency; resolve only the next increment's open scope, reference behavior and provisional performance target | Updated brief distinguishing existing behavior, requested corrections, pending choices and observable exit checks; an art-production choice is needed only when that work begins | Recorded decisions and user direction for remaining commitments under World/AGENTS |
 | **P1 — Movement and render proof** | Selected engine, capsule/avatar placeholder, camera, terrain blockout, one light/water/foliage sample; DevTools or native profiler | Reproducible 20-minute route on target laptop; comfortable controls, no stuck camera, saved traces and measured target assessment | P0 and approved tools |
-| **P2 — Information and action proof** | Synthetic adapter, canonical calendar reuse in an isolated profile, botanical panels, note drafts and selected-MM action controls against synthetic records | All semantic fixtures visible; correct 20:00/midnight behavior; keyboard/IME safe; MM action drafts exercise applicable types and effects; no writes to real Track | P1; adapter definition can begin alongside it |
+| **P2 — Information and knowledge-sky proof** | Synthetic adapter, canonical calendar reuse, Track-shaped panels, notebook drafts, grounded KS03 sky projection and selected-MM views/action drafts; include Quest only under its adopted presentation scope | All semantic fixtures visible; correct 20:00/midnight behavior; direct panel switching and keyboard/IME safety; recognizable sky layout in daylight/rain with restored camera; full information/action coverage tracked by MM family; no real Track writes | A usable P1 scene/input boundary; full P1 benchmarking need not block synthetic UI/sky iteration |
 | **P3 — Coherent atmosphere and art proof** | Blender asset loop, runtime cel shader, shared environment state, audio layers | Same scene passes clear/rain/wet-evening/night checks at the chosen quality target; one validated GLB round trip | P1; UI contrast reviewed with P2 |
 | **P4 — Stable journey proof** | Natural route connecting distinct places + regional/landmark gateway + one branching goal region and completed-region variant; deterministic assignment, load/unload and checkpoint recovery | Add/rename/reorder/complete/reopen synthetic goals without losing places or moving terrain under player; natural crossings and gateway travel both work | P1–P3 and detailed layout/gateway policy within the confirmed separate-world direction |
 | **P5 — Track safety prerequisite** | Separate Track change: shared identity/completion/MM reads, mutation repository, scoped note/MM commands, revision/conflict recovery, all writer participation | Root suite plus per-command parity, retry, cancellation and concurrency cases pass; cloud protocol/rules tested in an approved emulator; explicit rollout plan prepared | Can run alongside P1–P4 after its own Track authorization |
-| **P6 — Real read-only integration** | Approved same-origin connection or explicit native bridge; data status and supported Track navigation | Read-only acceptance against current app, user-owned backup/recovery path, no mount-time database write, slot-safe refresh | P2/P4; identity read contract from P5 or separately completed read work |
+| **P6 — Real read-only integration** | Approved same-origin connection or explicit native bridge; data status and supported Track navigation | Read-only acceptance against current app, user-owned backup/recovery path, no mount-time database write, slot-safe refresh | P2 and separately verified identity/read isolation; P4 is needed for live goal geography, not for a panel-only read proof; no requirement to finish write commands before safe reads |
 | **P7 — Real notebook and MM interaction** | Shared note/MM commands and journal, explicit-action forms, operation acknowledgment, conflict UI, offline/reconnect and device handling | Notes editable anywhere; every confirmed MM action family works through the star detail controls; local/remote races, retry, cancel, reload, quota and deletion checks preserve recoverable work | P5 + P6; synthetic star-detail controls; live-cloud validation explicitly authorized |
-| **P8 — Complete the first world** | Advanced traversal/book animation, sanctuary identity, grounded KS03 projection with MM-color glow and larger parents, full MM interaction, matched grove/star SIR cues, related markers, region kits, history, quiet/rest controls | All confirmed requirements covered, including recognizable projected layout, matched cues, star-to-MM editing and daylight/weather readability; no extra reward system; incomplete action families remain reported work | P3/P4/P7 and remaining presentation/experience/art choices |
+| **P8 — Complete the first world** | Finish and integrate earlier traversal, sky and MM proofs; book animation, garden home and separate sanctuaries, matched grove/star SIR cues, related markers, region kits, history, quiet/rest controls | All confirmed requirements covered, including recognizable projected layout, matched cues, star-to-MM editing and daylight/weather readability; no extra reward system; incomplete action families remain reported work | P3/P4/P7 and remaining presentation/experience/art choices |
 | **P9 — Private release and recovery** | Optimize assets, verify offline loading and origin, access rules, license inventory, package/cache behavior, export/restore | Release candidate tested on target laptop, access assumptions verified, recovery rehearsal passes, deployment/package effects reviewable | P8 plus explicit release approval |
 | **P10 — Maintain and expand** | Small improvements driven by playtest findings; profile each new region; periodically review dependencies and quotas | Each increment preserves the data contract and measured baseline; open backlog stays forward-looking | A stable first release |
 
-The critical paths are `P0 → P1 → P2/P3 → P4` for the playable experience and
-`P5 → P6 → P7` for safe connected notes and MM interaction. The full initial release needs
-both, followed by P8–P9. If P5 takes longer, continue synthetic art/traversal work and clearly
-label the demo's limitations; do not ship an unsafe writer to make the milestones look aligned.
+The experience path is `P0 → usable P1 → P2/P3 → P4`, with P1's sustained performance
+evidence required before world expansion. Safe reads need P2 plus the isolated read/identity
+contract; real writes need **both P5 and P6 before P7**. This avoids coupling a panel-only
+read experiment to completed terrain or to a finished write protocol. The full initial
+release still needs both paths, followed by P8–P9. If P5 takes longer, continue synthetic
+experience work and report the limitations; never substitute an unsafe writer.
+
+The sky view and advanced traversal must be tested before P8, because they define how the
+world is used. P8 integrates and completes those features; it must not be their first
+usability or feasibility test. The near-term order between sky/information, movement and
+appearance remains a user choice in Section 25.15. None of these dependency revisions
+authorizes live reads, Track runtime changes or new dependencies.
 
 For each implementation task: name its owner, files, input contract, output artifact,
 acceptance case, dependency and rollback/recovery behavior. Divide independent work into
@@ -1885,12 +2066,14 @@ requirement. Only compare another renderer/engine when the remaining limitation 
 | Local concurrency | Barrier-controlled simultaneous writes, different notes, same note/field, overlapping MM command write sets, different slot fields, slot switching/deletion during pending callbacks, missing Web Locks |
 | Cloud concurrency | Pending local vs remote update, two devices with same base, clock skew, stale client, reconnect/retry, permission failure, corrupt chunks, conflict resolution interrupted |
 | Draft recovery | Quota refusal, tab close during debounce, browser restart, conflict/remote deletion, export both, Cancel byte-identical, IME text preserved |
-| Accessibility | Keyboard-only information use, visible/restored focus, 200% zoom, long Thai/English content, reduced motion, muted audio, bright/night/rain contrast; adopted panel/input matrix, nested dialogs and Escape, pointer-lock re-entry, reminders without focus theft |
+| Accessibility | Full information without a summary gate; keyboard-only information use, visible/restored focus, 200% zoom, long Thai/English content, reduced motion, muted audio, bright/night/rain contrast; nested dialogs and Escape, pointer-lock re-entry, reminders without focus theft; world keeps advancing during reading/typing while gameplay keys remain captured |
+| Fantasy weather, if adopted | Replayable random occurrence/transition cases for snowfall, heavenly sky, downpour and flood; coherent snow/wetness/water/light changes, unpaused progression with panels open, no character damage or landmark loss, readable information and distinguishable MM stars |
 | World stability | Add/reorder/rename/complete/reopen goals, missing record, stable template version, respawn and region update while notebook open |
 | Lifecycle | Context loss/asset failure, repeated load/unload, no extra event listeners/audio voices, offline start after assets are available, outdated asset/cache version |
 
 Use synthetic data only in automated testing. World-only tests live under `World/tests/`;
-the future README documents their actual command once created. For any separate Track
+the existing [README](README.md#verification) documents their actual commands and evidence
+limits. For any separate Track
 runtime edit, follow the root workflow: relevant fail-first regression cases, shared-script
 syntax checks, **`node tests/run.js`**, browser smoke checks and cache-query updates. Do not
 replace or weaken the dependency-free root suite. Live Firebase and real multi-device checks
@@ -1956,28 +2139,71 @@ all twenty concept decisions before testing movement.
 
 <a id="next-work-sequence"></a>
 
-**Near-term three-step sequence (recorded 2026-09-06):** the user requested Step 1 now and
-asked that Steps 2 and 3 be recorded. Those follow-ons remain proposed work; recording them
-does not choose the engine, commit to an art approach, authorize installation, or begin a build.
+**Planning review (2026-09-08):** build on the existing synthetic demo. The original
+documentation pass and first scene exist; the scene has not passed the full movement,
+information, atmosphere or sustained-hardware gates. The following baseline comes from
+the current local source and recorded user feedback, not a new playtest or benchmark.
+
+| Area | Existing evidence / discrepancy | What the next proof must establish |
+| --- | --- | --- |
+| Controls | Walk/run/jump and a following camera exist; the user reports touchpad rotation stopping during movement | Reproduce simultaneous movement and preferred tap/double-tap camera dragging on the laptop; diagnose before changing controls or attributing the cause to the operating system |
+| Panel switching | `openPanel` can select another panel, but makes the entire bottom toolbar inert while a panel is open | Switch Today → Notebook → MM directly by pointer and keyboard, preserve each draft, and keep gameplay input suppressed; confirmation dialogs still own focus |
+| Track information | Today uses canonical calendar reads; the notebook is one synthetic textarea; the MM view provides name/observation drafts | Deliver the selected full information inside each opened panel; inventory Track's required sections, fields and actions with matching synthetic records; no required summary-to-full-details step |
+| Unpaused panels | The current demo keeps the environment advancing but skips character movement/physics while a panel owns input | Retain the live environment and continue ordinary character simulation while panels own input, including during typing and nested dialogs; the user has rejected a protective pause |
+| Evening and midnight | A three-position demo clock selects examples; its preview branch shows tomorrow's SIR list | Implement the adopted local-time policy, preserve today's unfinished information and original dates, and test Section 7.4's note/caution/deadline preview trigger. A SIR-only tomorrow must not widen that trigger without a decision |
+| Memory Grove | Three ground-level stars and an MM panel exist | Grounded overhead KS03 projection, recognizable positions/colors/connections, readable selection and restored camera; simple ground stars do not count as the sky feature |
+| Quest | Track's pure Quest readers exist; World has no Quest panel or Quest read adapter | Settle the proposed display, use the selected slot's canonical tree/rollup and synthetic fixtures, and keep task completion and quest management unavailable in World |
+| Atmosphere | Shared clear/rain/wetness response and an independent light study exist | Implement either the preferred live-weather connection or, if too complicated, the authorized random fantasy branch; preserve whole-world coherence and measure the chosen effects |
+| Data and performance | Isolated fixtures, memory-only drafts and behavior checks exist | Preserve isolation and report reset-on-reload; neither safe real edits nor sustained target-laptop performance has been proved |
+
+Source anchors: [demo panels and clock](scripts/app.js), [movement and scene](scripts/scene.js),
+[server read allow-list](tools/serve.js), [Track Quest readers](../scripts/quest-core.js),
+and [current verification limits](README.md#verification). This review does not refresh
+the historical external tool, pricing or service findings in Sections 24–25.4.
+
+**Revised three-step sequence — proposed ordering, pending user priorities:**
 
 | Step | Work | Status / evidence needed |
 | --- | --- | --- |
-| **1 — Tighten this draft** | Clarify entry states, hierarchy exceptions, calendar meanings and panel controls; assess tools by job; mark exact picture locations | Documentation update completed in this revision. Unchosen treatments are explicitly proposals; existing imagery and the pinned installation receipt are retained |
-| **2 — Test one small scene** | Recommended Babylon.js browser proof on the current laptop, with placeholders and synthetic data: movement/camera, one coherent weather transition, readable Today and draft-only notebook/MM controls | Proposed next work, corresponding to P0 and the small P1–P3 proofs. First choose the engine/proof boundary and approve specific tools. Assess the provisional 720p/30 fps target on actual hardware; report failures and remaining features before expansion |
-| **3 — Expand after the proof works** | Develop the priority visual references, complete one Blender-to-runtime asset loop if that approach is chosen, then grow one coherent region/feature at a time. Trial specialist tools only when their job arrives | Proposed follow-on. User reviews look/feel and specific installations; each increment reuses the measured baseline. The separate P5–P7 Track safety gates remain prerequisites for real writes, and P8–P9 for a complete private release |
+| **1 — Repair the existing interaction path** | Diagnose touchpad interruption; enable direct panel switching; map Today/notebook/MM content to Track and define the next increment from the choices below | A short repeatable interaction check: move and look together, open/read/switch panels, type and return without losing drafts or triggering movement while typing |
+| **2 — Prove the defining experience in the small scene** | Recommended emphasis: faithful information and grounded KS03 sky, with the Quest presentation if adopted. Then test the selected movement/launch/glide behavior and coherent atmosphere as focused increments | Each feature has its own user playtest and stated missing coverage; repeat the same route and complete P1–P3 evidence, including sustained laptop measurements. No requirement to finish a large art package first |
+| **3 — Expand and connect through separate gates** | Grow one goal region and stable travel/history behavior; prove an asset loop when its production approach is chosen; separately prepare safe real reads and then confirmed note/MM writes | P4 proves geography; P6 proves read isolation/identity; P5 + P6 gate P7 writes. P8 completes the full requirement inventory and P9 governs private release. A synthetic increment remains useful while integration is unfinished |
 
-The immediate next discussion is the concrete Step 2 engine/proof/dependency brief below,
-not another broad tool search. Existing references and simple wireframes can inform that
-proof; producing a large new art package is not its entry requirement. For Step 3, prioritize
-the R9 schedule schematic, R4 MM detail/density views and R6 interface/recovery sheets before
-decorative variants or additional biomes. No new picture, tool installation or prototype is
-part of this Step 1 documentation update.
+**Proposed representative playthrough:** enter the current slot's world → check Today
+without travel → move while looking around → open the notebook and retain a draft across
+panel switches → reach the Grove → inspect the sky and an MM's information → close back to
+the same safe world context. Run the same sequence in daylight and rain. Add launch/glide
+to a small island once its controls are defined. This connects the feature proofs into
+one ordinary use session without turning the sequence into mandatory daily work.
 
-**First decision set, before P0/P1:**
+Use R9 for schedule meanings and R4/R6 for sky detail and interface behavior. These should
+resolve a specific unanswered layout or behavior question; decorative variants and extra
+biomes are not prerequisites. Further installations and production art choices retain
+their existing approval gates.
 
-- **Engine/delivery:** recommended Babylon.js browser proof; alternative native Godot with
-  a separate data bridge; or a custom preference. Compare workflow and integration effort,
-  not screenshots alone.
+**Clarification status (updated 2026-09-08):** full information and unpaused panels are
+confirmed. The fantasy-weather alternative is authorized conditionally as stated below.
+The other three questions remain unanswered; their recommendations are not accepted defaults.
+
+| Choice | Decision or remaining alternatives | Work affected |
+| --- | --- | --- |
+| Next-demo emphasis | **Open:** information + sky first (recommended); movement + islands first; or world appearance first | Ordering within the next increment, not removal of other confirmed requirements |
+| Movement reference scope | **Open:** reference feel without stamina limits (recommended); include stamina/restrictions with non-dangerous recovery; or keep those mechanics undecided pending examples | Traversal state and animation; the reference target remains recorded, and no character danger is now confirmed |
+| Quest popup | **Open:** persistent compact starred list with separate interaction prompts (recommended); nearby relevant quests only; or Quest tab only | Proposed Quest presentation, not permission to tick, star or edit Track data |
+| Track panel fidelity | **Confirmed:** full applicable information in the opened panel; no required summary step | Complete content with sections/tabs/scrolling as needed; no exact pixel-layout requirement was added |
+| Reading during traversal | **Confirmed:** the game does not pause, and the character is not in danger | Panel input ownership remains necessary; simulation, weather and time continue; no protective relocation on open |
+| Weather source | **Conditional alternative authorized:** completely random fantasy occurrences if the real-weather connection is too complicated; snow, heavenly weather, heavy rain and floods are expressly invited | Do not require location/provider choices for the fantasy branch; record the implementation branch honestly and retain coherent, non-dangerous effects |
+
+**Later decisions, when their work begins:** define the exact slingshot launch before its
+controller; choose avatar appearance and asset production before final art; settle gateway
+unlock/return rules and goal retention before stable geography; settle slot/draft switching
+and privacy before real integration. These remain necessary decisions, but they need not
+be answered together to repair the current demo.
+
+**Existing proof constraints and later commitments:**
+
+- **Engine/delivery — decided 2026-09-06:** Babylon.js browser demo, with Codex implementing
+  and the user directing/playtesting. Native Godot is a fallback requiring new direction.
 - **Proof size/performance:** recommended one small traversable Clockgarden-adjacent scene,
   synthetic data, draft-only notebook, coherent weather and provisional 720p/30 fps target;
   alternatively a stricter 60 fps movement-first proof before richer effects.
@@ -1987,6 +2213,39 @@ part of this Step 1 documentation update.
 
 **World direction now confirmed:** separate worlds per slot, natural landscape paths, and
 regional/landmark gateways (Section 5).
+
+**Original first-increment brief (2026-09-06; retained as the baseline):** the user
+approved starting the demo. The first increment is one small traversable scene
+beside Clockgarden, using Babylon.js in the browser with WebGL 2 and live HTML/CSS panels.
+Keep the initial scope concrete; further installations retain their separate approval gate:
+
+- **Movement:** a placeholder avatar, walk/run/jump, third-person camera, simple collision,
+  and a return-to-start control on one repeatable route.
+- **Atmosphere:** one gradual clear-to-rain transition coordinating light, wind, rain and
+  surface wetness through shared state. Use simple geometry to test the behavior; these
+  placeholders do not settle the production asset approach.
+- **Information:** a readable Today panel with synthetic timed/untimed notes, a deadline
+  with gapped caution days, a completed deadline, review examples and a reference schedule.
+  Reuse Track's applicable read definitions without importing a live database or its
+  bootstrap/sync scripts. Show notebook and selected-MM controls as clearly labelled
+  synthetic drafts; they do not complete the later command-safety or full-MM phases.
+- **Isolation:** keep implementation and fixtures under `World/`, use an isolated browser
+  context, and never read or write the user's real `track_db`. Draft controls remain in
+  demo memory for this first increment, with their reset-on-reload limitation visible.
+- **Approved demo tooling:** Babylon.js 9.25.0 browser bundle, license/notice and integrity
+  receipt, retrieved with explicit dependency approval on 2026-09-06; plain JavaScript,
+  HTML/CSS and existing local serving/testing tools. Later dependency changes require
+  their own exact source/version/file-effects approval. No package manager, Blender
+  installation or asset pack was added; the Blender-to-GLB loop remains a later P3 check.
+- **Evidence:** run the scene, verify controls and panel focus, exercise the synthetic
+  states and weather transition, and report errors and limitations. Assess the provisional
+  720p/30 fps target on the actual laptop through the Section 25.13 procedure; a short run
+  or headless test does not satisfy the sustained graphical-performance gate.
+
+This historical brief defines the implemented starting scope; the revised sequence above
+addresses its gaps and subsequent user feedback. It does not mark P1–P3 complete or replace
+their remaining exit checks. The user's Ultra escalation rule is recorded in
+[`World/AGENTS.md`](AGENTS.md#ultra-escalation-rule).
 
 **Experience direction now recorded (2026-09-06):** Memory Grove with grounded stargazing,
 an always-readable KS03 star overlay, and full information and interaction for a selected MM
@@ -2000,11 +2259,12 @@ treatment.
 landmass layout, gateway routing/unlocks and emergency return; precise region completion
 calculation; archived/deleted history; MM action forms and recovery, grounded camera tuning,
 full MM detail organization, projection/hierarchy-size tuning and dense-network readability; exact
-task/to-learn symbols; acceptable movement assistance and reading safety; avatar identity;
-sanctuary identity; regional palette range; optional calm
-activities; reminder grouping/intensity; tomorrow's SIR/task trigger; home/device timezone;
-climate/location disclosure; and private delivery versus private data. Personal notes and
-full MM interaction are the confirmed writes; additional domains require a new deliberate
+task/to-learn symbols; acceptable movement assistance and passive traversal while panels own input;
+fixed-avatar appearance; garden-home layout and separate sanctuary identities; regional palette range; optional calm
+activities; reminder grouping and gentle-sound design; tomorrow's SIR/task trigger; home/device timezone;
+fantasy event tuning or location disclosure if the live-weather branch is pursued; and
+private delivery versus private data. Personal notes and full MM interaction are the
+confirmed writes; additional domains require a new deliberate
 product decision.
 
 <a id="picture-reference-package"></a>
@@ -2020,7 +2280,7 @@ interface package. Do not add image links until the referenced asset exists.
 | --- | --- | --- |
 | **R1 — Selected style sheet / high** | [End of §15, after regional consistency](#ref-style-sheet). Reuse the existing Plaza and Grove images; annotated sheet still needed | Annotated crops for silhouettes, cel bands, stone/metal/foliage palette, surface-detail density and ornament limits. Preserve the cover; no additional hero illustration is needed |
 | **R2 — Environment states / high** | [End of §14, after gradual transitions](#ref-environment-states). Comparison still needed | Identical camera/objects/panel position across clear, rainy, wet-evening and night states. Annotate coordinated wind, shadows, wetness/drying, water and stable reading surfaces; include reduced-motion treatment. Visual targets first, actual engine captures and a transition clip during P3 |
-| **R3 — Connected landscape and routes / high** | [End of §5.6, before Memory Grove](#ref-landscape-routes). Blockout still needed | Top-down plan plus matching third-person viewpoints locating sanctuary, Clockgarden, Grove, one active and one retained region, natural paths and gateways. Show scale, camera clearance and growth space; distinguish proposed loading boundaries from physical paths. Label unchosen layout/gateway assumptions as proposals |
+| **R3 — Connected landscape and routes / high** | [End of §5.6, before Memory Grove](#ref-landscape-routes). Blockout still needed | Top-down plan plus matching third-person viewpoints locating the garden home, separate sanctuaries, Clockgarden, Grove, one active and one retained region, natural paths and gateways. Show scale, camera clearance and growth space; distinguish proposed loading boundaries from physical paths. Label unchosen layout/gateway assumptions as proposals |
 | **R4 — Memory Grove and full MM interaction / highest** | Existing ground/daylight-sky image stays in §5.7. Add the missing material [at the end of §5.7](#ref-memory-grove-detail) | Selected-MM wireframes with type-appropriate MG/Kolb/+Lin/SIR/source views, ownership and named actions; empty/create and post-deletion states. Add a deterministic synthetic KS03-to-sky comparison with manual positions, dense labels/navigation, shared parents/cycles and weather readability. Preserve the existing botanical/petal-ring direction; do not regenerate the grove merely to repeat it |
 | **R5 — Avatar and notebook / medium** | [§4, after carry/stow behavior](#ref-avatar-notebook). Pose/rig sheet still needed | Front/side/back proportions and right-hand carry, stowed, climbing/vaulting/swimming and return poses. Annotate attachment points and transition obligations. Neutral placeholder first; polished identity/turnaround waits for the avatar choice |
 | **R6 — Interface, markers and recovery / highest** | [R6a: end of §6 marker choice](#ref-marker-legend); [R6b: §16 after normal/expanded states](#ref-interface-states); [R6c: §25.8 after conflict alternatives](#ref-save-recovery). All three sheets still needed | R6a: task/to-learn and due/caution/SIR shape legend in two regional materials. R6b: closed bud, dense Today, notebook and item detail with long synthetic Thai/English text, empty states, scrolling, focus and narrow/wide windows. R6c: note AND MM save/conflict/failure/export storyboard, separate local/cloud status and slot switching with drafts. Use real-text wireframes, then rendered UI captures |

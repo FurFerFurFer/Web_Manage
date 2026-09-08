@@ -62,14 +62,17 @@ function run(label, file, env) {
 const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js'];
 
 // Swept once, not per zone: true-storage-core.js, graph-layout.js,
-// doc-table-core.js, schedule-paste-core.js and the cdp cleanup path hold no
-// date code at all, so five runs would cost five times as long and prove
-// exactly the same thing. schedule-paste-core.js is the one that has to earn
-// its place here rather than merely claiming it — it reads DAYS — so its suite
-// carries a structural case asserting the file constructs no Date. All
-// weekday-to-calendar-day resolution lives in calendar-core.js, which is swept.
+// doc-table-core.js, schedule-paste-core.js, quest-core.js and the cdp cleanup
+// path hold no date code at all, so five runs would cost five times as long and
+// prove exactly the same thing. Two of them have to earn their place here
+// rather than merely claiming it — schedule-paste-core.js reads DAYS, and
+// quest-core.js expires a routine tick at the end of one — so each suite
+// carries a structural case asserting its file constructs no Date. Both take
+// the day as a PARAMETER: all weekday-to-calendar-day resolution lives in
+// calendar-core.js, which is swept, and the local day for a routine tick is
+// computed by the page.
 const UNSWEPT_FILES = ['true-storage-core.test.js', 'graph-layout.test.js', 'doc-table-core.test.js',
-  'schedule-paste-core.test.js', 'cdp-cleanup.test.js'];
+  'schedule-paste-core.test.js', 'quest-core.test.js', 'cdp-cleanup.test.js'];
 
 for (const tz of zones)
   for (const file of OFFLINE_FILES)

@@ -978,14 +978,51 @@ experience, computer-only initial scope, and limited subscription budget. Its
 [review notes](World/TRACK-WORLD-CONCEPT-DRAFT.md#24-feasibility-review-and-next-session-notes)
 identify the unresolved risks and candidate next checks.
 
-- Resolve the engine and browser-versus-native delivery before a representative prototype.
-- Evaluate movement, coherent weather, and readable Track views on the existing computer
-  with synthetic data before expanding the world or recommending purchases.
+- Follow [World's remaining proof gates](World/NOTES.md): playtest and measure movement,
+  coherent weather, and readable Track views on the existing computer with synthetic data
+  before expanding the world or recommending purchases.
 - Define game-state ownership and safe competing-note-edit recovery before real writes;
   coordinate with Proposal 4 rather than assuming the current sync merges note edits.
 - Keep phone/iPad versions and mobile requirements deferred.
 
 ## Additional Small Ideas
+
+### Quest: what was deliberately left out
+
+The feature works and is documented in README. These are the edges it does not cover:
+
+- **Home shows no quest progress.** A leaf draws a tick only when `completed` is literally
+  true; there is no `n/m` counter beside a parent as there is in the Progress tab. That is
+  deliberate — `countProgress` lives in `progress.html`, and copying it into `index.html`
+  would create exactly the twin `quest-core.js` exists to prevent. Fixing it properly means
+  moving the counter into a shared module, which is a bigger change than the readout is worth.
+- **Quests cannot be starred, reordered or removed from Home.** Home is read-only for quests
+  because it does not own `goals`. Giving it a control means adding `goals` to its write set
+  and to the ownership table.
+- **Quest order is tree order.** There is no user-chosen ordering, and no drag to reorder the
+  quest list independently of the goal tree.
+- **There is no "clear all quests".** If one is ever added it *is* destructive — unlike
+  un-questing a single row, which writes `false` and deletes nothing — so it must ask first.
+- **The starred rollup cannot be expanded.** A starred parent shows one row; there is no
+  affordance to see which descendants it stands for without scrolling to the tree below.
+
+### `buildToLearnTree` has no cycle guard
+
+Found while building Quest, and **not** fixed there — it is outside that scope, and
+`quest-core.js` sidesteps it entirely by hanging to-learn rows flat off their goal node
+rather than walking mind-map parents.
+
+`progress.html`'s `buildToLearnTree` recurses through `mm.parentIds` with no `seen` set,
+while its neighbour `getMMDescendants` has one. `parentIds` is plural and the connections
+picker on both canvas pages lets a user pick a descendant as a parent, so a cycle is
+reachable through ordinary use — and can also arrive from stored, synced or hand-edited
+data. A cyclic set of linked mind maps would recurse until the stack gives out, inside a
+React render, which empties the goal detail panel.
+
+AGENTS.md states the rule without exception: *every traversal of a parent/child graph
+carries a cycle guard*. This is the one known place that does not. The fix is a per-path
+`seen` copied per branch, matching `TrackTrueStorage.buildTree`'s contract — a repeated node
+is drawn once and its branch ends there — plus a cyclic-mm case seen timing out first.
 
 ### Finish routing the canvas pages' hard-coded UI accents through the theme
 

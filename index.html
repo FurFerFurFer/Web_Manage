@@ -9,7 +9,8 @@
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=8"></script>
   <script src="scripts/calendar-core.js?v=8"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=9">
+  <script src="scripts/quest-core.js?v=2"></script>
+  <link rel="stylesheet" href="styles/styles.css?v=11">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -102,6 +103,18 @@
         </div>
         <div id="cal-detail"></div>
       </div>
+    </section>
+
+    <section class="quest-panel" aria-labelledby="quest-panel-title">
+      <div class="quest-header">
+        <div>
+          <span id="quest-panel-title" class="slot-panel-label">Quest</span>
+          <span class="slot-panel-hint">The side list you keep for yourself — read-only here.</span>
+        </div>
+        <a class="quest-open" href="progress.html#quest">Edit in Progress →</a>
+      </div>
+      <div id="quest-starred" class="quest-starred"></div>
+      <div id="quest-list" class="quest-list"></div>
     </section>
   </main>
 
@@ -224,6 +237,117 @@
       }
     }
 
+    /* ── the quest panel ──────────────────────────────────────────────────
+       The side list, mirrored from progress.html#quest. Every rule about what
+       a quest IS lives in TrackQuest (scripts/quest-core.js) — the pruned
+       tree, the starred rollup, and the "include all children but only show
+       the parent" collapse. Nothing is re-spelled here, because a rule spelled
+       at two surfaces is this project's recurring bug.
+
+       Three rules, the same three renderRings lives under:
+       - It is READ-ONLY. Nothing here writes track_db, and Home's write set
+         stays "the slot list itself". A tick or a star belongs to Progress,
+         which owns `goals`; putting one here would make Home a writer of a
+         key it does not own.
+       - It cannot throw. This runs on Home's critical path, so every branch
+         ends in "draw nothing" rather than in an error. TrackQuest's readers
+         are total, and the whole body is wrapped anyway.
+       - Days go through TrackCalendar.toDateStr, the shared LOCAL-day helper
+         this page already loads — never toISOString().split('T')[0], which is
+         a UTC day, and never a second copy of the same three lines.
+
+       No progress bars, deliberately: countProgress lives in progress.html and
+       copying it here would create exactly the twin quest-core.js exists to
+       prevent. A leaf shows a tick only when it is literally complete. */
+    function renderQuests() {
+      const panel = document.querySelector('.quest-panel');
+      const list = document.getElementById('quest-list');
+      const starred = document.getElementById('quest-starred');
+      if (!panel || !list || !starred) return;
+
+      const hide = () => { panel.hidden = true; list.innerHTML = ''; starred.innerHTML = ''; };
+
+      try {
+        if (!window.TrackQuest) return hide();
+        const db = getDB();
+        const slots = db.slots || [];
+        if (!slots.length) return hide();
+        const slot = slots.filter(x => x.id === db.activeSlotId)[0] || slots[0];
+        if (!slot) return hide();
+
+        panel.hidden = false;
+        const mms = slot.mms || [];
+        const tree = TrackQuest.questTree(slot.goals || [], mms);
+        const rollup = TrackQuest.starRollup(slot.goals || [], mms);
+
+        // A routine's tick is quest-local and expires with the day. Read fresh
+        // on every render, never into a module cache — the same rule the
+        // calendar legend's key follows.
+        // TrackCalendar.toDateStr, not a local copy: this page already loads
+        // calendar-core.js, and a second local-day helper is exactly the
+        // duplication that turns into a UTC-day bug one edit later.
+        let ticks = [];
+        try {
+          ticks = TrackQuest.routineTicks(
+            localStorage.getItem(TrackQuest.ROUTINE_TICK_KEY), slot.id,
+            TrackCalendar.toDateStr(new Date()));
+        } catch (e) { ticks = []; }
+
+        const esc = s => String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+
+        starred.innerHTML = rollup.length ? (
+          '<div class="quest-section-label">★ Starred</div>' +
+          rollup.map(row => '<div class="quest-star-row" data-quest-star-row="' +
+            esc(row.kind === 'learn' ? row.node.id + ':' + row.mmId : row.node.id) + '">' +
+            '<span class="quest-star">★</span><span class="quest-title">' +
+            esc(row.kind === 'learn'
+              ? (row.mm ? row.mm.name : 'mind map removed')
+              : (row.node.title || 'Untitled')) + '</span>' +
+            // Only when the row stands for more than itself — a starred leaf
+            // saying "1 quest" is noise. Same rule as the Progress tab, and the
+            // number comes from the same starRollup rather than a second walk.
+            (row.count > 1
+              ? '<span class="quest-count" data-quest-star-count="' + esc(row.node.id) + '">' +
+                row.count + ' quests</span>'
+              : '') +
+            (row.kind === 'learn' ? '<span class="quest-kind">to learn</span>' : '') +
+            '</div>').join('')
+        ) : '';
+
+        function rowsFor(entry) {
+          const n = entry.node;
+          const routine = n.taskType === 'routine';
+          const done = routine ? ticks.indexOf(n.id) >= 0 : !!n.completed;
+          const kind = n.isSubGoal ? 'sub-goal'
+            : (n.children || []).length ? 'goal'
+            : routine ? 'routine' : 'task';
+          let html = '<div class="quest-row' + (entry.quest ? '' : ' is-context') +
+            (done ? ' is-done' : '') + '" data-quest-row="' + esc(n.id) +
+            '" style="--depth:' + entry.depth + '">' +
+            '<span class="quest-mark">' + (entry.quest ? (done ? '✓' : '·') : '') + '</span>' +
+            '<span class="quest-title">' + esc(n.title || 'Untitled') + '</span>' +
+            (entry.star ? '<span class="quest-star">★</span>' : '') +
+            '<span class="quest-kind">' + kind + '</span></div>';
+          html += entry.learn.map(row =>
+            '<div class="quest-row is-learn" data-quest-learn-row="' +
+            esc(n.id + ':' + row.mmId) + '" style="--depth:' + (entry.depth + 1) + '">' +
+            '<span class="quest-mark"></span><span class="quest-title">' +
+            esc(row.mm ? row.mm.name : 'mind map removed') + '</span>' +
+            (row.star ? '<span class="quest-star">★</span>' : '') +
+            '<span class="quest-kind">to learn</span></div>').join('');
+          return html + entry.children.map(rowsFor).join('');
+        }
+
+        list.innerHTML = tree.length
+          ? tree.map(rowsFor).join('')
+          : '<p class="quest-empty">No quests yet — pick some in <a href="progress.html#quest">Progress</a>.</p>';
+      } catch (e) {
+        hide();
+      }
+    }
+
     function renderSlots() {
       const db = getDB();
       const slots = db.slots || [];
@@ -239,6 +363,7 @@
         container.appendChild(el);
         renderCalendar();
         renderRings();
+        renderQuests();
         return;
       }
 
@@ -339,6 +464,7 @@
 
       renderCalendar();
       renderRings();
+      renderQuests();
     }
 
     function startRename(id, currentName, nameRow) {
@@ -1082,6 +1208,9 @@
     window.addEventListener('storage', e => {
       if (!e.key || e.key === 'track_db') renderSlots();
       else if (e.key === CAL_HIDDEN_KEY) renderCalendar();
+      // quest-local routine ticks: cheaper than a full renderSlots, and the
+      // payload is never trusted — the value is re-read inside renderQuests.
+      else if (window.TrackQuest && e.key === TrackQuest.ROUTINE_TICK_KEY) renderQuests();
     });
 
     renderSlots();

@@ -1,0 +1,22 @@
+{
+  "name": "babylonjs",
+  "version": "9.25.0",
+  "license": "Apache-2.0",
+  "source": "https://registry.npmjs.org/babylonjs/-/babylonjs-9.25.0.tgz",
+  "archiveIntegrity": "sha512-1hqtHr21ahlOYePM/DeWqhO4kUh9LPrbSjefTjdnSkmKnNqt8eYAxkFDYwk88hLUzY2FhPx7WJBG6ZRshCIxMQ==",
+  "archiveBytes": 21129389,
+  "files": {
+    "babylon.js": {
+      "bytes": 8316622,
+      "sha256": "decdea56272bb68a5a3c2f0d2a0996d0c74da5196a9a4ee444d9cde6a81d0806"
+    },
+    "license.md": {
+      "bytes": 9226,
+      "sha256": "9362ea9ea17cb221a20cbbd63f404710834cc273d2a9a7b60314fd68ab702cd6"
+    },
+    "NOTICE.md": {
+      "bytes": 46,
+      "sha256": "225463efd81558f120a6e0cdd7f4c1007ed486006d1228c4849fee0c49715823"
+    }
+  }
+}

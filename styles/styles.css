@@ -302,8 +302,10 @@ body.home {
   position: relative;
   min-height: 100vh;
   min-height: 100dvh;
-  /* no bottom padding: the full-bleed calendar is the last section and ends
-     flush with the bottom of the page */
+  /* no bottom padding: the last section is full-bleed (the calendar, and the
+     quest panel below it) and ends flush with the bottom of the page. A new
+     section at the end repeats the full-bleed trick rather than adding padding
+     back here — see .quest-panel. */
   padding: clamp(4.5rem, 9vw, 7rem) 1rem 0;
   overflow-x: hidden;
   font-family: var(--font-ui);
@@ -2305,6 +2307,132 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
   color: var(--color-success);
   text-decoration: line-through;
 }
+
+/* ── home: the quest panel (index.html) ───────────────────── */
+/* Sits directly below the universal calendar, which is FULL BLEED and exactly
+   one viewport tall. Two consequences, and the first is the load-bearing one:
+
+   - This panel repeats the full-bleed trick rather than body.home gaining a
+     bottom padding. body.home deliberately has none — "the full-bleed calendar
+     is the last section and ends flush with the bottom of the page" — and this
+     panel is simply the new last section. Adding padding there instead would
+     re-introduce a gutter under a full-bleed band on every one of Home's
+     breakpoints, for one panel's benefit.
+   - It is a continuation BAND, not a card. A 46rem card floating a viewport
+     below a full-bleed month reads as a stray fragment; a band reads as the
+     page continuing.
+
+   No backdrop-filter, matching .cal-panel: it would make this a containing
+   block for any fixed child, and there is nothing here worth blurring. */
+.quest-panel {
+  --quest-pad: clamp(1rem, 3vw, 1.375rem);
+  width: auto;
+  margin-inline: calc(50% - 50vw);
+  padding: var(--quest-pad)
+    max(var(--quest-pad), env(safe-area-inset-right))
+    max(calc(var(--quest-pad) * 2), env(safe-area-inset-bottom))
+    max(var(--quest-pad), env(safe-area-inset-left));
+  border-block-start: 1px solid var(--color-border);
+  background: rgba(var(--color-surface-rgb), 0.9);
+}
+
+.quest-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  max-width: 46rem;
+  margin: 0 auto 1rem;
+}
+
+.quest-open {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  text-decoration: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.7rem;
+  background: var(--color-surface-strong);
+}
+
+.quest-open:hover { border-color: var(--color-primary); }
+
+.quest-starred,
+.quest-list { max-width: 46rem; margin: 0 auto; }
+
+.quest-starred:not(:empty) { margin-bottom: 1.25rem; }
+
+.quest-section-label {
+  font-family: var(--font-data);
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-warning);
+  margin-bottom: 0.4rem;
+}
+
+.quest-row,
+.quest-star-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.28rem 0;
+  font-size: 0.8125rem;
+  color: var(--color-text);
+  border-block-end: 1px solid color-mix(in srgb, var(--color-border) 45%, transparent);
+}
+
+/* The tree is read as an outline, so depth is an indent rather than a nested
+   box — one flat list of rows keeps the row heights even down the column. */
+.quest-row { padding-inline-start: calc(var(--depth, 0) * 0.9rem); }
+
+.quest-star-row { border-inline-start: 2px solid var(--color-warning); padding-inline-start: 0.5rem; }
+
+/* A row kept only because a quest sits beneath it. Context, not a quest — and
+   it carries no controls anywhere, on either surface. */
+.quest-row.is-context { color: var(--color-text-muted); }
+
+.quest-row.is-done .quest-title { text-decoration: line-through; color: var(--color-text-muted); }
+
+.quest-row.is-learn .quest-title { color: var(--color-accent-live, var(--color-primary)); }
+
+.quest-mark {
+  flex-shrink: 0;
+  width: 0.85rem;
+  font-size: 0.7rem;
+  color: var(--color-success);
+}
+
+.quest-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quest-star { flex-shrink: 0; color: var(--color-warning); font-size: 0.75rem; }
+
+/* How many quests a collapsed starred row stands for. Shown only past one, so
+   a starred leaf never reads "1 quest". */
+.quest-count {
+  flex-shrink: 0;
+  font-family: var(--font-data);
+  font-size: 0.6875rem;
+  color: var(--color-text-muted);
+}
+
+.quest-kind {
+  flex-shrink: 0;
+  font-family: var(--font-data);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.quest-empty { font-size: 0.8125rem; color: var(--color-text-muted); margin: 0; }
+.quest-empty a { color: var(--color-primary); }
 
 /* ── documentations: embedded calendar block ──────────────── */
 /* The same month grid and day detail as the universal calendar, but sized for

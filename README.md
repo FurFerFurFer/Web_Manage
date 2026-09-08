@@ -35,7 +35,9 @@ The code is operational. Verification is syntax checking, the committed suite, a
 | [`docs/TABLE-PASTE.md`](docs/TABLE-PASTE.md) | The user-facing spec for `::: track-table` — what to ask an AI shown a picture of a table |
 | [`docs/SCHEDULE-PASTE.md`](docs/SCHEDULE-PASTE.md) | The user-facing spec for `::: track-schedule` — what to ask an AI shown a picture of a timetable |
 | [`World/AGENTS.md`](World/AGENTS.md) | Mandatory rules for the Track World game project, which lives entirely in `World/` |
-| [`World/TRACK-WORLD-CONCEPT-DRAFT.md`](World/TRACK-WORLD-CONCEPT-DRAFT.md) | Draft visual and spatial concept for the Track world; implementation is authorized, nothing is built yet |
+| [`World/README.md`](World/README.md) | The separate synthetic Track World demo, local run/test commands and evidence limits |
+| [`World/NOTES.md`](World/NOTES.md) | Unfinished game proof gates and future work |
+| [`World/TRACK-WORLD-CONCEPT-DRAFT.md`](World/TRACK-WORLD-CONCEPT-DRAFT.md) | Visual/spatial concept and phased workflow for Track World; the first Babylon.js browser demo is implemented |
 
 When a proposed change is implemented:
 
@@ -205,6 +207,40 @@ Current MG behavior includes:
 - Milestone blocks and milestone progress.
 - Routine task dates.
 - Task scheduling and duration.
+- Quests and starred quests, curated from the goal tree and its `toLearn` mind maps.
+
+### Quests
+
+A **quest** is a pointer to work that already exists: a node in the goal tree, or a mind map linked under a goal through `toLearn`. It is a side list the user changes freely — nothing is created, moved, or scheduled by adding one.
+
+The `QUEST` tab in `progress.html` shows two sections:
+
+- **★ Starred** — a flat list. Starring a parent includes everything beneath it but shows **one** row for the parent, because that row stands for the whole subtree, with a count of how many quests that is. A row standing only for itself shows no count, since "1 quest" is noise. `TrackQuest.starRollup` is the one definition of both the collapse and the count.
+- **Quests** — the goal tree pruned to branches that contain a quest. An ancestor kept only as context is drawn muted and carries no controls at all: a tick there would complete work the user never selected.
+
+`+ quest` opens a picker over the whole goal tree with a search box. It deliberately does **not** reuse the schedule picker's renderer: that one drops a completed node (a ticked quest must stay visible to untick or un-quest) and drops a node with no leaves (a goal whose only content is linked mind maps is exactly a quest target). Supporting actions, routines and milestone tabs are not offered — the picker is goal content only.
+
+What can be ticked, and what cannot, is a rule rather than an omission:
+
+| Row | Tick |
+| --- | --- |
+| Leaf task | writes `completed`, through the same `toggleLeaf` the Goals tab uses |
+| Leaf **routine** | quest-only; see below |
+| A node with children | no checkbox — `toggleLeaf` refuses a non-leaf, so one would render, click and do nothing |
+| A to-learn mind map | no checkbox — MM completion is computed, never stored |
+| A context ancestor | no controls |
+
+A **routine** quest ticks in the tab only. The tick never writes `routineDates`, so it does not affect the real routine completion, and it **resets at the end of the day**. It lives in its own browser key, `track_quest_routine_ticks`, holding `{slotId, day, ids}` — one stored day covers the whole set, so a day that is not today reads as empty. Expiry is structural: there is no timer and no cleanup job.
+
+Quests can be **dragged to arrange** within their own goal, through the `⇅` handle that appears once a group has more than one. The order is a per-node `questOrder`, written across the whole group; a group nobody has dragged carries no key at all and simply follows the goal tree, and an unarranged sibling sorts after the arranged ones rather than jumping to the front. Dragging is the Quest tab's own view and **never restructures the goal tree** — the Goals tab keeps whatever order it had. A drag from another goal is inert. Home mirrors the chosen order without re-deriving it.
+
+Milestone nodes are omitted from Quest entirely. Their children are promoted one level, exactly as the schedule picker already flattens them, so a real task nested under a milestone stays reachable.
+
+Un-questing or un-starring a **node** writes `false` and deletes nothing, so a star left on an un-quested node stays dormant and re-questing restores exactly what was chosen. The two **to-learn** lists follow the opposite rule and delete their key when the last id goes, because nothing sits behind them as a fallback — but the effect is the same, since `starLearn` is read through `questLearn`. Neither control asks for confirmation, for the same reason unmerging a table cell does not: nothing is destroyed, and pressing the same control undoes it. A "clear all quests" button would not be exempt.
+
+`index.html` mirrors the list read-only below the universal calendar, with the same prune and the same rollup, and a link into `progress.html#quest`. It writes nothing — Home's write set is still the slot list alone.
+
+A quest whose mind map was later deleted in KS02 reads as *mind map removed* and stays removable by hand, rather than vanishing.
 
 ### Progress and streaks
 
@@ -1037,10 +1073,11 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `scripts/graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
+| `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`) — membership, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Read by `progress.html` and `index.html`, so neither can drift. Holds no date code; the day is a parameter |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
 | `styles/styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
 | `docs/` | User-facing paste specifications for the Track application |
-| `World/` | The Track World game project — its concept draft, its reference imagery, and its own `AGENTS.md`. Nothing in it is part of the Track runtime and nothing in it writes Track data |
+| `World/` | Separate synthetic Track World demo, concept and reference imagery; see its README for run/test details and its AGENTS for rules. Nothing in it is part of the Track runtime or writes Track data |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
 | `README.md` | Current project and workflow documentation |
@@ -1070,6 +1107,7 @@ Track-website/
 │   ├── graph-layout.js
 │   ├── notes-widget.js
 │   ├── schedule-paste-core.js
+│   ├── quest-core.js
 │   ├── schema.js
 │   ├── storage-guard.js
 │   ├── theme.js
@@ -1079,12 +1117,7 @@ Track-website/
 ├── docs/
 │   ├── SCHEDULE-PASTE.md
 │   └── TABLE-PASTE.md
-├── World/
-│   ├── AGENTS.md
-│   ├── TRACK-WORLD-CONCEPT-DRAFT.md
-│   └── assets/
-│       └── images/
-│           └── living-botanical-clock-plaza.png
+├── World/                     # Separate game; see World/README.md
 └── tests/
     ├── run.js
     ├── calendar-core.test.js
@@ -1176,6 +1209,8 @@ The pages currently read or write fields including:
   refSchedules
 }
 ```
+
+Quests added **no** field to this list. `quest`, `star`, `questLearn`, `starLearn` and `questOrder` are item-level keys on a goal node inside the existing `goals` list, which is why they need no migration, no default, and no importer change: absence is already the correct state for every stored node, and the flags travel with the node through nesting, reordering, deletion and an export/import round trip. An offline case in `tests/schema.test.js` asserts a slot carrying all five still normalizes to exactly these 24 fields.
 
 #### Canonical slot schema
 
@@ -1338,6 +1373,7 @@ The project also currently uses:
 - `track_db_ts` for the local Firebase comparison timestamp. It records when this device's data was last **confirmed** in the cloud, not when the device last edited, so it is written only after the server accepts a write.
 - `track_db_pending` while this device holds edits the cloud has not accepted yet. Set synchronously on every `track_db` write and removed on confirmation, so a tab closed mid-upload still records that edits are unsent.
 - `track_home_cal_hidden` for the Home calendar legend's filter. It holds a JSON array of the switched-**off** category keys, so absence and `[]` are the same state and a category added to `calendar-core.js` later is on by default. It is clamped on read to the five rows the legend renders, and both ends are total: a malformed value hides nothing and a browser that refuses the write leaves the calendar working. A view preference only — never part of `track_db`, never exported or synced.
+- `track_quest_routine_ticks` for a routine quest's day-scoped tick. It holds `{slotId, day, ids}`, and expiry is structural rather than scheduled: one stored `day` covers the whole set, so a day that is not today reads as empty — no timer, no cleanup job, no midnight edge case. A `slotId` mismatch reads as empty too. `progress.html` writes it and `index.html` reads it. Both ends are total, and it is a view preference only — never part of `track_db`, never exported or synced, so writing it arms no cloud upload.
 - `trackPriorityMatrix` for schedule priority-matrix state.
 - `fb_reloaded` and `fb_reloaded_gen` in `sessionStorage` to break Firebase reload loops and record which cloud generation was reloaded into.
 - Older legacy keys during migration, including former Progress and KS02 storage keys.
@@ -1441,6 +1477,7 @@ It runs three layers:
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
 | Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, column widths normalising to a conserved total and following a row or column change, band geometry and the row/column move that permutes `rows`, `merges` and `colWidths` together, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
+| Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
 | Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed |
 
@@ -1450,9 +1487,13 @@ That sweep is the point, not a detail: `calendar-core.js` exists to turn instant
 into *local* calendar days and `schema.js` stamps a new slot with one, and the
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
 machine running in UTC. `true-storage-core.test.js`, `graph-layout.test.js`,
-`doc-table-core.test.js` and `cdp-cleanup.test.js` run **once**: none of those
-modules holds any date code, so a sweep would cost five runs and prove the same
-thing.
+`doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js` and
+`cdp-cleanup.test.js` run **once**: none of those modules holds any date code, so a
+sweep would cost five runs and prove the same thing. The last two have to *earn*
+that rather than merely claim it — one reads days, the other expires a tick at the
+end of one — so each suite carries a structural case that greps its module, with
+comments stripped first, and fails if a `Date` ever appears. Both take the day as
+a parameter instead.
 
 A run **cleans up after itself, including when it is interrupted.** `close()`
 cannot throw, so a profile directory that refuses to delete prints a warning and
@@ -1580,6 +1621,7 @@ node --check scripts/true-storage-core.js
 node --check scripts/graph-layout.js
 node --check scripts/doc-table-core.js
 node --check scripts/schedule-paste-core.js
+node --check scripts/quest-core.js
 ```
 
 Then the committed suite, which is the fastest way to find out whether a change
@@ -1674,14 +1716,17 @@ The committed suite is the part of this baseline a reader can reproduce:
 node tests/run.js
 ```
 
-As of 2026-08-26 that is 142 offline cases (88 in `calendar-core.test.js`, 54 in
+As of 2026-09-07 that is 172 offline cases (107 in `calendar-core.test.js`, 65 in
 `schema.test.js`, several hundred assertions) executed under five timezones from
 UTC+14 to UTC-11, plus 24 cases in `true-storage-core.test.js`, 21 in
-`graph-layout.test.js`, 73 in `doc-table-core.test.js` and 13 in
-`cdp-cleanup.test.js` run once each — none of them holds date code — plus 176
-browser subtests in headless Chrome. **All 15 suites pass**, leaving no process
+`graph-layout.test.js`, 103 in `doc-table-core.test.js`, 35 in
+`schedule-paste-core.test.js`, 54 in `quest-core.test.js` and 13 in
+`cdp-cleanup.test.js` run once each — none of them holds date code — plus 251
+browser subtests in headless Chrome. **All 17 suites pass**, leaving no process
 and no `/tmp/track-cdp-*` directory behind. Budget 10 minutes on an idle machine
-and around 14 under a load average of 2.5 — both were measured.
+and around 25 under GNOME's file indexer at 21% — both were measured. Judge
+contention by `pcpu` and `/proc/loadavg`, never by how many processes match a
+pattern: `pgrep -f` counts the shell that invoked it.
 
 ### Hand-picked caution days (2026-08-22)
 
@@ -1946,6 +1991,7 @@ The latest commits before this documentation update show current work concentrat
 - MG schedule layout.
 - Calendar notes.
 - Deadlines with hand-picked caution days, and a full 00:00–24:00 schedule timeline.
+- Quests: a curated side list off the goal tree, starred rollups, and a read-only mirror on Home.
 - Source visibility in Schedule.
 - Expanded and filtered task-directory views.
 - Repeated stabilization of touch schedule behavior and Firebase reload behavior.
