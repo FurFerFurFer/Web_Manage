@@ -65,15 +65,19 @@
   landing, climbing, rapid climb and the vault — with the notebook carry/stow throughout.
   Anything outside that list needs new direction.
   `11-28-38.webm` (**0-19.4 s**) contains **no landing** — flat plaza throughout — but the
-  user confirms it is **SPEED-ACCURATE**, and that **some other clips are sped up in the
-  source video**. It is therefore the **one clip a timing may be measured from**, and its
-  side-on **stop**, **slow walk** and **idle** are the best the project has. Every other
-  clip stays **pose and silhouette only**; never derive a cadence from one, and never
-  average across clips. **A measurement from `11-28-38` is information, NOT an override** —
-  the user accepted the rhythm on 2026-09-15 and that still wins; if a measured cadence
-  disagrees with 1.70/1.88/2.05/2.20 Hz, **report it and ask**, never retune. This does make
-  the run rate checkable for the first time: it was reasoned from a half-second cycle seen
-  in `08-42-45.webm`, whose speed is unknown. See the comparison's first two sections.
+  user confirms it is **1x real time** — the **timing baseline** — and its side-on **stop**,
+  **slow walk** and **idle** are the best the project has. On clip speed the user's precise
+  position is: **`11-13-41` and `11-09-09` are SPED UP by an unknown factor and are pose-only
+  permanently**; every other clip is **either 1x or 0.25x** (YouTube quarter-speed playback),
+  so its real timing is recoverable once the factor is known. **The factor is empirically
+  detectable** — measure a cadence and compare against `11-28-38`: same rate means 1x, a
+  quarter means 0.25x, and a factor of four cannot be mistaken for variation. Classify before
+  using, and record the verdict in the comparison. **Any measurement is information, NOT an
+  override** — the user accepted the rhythm on 2026-09-15 and that still wins; if a measured
+  cadence disagrees with 1.70/1.88/2.05/2.20 Hz, **report it and ask**, never retune.
+  **Classify `08-42-45.webm` first**: the 2.05 Hz run rate was reasoned from its
+  "half-second cycle", so if it is 0.25x the true cycle was ~2 s and the rate was derived
+  four times too fast. See the comparison's clip index and speed section.
 - **Debt carried in:** the September 15-17 push-off increment **shipped to disk**
   (`character-animation.js`, `character-rig.js`, index `v5`/`v4`, README, both animation
   suites) but [docs/VERIFICATION-LOG.md](docs/VERIFICATION-LOG.md) has **no entry for it** —

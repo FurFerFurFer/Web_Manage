@@ -205,24 +205,29 @@ The nine recordings below are described across several sections of this file. Th
 the index; the sections carry the detail. **Times outside a usable window contain combat,
 burned-in captions, cutscenes or an entirely different video** — never read a clip whole.
 
-| File (`Screencast from …`) | Size | Use | Establishes |
-| --- | ---: | --- | --- |
-| `2026-09-13 08-42-45.webm` | 637x579 | whole | Ground movement, sprint entry, jump/land, stop/restart. **Speed unknown — may be one of the sped-up ones** |
-| `2026-09-13 09-05-56.webm` | 637x579 | — | Demo recording, not reference |
-| `2026-09-13 16-57-19.webm` | 637x579 | whole | More ground movement |
-| `2026-09-13 17-52-28.webm` | 272x243 | superseded | Climbing, different character. Superseded by `11-13-41` |
-| `2026-09-13 20-00-22.webm` | 350x377 | — | **Rejected demo** recording |
-| `2026-09-15 21-31-32.webm` | 361x372 | whole | Base-tier locomotion side-on, support/push-off/airborne |
-| `2026-09-19 09-46-46.webm` | 407x409 | whole | Aether side-on **run**, ending in a **stop** |
-| `2026-09-19 09-50-07.webm` | 216x268 | superseded | Climbing from behind. Superseded by `11-13-41` |
-| `2026-09-19 09-51-20.webm` | 448x353 | **NONE** | **REJECTED** — winged combat hover, not a glide |
-| `2026-09-19 11-09-09.webm` | 392x315 | **10.5-13.2 s** | **Glide** side-on; glide-to-landing from behind |
-| `2026-09-19 11-13-41.webm` | 453x380 | **0-16.5 s** | **Climbing, two side-on VAULTS, rapid climb**, side-on run, idle, roof descent |
-| `2026-09-19 11-14-14.webm` | 453x380 | **0-15 s, 20.8-29 s** | 15 s **glide**; 8 s **FREE FALL** |
-| `2026-09-19 11-28-38.webm` | 453x380 | **0-19.4 s** | **THE TIMING REFERENCE** — the one speed-accurate clip. Side-on **stop**, **walk**, **idle** |
-| `2026-09-19 11-36-25.webm` | 453x380 | **0.6-4.5 s** | **LIGHT LANDING** into a run |
-| `2026-09-19 11-43-26.webm` | 463x385 | low value | Cliff-edge run (rear); rest is combat under captions |
-| `2026-09-19 11-44-03.webm` | 463x385 | **~4.5-6.5 s** | **Ledge takeoff**; ends in water |
+**Speed** column: `1x` confirmed real time; `SPED UP` means the source video was sped by an
+unknown factor and **no timing is recoverable — pose only, permanently**; `1x or 0.25x`
+means real time is recoverable once the factor is classified against `11-28-38` (see the
+speed section above).
+
+| File (`Screencast from …`) | Size | Speed | Use | Establishes |
+| --- | ---: | --- | --- | --- |
+| `2026-09-13 08-42-45.webm` | 637x579 | 1x or 0.25x — **classify first** | whole | Ground movement, sprint entry, jump/land, stop/restart. The 2.05 Hz run rate was reasoned from this clip |
+| `2026-09-13 09-05-56.webm` | 637x579 | n/a | — | Demo recording, not reference |
+| `2026-09-13 16-57-19.webm` | 637x579 | 1x or 0.25x | whole | More ground movement |
+| `2026-09-13 17-52-28.webm` | 272x243 | 1x or 0.25x | superseded | Climbing, different character. Superseded by `11-13-41` |
+| `2026-09-13 20-00-22.webm` | 350x377 | n/a | — | **Rejected demo** recording |
+| `2026-09-15 21-31-32.webm` | 361x372 | 1x or 0.25x | whole | Base-tier locomotion side-on, support/push-off/airborne |
+| `2026-09-19 09-46-46.webm` | 407x409 | 1x or 0.25x | whole | Aether side-on **run**, ending in a **stop** |
+| `2026-09-19 09-50-07.webm` | 216x268 | 1x or 0.25x | superseded | Climbing from behind. Superseded by `11-13-41` |
+| `2026-09-19 09-51-20.webm` | 448x353 | n/a | **NONE** | **REJECTED** — winged combat hover, not a glide |
+| `2026-09-19 11-09-09.webm` | 392x315 | **SPED UP** | **10.5-13.2 s** | **Glide** side-on; glide-to-landing from behind. **Pose only** |
+| `2026-09-19 11-13-41.webm` | 453x380 | **SPED UP** | **0-16.5 s** | **Climbing, two side-on VAULTS, rapid climb**, side-on run, idle, roof descent. **Pose only** |
+| `2026-09-19 11-14-14.webm` | 453x380 | 1x or 0.25x | **0-15 s, 20.8-29 s** | 15 s **glide**; 8 s **FREE FALL** |
+| `2026-09-19 11-28-38.webm` | 453x380 | **1x — CONFIRMED** | **0-19.4 s** | **THE TIMING BASELINE.** Side-on **stop**, **walk**, **idle**, running |
+| `2026-09-19 11-36-25.webm` | 453x380 | 1x or 0.25x | **0.6-4.5 s** | **LIGHT LANDING** into a run |
+| `2026-09-19 11-43-26.webm` | 463x385 | 1x or 0.25x | low value | Cliff-edge run (rear); rest is combat under captions |
+| `2026-09-19 11-44-03.webm` | 463x385 | 1x or 0.25x | **~4.5-6.5 s** | **Ledge takeoff**; ends in water |
 
 **Coverage.** Referenced and buildable: base locomotion, walk, idle, stop, turns, jump,
 climbing, rapid climb, **climb-to-ledge vault**, gliding, **free fall**, ledge takeoff,
@@ -230,25 +235,45 @@ climbing, rapid climb, **climb-to-ledge vault**, gliding, **free fall**, ledge t
 descoped by the user on 2026-09-19. Never referenced and never to be invented: **player
 gliding with the notebook**, and notebook handling in any motion.
 
-### ONE clip is speed-accurate. Every other one is POSE-ONLY.
+### Clip speed: TWO are sped up and permanently pose-only. The rest are recoverable.
 
-**Amended 2026-09-19, later the same day.** The user identified
-`Screencast from 2026-09-19 11-28-38.webm` as **speed-accurate**, and confirmed that
-**some of the others are sped up in the original YouTube video**. Which ones is not known.
-Three rules follow, and the first two are load-bearing:
+**Amended twice on 2026-09-19.** The first amendment said only one clip was
+speed-accurate and treated every other as suspect. The user then gave the precise position,
+which is considerably better:
 
-- **`11-28-38.webm` is the ONLY clip a timing may be measured from.** Every other clip in
-  this file stays **pose and silhouette only** — the section below still governs them. Do
-  not average across clips, and do not "confirm" a timing from a second clip: an unknown
-  speed factor cannot corroborate anything.
-- **A measurement from it is INFORMATION, NOT AN OVERRIDE.** The user accepted the demo's
-  rhythm outright on 2026-09-15, and that acceptance still outranks any clip. If a measured
-  Genshin cadence disagrees with 1.70/1.88/2.05/2.20 Hz, **report the difference and ask** —
-  never retune the accepted rates on the strength of a measurement the user has not seen.
-- This finally makes one long-standing number **checkable**. The run rate was reasoned from
-  "the run's approximately half-second cycle" seen in `08-42-45.webm`, whose speed is
-  unknown and may well be one of the sped-up ones. It was never a safe measurement. It can
-  now be tested against a reliable source for the first time.
+> "`11-13-41` and `11-09-09` are sped up originally, the others are either normal or
+> normal + 0.25 youtube speed."
+
+Four rules follow, and the first two are load-bearing:
+
+- **`11-13-41.webm` and `11-09-09.webm` are POSE-ONLY, permanently.** Their source videos
+  were sped up by an **unknown** factor, so nothing recovers a real time from them. They
+  remain excellent for silhouette — `11-13-41` still holds the only footage of the
+  climb-to-ledge vault — but never read a duration, a cadence or a contact window from
+  either, and never average them with anything.
+- **Every OTHER clip is timing-usable once its factor is identified**, because the only two
+  possibilities are **1x** and **0.25x** (recorded off YouTube's quarter-speed playback).
+  A 0.25x clip is not damaged, merely **scaled by a known constant**: real time is recorded
+  time ÷ 4. Identify the factor, divide, and the timing is sound.
+- **The factor is EMPIRICALLY DETECTABLE, so do not guess it.**
+  `Screencast from 2026-09-19 11-28-38.webm` is confirmed **1x** and contains running.
+  Measure a gait cadence in any other clip and compare: it will land either at roughly the
+  same rate (**1x**) or at roughly a **quarter** of it (**0.25x**). A factor of four is
+  unmistakable and cannot be confused with ordinary variation between a walk and a run.
+  Classify each clip that way, record the verdict in this file, and only then use its
+  timings.
+- **A measurement is INFORMATION, NOT AN OVERRIDE.** The user accepted the demo's rhythm
+  outright on 2026-09-15, and that acceptance outranks any clip. If a measured Genshin
+  cadence disagrees with 1.70/1.88/2.05/2.20 Hz, **report the difference and ask** — never
+  retune the accepted rates on the strength of a measurement the user has not seen.
+
+**One specific number is now worth resolving.** The 2.05 Hz run rate was reasoned from "the
+run's approximately half-second cycle" seen in `08-42-45.webm`. That clip is **not** one of
+the two sped-up ones, so it is 1x or 0.25x. If 1x, the original reasoning was roughly sound.
+If 0.25x, the true cycle was about **two seconds**, and the rate was derived four times too
+fast. Classify `08-42-45.webm` first; it is the highest-value single classification in the
+library. (Prior expectation: a quarter-speed run reads as obvious slow motion and the
+observer recorded half a second, so **1x is likely** — but likely is not measured.)
 
 ### Every OTHER reference clip is a YouTube capture, and its SPEED IS NOT RELIABLE
 
