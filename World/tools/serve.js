@@ -3,11 +3,11 @@ const http = require('node:http');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const world = path.resolve(__dirname, '..');
-const shared = new Map(['schema.js', 'calendar-core.js'].map(name => [
+const shared = new Map(['schema.js', 'calendar-core.js', 'quest-core.js', 'graph-layout.js'].map(name => [
   '/track-core/' + name, path.resolve(world, '../scripts', name)
 ]));
 
-// Only the game and two pure Track readers are exposed on this separate origin.
+// Only the game and four pure Track modules are exposed on this separate origin.
 // No Track page, sync script, database export, or repository directory listing.
 function createServer() {
   return http.createServer(async (req, res) => {

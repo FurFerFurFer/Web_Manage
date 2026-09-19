@@ -34,6 +34,7 @@ The code is operational. Verification is syntax checking, the committed suite, a
 | `AGENTS.md` | Mandatory project rules and verification procedure for coding agents |
 | [`docs/TABLE-PASTE.md`](docs/TABLE-PASTE.md) | The user-facing spec for `::: track-table` — what to ask an AI shown a picture of a table |
 | [`docs/SCHEDULE-PASTE.md`](docs/SCHEDULE-PASTE.md) | The user-facing spec for `::: track-schedule` — what to ask an AI shown a picture of a timetable |
+| [`docs/VERIFICATION-LOG.md`](docs/VERIFICATION-LOG.md) | The evidence record for completed work — what was run, what failed first, and what is not covered |
 | [`World/AGENTS.md`](World/AGENTS.md) | Mandatory rules for the Track World game project, which lives entirely in `World/` |
 | [`World/README.md`](World/README.md) | The separate synthetic Track World demo, local run/test commands and evidence limits |
 | [`World/NOTES.md`](World/NOTES.md) | Unfinished game proof gates and future work |
@@ -44,6 +45,7 @@ When a proposed change is implemented:
 1. Update this README to describe the new current behavior.
 2. Remove, revise, or mark the corresponding proposal in `NOTES.md`.
 3. Update `AGENTS.md` only if the operating rules or required checks changed.
+4. Append the verification evidence to `docs/VERIFICATION-LOG.md`.
 
 ## Current Features
 
@@ -1076,7 +1078,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`) — membership, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Read by `progress.html` and `index.html`, so neither can drift. Holds no date code; the day is a parameter |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
 | `styles/styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
-| `docs/` | User-facing paste specifications for the Track application |
+| `docs/` | User-facing paste specifications, and the verification evidence log |
 | `World/` | Separate synthetic Track World demo, concept and reference imagery; see its README for run/test details and its AGENTS for rules. Nothing in it is part of the Track runtime or writes Track data |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
 | `tests/` | The committed suite — `run.js` (one command, timezone sweep), `calendar-core.test.js` and `schema.test.js` (offline), `browser.test.js` (real Chrome), and `lib/` (CDP driver, static server, synthetic fixtures) |
@@ -1116,7 +1118,8 @@ Track-website/
 │   └── styles.css
 ├── docs/
 │   ├── SCHEDULE-PASTE.md
-│   └── TABLE-PASTE.md
+│   ├── TABLE-PASTE.md
+│   └── VERIFICATION-LOG.md
 ├── World/                     # Separate game; see World/README.md
 └── tests/
     ├── run.js

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   window.createWorldScene = function (canvas, hooks) {
-    const B = window.BABYLON, Core = window.WorldDemoCore;
+    const B = window.BABYLON, Core = window.WorldDemoCore, Flight = window.WorldFlight, CharacterMotion = window.WorldCharacterMotion, Stamina = window.WorldStamina;
     if (!B || !B.Engine.isSupported()) throw new Error('Babylon.js or WebGL is unavailable.');
     const engine = new B.Engine(canvas, true, {stencil:true, preserveDrawingBuffer:false, disableWebGL2Support:false}, false);
     const scene = new B.Scene(engine);
@@ -98,6 +98,33 @@
     box('gateway-lintel',[13.2,.65,1.35],v(0,5.75,18),stone,false,true);
     const suspended=ring('hanging-clock',1.7,.09,v(0,4.8,18),gold); suspended.rotation.x=Math.PI/2;
     for(let i=0;i<5;i++) box('lintel-vine-'+i,[.16,1+i%2*.5,.16],v(-4+i*2,5.1-i%2*.25,17.4),leaf);
+    // The small flight loop sits beyond the garden's edge, so the geographic
+    // map still has one walkable surface at each horizontal coordinate.
+    const pads=[],islands=[];
+    function launchPad(id,x,y,z){
+      cylinder('launch-pad-'+id,3.4,.16,v(x,y-.08,z),stone,true);
+      ring('launch-rim-'+id,1.55,.12,v(x,y+.03,z),gold);
+      const petals=[];
+      for(let i=0;i<4;i++){
+        const a=i*Math.PI/2;
+        const petal=sphere('launch-petal-'+id+'-'+i,[.4,1.8,.5],v(x+Math.sin(a)*1.7,y+.7,z+Math.cos(a)*1.7),glow);
+        petal.rotation.z=-Math.sin(a)*.45;petal.rotation.x=Math.cos(a)*.45;petals.push(petal);
+      }
+      pads.push({id,x,y,z});
+    }
+    launchPad('garden',0,.18,29);
+    for(const spec of [{id:'cloudrest',name:'Cloudrest',x:0,y:19,z:56,r:7},{id:'windward',name:'Windward Isle',x:21,y:12,z:57,r:6}]){
+      finish(B.MeshBuilder.CreateCylinder('floating-rock-'+spec.id,{diameterTop:spec.r*2,diameterBottom:2,height:7,tessellation:10},scene),stoneSide,v(spec.x,spec.y-3.5,spec.z),true,true);
+      cylinder('floating-island-'+spec.id,spec.r*2,.18,v(spec.x,spec.y-.09,spec.z),grass,true,48);
+      cylinder('island-walk-'+spec.id,5,.12,v(spec.x,spec.y+.06,spec.z),stone,true);
+      launchPad(spec.id,spec.x,spec.y+.28,spec.z);
+      for(const dx of [-3.5,3.5]){
+        cylinder('island-column-'+spec.id+'-'+dx,.45,2.5,v(spec.x+dx,spec.y+1.25,spec.z+1),stone,false,8);
+        sphere('island-flower-'+spec.id+'-'+dx,[1.1,.45,1.1],v(spec.x+dx,spec.y+2.55,spec.z+1),flower);
+      }
+      islands.push(spec);
+    }
+    for(let i=0;i<7;i++)box('launch-path-'+i,[1.8,.1,1.1],v(0,.08,20+i*1.2),stone,true);
     // Deterministic arrangement makes screenshots and performance routes repeatable.
     let seed=93;
     const random=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296;};
@@ -126,14 +153,22 @@
       const peak=finish(B.MeshBuilder.CreateCylinder('distant-hill-'+i,{diameterTop:2,diameterBottom:28+i*2,height:12+i%3*5,tessellation:6},scene),material('hill-'+i,i%2?'#8fb5a1':'#93b4af'),v(-60+i*30,1,68+i%2*10));
       peak.rotation.y=i*.7;
     }
-    const grovePositions=[[-13,15],[-16,18],[-11,20]];
-    ['#80ad74','#7ec7d1','#e9bd68'].forEach((color,i)=>{
-      const [x,z]=grovePositions[i];
+    const grovePositions=[[-13,15],[-16,18],[-11,20]],petalRings=[];
+    hooks.mindMaps.forEach((node,i)=>{
+      const color=node.color,[x,z]=grovePositions[i]||[-13-Math.cos(i)*4,18+Math.sin(i)*4];
       cylinder('grove-plinth-'+i,1.5,.45,v(x,.3,z),stone,true);
       const sm=material('star-material-'+i,color,.4);
       const star=finish(B.MeshBuilder.CreatePolyhedron('memory-star-'+i,{type:1,size:i===0?.7:.45},scene),sm,v(x,1.6,z));
       star.isPickable=true;star.metadata={mmIndex:i};stars.push(star);
       ring('star-ring-'+i,.75,.045,v(x,.57,z),gold);
+      const petals=[];
+      for(let j=0;j<8;j++) {
+        const angle=j*Math.PI/4,position=v(x+Math.sin(angle)*.58,.59,z+Math.cos(angle)*.58);
+        const outline=ring('review-petal-'+i+'-'+j,.105,.024,position,gold);
+        const fill=sphere('review-petal-fill-'+i+'-'+j,[.17,.035,.17],position,gold);
+        petals.push({outline,fill});
+      }
+      petalRings.push({outline:B.Mesh.MergeMeshes(petals.map(p=>p.outline),true,true),fill:B.Mesh.MergeMeshes(petals.map(p=>p.fill),true,true)});
     });
     for(const [x,z] of [[-4,-3],[4,-3],[-6,13],[6,13]]) {
       cylinder('lamp-post',.15,1.8,v(x,.9,z),gold,false,8);
@@ -145,40 +180,221 @@
     player.isVisible=false; player.isPickable=false;
     player.ellipsoid=v(.35,.88,.35);player.ellipsoidOffset=v(0,0,0);player.position=v(0,1.08,-6);
     const avatar=new B.TransformNode('avatar',scene);
-    const body=finish(B.MeshBuilder.CreateCylinder('traveler-cloak',{diameterTop:.58,diameterBottom:1,height:1.05,tessellation:8},scene),cloth,v(0,0,0),false,true);body.parent=avatar;body.position.y=.87;
-    const head=sphere('traveler-head',[.46,.52,.46],v(0,1.64,0),skin,true);head.parent=avatar;
-    const hair=sphere('traveler-hair',[.51,.34,.51],v(0,1.85,-.025),boots,true);hair.parent=avatar;
-    const legs=[];
-    for(const x of [-.21,.21]) {const leg=box('traveler-leg',[.24,.6,.3],v(x,.3,0),boots,false,true);leg.parent=avatar;legs.push(leg);}
-    const notebook=box('traveler-notebook',[.12,.4,.3],v(.45,.75,0),book,false,true);notebook.parent=avatar;notebook.rotation.z=-.12;
-    const scarf=box('traveler-scarf',[.18,.7,.045],v(-.18,1.13,-.38),gold,false,true);scarf.parent=avatar;
+    const character=window.createWorldCharacter(scene,avatar,{cloth,skin,boots,gold,book,shadows});
+    const glider=new B.TransformNode('traveler-glider',scene);glider.parent=avatar;glider.position.y=2.15;
+    const wing=finish(B.MeshBuilder.CreateCylinder('glider-canopy',{diameterTop:0,diameterBottom:3.8,height:.48,tessellation:8},scene),cloth,v(0,0,0),false,true);
+    wing.parent=glider;wing.scaling.z=.62;
+    for(const x of [-.45,.45]){const line=box('glider-cord',[.025,.4,.025],v(x,-.18,.14),gold);line.parent=glider;line.rotation.z=x*.5;}
+    glider.setEnabled(false);
+    const avatarMeshes=avatar.getChildMeshes();
     const camera=new B.FreeCamera('camera',v(0,5,-13),scene);camera.minZ=.15;camera.fov=.85;
     scene.activeCamera=camera;
-    let yaw=0,pitch=.31,distance=8.8,sensitivity=1,paused=true,disposed=false;
-    let vertical=0,grounded=false,coyote=0,jumpBuffer=0,velocity=v(0,0,0),walkPhase=0;
+    let yaw=0,pitch=.31,distance=8.8,sensitivity=1,paused=true,inputEnabled=true,disposed=false,stargazing=false;
+    const skyRenderer=window.createWorldSkyScene(scene);
+    let skyMotion={phase:'garden',elapsed:0},skyReveal=0;
+    const tilt=value=>Core.clamp(value,-1.15,1.25);
+    let vertical=0,grounded=false,coyote=0,jumpBuffer=0,velocity=v(0,0,0);
+    let flight=Flight.initial(),glideToggle=false,checkpoint={x:0,y:.18,z:-6},lastIsland=null;
+    let climbing=null,detachTime=0,sprinting=false,climbMotion={x:0,z:0};
+    // Sprint stamina. The budget is the KS03 streak's, read once from synthetic data
+    // by app.js: movement never reads or writes a Track record for it. Sprint only --
+    // climbing and gliding spend nothing (WorldStamina holds that rule).
+    const staminaBudget=Number.isFinite(hooks?.staminaBudget)?hooks.staminaBudget:Stamina.budgetFor(0);
+    let stamina=Stamina.initial(staminaBudget),sprint=Stamina.sprintInitial(),dashPending=false;
+    let facing=0,previousFacing=0,gliderOpen=0;
+    const previousPosition=player.position.clone(),renderPosition=player.position.clone();
+    let characterMotion=CharacterMotion.reset(characterSample());
+    let previousCharacterMotion=characterMotion;
+    character.reset(characterMotion);
+    function characterSample(){return {position:player.position.asArray(),facing,vertical,grounded,climbing:!!climbing,
+      gliding:flight.gliding,detaching:detachTime>0,sprinting,charge:flight.charge,paused};}
+    function syncPose(){previousPosition.copyFrom(player.position);renderPosition.copyFrom(player.position);previousFacing=facing;
+      characterMotion=CharacterMotion.reset(characterSample());previousCharacterMotion=characterMotion;character.reset(characterMotion);}
+    const visitedIslands=new Set();
+    const currentPad=()=>pads.find(p=>Math.hypot(player.position.x-p.x,player.position.z-p.z)<1.5&&Math.abs(player.position.y-.9-p.y)<.35)||null;
     let reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
     let environment=Core.initialEnvironment(),target={rain:false,night:false};
     const keys=new Set(),cleanup=[];
     const on=(object,event,fn,options)=>{object.addEventListener(event,fn,options);cleanup.push(()=>object.removeEventListener(event,fn,options));};
-    const blocked=()=>paused||document.hidden||document.activeElement!==canvas;
-    function reset() {player.position.copyFrom(v(0,1.08,-6));vertical=0;velocity.setAll(0);keys.clear();jumpBuffer=0;yaw=0;pitch=.31;distance=8.8;}
+    const blocked=()=>paused||stargazing||!inputEnabled||document.hidden||document.activeElement!==canvas;
+    const inGrove=()=>player.position.x< -9&&player.position.z>11;
+    let destination=null;
+    // The single surface lookup for geographic pins and landmarks. This demo
+    // has one surface layer: a downward ray chooses its highest solid surface.
+    function surfacePoint(point){
+      if(!Number.isFinite(point?.x)||!Number.isFinite(point?.z))return null;
+      const hit=scene.pickWithRay(new B.Ray(v(point.x,100,point.z),v(0,-1,0),150),mesh=>mesh.checkCollisions&&mesh!==player);
+      return hit.hit?{x:point.x,y:hit.pickedPoint.y,z:point.z}:null;
+    }
+    // Clearance is measured BELOW the feet, never from world zero or a ray
+    // starting above an island. Open air beyond a ledge has infinite clearance.
+    function groundClearance(){
+      const hit=scene.pickWithRay(new B.Ray(player.position,v(0,-1,0),200),mesh=>mesh.checkCollisions&&mesh!==player);
+      return hit.hit?Math.max(0,player.position.y-.9-hit.pickedPoint.y):Infinity;
+    }
+    function wallAhead(direction=v(Math.sin(facing),0,Math.cos(facing))){
+      for(const height of [.25,-.5]){
+        const hit=scene.pickWithRay(new B.Ray(player.position.add(v(0,height,0)),direction,.9),mesh=>mesh.checkCollisions&&mesh!==player);
+        const normal=hit.hit&&hit.getNormal(true);
+        if(!normal||Math.abs(normal.y)>.75)continue;
+        normal.y=0;normal.normalize();
+        if(B.Vector3.Dot(normal,direction)>0)normal.scaleInPlace(-1);
+        return {normal,point:hit.pickedPoint.clone()};
+      }
+      return null;
+    }
+    function detachWall(){
+      const normal=climbing.normal.clone();climbing=null;climbMotion={x:0,z:0};flight=Flight.initial();
+      grounded=false;coyote=0;jumpBuffer=0;glideToggle=false;
+      velocity.copyFrom(normal.scale(Flight.tuning.detachSpeed));vertical=Flight.tuning.detachUp;detachTime=Flight.tuning.detachSeconds;
+    }
+    function stepClimb(dt,controls){
+      const up=controls?((keys.has('KeyW')||keys.has('ArrowUp')?1:0)-(keys.has('KeyS')||keys.has('ArrowDown')?1:0)):0;
+      const side=controls?((keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0)):0;
+      const inward=climbing.normal.scale(-1),wall=wallAhead(inward);
+      if(!wall){
+        // Step over a reached ledge only with upward input. Opening a panel
+        // never moves the character onto a protective landing.
+        if(up>0){
+          const ahead=player.position.add(inward.scale(.85));
+          const top=scene.pickWithRay(new B.Ray(ahead.add(v(0,1.2,0)),v(0,-1,0),3),mesh=>mesh.checkCollisions&&mesh!==player);
+          if(top.hit&&top.getNormal(true)?.y>.7&&top.pickedPoint.y>=player.position.y-1.1&&top.pickedPoint.y<=player.position.y+.3){
+            player.position.y=top.pickedPoint.y+.92;player.moveWithCollisions(inward.scale(.85));grounded=true;
+          }
+        }
+        climbing=null;climbMotion={x:0,z:0};vertical=-.8;return;
+      }
+      climbing=wall;grounded=false;vertical=0;velocity.setAll(0);lastIsland=null;
+      player.position.x=wall.point.x+wall.normal.x*.4;player.position.z=wall.point.z+wall.normal.z*.4;
+      facing=Flight.turn(facing,Math.atan2(-wall.normal.x,-wall.normal.z),Flight.blend(Flight.tuning.turnResponse,dt));
+      const factor=Flight.tuning.climbSpeed/(Math.hypot(side,up)||1),tangent=v(-wall.normal.z,0,wall.normal.x);
+      climbMotion=controls?Flight.steer(climbMotion,{x:side*factor,z:up*factor},'climb',dt):{x:0,z:0};
+      player.moveWithCollisions(v(tangent.x*climbMotion.x*dt,climbMotion.z*dt,tangent.z*climbMotion.x*dt));
+      if(up<0&&groundClearance()<.12){climbing=null;grounded=true;vertical=-.8;}
+    }
+    function setDestination(point){
+      destination=point&&['x','y','z'].every(key=>Number.isFinite(point[key]))?{...point}:null;
+    }
+    // Page coordinates for a world point, shared by the destination waypoint and the
+    // sprint bar that rides beside the character. One projection, one inView rule.
+    function projectPoint(point){
+      const rect=canvas.getBoundingClientRect();
+      const global=camera.viewport.toGlobal(engine.getRenderWidth(),engine.getRenderHeight());
+      const p=B.Vector3.Project(point,B.Matrix.Identity(),scene.getTransformMatrix(),global);
+      const x=rect.left+p.x*rect.width/engine.getRenderWidth(),y=rect.top+p.y*rect.height/engine.getRenderHeight();
+      const inFront=B.Vector3.Dot(point.subtract(camera.position),camera.getForwardRay().direction)>camera.minZ;
+      return {x,y,inView:inFront&&p.z>=0&&p.z<=1&&x>=rect.left&&x<=rect.right&&y>=rect.top&&y<=rect.bottom};
+    }
+    function destinationProjection(){
+      return destination?projectPoint(v(destination.x,destination.y,destination.z)):null;
+    }
+    // The rendered body, not the collider origin: the bar must sit beside the traveler
+    // the player can see, which is the interpolated render position. It also reports the
+    // traveler's ON-SCREEN height, because anything placed beside them has to clear a
+    // body whose apparent size changes with the camera distance: a fixed pixel offset
+    // clears the model at the default distance and sits on their chest zoomed in.
+    function playerProjection(){
+      const base=projectPoint(renderPosition.add(v(0,.35,0)));
+      const crown=projectPoint(renderPosition.add(v(0,1.3,0)));
+      return {...base,scale:Math.abs(crown.y-base.y)};
+    }
+    function destinationOccluded(){
+      if(!destination)return false;
+      const delta=v(destination.x,destination.y,destination.z).subtract(camera.position),length=delta.length();
+      if(length<.1)return false;
+      return !!scene.pickWithRay(new B.Ray(camera.position,delta.normalize(),length-.05),mesh=>mesh.checkCollisions&&mesh!==player).hit;
+    }
+    function lookAtSky(value) {
+      if(value&&(!inGrove()||!grounded))return {ok:false,reason:!inGrove()?'Walk into the Memory Grove to look at the MM sky.':'Land first to begin grounded stargazing.'};
+      if(!value&&skyMotion.phase==='garden')return {ok:true};
+      skyMotion={phase:value?'entering':'leaving',elapsed:0,fromPosition:camera.position.clone(),
+        fromRotation:(camera.rotationQuaternion||B.Quaternion.RotationYawPitchRoll(yaw,pitch,0)).clone(),
+        fromFov:camera.fov,fromReveal:skyReveal};
+      // Keep walking locked through both camera transitions, including early exit.
+      stargazing=true;clearInput();velocity.setAll(0);vertical=0;
+      return {ok:true};
+    }
+    function visitGrove() {
+      const destination=v(-10,5,16);
+      const floor=scene.pickWithRay(new B.Ray(destination,v(0,-1,0),8),mesh=>mesh.checkCollisions&&mesh!==player);
+      if(!floor.hit)return false;
+      clearInput();stargazing=false;velocity.setAll(0);vertical=0;
+      flight=Flight.initial();climbing=null;detachTime=0;
+      player.position.copyFrom(destination);player.position.y=floor.pickedPoint.y+.9;grounded=true;syncPose();
+      return true;
+    }
+    function resetCamera() {yaw=0;pitch=.31;distance=8.8;}
+    function reset() {stargazing=false;skyMotion={phase:'garden',elapsed:0};skyReveal=0;skyRenderer.setReveal(0);player.position.copyFrom(v(0,1.08,-6));vertical=0;velocity.setAll(0);clearInput();flight=Flight.initial();climbing=null;detachTime=0;sprinting=false;stamina=Stamina.initial(staminaBudget);sprint=Stamina.sprintInitial();dashPending=false;facing=0;syncPose();checkpoint={x:0,y:.18,z:-6};lastIsland=null;resetCamera();}
+    function visitLauncher(){
+      if(stargazing)return false;
+      clearInput();flight=Flight.initial();velocity.setAll(0);vertical=0;
+      climbing=null;detachTime=0;
+      const pad=pads[0];player.position.set(pad.x,pad.y+.9,pad.z);grounded=true;syncPose();resetCamera();return true;
+    }
+    function recover(){
+      clearInput();flight=Flight.initial();velocity.setAll(0);vertical=0;
+      climbing=null;detachTime=0;
+      player.position.set(checkpoint.x,checkpoint.y+.9,checkpoint.z);grounded=true;syncPose();
+      hooks.announce?.('Back on solid ground. Nothing was lost.');
+    }
     function step(dt) {
+      previousPosition.copyFrom(player.position);previousFacing=facing;
       environment=Core.advanceEnvironment(environment,target,dt);
-      if(blocked()) {velocity.setAll(0);return;}
-      if(keys.has('KeyQ')) yaw-=dt*1.6;
-      if(keys.has('KeyE')) yaw+=dt*1.6;
-      const x=(keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0);
-      const z=(keys.has('KeyW')||keys.has('ArrowUp')?1:0)-(keys.has('KeyS')||keys.has('ArrowDown')?1:0);
-      const speed=keys.has('ShiftLeft')||keys.has('ShiftRight')?6:3.5;
+      if(paused||document.hidden)return;
+      // Sprint stamina observes the resolved body once per step, ABOVE the climbing
+      // return below, so no branch can skip it. Exhaustion drops the toggle here and
+      // nowhere else, which is what keeps `sprinting` from disagreeing with the speed
+      // it picks further down.
+      sprint=Stamina.sprintAdvance(sprint,{speeds:Flight.tuning},dt);
+      sprinting=Stamina.isSprinting(sprint,Flight.tuning);
+      // Only the LOCKED run drains: a dash was already paid for at its press.
+      stamina=Stamina.advance(stamina,{sprinting:sprint.locked,moving:Math.hypot(velocity.x,velocity.z)>.05,
+        grounded:grounded&&!climbing,budget:staminaBudget},dt);
+      // A dash can exhaust the budget BEFORE its hold reaches the run lock. Clear
+      // that pending hold too, or a short budget recovers in time to lock itself.
+      if((sprint.locked||sprint.held)&&!Stamina.canSprint(stamina)){sprint=Stamina.sprintUnlock(sprint);hooks.announce?.('Out of sprint. It comes back as you walk.');}
+      // A companion owns input, not time: inertia, gravity and collision stay live.
+      const controls=!blocked();
+      if(controls&&keys.has('KeyQ')) yaw-=dt*1.6;
+      if(controls&&keys.has('KeyE')) yaw+=dt*1.6;
+      if(controls&&keys.has('KeyR')) pitch=tilt(pitch+dt*1.6);
+      if(controls&&keys.has('KeyF')) pitch=tilt(pitch-dt*1.6);
+      if(climbing){stepClimb(dt,controls);return;}
+      const x=controls?((keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0)):0;
+      const z=controls?((keys.has('KeyW')||keys.has('ArrowUp')?1:0)-(keys.has('KeyS')||keys.has('ArrowDown')?1:0)):0;
       const direction=v(x*Math.cos(yaw)+z*Math.sin(yaw),0,z*Math.cos(yaw)-x*Math.sin(yaw));
-      if(direction.lengthSquared()>0) direction.normalize().scaleInPlace(speed);
-      const blend=1-Math.exp(-dt*12);velocity.x+=(direction.x-velocity.x)*blend;velocity.z+=(direction.z-velocity.z)*blend;
       const floor=scene.pickWithRay(new B.Ray(player.position,v(0,-1,0),1.15),mesh=>mesh.checkCollisions&&mesh!==player);
       const clearance=floor.hit?player.position.y-floor.pickedPoint.y:Infinity;
       grounded=clearance<=.94&&vertical<=0;
+      // Keep the ellipsoid above the contacted tread before launching a jump.
+      // Starting slightly inside a path stone made collision recovery cancel the
+      // upward impulse, so Space silently failed at some Grove path positions.
+      if(grounded&&clearance<.9)player.position.y+=.9-clearance;
+      const pad=currentPad();
+      flight=Flight.advance(flight,{grounded,onPad:!!pad,controls,held:keys.has('KeyX'),toggle:glideToggle,vertical,
+        clearance:glideToggle||flight.armed?groundClearance():0},dt);
+      glideToggle=false;
       coyote=grounded?.1:Math.max(0,coyote-dt);jumpBuffer=Math.max(0,jumpBuffer-dt);
-      if(jumpBuffer>0&&coyote>0) {vertical=6.2;grounded=false;coyote=0;jumpBuffer=0;}
-      if(grounded) vertical=-.8;else vertical=Math.max(-18,vertical-18*dt);
+      if(flight.impulse){vertical=flight.impulse;grounded=false;coyote=0;jumpBuffer=0;hooks.announce?.('Launched. Hold W to reach Cloudrest; Space opens the glider.');}
+      else if(jumpBuffer>0&&coyote>0) {vertical=Flight.tuning.jumpSpeed;grounded=false;coyote=0;jumpBuffer=0;flight=Flight.initial();}
+      const speed=flight.gliding?Flight.tuning.glideSpeed:Stamina.sprintSpeed(sprint,Flight.tuning);
+      if(flight.charge>0)direction.setAll(0);
+      if(direction.lengthSquared()>0)direction.normalize().scaleInPlace(speed);
+      // A dash is an IMPULSE, not merely a raised target. Steering toward a target that
+      // is already decaying never catches it from a standstill -- the burst measured 9.1
+      // against a 12 running speed -- so the press sets the body moving at dash speed,
+      // along the held direction or, with no input, the way the traveler is facing.
+      if(dashPending){
+        dashPending=false;
+        const heading=direction.lengthSquared()>0?direction.clone().normalize():v(Math.sin(facing),0,Math.cos(facing));
+        velocity.x=heading.x*speed;velocity.z=heading.z*speed;
+      }
+      if(detachTime===0){
+        const next=Flight.steer(velocity,direction,grounded?'ground':flight.gliding?'glide':'air',dt);
+        velocity.x=next.x;velocity.z=next.z;
+      }
+      detachTime=Math.max(0,detachTime-dt);
+      if(grounded) vertical=-.8;else vertical=Math.max(flight.gliding?-Flight.tuning.descent:-18,vertical-Flight.tuning.gravity*dt);
       const before=player.position.clone();
       // Low stairs use a bounded step-up; high ledges still require a jump.
       if(grounded&&direction.lengthSquared()>.1) {
@@ -188,49 +404,131 @@
       }
       player.moveWithCollisions(v(velocity.x*dt,vertical*dt,velocity.z*dt));
       if(vertical>0&&player.position.y-before.y<vertical*dt*.15) vertical=0;
-      if(player.position.y< -7) reset();
+      if(player.position.y< -7)recover();
+      if(!grounded)lastIsland=null;
+      if(grounded){
+        const island=islands.find(p=>Math.hypot(player.position.x-p.x,player.position.z-p.z)<p.r&&Math.abs(player.position.y-.9-p.y)<.65);
+        lastIsland=island?.id||null;
+        if(island){
+          checkpoint={x:island.x,y:island.y+.28,z:island.z};
+          if(!visitedIslands.has(island.id)){visitedIslands.add(island.id);hooks.announce?.('Landed on '+island.name+'. '+(visitedIslands.size===2?'Both islands explored. Glide back to the garden whenever you like.':'The next island is east.'));}
+        }else if(player.position.y<2)checkpoint={x:0,y:.18,z:-6};
+      }
       if(direction.lengthSquared()>.05) {
         const desired=Math.atan2(direction.x,direction.z);
-        const delta=Math.atan2(Math.sin(desired-avatar.rotation.y),Math.cos(desired-avatar.rotation.y));
-        avatar.rotation.y+=delta*(1-Math.exp(-dt*15));
+        facing=Flight.turn(facing,desired,Flight.blend(Flight.tuning.turnResponse,dt));
       }
-      walkPhase+=Math.hypot(velocity.x,velocity.z)*dt*2.5;
     }
-    const simulation=Core.stepper(step);
+    // Observe resolved simulation state, including the early climbing return.
+    // This feed drives presentation only; it cannot move the body.
+    const simulation=Core.stepper(dt=>{previousCharacterMotion=characterMotion;step(dt);characterMotion=CharacterMotion.advance(characterMotion,characterSample(),dt);});
+    let drag=null;
+    function endDrag() {
+      const previousDrag=drag;drag=null;
+      if(previousDrag&&canvas.hasPointerCapture(previousDrag.id))canvas.releasePointerCapture(previousDrag.id);
+    }
+    function clearInput() {
+      keys.clear();jumpBuffer=0;glideToggle=false;flight.charge=0;climbMotion={x:0,z:0};endDrag();
+      // The physical key is gone, so the hold ends -- but a LOCKED run is not input and
+      // survives, which is what keeps a run alive across opening a companion panel.
+      sprint=Stamina.sprintRelease(sprint);dashPending=false;
+    }
     on(canvas,'keydown',event=>{
-      if(event.isComposing||event.ctrlKey||event.metaKey||event.altKey||paused)return;
-      if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight','Space','KeyQ','KeyE'].includes(event.code)) {
-        event.preventDefault();keys.add(event.code);if(event.code==='Space'&&!event.repeat)jumpBuffer=.13;
+      if(event.isComposing||event.ctrlKey||event.metaKey||event.altKey||blocked())return;
+      if(event.code==='Home'){event.preventDefault();if(!event.repeat)resetCamera();return;}
+      if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight','Space','KeyQ','KeyE','KeyR','KeyF','KeyX'].includes(event.code)) {
+        event.preventDefault();
+        // One press is a DASH. Holding it past dashSeconds locks running, and a short
+        // dash is the only unsprint; WorldStamina owns every part of that rule.
+        // Sprint is a GROUND move, so the BURST is grounded-only. A press that cannot
+        // dash is still heard while running, because the short-dash unsprint has to
+        // reach a body that is mid-jump or bouncing over a tread -- otherwise the press
+        // vanishes and the player is stuck in a run they asked to end.
+        if((event.code==='ShiftLeft'||event.code==='ShiftRight')&&!event.repeat&&!keys.has(event.code)&&!climbing&&!flight.gliding){
+          if(grounded){
+            const dash=Stamina.sprintPress(sprint,stamina,Flight.tuning);
+            sprint=dash.sprint;
+            if(dash.dashed){stamina=Stamina.spend(stamina,staminaBudget,dash.cost);dashPending=true;}
+          }else if(sprint.locked)sprint=Stamina.sprintHold(sprint);
+        }
+        keys.add(event.code);
+        if(event.code==='Space'&&!event.repeat){
+          const wall=!climbing&&detachTime===0?wallAhead():null;
+          const action=Flight.spaceAction({climbing:!!climbing,wall:!!wall,grounded,coyote,gliding:flight.gliding,clearance:groundClearance()});
+          if(action==='detach')detachWall();
+          else if(action==='climb'){climbing=wall;climbMotion={x:0,z:0};flight=Flight.initial();vertical=0;velocity.setAll(0);grounded=false;coyote=0;jumpBuffer=0;glideToggle=false;}
+          else if(action==='jump')jumpBuffer=.13;
+          else if(action==='glide'||action==='fold')glideToggle=true;
+        }
       }
     });
-    on(window,'keyup',event=>keys.delete(event.code));
-    on(window,'blur',()=>{keys.clear();simulation.reset();});
-    on(document,'visibilitychange',()=>{keys.clear();simulation.reset();});
-    on(canvas,'blur',()=>keys.clear());
-    let drag=null;
-    on(canvas,'pointerdown',event=>{if(paused)return;canvas.focus();drag={x:event.clientX,y:event.clientY,moved:0,id:event.pointerId};canvas.setPointerCapture(event.pointerId);});
-    on(canvas,'pointermove',event=>{
-      if(!drag||paused)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
-      drag.moved+=Math.abs(dx)+Math.abs(dy);yaw+=dx*.005*sensitivity;pitch=Core.clamp(pitch+dy*.004*sensitivity,.12,1.05);drag.x=event.clientX;drag.y=event.clientY;
+    on(window,'keyup',event=>{
+      keys.delete(event.code);
+      // The release decides what the press meant, so it only counts once BOTH Shift
+      // keys are up: letting go of one while the other is held is still a hold.
+      if((event.code==='ShiftLeft'||event.code==='ShiftRight')&&!keys.has('ShiftLeft')&&!keys.has('ShiftRight'))
+        sprint=Stamina.sprintRelease(sprint);
     });
-    on(canvas,'pointerup',event=>{
-      if(drag&&drag.moved<6&&!paused) {
-        const hit=scene.pick(event.offsetX,event.offsetY,mesh=>!!mesh.metadata?.mmIndex||mesh.metadata?.mmIndex===0);
+    on(window,'blur',()=>{clearInput();simulation.reset();});
+    on(document,'visibilitychange',()=>{clearInput();simulation.reset();});
+    on(canvas,'blur',clearInput);
+    on(canvas,'pointerdown',event=>{if(paused||stargazing||!inputEnabled||event.button!==0)return;canvas.focus();drag={x:event.clientX,y:event.clientY,moved:0,id:event.pointerId};canvas.setPointerCapture(event.pointerId);});
+    // Capture is an event-routing aid, not the lifetime of a held gesture.
+    // Window listeners keep a drag alive if capture is lost while W is held.
+    // Release/cancel, focus loss and panel entry still end it explicitly.
+    on(window,'pointermove',event=>{
+      if(!drag||event.pointerId!==drag.id||blocked())return;
+      if(!(event.buttons&1)){endDrag();return;}
+      const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
+      drag.moved+=Math.abs(dx)+Math.abs(dy);yaw+=dx*.005*sensitivity;pitch=tilt(pitch+dy*.004*sensitivity);drag.x=event.clientX;drag.y=event.clientY;
+    });
+    on(window,'pointerup',event=>{
+      if(!drag||event.pointerId!==drag.id)return;
+      if(drag&&drag.moved<6&&!blocked()) {
+        const rect=canvas.getBoundingClientRect();
+        const hit=scene.pick(event.clientX-rect.left,event.clientY-rect.top,mesh=>!!mesh.metadata?.mmIndex||mesh.metadata?.mmIndex===0);
         if(hit?.hit)hooks.selectMM(hit.pickedMesh.metadata.mmIndex);
       }
-      drag=null;if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);
+      endDrag();
     });
-    on(canvas,'pointercancel',()=>{drag=null;});
+    on(window,'pointercancel',event=>{if(drag?.id===event.pointerId)endDrag();});
     on(canvas,'contextmenu',event=>event.preventDefault());
-    on(canvas,'wheel',event=>{if(paused)return;event.preventDefault();distance=Core.clamp(distance+event.deltaY*.008,3,13);},{passive:false});
+    on(canvas,'wheel',event=>{if(paused||!inputEnabled)return;event.preventDefault();distance=Core.clamp(distance+event.deltaY*.008,3,13);},{passive:false});
     // Rain is a bounded line batch, not hundreds of independent scene objects.
     const rainLines=Array.from({length:120},()=>[v(0,0,0),v(0,0,0)]);
     const rainSeeds=rainLines.map(()=>({x:random()*22-11,z:random()*20-10,y:random()*12}));
     const rainMesh=B.MeshBuilder.CreateLineSystem('rain',{lines:rainLines,updatable:true},scene);
     rainMesh.color=c('#d2e5df');rainMesh.isPickable=false;rainMesh.alwaysSelectAsActiveMesh=true;
+    const snowLines=Array.from({length:160},()=>[v(0,0,0),v(0,0,0)]);
+    const snowMesh=B.MeshBuilder.CreateLineSystem('snow',{lines:snowLines,updatable:true},scene);
+    snowMesh.color=c('#fffaf0');snowMesh.isPickable=false;snowMesh.alwaysSelectAsActiveMesh=true;
+    const skyGold=material('sky-halo','#fff1c0',.65),halos=[];
+    for(let i=0;i<3;i++){
+      const halo=ring('heavenly-halo-'+i,15+i*6,.22,v(-13,40+i*3,80),skyGold);
+      halo.rotation.x=.4;halo.rotation.z=-.28;halo.isPickable=false;halos.push(halo);
+    }
+    // Read the authored meshes before batching: the geographic map shares the
+    // scene's coordinates and dimensions rather than maintaining another island.
+    const mapNames=/^(garden-floor|floating-island-|launch-pad-|launch-path-|plaza-base|arrival-stone-|grove-path-|terrace-step-|terrace$|stream$|bridge$|clock-plinth$|gateway-pier$|gateway-lintel$|crown-|grove-plinth-)/;
+    // The first render has not happened yet. Update EVERY collider transform,
+    // including the island below the map floor, before any height ray is cast.
+    scene.meshes.forEach(mesh=>mesh.computeWorldMatrix(true));
+    const mapFeatures=scene.meshes.filter(mesh=>mapNames.test(mesh.name)).map(mesh=>{
+      const bounds=mesh.getBoundingInfo().boundingBox;
+      return {name:mesh.name,x:bounds.centerWorld.x,z:bounds.centerWorld.z,width:bounds.extendSizeWorld.x*2,depth:bounds.extendSizeWorld.z*2,
+        round:/^(garden-floor|floating-island-|launch-pad-|plaza-base|clock-plinth|crown-|grove-plinth)/.test(mesh.name)};
+    });
+    const landmarkSpecs=[['arrival','Garden approach','arrival-stone-3','path'],['plaza','Clock Plaza','clock-plinth','clock'],
+      ['grove','Memory Grove','grove-plinth-0','star'],['bridge','Little bridge','bridge','bridge'],
+      ['terrace','North terrace','terrace','leaf'],['gateway','Garden gateway','gateway-lintel','gate'],
+      ['launcher','Windseed launcher','launch-pad-garden','launch'],['cloudrest','Cloudrest','launch-pad-cloudrest','island'],['windward','Windward Isle','launch-pad-windward','island']];
+    const landmarks=landmarkSpecs.map(([id,name,meshName,icon])=>{
+      const f=mapFeatures.find(feature=>feature.name===meshName);return {id,name,icon,...surfacePoint(f)};
+    });
+    hooks.cartography?.({features:mapFeatures,landmarks});
     // Batch stationary pieces by material and collision behavior. Animated
     // foliage, the avatar and selectable stars retain their individual meshes.
-    const animated=new Set([...foliage.map(f=>f.mesh),...stars,player,rainMesh]);
+    const animated=new Set([...foliage.map(f=>f.mesh),...stars,...halos,...petalRings.flatMap(petal=>[petal.outline,petal.fill]),player,rainMesh,snowMesh]);
     const batches=new Map();
     for(const mesh of scene.meshes) {
       if(animated.has(mesh)||mesh.parent||!mesh.material||!mesh.getTotalVertices())continue;
@@ -260,24 +558,61 @@
       const now=performance.now(),dt=(now-previous)/1000;previous=now;
       if(document.hidden){simulation.reset();return;}
       simulation.advance(dt);elapsedRun+=Math.min(dt,.1);
-      avatar.position.copyFrom(player.position.subtract(v(0,.9,0)));
-      const moving=!blocked()&&Math.hypot(velocity.x,velocity.z)>.1;
-      legs.forEach((leg,i)=>{leg.rotation.x=moving&&grounded?Math.sin(walkPhase+i*Math.PI)*.45:0;});
-      scarf.rotation.x=reduced?0:Math.sin(environment.elapsed*2)*environment.wind*.12;
-      const focus=player.position.add(v(0,.65,0));
+      // Interpolate presentation only. Collision, wall probes and glide clearance
+      // always use the fixed-step body; extra rendered frames do not repeat a pose.
+      renderPosition.copyFrom(B.Vector3.Lerp(previousPosition,player.position,simulation.alpha));
+      avatar.position.copyFrom(renderPosition.subtract(v(0,.9,0)));
+      avatar.rotation.y=Flight.turn(previousFacing,facing,simulation.alpha);
+      const poseBlend=Flight.blend(Flight.tuning.poseResponse,dt);
+      const renderedMotion={...characterMotion,sample:{...characterMotion.sample,
+        position:renderPosition.asArray(),facing:avatar.rotation.y}};
+      for(const key of ['groundDistance','climbDistance','speed','turnRate'])
+        renderedMotion[key]=previousCharacterMotion[key]+(characterMotion[key]-previousCharacterMotion[key])*simulation.alpha;
+      character.update(renderedMotion,dt,reduced);
+      glider.setEnabled(flight.gliding);
+      gliderOpen=flight.gliding?gliderOpen+(1-gliderOpen)*poseBlend:0;
+      glider.scaling.y=.15+.85*gliderOpen;
+      const focus=renderPosition.add(v(0,.65,0));
       const desired=focus.add(v(-Math.sin(yaw)*distance*Math.cos(pitch),distance*Math.sin(pitch),-Math.cos(yaw)*distance*Math.cos(pitch)));
       const delta=desired.subtract(focus),len=delta.length();
       const obstruction=scene.pickWithRay(new B.Ray(focus,delta.normalize(),len),mesh=>mesh.checkCollisions&&mesh!==player);
       const safe=obstruction.hit?focus.add(delta.scale(Math.max(.45,obstruction.distance-.35))):desired;
-      camera.position.copyFrom(safe);camera.setTarget(focus);
+      const normalPose={position:safe,rotation:B.Quaternion.RotationYawPitchRoll(yaw,pitch,0),fov:.85};
+      const skyPose=skyRenderer.pose(player.position.y+1.45)||normalPose;
+      if(skyMotion.phase==='entering'||skyMotion.phase==='leaving') {
+        const entering=skyMotion.phase==='entering',destination=entering?skyPose:normalPose;
+        skyMotion.elapsed+=Math.min(dt,.25);
+        const t=reduced?1:Core.clamp(skyMotion.elapsed/(entering?1.6:1.1),0,1),ease=t*t*(3-2*t);
+        camera.position.copyFrom(B.Vector3.Lerp(skyMotion.fromPosition,destination.position,ease));
+        camera.rotationQuaternion=B.Quaternion.Slerp(skyMotion.fromRotation,destination.rotation,ease);
+        camera.fov=skyMotion.fromFov+(destination.fov-skyMotion.fromFov)*ease;
+        skyReveal=entering?Core.clamp((t-.65)/.35,0,1):skyMotion.fromReveal*(1-Core.clamp(t*3,0,1));
+        if(t===1){skyMotion.phase=entering?'viewing':'garden';stargazing=entering;}
+      } else {
+        const pose=skyMotion.phase==='viewing'?skyPose:normalPose;
+        camera.position.copyFrom(pose.position);camera.rotationQuaternion=pose.rotation;camera.fov=pose.fov;
+        skyReveal=stargazing?1:0;
+      }
+      // Collision can bring the camera into the traveler during a climb.
+      // Fade only the character's meshes, preserving shared world materials.
+      const avatarVisibility=Core.clamp((B.Vector3.Distance(camera.position,focus)-1.2),0,1);
+      avatarMeshes.forEach(mesh=>{mesh.visibility=avatarVisibility;});
+      skyRenderer.setReveal(skyReveal);
       const env=environment,dim=1-env.night*.76;
       scene.clearColor=B.Color4.Lerp(new B.Color4(.68,.82,.83,1),new B.Color4(.34,.47,.5,1),env.rain);
+      scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.12,.22,.28,1),env.storm*.65);
+      scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.75,.81,.83,1),env.snow*.7);
+      scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.74,.7,.83,1),env.halo*.65);
       scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.055,.095,.16,1),env.night);
       scene.fogColor=new B.Color3(scene.clearColor.r,scene.clearColor.g,scene.clearColor.b);
-      scene.fogDensity=.008+env.rain*.009;
+      scene.fogDensity=.008+env.rain*.009+env.snow*.005+env.storm*.004;
       sun.intensity=(.8-env.rain*.5)*dim;hemi.intensity=.65-env.rain*.13-env.night*.25;
       hemi.diffuse=B.Color3.Lerp(c('#f2f3d6'),c('#809fcb'),env.night);
       stone.diffuseColor=B.Color3.Lerp(c('#ddd9b8'),c('#9eae9e'),env.wetness);
+      stone.diffuseColor=B.Color3.Lerp(stone.diffuseColor,c('#ecf0ec'),env.snowCover*.9);
+      grass.diffuseColor=B.Color3.Lerp(c('#82ad72'),c('#e2eeee'),env.snowCover);
+      leaf.diffuseColor=B.Color3.Lerp(c('#55936e'),c('#cfdfd8'),env.snowCover*.8);
+      leafLight.diffuseColor=B.Color3.Lerp(c('#91b573'),c('#edf0e6'),env.snowCover*.8);
       stone.specularColor=new B.Color3(.06,.06,.06).scale(1+env.wetness*5);
       water.diffuseColor=B.Color3.Lerp(c('#68b8ba'),c('#507e8c'),env.rain*.6+env.night*.4);
       glow.emissiveColor=c('#f1dea0').scale(.2+env.night*.8);
@@ -286,16 +621,36 @@
       rainMesh.setEnabled(env.rain>.02&&!reduced);rainMesh.alpha=env.rain*.5;
       if(rainMesh.isEnabled()) {
         rainSeeds.forEach((drop,i)=>{const y=((drop.y-env.elapsed*(9+env.rain*3))%12+12)%12;
-          const x=player.position.x+drop.x,z=player.position.z+drop.z;
-          rainLines[i][0].set(x,y,z);rainLines[i][1].set(x-env.wind*.18,y+.65,z-.09);
+          const x=player.position.x+drop.x,z=player.position.z+drop.z,altitude=player.position.y-2;
+          rainLines[i][0].set(x,y+altitude,z);rainLines[i][1].set(x-env.wind*.18,y+.65+altitude,z-.09);
         });
         B.MeshBuilder.CreateLineSystem('rain',{lines:rainLines,instance:rainMesh});
       }
+      snowMesh.setEnabled(env.snow>.02&&!reduced);snowMesh.alpha=env.snow*.85;
+      if(snowMesh.isEnabled()){
+        for(let i=0;i<80;i++){
+          const drop=rainSeeds[i],y=((drop.y-env.elapsed*1.3)%12+12)%12+player.position.y-2;
+          const x=player.position.x+drop.x+Math.sin(env.elapsed*.5+i)*.6,z=player.position.z+drop.z;
+          snowLines[i*2][0].set(x-.045,y,z);snowLines[i*2][1].set(x+.045,y,z);
+          snowLines[i*2+1][0].set(x,y-.045,z);snowLines[i*2+1][1].set(x,y+.045,z);
+        }
+        B.MeshBuilder.CreateLineSystem('snow',{lines:snowLines,instance:snowMesh});
+      }
+      halos.forEach(halo=>{halo.setEnabled(env.halo>.02);halo.visibility=env.halo*.65;});
       scene.render();
+      // Match the displayed camera every rendered frame, including a stationary
+      // orbit. Map arrows follow the view; the avatar's facing is separate.
+      hooks.navigation?.({x:player.position.x,y:player.position.y-.9,z:player.position.z,facing:avatar.rotation.y,yaw,
+        destination:destinationProjection()});
+      if(stargazing)hooks.skyFrame({phase:skyMotion.phase,reveal:skyReveal,points:skyRenderer.project()});
       if(dt>0&&dt<1){samples.push(dt*1000);if(samples.length>600)samples.shift();}
       uiElapsed+=dt;
-      if(uiElapsed>.5){uiElapsed=0;hooks.tick({environment:env,position:player.position.asArray(),metrics:metrics()});}
+      if(uiElapsed>.1){uiElapsed=0;hooks.tick({environment:env,position:player.position.asArray(),inGrove:inGrove(),grounded,flight:flightStatus(),metrics:metrics(),
+        stamina:{value:stamina.value,max:staminaBudget,exhausted:stamina.exhausted},sprinting,
+        sprint:{locked:sprint.locked,held:sprint.held,speed:sprint.speed},player:playerProjection()});}
     }
+    function flightStatus(){return {...flight,pad:currentPad()?.id||null,island:lastIsland,visited:[...visitedIslands],checkpoint:{...checkpoint},climbing:!!climbing,
+      wallNormal:climbing?.normal.asArray()||null,clearance:groundClearance(),minGlideHeight:Flight.MIN_GLIDE_HEIGHT};}
     function metrics() {
       const sorted=[...samples].sort((a,b)=>a-b);
       return {fps:samples.length?Math.round(1000/(samples.reduce((a,b)=>a+b,0)/samples.length)):0,
@@ -304,15 +659,33 @@
         resolution:engine.getRenderWidth()+' × '+engine.getRenderHeight(),seconds:Math.round(elapsedRun),
         renderer:engine.getGlInfo().renderer,version:B.Engine.Version};
     }
+    let reviewCues=[];
+    function setReviewCues(nodes) {
+      reviewCues=nodes.map(node=>({id:node.id,pending:node.pending,reviewed:node.reviewed}));
+      petalRings.forEach((petal,i)=>{
+        petal.outline.setEnabled(!!(nodes[i]?.pending||nodes[i]?.reviewed));
+        petal.fill.setEnabled(!!nodes[i]?.pending);
+      });
+    }
+    setReviewCues(hooks.mindMaps);
     on(canvas,'webglcontextlost',event=>{event.preventDefault();paused=true;hooks.error('The graphics context was lost. Notebook drafts remain available; reload when ready.');});
     engine.runRenderLoop(render);
     return {
-      pause(value){paused=value;keys.clear();jumpBuffer=0;drag=null;simulation.reset();},
-      reset, setWeather(patch){target={...target,...patch};},
+      pause(value){paused=value;clearInput();simulation.reset();},
+      setInputEnabled(value){inputEnabled=value;clearInput();},
+      reset, resetCamera, lookAtSky, visitGrove, visitLauncher, setReviewCues, surfacePoint, setDestination,
+      setSkyView(graph,view,viewport){skyRenderer.sync(graph,view,viewport);},setWeather(patch){target={...target,...patch};},
       setReduced(value){reduced=value;},setSensitivity(value){sensitivity=value;},
       setQuality(value){quality=value;resize();},metrics,
-      snapshot(){return {position:player.position.asArray(),grounded,paused,vertical,jumpBuffer,coyote,environment:{...environment},target:{...target},reduced,yaw,pitch,quality,metrics:metrics()};},
-      dispose(){disposed=true;engine.stopRenderLoop(render);cleanup.forEach(fn=>fn());instrumentation.dispose();scene.dispose();engine.dispose();}
+      snapshot(){return {position:player.position.asArray(),grounded,sprinting,
+        stamina:{value:stamina.value,max:staminaBudget,exhausted:stamina.exhausted},
+        sprint:{locked:sprint.locked,held:sprint.held,speed:sprint.speed},player:playerProjection(),
+        motion:{velocity:velocity.asArray(),facing,renderPosition:renderPosition.asArray()},flight:flightStatus(),gliderVisible:glider.isEnabled(),effects:{rain:rainMesh.isEnabled(),snow:snowMesh.isEnabled(),halos:halos.some(h=>h.isEnabled())},inGrove:inGrove(),stargazing,skyPhase:skyMotion.phase,skyReveal,skyStars:skyRenderer.snapshot(),reviewCues:reviewCues.map(cue=>({...cue})),paused,inputEnabled,vertical,jumpBuffer,coyote,environment:{...environment},target:{...target},reduced,yaw,pitch,roll:0,
+        characterMotion:{...characterMotion,sample:{...characterMotion.sample,position:[...characterMotion.sample.position]}},
+        character:character.snapshot(),
+        cameraForward:camera.getForwardRay().direction.asArray(),cameraUp:camera.getDirection(B.Axis.Y).asArray(),
+        destination:destination?{...destination,projection:destinationProjection(),occluded:destinationOccluded()}:null,quality,metrics:metrics()};},
+      dispose(){disposed=true;engine.stopRenderLoop(render);cleanup.forEach(fn=>fn());skyRenderer.dispose();instrumentation.dispose();scene.dispose();engine.dispose();}
     };
   };
 })();

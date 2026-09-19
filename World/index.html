@@ -6,46 +6,78 @@
   <meta name="theme-color" content="#264d45">
   <title>Clockgarden · Track World demo</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="styles/demo.css?v=2">
+  <link rel="stylesheet" href="styles/demo.css?v=21">
   <script defer src="scripts/storage-isolation.js?v=1"></script>
   <script defer src="vendor/babylonjs-9.25.0/babylon.js?v=1"></script>
   <script defer src="/track-core/schema.js?v=7"></script>
   <script defer src="/track-core/calendar-core.js?v=7"></script>
-  <script defer src="scripts/demo-core.js?v=2"></script>
-  <script defer src="scripts/scene.js?v=2"></script>
-  <script defer src="scripts/app.js?v=2"></script>
+  <script defer src="/track-core/quest-core.js?v=1"></script>
+  <script defer src="/track-core/graph-layout.js?v=1"></script>
+  <script defer src="scripts/demo-core.js?v=8"></script>
+  <script defer src="scripts/flight-core.js?v=5"></script>
+  <script defer src="scripts/stamina-core.js?v=3"></script>
+  <script defer src="scripts/character-motion.js?v=3"></script>
+  <script defer src="scripts/character-animation.js?v=5"></script>
+  <script defer src="scripts/character-rig.js?v=4"></script>
+  <script defer src="scripts/sky-core.js?v=1"></script>
+  <script defer src="scripts/sky-view.js?v=4"></script>
+  <script defer src="scripts/sky-scene.js?v=1"></script>
+  <script defer src="scripts/map-core.js?v=2"></script>
+  <script defer src="scripts/map-view.js?v=4"></script>
+  <script defer src="scripts/scene.js?v=21"></script>
+  <script defer src="scripts/app.js?v=20"></script>
 </head>
 <body>
-  <canvas id="world" tabindex="0" aria-label="Clockgarden. Use W A S D or arrow keys to walk, Shift to run, Space to jump, Q and E to turn the camera. Drag to look and scroll to zoom."></canvas>
+  <canvas id="world" tabindex="0" aria-label="Clockgarden. WASD moves; tap Shift to dash, hold it for about 1 second to lock running, and tap again to unsprint. Space grabs a nearby wall, or lets go with an outward push while climbing. Otherwise Space jumps or opens the glider above a drop of four jump heights. Hold X on a Windseed launcher and release to launch. Drag to look. Q/E turn, R/F tilt. Home resets the camera. Scroll zooms."></canvas>
   <div class="world-vignette" aria-hidden="true"></div>
+  <div id="world-destination" class="world-destination" role="img" aria-label="Navigation destination" hidden><small id="world-destination-distance"></small><svg viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2 22 12 12 30 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></div>
+  <section id="sky-view" class="sky-view" aria-labelledby="sky-title" hidden>
+    <div class="sky-heading"><div><small>Memory Grove · grounded stargazing</small><h1 id="sky-title">Mind maps among the stars</h1></div><button id="leave-sky" class="secondary">Return to garden <kbd>Esc</kbd></button></div>
+    <p id="sky-description">Looking up into the Grove’s sky…</p>
+    <div class="sky-tools"><button id="sky-out" class="secondary" aria-label="Zoom out">−</button><button id="sky-in" class="secondary" aria-label="Zoom in">+</button><button id="sky-fit" class="secondary">Fit all</button><label for="sky-find">Find a mind map</label><input id="sky-find" type="text" placeholder="Name…"></div>
+    <div id="sky-results" class="sky-results" hidden></div>
+    <div id="sky-map" class="sky-map" role="group" aria-label="Mind map constellation. Drag to pan, scroll to zoom, or Tab to a star." tabindex="0"></div>
+    <p class="sky-legend">✿ Review due · ✓ Reviewed · no petals: no reviews today <span>Drag to pan · scroll to zoom</span></p>
+  </section>
   <header class="identity"><span class="world-mark" aria-hidden="true">✧</span><div><span>Track World</span><strong>Clockgarden</strong></div></header>
+  <button id="minimap" class="minimap" data-panel="map" aria-label="Open world map" hidden><canvas id="minimap-canvas" aria-hidden="true"></canvas><span class="map-north" aria-hidden="true">N</span><span class="minimap-caption">World map <kbd>M</kbd></span></button>
   <div class="day-bud"><button id="today-bud" data-panel="today" aria-label="Open Today"><svg viewBox="0 0 40 48" aria-hidden="true"><path d="M20 38C5 34 4 20 20 4c16 16 15 30 0 34Z"/><path d="M20 39C5 41 1 32 2 27c11-1 16 4 18 12Zm0 0c15 2 19-7 18-12-11-1-16 4-18 12Z"/><path d="M20 13v32"/></svg><span><strong>Today</strong><small id="clock-label">Demo clock · 17:40</small></span></button></div>
   <main>
     <section id="welcome" class="welcome" aria-labelledby="welcome-title">
-      <span class="demo-label">First playable study</span>
+      <span class="demo-label">Playable garden & sky-island demo</span>
       <h1 id="welcome-title">A little room<br>to wander.</h1>
-      <p>Follow the stone path. Watch the weather turn.<br>Bring a thought back to your notebook.</p>
+      <p>Wander the garden. Launch into the sky.<br>Glide to an island, and bring a thought back.</p>
       <button id="enter" class="primary" disabled>Preparing the garden…</button>
+      <button id="try-flight-welcome" class="secondary" disabled>Try island flight</button>
       <p class="welcome-note">Synthetic Track data. Drafts last until reload.<br>Simple shapes stand in for the final artwork.</p>
     </section>
-    <section id="panel" class="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" hidden>
+    <section id="panel" class="panel" role="dialog" aria-modal="false" aria-labelledby="panel-title" hidden>
       <div class="panel-heading"><div><span id="panel-kicker">Your garden companion</span><h1 id="panel-title">Today</h1></div><button id="close-panel" class="icon-button" aria-label="Close panel">×</button></div>
       <div id="panel-content" class="panel-content"></div>
-      <div class="panel-footer">Synthetic demo · movement rests while you read</div>
+      <div class="panel-footer">The garden keeps moving while you read</div>
     </section>
     <div id="load-error" role="alert" hidden><h2>The garden needs attention</h2><p id="error-message"></p><p>Use the local demo server. If WebGL is unavailable, enable browser hardware acceleration and reload.</p><button id="read-without-world">Open notebook</button> <button id="retry">Reload demo</button></div>
   </main>
-  <div id="interaction" class="interaction" hidden></div>
+  <aside id="gameplay-popup" class="quest-popup" aria-label="Quests and nearby interactions" hidden>
+    <div id="destination-locator" class="destination-locator" hidden><span id="destination-arrow" aria-hidden="true">↑</span><div><strong id="destination-name"></strong><small id="destination-distance"></small></div><button id="stop-navigation" aria-label="Stop navigation">×</button></div>
+    <div id="quest-popup" hidden><button id="quest-open" data-panel="quest" aria-controls="panel" aria-expanded="false" title="Open the full Quest list">Quest</button></div>
+    <div id="interaction" class="interaction" hidden></div>
+    <button id="enter-sky" class="secondary" hidden>Look at the MM sky <kbd>G</kbd></button>
+  </aside>
+  <aside id="flight-hint" class="flight-hint" aria-label="Flight controls" hidden><strong id="flight-title"></strong><span id="flight-instruction"></span><progress id="launch-charge" max="1" value="0" aria-label="Launch charge" hidden></progress></aside>
+  <div id="sprint-stamina" class="sprint-stamina" role="progressbar" aria-label="Sprint stamina" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" hidden><span id="sprint-stamina-bar" class="sprint-stamina-fill"></span><small id="sprint-stamina-label">Sprint</small></div>
   <div class="bottom-ui">
     <div class="location"><span id="place-name">Clockgarden approach</span><small id="weather-label">Clear skies</small></div>
     <nav class="toolbelt" aria-label="Garden companions">
       <button data-panel="today"><span aria-hidden="true">◷</span>Today<kbd>T</kbd></button>
       <button data-panel="notebook"><span aria-hidden="true">▤</span>Notebook<kbd>N</kbd></button>
-      <button data-panel="memory"><span aria-hidden="true">✧</span>Mind maps<kbd>M</kbd></button>
+      <button data-panel="memory"><span aria-hidden="true">✧</span>Mind maps<kbd>K</kbd></button>
+      <button data-panel="quest"><span aria-hidden="true">☆</span>Quest<kbd>J</kbd></button>
+      <button data-panel="map"><span aria-hidden="true">◇</span>Map<kbd>M</kbd></button>
       <button data-panel="weather"><span aria-hidden="true">☂</span>Weather<kbd>V</kbd></button>
       <button data-panel="help" aria-label="Controls and demo information">?</button>
     </nav>
-    <div class="control-hint">WASD move <span>Shift run</span> <span>Space jump</span><br>Drag to look <span>Q / E turn</span> <span>Wheel zoom</span></div>
+    <div class="control-hint">WASD move <span>Tap Shift: dash / unsprint · hold 1 s: run</span> <span>Space climb / jump / glide</span><br>Hold X on a launcher <span>Drag to look</span></div>
   </div>
   <div id="announcement" class="sr-only" aria-live="polite"></div>
   <noscript>This demo needs JavaScript to draw the garden.</noscript>
