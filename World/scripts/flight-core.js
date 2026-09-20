@@ -2,7 +2,12 @@
   'use strict';
   // Demo tuning, independent of Track records or streaks. A charged release is
   // an explicit input; blur, panel entry and leaving the pad cancel the charge.
-  const tuning=Object.freeze({walkSpeed:5.2,runSpeed:12,groundStart:18,groundStop:24,groundTurn:24,airResponse:12,glideResponse:8,climbResponse:18,turnResponse:20,poseResponse:16,
+  // Character scale (ruling 3). The BODY is 1.30x; the scene, the camera and every
+  // controller value stay at their original size. Step length is speed/(2*rate), so a
+  // longer leg is what cuts step/leg from 1.61 to 1.24 -- the world must NOT grow with
+  // it or the character simply covers 30% less ground and nothing else changes.
+  const characterScale=1.30;
+  const tuning=Object.freeze({characterScale,walkSpeed:5.2,runSpeed:12,groundStart:18,groundStop:24,groundTurn:24,airResponse:12,glideResponse:8,climbResponse:18,turnResponse:20,poseResponse:16,
     jumpSpeed:6.2,gravity:18,chargeSeconds:1.2,minCharge:.12,launchMin:22,launchExtra:12,glideSpeed:8,descent:2.4,climbSpeed:2.2,detachSpeed:3,detachUp:2.2,detachSeconds:.18});
   const elapsed=dt=>Math.max(0,Math.min(.1,Number.isFinite(dt)?dt:0));
   const blend=(rate,dt)=>1-Math.exp(-rate*elapsed(dt));

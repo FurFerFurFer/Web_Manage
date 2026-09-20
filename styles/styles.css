@@ -2547,6 +2547,110 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
   font-size: 0.6875rem;
 }
 
+/* ── "Coming up" ──────────────────────────────────────────────────────────
+   The list at the foot of a calendar block: every day note and deadline still
+   ahead, reachable with no day clicked. Its own namespace rather than a reuse
+   of .cal-doc-row — the browser suite selects that class broadly across
+   .doc-cal and takes the first match, so a row borrowing it would be counted
+   as a day-panel row. */
+.doc-cal-up {
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.doc-cal-up-head {
+  margin-bottom: 0.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.625rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.doc-cal-up-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* The row text is a button leading to the item's day. Like .cal-doc-row-link it
+   has to read as the static rows around it, so the button chrome is stripped
+   and only the cursor and a hover underline say it is live. */
+.doc-cal-up-main {
+  flex: 1 1 12rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.doc-cal-up-main:hover,
+.doc-cal-up-main:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A ticked row must not lose its strike to the hover underline — losing it is
+   read as "not done", which is the one thing the tick exists to say. */
+.doc-cal-up-row.done > .doc-cal-up-main:hover,
+.doc-cal-up-row.done > .doc-cal-up-main:focus-visible {
+  text-decoration: line-through underline;
+}
+
+/* the date column, fixed so icons and titles line up down the list */
+.doc-cal-up-date {
+  display: inline-block;
+  min-width: 5.5rem;
+  color: var(--color-text-muted);
+}
+
+/* .cal-item-meta is otherwise styled only under .cal-detail-item */
+.doc-cal-up-row .cal-item-meta {
+  color: var(--color-text-muted);
+}
+
+/* in this calendar's scope: the same mark the day panel gives its own rows */
+.doc-cal-up-row.own {
+  background: var(--color-primary-soft);
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+/* a ticked deadline: still coming up, no longer warning. The strike goes on the
+   row text alone, so the origin chip beside it stays legible. */
+.doc-cal-up-row.done > .doc-cal-up-main {
+  color: var(--color-success);
+  text-decoration: line-through;
+}
+
+.doc-cal-up-more,
+.doc-cal-up-empty {
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
+}
+
+.doc-cal-up-more {
+  margin-top: 0.15rem;
+  padding: 0 0.3rem;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.doc-cal-up-more:hover {
+  color: var(--color-primary-text);
+}
+
 .doc-cal-add {
   margin-left: 0.4rem;
   padding: 0 0.35rem;
@@ -3016,6 +3120,7 @@ button.cal-doc-origin:hover {
   body.docs-page .doc-cal-hint,
   body.docs-page .cal-doc-form,
   body.docs-page .cal-doc-row-acts,
+  body.docs-page .doc-cal-up-more,
   body.docs-page .doc-cal .cal-detail-acts {
     display: none !important;
   }
@@ -3034,7 +3139,18 @@ button.cal-doc-origin:hover {
   body.docs-page .doc-cal .cal-detail-date,
   body.docs-page .doc-cal .cal-doc-row,
   body.docs-page .doc-cal .cal-detail-item,
-  body.docs-page .doc-cal .cal-empty-msg {
+  body.docs-page .doc-cal .cal-empty-msg,
+  /* "Coming up" is CONTENT, so it prints — a printed page otherwise carries a
+     month grid with nothing saying what is on it. The muted spans are listed
+     one by one because each sets its own colour, and inheriting #111 from the
+     row would lose to any direct match: under Night those tokens are near-white
+     and would print invisible on paper. */
+  body.docs-page .doc-cal .doc-cal-up-head,
+  body.docs-page .doc-cal .doc-cal-up-row,
+  body.docs-page .doc-cal .doc-cal-up-date,
+  body.docs-page .doc-cal .doc-cal-up-empty,
+  body.docs-page .doc-cal .doc-cal-up-row .cal-item-meta,
+  body.docs-page .doc-cal .doc-cal-up-row .cal-item-time {
     color: #111 !important;
   }
 

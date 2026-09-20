@@ -42,8 +42,8 @@ test('map and Quest: actual geography, session pins, navigation, focus and unpau
     assert.equal(await page.evaluate(()=>WorldDemo.snapshot().panel),'map');
     await page.waitFor(()=>document.querySelectorAll('.map-marker').length===9);
     const bridge=await page.evaluate(()=>WorldDemo.snapshot().map.landmarks.find(p=>p.id==='bridge'));
-    assert.deepEqual({id:bridge.id,name:bridge.name,icon:bridge.icon,x:bridge.x,z:bridge.z},{id:'bridge',name:'Little bridge',icon:'bridge',x:9.5,z:5});
-    assert.ok(Math.abs(bridge.y-.425)<.001,'the bridge destination uses the deck height: '+JSON.stringify(bridge));
+    assert.deepEqual({id:bridge.id,name:bridge.name,icon:bridge.icon,x:bridge.x,z:bridge.z},{id:'bridge',name:'Little bridge',icon:'bridge',x:Math.fround(9.5*1.30),z:5*1.30});
+    assert.ok(Math.abs(bridge.y-.425*1.30)<.001,'the bridge destination uses the deck height: '+JSON.stringify(bridge));
     assert.ok(await page.evaluate(()=>{
       const player=document.querySelector('.map-player'),marker=document.querySelector('.map-marker');
       return Number(getComputedStyle(player).zIndex)>Number(getComputedStyle(marker).zIndex||0)||getComputedStyle(marker).zIndex==='auto';
@@ -67,7 +67,7 @@ test('map and Quest: actual geography, session pins, navigation, focus and unpau
       await shot('pin-preview');await textButton('Cancel');
       assert.equal(await page.evaluate(()=>!!document.getElementById('map-pin-preview')),false);
       assert.equal(await page.evaluate(()=>WorldDemo.snapshot().map.pins.length),0);
-      await textButton('Fit garden');await mapClick(48,7);
+      await textButton('Fit garden');await mapClick(48*1.30,7*1.30);
       assert.equal(await page.evaluate(()=>document.querySelector('.map-details .primary').disabled),true,'a point without a surface is not given a fake height');
       await mapClick(20,0);assert.equal(await page.evaluate(()=>document.querySelector('.map-details .primary').disabled),false);
       await textButton('Cancel');await textButton('Fit garden');
@@ -174,9 +174,9 @@ test('map and Quest: actual geography, session pins, navigation, focus and unpau
       await page.waitFor(()=>WorldDemo.snapshot().world.grounded);
       await click('.toolbelt [data-panel="map"]');await textButton('Fit garden');
       for(let i=0;i<5;i++)await click('#map-zoom-in');
-      await mapClick(0,9);await input('pin-name','Behind the clock');await textButton('Save pin');
+      await mapClick(0,9*1.30);await input('pin-name','Behind the clock');await textButton('Save pin');
       const pin=await page.evaluate(()=>WorldDemo.snapshot().map.pins[0]);
-      assert.ok(Math.abs(pin.y-.17)<.01,'pin is on the plaza surface');
+      assert.ok(Math.abs(pin.y-.17*1.30)<.01,'pin is on the plaza surface');
       await click('#map-navigate');await click('#close-panel');
       await page.waitFor(()=>!document.getElementById('world-destination').hidden);
       const marker=await page.evaluate(()=>{const node=document.getElementById('world-destination'),r=node.getBoundingClientRect();
@@ -194,7 +194,7 @@ test('map and Quest: actual geography, session pins, navigation, focus and unpau
       await key('Home','Home');await click('.toolbelt [data-panel="map"]');
       await page.evaluate(()=>{const s=document.getElementById('map-location');s.value='terrace';s.dispatchEvent(new Event('change',{bubbles:true}));});
       await click('#map-navigate');
-      assert.ok(await page.evaluate(()=>Math.abs(WorldDemo.snapshot().world.destination.y-.8)<.001),'landmark navigation uses the terrace height');
+      assert.ok(await page.evaluate(()=>Math.abs(WorldDemo.snapshot().world.destination.y-.8*1.30)<.001),'landmark navigation uses the terrace height');
       await click('#map-stop');
       assert.equal(await page.evaluate(()=>WorldDemo.snapshot().world.destination),null);
       await page.evaluate(id=>{const s=document.getElementById('map-location');s.value=id;s.dispatchEvent(new Event('change',{bubbles:true}));},pin.id);

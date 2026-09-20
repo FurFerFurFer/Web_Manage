@@ -2,6 +2,16 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const Flight=require('../scripts/flight-core');
 
+test('the approved scale preserves relative jump height and airtime while ground speeds stay fixed',()=>{
+  const t=Flight.tuning,k=1.30;
+  assert.ok(Math.abs(t.jumpSpeed-8.06)<1e-10,'approved jump impulse must scale with the body');
+  assert.ok(Math.abs(t.gravity-23.4)<1e-10,'approved gravity must preserve jump time');
+  assert.ok(Math.abs((t.jumpSpeed**2/(2*t.gravity))/k-6.2**2/36)<1e-10);
+  assert.ok(Math.abs(2*t.jumpSpeed/t.gravity-2*6.2/18)<1e-10);
+  assert.ok(Math.abs(Flight.MIN_GLIDE_HEIGHT/k-4*6.2**2/36)<1e-10);
+  assert.equal(t.walkSpeed,5.2);assert.equal(t.runSpeed,12);
+});
+
 test('ground starts, reversals and braking stay responsive at 30/60/120 fps',()=>{
   const results=[];
   for(const fps of [30,60,120]){

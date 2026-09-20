@@ -6,19 +6,25 @@
   P4 onward is untouched; real Track reads/writes remain separately gated.
 - **Next increment:** the user's
   [four rulings of 2026-09-19](TRACK-WORLD-CONCEPT-DRAFT.md#4-player-perspective-and-movement),
-  in this order:
-  1. **Character scale.** Step length is `speed / (2 x cycle rate)`; with speeds pinned and
-     a faster limb rate already rejected, leg length is the only free term. The shipped rig
-     takes steps of **1.61 / 2.24 / 3.08 / 3.88 x leg** against a human walking band of
-     0.8-1.2x and a sprint ceiling near 2.3x. Apply a uniform character scale, starting
-     from **k = 1.30** against the current 0.95 u leg, rescale the scene with it, and report
-     the resulting step/leg table for all four tiers. **No single k fits every tier** — the
-     base must stay jog-class (k <= 1.34, ruling 2) while the dash would need k >= 1.69, and
-     the ranges do not overlap because the pinned 3.1x speed spread exceeds what a human
-     gait expresses. Resolve for the base; the **dash's 2.98x is a deliberate exceedance**,
-     not a gap to report. **Stop and ask** before touching jump
-     impulse, gravity, step-up or camera distance — the ruling explains why.
-  2. **Production-path research, READ-ONLY.** Name skinned/rigged character and authored-
+  in this order, with the September 19 hand-off's scale checkpoint:
+  1. **Scale playtest and remaining traversal decision.** Review the 1.30× build with
+     the [README checklist](README.md#scale-checkpoint-playtest): foot support/push-off,
+     forward reach and seated silhouette in the base/run first; then dash transitions,
+     turns, jump/steps, wall clearance and notebook clipping. Do not change joint curves
+     before this checkpoint is accepted. The user's **Option A** for jump/gravity,
+     step-up and camera is closed in draft §4; do not ask it again.
+     **Pending traversal choice:** launch 22–34→28.6–44.2, glide 8/2.4→10.4/3.12,
+     climb 2.2→2.86 and detach 3/2.2→3.9/2.86 need the separate answer already requested.
+     Without proportional launch/glide tuning the enlarged Cloudrest route is unreachable.
+     Complete that gated correction and rerun affected traversal checks once answered.
+  2. **Reference timing, read-only:** resolve the `11-28-38` timing-baseline discrepancy
+     documented in the comparison before assigning absolute clip speeds. Keep the
+     accepted four rates unchanged. `08-42-45` has an observed ~2.3 full cycles per
+     recorded second; it is not yet an established real-time rate.
+  3. **STOP after the scale build and full sequential verification.** Hand back for
+     visual acceptance; do not author the newly referenced traversal motions first.
+  4. **QUEUED after scale acceptance or an explicit instruction to proceed:**
+     **production-path research, READ-ONLY.** Name skinned/rigged character and authored-
      animation candidates with licence, real cost and laptop impact; recommend one.
      **Download, install and buy nothing.**
 - **Do NOT do:** a slow-walk gait (the user does not want one in the game); a rename of the
@@ -64,9 +70,10 @@
   tiers and their transitions, starts, stops, turns, idle, jump, free fall, glide, light
   landing, climbing, rapid climb and the vault — with the notebook carry/stow throughout.
   Anything outside that list needs new direction.
-  `11-28-38.webm` (**0-19.4 s**) contains **no landing** — flat plaza throughout — but the
-  user confirms it is **1x real time** — the **timing baseline** — and its side-on **stop**,
-  **slow walk** and **idle** are the best the project has. On clip speed the user's precise
+  `11-28-38.webm` (**0-19.4 s**) is user-reported **1x real time**. Detailed September 19
+  reinspection shows airborne jump/landing sequences and settling; the comparison records
+  why it has not established a repeated running cadence. Resolve that calibration issue
+  before using it to classify the other clips. On clip speed the user's precise
   position is: **`11-13-41` and `11-09-09` are SPED UP by an unknown factor and are pose-only
   permanently**; every other clip is **either 1x or 0.25x** (YouTube quarter-speed playback),
   so its real timing is recoverable once the factor is known. **The factor is empirically
@@ -75,17 +82,11 @@
   using, and record the verdict in the comparison. **Any measurement is information, NOT an
   override** — the user accepted the rhythm on 2026-09-15 and that still wins; if a measured
   cadence disagrees with 1.70/1.88/2.05/2.20 Hz, **report it and ask**, never retune.
-  **Classify `08-42-45.webm` first**: the 2.05 Hz run rate was reasoned from its
-  "half-second cycle", so if it is 0.25x the true cycle was ~2 s and the rate was derived
-  four times too fast. See the comparison's clip index and speed section.
-- **Debt carried in:** the September 15-17 push-off increment **shipped to disk**
-  (`character-animation.js`, `character-rig.js`, index `v5`/`v4`, README, both animation
-  suites) but [docs/VERIFICATION-LOG.md](docs/VERIFICATION-LOG.md) has **no entry for it** —
-  that session hit a provider quota wall mid-diagnosis. Its three reported "failures" (sky,
-  map, flight) were every one of them `CDP connection closed`, the known contention
-  signature from running three browser suites in parallel, not regressions. Re-run those
-  three **sequentially** and write the missing evidence entry before stacking new work on
-  top. Nothing in `World/` is committed; the last commit is `94a1a41`.
+  **Classify `08-42-45.webm` first** before using it as a real-time cadence baseline.
+  The comparison records the measured recurrence and the unresolved baseline problem.
+  Quarter-speed conversion divides recorded duration by four, so it multiplies cadence
+  by four; do not repeat the earlier inverted conversion. Measurement remains information,
+  never permission to retune.
 - **After visual acceptance:** perform the physical laptop proof in **PLAN §25.13**, then
   continue the information/action inventory and dense sky/Quest/map proofs.
 

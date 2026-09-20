@@ -13,6 +13,12 @@
     scene.skipPointerMovePicking = true;
     const c = hex => B.Color3.FromHexString(hex);
     const v = (x,y,z) => new B.Vector3(x,y,z);
+    // Ruling 3 scales the BODY, never the world. b()/bv() convert a character
+    // measurement -- collider half-extents, the feet offset below the collider
+    // centre, limb reach used to probe walls and ledges, head/eye heights -- into
+    // world units. Scene geometry, camera framing and controller values are NOT
+    // body measurements and stay exactly as authored.
+    const S=Flight.tuning.characterScale,b=n=>n*S,bv=(x,y,z)=>v(b(x),b(y),b(z));
     const mats = {};
     function material(name, color, emissive = 0) {
       const m = new B.StandardMaterial(name, scene);
@@ -178,7 +184,7 @@
     // the character's center, while feet are center minus .9 world units.
     const player=B.MeshBuilder.CreateBox('player-collider',{size:1},scene);
     player.isVisible=false; player.isPickable=false;
-    player.ellipsoid=v(.35,.88,.35);player.ellipsoidOffset=v(0,0,0);player.position=v(0,1.08,-6);
+    player.ellipsoid=bv(.35,.88,.35);player.ellipsoidOffset=v(0,0,0);player.position=v(0,.18+b(.9),-6);
     const avatar=new B.TransformNode('avatar',scene);
     const character=window.createWorldCharacter(scene,avatar,{cloth,skin,boots,gold,book,shadows});
     const glider=new B.TransformNode('traveler-glider',scene);glider.parent=avatar;glider.position.y=2.15;
@@ -211,7 +217,7 @@
     function syncPose(){previousPosition.copyFrom(player.position);renderPosition.copyFrom(player.position);previousFacing=facing;
       characterMotion=CharacterMotion.reset(characterSample());previousCharacterMotion=characterMotion;character.reset(characterMotion);}
     const visitedIslands=new Set();
-    const currentPad=()=>pads.find(p=>Math.hypot(player.position.x-p.x,player.position.z-p.z)<1.5&&Math.abs(player.position.y-.9-p.y)<.35)||null;
+    const currentPad=()=>pads.find(p=>Math.hypot(player.position.x-p.x,player.position.z-p.z)<1.5&&Math.abs(player.position.y-b(.9)-p.y)<.35)||null;
     let reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
     let environment=Core.initialEnvironment(),target={rain:false,night:false};
     const keys=new Set(),cleanup=[];
@@ -230,11 +236,11 @@
     // starting above an island. Open air beyond a ledge has infinite clearance.
     function groundClearance(){
       const hit=scene.pickWithRay(new B.Ray(player.position,v(0,-1,0),200),mesh=>mesh.checkCollisions&&mesh!==player);
-      return hit.hit?Math.max(0,player.position.y-.9-hit.pickedPoint.y):Infinity;
+      return hit.hit?Math.max(0,player.position.y-b(.9)-hit.pickedPoint.y):Infinity;
     }
     function wallAhead(direction=v(Math.sin(facing),0,Math.cos(facing))){
       for(const height of [.25,-.5]){
-        const hit=scene.pickWithRay(new B.Ray(player.position.add(v(0,height,0)),direction,.9),mesh=>mesh.checkCollisions&&mesh!==player);
+        const hit=scene.pickWithRay(new B.Ray(player.position.add(bv(0,height,0)),direction,b(.9)),mesh=>mesh.checkCollisions&&mesh!==player);
         const normal=hit.hit&&hit.getNormal(true);
         if(!normal||Math.abs(normal.y)>.75)continue;
         normal.y=0;normal.normalize();
@@ -256,16 +262,16 @@
         // Step over a reached ledge only with upward input. Opening a panel
         // never moves the character onto a protective landing.
         if(up>0){
-          const ahead=player.position.add(inward.scale(.85));
-          const top=scene.pickWithRay(new B.Ray(ahead.add(v(0,1.2,0)),v(0,-1,0),3),mesh=>mesh.checkCollisions&&mesh!==player);
-          if(top.hit&&top.getNormal(true)?.y>.7&&top.pickedPoint.y>=player.position.y-1.1&&top.pickedPoint.y<=player.position.y+.3){
-            player.position.y=top.pickedPoint.y+.92;player.moveWithCollisions(inward.scale(.85));grounded=true;
+          const ahead=player.position.add(inward.scale(b(.85)));
+          const top=scene.pickWithRay(new B.Ray(ahead.add(bv(0,1.2,0)),v(0,-1,0),b(3)),mesh=>mesh.checkCollisions&&mesh!==player);
+          if(top.hit&&top.getNormal(true)?.y>.7&&top.pickedPoint.y>=player.position.y-b(1.1)&&top.pickedPoint.y<=player.position.y+b(.3)){
+            player.position.y=top.pickedPoint.y+b(.92);player.moveWithCollisions(inward.scale(b(.85)));grounded=true;
           }
         }
         climbing=null;climbMotion={x:0,z:0};vertical=-.8;return;
       }
       climbing=wall;grounded=false;vertical=0;velocity.setAll(0);lastIsland=null;
-      player.position.x=wall.point.x+wall.normal.x*.4;player.position.z=wall.point.z+wall.normal.z*.4;
+      player.position.x=wall.point.x+wall.normal.x*b(.4);player.position.z=wall.point.z+wall.normal.z*b(.4);
       facing=Flight.turn(facing,Math.atan2(-wall.normal.x,-wall.normal.z),Flight.blend(Flight.tuning.turnResponse,dt));
       const factor=Flight.tuning.climbSpeed/(Math.hypot(side,up)||1),tangent=v(-wall.normal.z,0,wall.normal.x);
       climbMotion=controls?Flight.steer(climbMotion,{x:side*factor,z:up*factor},'climb',dt):{x:0,z:0};
@@ -294,8 +300,8 @@
     // body whose apparent size changes with the camera distance: a fixed pixel offset
     // clears the model at the default distance and sits on their chest zoomed in.
     function playerProjection(){
-      const base=projectPoint(renderPosition.add(v(0,.35,0)));
-      const crown=projectPoint(renderPosition.add(v(0,1.3,0)));
+      const base=projectPoint(renderPosition.add(bv(0,.35,0)));
+      const crown=projectPoint(renderPosition.add(bv(0,1.3,0)));
       return {...base,scale:Math.abs(crown.y-base.y)};
     }
     function destinationOccluded(){
@@ -320,21 +326,21 @@
       if(!floor.hit)return false;
       clearInput();stargazing=false;velocity.setAll(0);vertical=0;
       flight=Flight.initial();climbing=null;detachTime=0;
-      player.position.copyFrom(destination);player.position.y=floor.pickedPoint.y+.9;grounded=true;syncPose();
+      player.position.copyFrom(destination);player.position.y=floor.pickedPoint.y+b(.9);grounded=true;syncPose();
       return true;
     }
     function resetCamera() {yaw=0;pitch=.31;distance=8.8;}
-    function reset() {stargazing=false;skyMotion={phase:'garden',elapsed:0};skyReveal=0;skyRenderer.setReveal(0);player.position.copyFrom(v(0,1.08,-6));vertical=0;velocity.setAll(0);clearInput();flight=Flight.initial();climbing=null;detachTime=0;sprinting=false;stamina=Stamina.initial(staminaBudget);sprint=Stamina.sprintInitial();dashPending=false;facing=0;syncPose();checkpoint={x:0,y:.18,z:-6};lastIsland=null;resetCamera();}
+    function reset() {stargazing=false;skyMotion={phase:'garden',elapsed:0};skyReveal=0;skyRenderer.setReveal(0);player.position.copyFrom(v(0,.18+b(.9),-6));vertical=0;velocity.setAll(0);clearInput();flight=Flight.initial();climbing=null;detachTime=0;sprinting=false;stamina=Stamina.initial(staminaBudget);sprint=Stamina.sprintInitial();dashPending=false;facing=0;syncPose();checkpoint={x:0,y:.18,z:-6};lastIsland=null;resetCamera();}
     function visitLauncher(){
       if(stargazing)return false;
       clearInput();flight=Flight.initial();velocity.setAll(0);vertical=0;
       climbing=null;detachTime=0;
-      const pad=pads[0];player.position.set(pad.x,pad.y+.9,pad.z);grounded=true;syncPose();resetCamera();return true;
+      const pad=pads[0];player.position.set(pad.x,pad.y+b(.9),pad.z);grounded=true;syncPose();resetCamera();return true;
     }
     function recover(){
       clearInput();flight=Flight.initial();velocity.setAll(0);vertical=0;
       climbing=null;detachTime=0;
-      player.position.set(checkpoint.x,checkpoint.y+.9,checkpoint.z);grounded=true;syncPose();
+      player.position.set(checkpoint.x,checkpoint.y+b(.9),checkpoint.z);grounded=true;syncPose();
       hooks.announce?.('Back on solid ground. Nothing was lost.');
     }
     function step(dt) {
@@ -363,13 +369,13 @@
       const x=controls?((keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0)):0;
       const z=controls?((keys.has('KeyW')||keys.has('ArrowUp')?1:0)-(keys.has('KeyS')||keys.has('ArrowDown')?1:0)):0;
       const direction=v(x*Math.cos(yaw)+z*Math.sin(yaw),0,z*Math.cos(yaw)-x*Math.sin(yaw));
-      const floor=scene.pickWithRay(new B.Ray(player.position,v(0,-1,0),1.15),mesh=>mesh.checkCollisions&&mesh!==player);
+      const floor=scene.pickWithRay(new B.Ray(player.position,v(0,-1,0),b(1.15)),mesh=>mesh.checkCollisions&&mesh!==player);
       const clearance=floor.hit?player.position.y-floor.pickedPoint.y:Infinity;
-      grounded=clearance<=.94&&vertical<=0;
+      grounded=clearance<=b(.94)&&vertical<=0;
       // Keep the ellipsoid above the contacted tread before launching a jump.
       // Starting slightly inside a path stone made collision recovery cancel the
       // upward impulse, so Space silently failed at some Grove path positions.
-      if(grounded&&clearance<.9)player.position.y+=.9-clearance;
+      if(grounded&&clearance<b(.9))player.position.y+=b(.9)-clearance;
       const pad=currentPad();
       flight=Flight.advance(flight,{grounded,onPad:!!pad,controls,held:keys.has('KeyX'),toggle:glideToggle,vertical,
         clearance:glideToggle||flight.armed?groundClearance():0},dt);
@@ -399,15 +405,15 @@
       // Low stairs use a bounded step-up; high ledges still require a jump.
       if(grounded&&direction.lengthSquared()>.1) {
         const ahead=player.position.add(v(velocity.x,0,velocity.z).normalize().scale(.5));
-        const stepHit=scene.pickWithRay(new B.Ray(ahead.add(v(0,.45,0)),v(0,-1,0),1.65),mesh=>mesh.checkCollisions&&mesh!==player);
-        if(stepHit.hit) {const rise=stepHit.pickedPoint.y+.9-player.position.y;if(rise>.025&&rise<.24) player.position.y+=rise;}
+        const stepHit=scene.pickWithRay(new B.Ray(ahead.add(bv(0,.45,0)),v(0,-1,0),b(1.65)),mesh=>mesh.checkCollisions&&mesh!==player);
+        if(stepHit.hit) {const rise=stepHit.pickedPoint.y+b(.9)-player.position.y;if(rise>.025&&rise<.24) player.position.y+=rise;}
       }
       player.moveWithCollisions(v(velocity.x*dt,vertical*dt,velocity.z*dt));
       if(vertical>0&&player.position.y-before.y<vertical*dt*.15) vertical=0;
       if(player.position.y< -7)recover();
       if(!grounded)lastIsland=null;
       if(grounded){
-        const island=islands.find(p=>Math.hypot(player.position.x-p.x,player.position.z-p.z)<p.r&&Math.abs(player.position.y-.9-p.y)<.65);
+        const island=islands.find(p=>Math.hypot(player.position.x-p.x,player.position.z-p.z)<p.r&&Math.abs(player.position.y-b(.9)-p.y)<.65);
         lastIsland=island?.id||null;
         if(island){
           checkpoint={x:island.x,y:island.y+.28,z:island.z};
@@ -561,7 +567,7 @@
       // Interpolate presentation only. Collision, wall probes and glide clearance
       // always use the fixed-step body; extra rendered frames do not repeat a pose.
       renderPosition.copyFrom(B.Vector3.Lerp(previousPosition,player.position,simulation.alpha));
-      avatar.position.copyFrom(renderPosition.subtract(v(0,.9,0)));
+      avatar.position.copyFrom(renderPosition.subtract(bv(0,.9,0)));
       avatar.rotation.y=Flight.turn(previousFacing,facing,simulation.alpha);
       const poseBlend=Flight.blend(Flight.tuning.poseResponse,dt);
       const renderedMotion={...characterMotion,sample:{...characterMotion.sample,
@@ -572,13 +578,13 @@
       glider.setEnabled(flight.gliding);
       gliderOpen=flight.gliding?gliderOpen+(1-gliderOpen)*poseBlend:0;
       glider.scaling.y=.15+.85*gliderOpen;
-      const focus=renderPosition.add(v(0,.65,0));
+      const focus=renderPosition.add(bv(0,.65,0));
       const desired=focus.add(v(-Math.sin(yaw)*distance*Math.cos(pitch),distance*Math.sin(pitch),-Math.cos(yaw)*distance*Math.cos(pitch)));
       const delta=desired.subtract(focus),len=delta.length();
       const obstruction=scene.pickWithRay(new B.Ray(focus,delta.normalize(),len),mesh=>mesh.checkCollisions&&mesh!==player);
       const safe=obstruction.hit?focus.add(delta.scale(Math.max(.45,obstruction.distance-.35))):desired;
       const normalPose={position:safe,rotation:B.Quaternion.RotationYawPitchRoll(yaw,pitch,0),fov:.85};
-      const skyPose=skyRenderer.pose(player.position.y+1.45)||normalPose;
+      const skyPose=skyRenderer.pose(player.position.y+b(1.45))||normalPose;
       if(skyMotion.phase==='entering'||skyMotion.phase==='leaving') {
         const entering=skyMotion.phase==='entering',destination=entering?skyPose:normalPose;
         skyMotion.elapsed+=Math.min(dt,.25);
@@ -595,7 +601,7 @@
       }
       // Collision can bring the camera into the traveler during a climb.
       // Fade only the character's meshes, preserving shared world materials.
-      const avatarVisibility=Core.clamp((B.Vector3.Distance(camera.position,focus)-1.2),0,1);
+      const avatarVisibility=Core.clamp((B.Vector3.Distance(camera.position,focus)-b(1.2)),0,1);
       avatarMeshes.forEach(mesh=>{mesh.visibility=avatarVisibility;});
       skyRenderer.setReveal(skyReveal);
       const env=environment,dim=1-env.night*.76;
@@ -640,7 +646,7 @@
       scene.render();
       // Match the displayed camera every rendered frame, including a stationary
       // orbit. Map arrows follow the view; the avatar's facing is separate.
-      hooks.navigation?.({x:player.position.x,y:player.position.y-.9,z:player.position.z,facing:avatar.rotation.y,yaw,
+      hooks.navigation?.({x:player.position.x,y:player.position.y-b(.9),z:player.position.z,facing:avatar.rotation.y,yaw,
         destination:destinationProjection()});
       if(stargazing)hooks.skyFrame({phase:skyMotion.phase,reveal:skyReveal,points:skyRenderer.project()});
       if(dt>0&&dt<1){samples.push(dt*1000);if(samples.length>600)samples.shift();}
@@ -677,7 +683,7 @@
       setSkyView(graph,view,viewport){skyRenderer.sync(graph,view,viewport);},setWeather(patch){target={...target,...patch};},
       setReduced(value){reduced=value;},setSensitivity(value){sensitivity=value;},
       setQuality(value){quality=value;resize();},metrics,
-      snapshot(){return {position:player.position.asArray(),grounded,sprinting,
+      snapshot(){return {characterScale:S,position:player.position.asArray(),grounded,sprinting,
         stamina:{value:stamina.value,max:staminaBudget,exhausted:stamina.exhausted},
         sprint:{locked:sprint.locked,held:sprint.held,speed:sprint.speed},player:playerProjection(),
         motion:{velocity:velocity.asArray(),facing,renderPosition:renderPosition.asArray()},flight:flightStatus(),gliderVisible:glider.isEnabled(),effects:{rain:rainMesh.isEnabled(),snow:snowMesh.isEnabled(),halos:halos.some(h=>h.isEnabled())},inGrove:inGrove(),stargazing,skyPhase:skyMotion.phase,skyReveal,skyStars:skyRenderer.snapshot(),reviewCues:reviewCues.map(cue=>({...cue})),paused,inputEnabled,vertical,jumpBuffer,coyote,environment:{...environment},target:{...target},reduced,yaw,pitch,roll:0,

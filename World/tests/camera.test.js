@@ -51,9 +51,13 @@ test('upright orbit camera, drag continuity, reset and reading input',{timeout:1
         assert.ok(Math.abs(rolled.cameraUp[0])<.002);
         const other=await held('KeyZ');assert.equal(other.roll,0,'Z does not roll the camera');
         const raised=await held('KeyF');assert.ok(raised.pitch<other.pitch-.3,'F pitches the other way');
-        const beforeReset=await snapshot();
-        await page.evaluate(()=>document.getElementById('world').dispatchEvent(new KeyboardEvent('keydown',{code:'Home',key:'Home',bubbles:true})));
-        const upright=await snapshot();
+        // Compare inside the same event turn: a separate CDP round trip allows
+        // collision settling (including floating-point noise) between samples.
+        const {beforeReset,upright}=await page.evaluate(()=>{
+          const beforeReset=WorldDemo.snapshot().world;
+          document.getElementById('world').dispatchEvent(new KeyboardEvent('keydown',{code:'Home',key:'Home',bubbles:true}));
+          return {beforeReset,upright:WorldDemo.snapshot().world};
+        });
         assert.deepEqual([upright.yaw,upright.pitch,upright.roll],[0,.31,0]);
         assert.equal(upright.position[0],beforeReset.position[0]);assert.equal(upright.position[2],beforeReset.position[2]);
       } finally {await reset();}

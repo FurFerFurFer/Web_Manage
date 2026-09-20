@@ -98,12 +98,22 @@ readable and editable without the scene.
   from 3.85 on 2026-09-13 at the user's request for a faster walk; the run has been 12 in
   `flight-core.js` since it was split out, though this file previously described it as 6.6 —
   the figure was stale and is corrected here rather than the code being changed.
-  Other controller values remain unchanged.
+  Ground acceleration, braking, turning, dash/hold behavior and stamina timing are unchanged.
   The avatar and following camera interpolate between fixed simulation positions.
   Collision and the four-jump-height gate use the actual simulation body.
 - The fixed botanical traveler uses a **local procedural rebuild on the existing rig**.
-  Thigh/shin lengths of **0.49 / 0.46** units, overlapping torso volumes and shin-mounted
-  boot cuffs form the articulated body; the collision body is unchanged.
+  The character, notebook, glider and scene use a uniform **1.30× scale**. Model-local
+  thigh/shin lengths stay **0.49 / 0.46**; their rendered lengths are **0.637 / 0.598**
+  world units, for a **1.235-unit leg**. Overlapping torso volumes and shin-mounted
+  boot cuffs form the same articulated body. The collision ellipsoid, wall/ground probes,
+  stair heights, bridge widths and island spacing share the scale.
+  With the user's **Option A**, jump impulse is **8.06**, gravity **23.4**, bounded step-up
+  **0.312**, and camera distance **11.44** (zoom **3.9–16.9**). Relative jump height and
+  vertical airtime remain proportional. Ground speeds stay **5.2 / 12 / 16.2**, so
+  enlarged routes take 30% longer and horizontal jumps span less of an enlarged gap.
+  Framing remains similar because both body and camera distance grew; the intended
+  movement difference is reduced step length relative to the legs. Pose coordinates
+  remain local to the model; contacts and exported ankle heights use world units.
   Four independent motion sets own heel recovery, support timing, pelvis weight transfer,
   torso lean/counter-rotation and arm phrasing. At steady observed speeds 5.2 / 8 / 12 /
   16.2, their full left/right cycles are **1.70 / 1.88 / 2.05 / 2.20 Hz**. Jog is a
@@ -140,8 +150,9 @@ readable and editable without the scene.
   walking reference `2026-09-15 21-31-32.webm`; exact timing/force parity is not established.
   This is coordinated presentation, not animation-driven collider motion. Terrain-adaptive feet/hands,
   notebook clearance in every pose, Aether appearance fidelity, naturalness and exact
-  reference parity remain unproven. There is no reference notebook handling or player
-  gliding in the inspected Genshin footage. No purchase, download, installation or new
+  reference parity remain unproven. Notebook handling has no supplied reference.
+  Later footage supplies gliding, climbing/vault, free fall and light landing poses;
+  those new motion builds are outside this scale checkpoint. No purchase, download, installation or new
   dependency was used. See the [comparison](MOVEMENT-DEMO-COMPARISON.md) and
   [verification record](docs/VERIFICATION-LOG.md).
 
@@ -162,7 +173,10 @@ readable and editable without the scene.
   Launch apex deployment still works while a companion owns input when clearance permits it.
   WASD steers at 8 world units/second with a 2.4 units/second maximum gliding descent.
   Cloudrest and Windward Isle have real collision surfaces and checkpoint recovery.
-  These are reversible demo values.
+  **Current limitation:** launch/glide/climb/detach retain their earlier speeds pending
+  the separate traversal-scale decision. With the higher gravity and enlarged route,
+  the unchanged launcher cannot complete the Cloudrest route. Ground playtesting is
+  available; the island route needs that outstanding choice.
   [The movement comparison](MOVEMENT-DEMO-COMPARISON.md) records the reference target and
   the limits of what has actually been measured.
 - **Dash, locked running and sprint stamina, reviewed on 2026-09-13.** Shift is
@@ -328,6 +342,24 @@ Security Policy disallows outbound connections, remote scripts and form submissi
 The browser test seeds a synthetic sentinel in the real storage of a temporary profile,
 traps every native storage operation, then verifies no operation occurred and the
 sentinel remained byte-identical. No personal browser profile is used for that test.
+
+## Scale checkpoint playtest
+
+Reload the local demo, enter the garden, and press **Home** to reset camera framing.
+The scale changes step-to-body proportions; it does not replace the rigid character model.
+
+1. **W, then W + hold Shift for one second:** watch the foot plant, hips pass over it,
+   heel lift and push-off in the base gait and locked run. Look for forward overreach,
+   a seated silhouette, sliding toes or a body that drops as the foot releases.
+2. **Tap Shift while moving, then release W and restart:** compare the dash and the
+   jog crossed during acceleration/braking. Judge reach and continuity; cadence is fixed.
+3. **While moving, change W→D and W→S:** check 90°/180° turns for foot crossing or pops.
+4. **Run + Space, then walk up the terrace steps:** judge relative jump height, landing
+   and clearance at the enlarged body size. Wheel zoom and Home should keep familiar framing.
+5. **Face a gateway pillar, Space, W, then Space to detach:** inspect wall clearance
+   and notebook carry/stow clipping. The climb choreography itself is unchanged.
+
+Automated geometry/contact checks cannot establish naturalness or reference parity.
 
 ## Verification
 

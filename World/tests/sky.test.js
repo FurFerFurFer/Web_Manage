@@ -22,8 +22,8 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       down('KeyW');down('KeyA');down('ShiftLeft');
       function step(){
         const state=WorldDemo.snapshot().world;
-        if(phase===0&&state.position[0]<-11){up('KeyA');phase=1;}
-        if(state.position[2]>13||++frames>500){up('KeyW');up('KeyA');up('ShiftLeft');resolve(state);return;}
+        if(phase===0&&state.position[0]<-11*1.30){up('KeyA');phase=1;}
+        if(state.position[2]>13*1.30||++frames>500){up('KeyW');up('KeyA');up('ShiftLeft');resolve(state);return;}
         requestAnimationFrame(step);
       }requestAnimationFrame(step);
     }));

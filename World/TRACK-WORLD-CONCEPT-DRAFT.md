@@ -297,11 +297,26 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
 
      **This ruling collides with the frozen controller values, and that collision is the
      user's to settle.** Jump impulse 6.2, gravity 18, the bounded step-up and the camera
-     distance are world-unit quantities. Left alone while the body grows 1.4x, the jump
-     becomes 1.4x shorter *relative to the body* and the camera sits 1.4x closer to it, so
+     distance are world-unit quantities. Left alone while the body grows by k, the jump
+     becomes k times shorter *relative to the body* and the camera sits k times closer to it, so
      the accepted feel changes even though no controller number was edited. Scaling them
      together preserves the feel but edits the frozen list. Present both with a
      recommendation and **stop**; do not resolve it quietly in either direction.
+
+     **Option A selected by the user on September 20:** at **k=1.30**, scale jump
+     impulse/gravity to **8.06 / 23.4**, bounded step-up to **0.312**, and camera distance
+     to **11.44** with zoom bounds **3.9–16.9**. The user also requires a concrete
+     playtest checklist for every change. This closes the jump/gravity/step-up/camera
+     question; do not ask it again. Vertical airtime and jump height relative to the
+     body stay proportional. Ground speeds remain fixed, so route crossing takes 30%
+     longer and horizontal jump reach covers less of an enlarged gap.
+
+     **Additional traversal choice pending:** scaling launch, glide and climbing speeds
+     and detach impulse was omitted from the earlier question. With the approved higher
+     gravity, unchanged Windseed launch cannot sustain the enlarged Cloudrest route.
+     Recommend scaling these remaining traversal quantities by 1.30; preserve input,
+     response and stamina timing. A separate structured question is awaiting the user's
+     answer. This does not reopen Option A or authorize a new motion set.
 
   4. **Climbing, falling and gliding stay UNBUILT until the user supplies footage.** The
      user has undertaken to record Aether climbing, falling, landing and gliding in Genshin

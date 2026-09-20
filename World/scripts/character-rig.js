@@ -4,6 +4,7 @@
   // the simulation owns position/facing, collision, Space priority and glide eligibility.
   window.createWorldCharacter=function(scene,root,{cloth,skin,boots,gold,book,shadows}){
     const B=window.BABYLON,clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+    root.scaling.setAll(window.WorldFlight.tuning.characterScale);
     const joints={},meshes=[],D=window.WorldCharacterAnimation.dimensions;
     const vec=(x=0,y=0,z=0)=>new B.Vector3(x,y,z);
     function pivot(name,parent,position){

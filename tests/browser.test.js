@@ -552,6 +552,274 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* ── "Coming up" ────────────────────────────────────────────────────────
+     Day notes and deadlines get no category dot — they are not in TC.CATS —
+     and the ownership edge bar is drawn for THIS calendar's items alone, so
+     everything else on the calendar was unreachable without clicking the day
+     it sits on. These cases cover the list that fixes that. Days are seeded
+     with dayFromToday so they cannot rot, and the block is added through the
+     real add menu so the test cannot drift from the shape the page writes. */
+
+  /* The db the cases below are built from: four items ahead, spanning three
+     origins and two months. It holds NO past item on purpose. The cutoff is
+     tested by its own case against its own fixture, so that reversing the
+     cutoff does not also move every count asserted here — which would wrap this
+     file's other baselines inside that one instead of leaving them disjoint. */
+  const upDb = () => seedDb({
+    docPages: [F.docPage('p-1', { title: 'Physics 101' }), F.docPage('p-other', { title: 'Lab notes' })],
+    calendarNotes: [
+      F.calNote('n-own', dayFromToday(2), { title: 'Mine', time: '09:00', docPageId: 'p-1' }),
+      F.calNote('n-sched', dayFromToday(3), { title: 'From the Schedule' })
+    ],
+    deadlines: [
+      F.deadline('d-own', dayFromToday(5), { title: 'My deadline', docPageId: 'p-1',
+        cautionDates: [dayFromToday(3), dayFromToday(4)] }),
+      F.deadline('d-other', dayFromToday(40), { title: 'Theirs', docPageId: 'p-other' })
+    ]
+  });
+
+  const upRows = page => page.evaluate(function () {
+    return Array.prototype.map.call(document.querySelectorAll('.doc-cal-up-row'), function (r) {
+      return {
+        date: r.getAttribute('data-up-date'), kind: r.getAttribute('data-up-kind'),
+        own: r.classList.contains('own'), done: r.classList.contains('done'),
+        text: r.textContent.replace(/\s+/g, ' ').trim(),
+        tip: (r.querySelector('.doc-cal-up-main') || {}).title
+      };
+    });
+  });
+
+  const openWithUpList = async db => {
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await page.waitFor(function () { return !!document.querySelector('[data-doc-cal-upcoming]'); },
+      { message: 'the Coming up list' });
+    return page;
+  };
+
+  await t.test('DOCUMENTATIONS: the upcoming list shows notes and deadlines with no day clicked', async () => {
+    const page = await openWithUpList(upDb());
+
+    // The claim this case is named for, asserted FIRST: no cell was clicked.
+    const open_ = await page.evaluate(function () {
+      return !!document.querySelector('.doc-cal .cal-detail');
+    });
+    assert.equal(open_, false, 'no day panel is open');
+
+    const rows = await upRows(page);
+    assert.equal(rows.length, 4, 'four items ahead are listed with nothing clicked');
+    const row = s => rows.find(r => r.text.indexOf(s) >= 0);
+    assert.ok(row('Mine') && row('From the Schedule') && row('Theirs'),
+      'all three origins reach the list, not just the ones this page owns');
+    assert.equal(row('Mine').own, true, 'this page\'s own note is marked');
+    assert.equal(row('From the Schedule').own, false, 'a Schedule-authored item is not');
+    assert.equal(row('Theirs').own, false, 'and neither is another page\'s');
+    assert.ok(/📄 Lab notes/.test(row('Theirs').text), 'the other page is named by its origin chip');
+    assert.ok(/2 caution days/.test(row('My deadline').text),
+      'a deadline carries its caution COUNT rather than one row per caution day');
+    assert.equal(rows.filter(r => r.kind === 'deadline' && /My deadline/.test(r.text)).length, 1,
+      'and is listed exactly once, on its due day');
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: the upcoming list omits a past item and names the cutoff', async () => {
+    // Its own fixture, holding the past item the shared one deliberately omits.
+    const page = await openWithUpList(seedDb({
+      docPages: [F.docPage('p-1', { title: 'Physics 101' })],
+      calendarNotes: [
+        F.calNote('n-past', dayFromToday(-3), { title: 'Already gone', docPageId: 'p-1' }),
+        F.calNote('n-ahead', dayFromToday(3), { title: 'Still to come', docPageId: 'p-1' })
+      ],
+      deadlines: [F.deadline('d-past', dayFromToday(-1), { title: 'Long gone', docPageId: 'p-1' })]
+    }));
+    const rows = await upRows(page);
+    assert.equal(rows.length, 1, 'only the item ahead is listed');
+    assert.ok(!rows.some(r => /Already gone|Long gone/.test(r.text)),
+      'a note and a deadline dated before today are both absent');
+    assert.ok(!rows.some(r => r.date < dayFromToday(0)), 'nothing before today survives the cut');
+    await page.close();
+
+    // and with nothing ahead at all, the empty state says WHERE the list starts
+    const bare = await openWithUpList(seedDb({
+      docPages: [F.docPage('p-1')],
+      calendarNotes: [F.calNote('n-past', dayFromToday(-1), { title: 'Yesterday', docPageId: 'p-1' })],
+      deadlines: []
+    }));
+    const empty = await bare.evaluate(function () {
+      return {
+        head: (document.querySelector('.doc-cal-up-head') || {}).textContent,
+        msg: (document.querySelector('.doc-cal-up-empty') || {}).textContent
+      };
+    });
+    assert.equal(empty.head, 'Coming up (0)');
+    assert.ok(empty.msg.indexOf(dayFromToday(0)) >= 0,
+      'the empty message names today, so an item filed yesterday does not read as lost');
+    await bare.close();
+  });
+
+  await t.test('DOCUMENTATIONS: clicking an upcoming row opens that day, month included', async () => {
+    const page = await openWithUpList(upDb());
+    const before = await page.evaluate(function () {
+      return (document.querySelector('.doc-cal .cal-month-label') || {}).textContent;
+    });
+
+    await page.evaluate(function (ds) {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal-up-row'), function (r) {
+        return r.getAttribute('data-up-date') === ds;
+      }).querySelector('.doc-cal-up-main').click();
+    }, dayFromToday(40));
+    await page.waitFor(function () { return !!document.querySelector('.doc-cal .cal-detail'); },
+      { message: 'the day panel after clicking an upcoming row' });
+
+    const after = await page.evaluate(function () {
+      return {
+        month: (document.querySelector('.doc-cal .cal-month-label') || {}).textContent,
+        sel: (document.querySelector('.doc-cal .cal-cell.selected .cal-day-num') || {}).textContent,
+        still: document.querySelectorAll('.doc-cal-up-row').length
+      };
+    });
+    // A row 40 days out is in another month, so setSelDs alone would select a
+    // day the grid is not showing. goToDay moves both.
+    assert.notEqual(after.month, before, 'the grid moved to the row\'s month');
+    assert.equal(after.sel, String(Number(dayFromToday(40).slice(8))), 'and selected its day');
+    assert.equal(after.still, 4, 'the list itself is unmoved by the jump');
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: the upcoming list honours the category filter', async () => {
+    const page = await openWithUpList(upDb());
+    assert.equal((await upRows(page)).length, 4, 'four before filtering');
+
+    // Anything carrying a docPageId answers to the single 'doc' key, not to
+    // 'daynote' / 'deadline' — TC.originKey's rule. Switching Documentation off
+    // must empty the list of exactly what it empties the grid of.
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal-btn'),
+        function (b) { return /Filter/.test(b.textContent); }).click();
+    });
+    await page.waitFor(function () { return document.querySelectorAll('.doc-cal-filter').length > 0; },
+      { message: 'the filter chips' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal-filter'),
+        function (b) { return b.textContent.trim() === 'Documentation'; }).click();
+    });
+    // Wait for the WRITE to land, never for the right answer to appear: a list
+    // that ignored the filter would otherwise time out here instead of
+    // reporting the count it actually rendered.
+    await page.waitFor(function () {
+      return /"hidden":\["doc"\]/.test(localStorage.getItem('track_db') || '');
+    }, { message: 'the Documentation filter to reach track_db' });
+
+    const rows = await upRows(page);
+    assert.equal(rows.length, 1, 'only the Schedule-authored item is left');
+    assert.ok(/From the Schedule/.test(rows[0].text), 'and it is the one with no docPageId');
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: a ticked deadline stays in the upcoming list, struck', async () => {
+    const page = await openWithUpList(seedDb({
+      docPages: [F.docPage('p-1')],
+      calendarNotes: [],
+      deadlines: [F.deadline('d-done', dayFromToday(4),
+        { title: 'Handled', done: true, docPageId: 'p-1',
+          cautionDates: [dayFromToday(2), dayFromToday(3)] })]
+    }));
+    const rows = await upRows(page);
+    // "Show both, always": the tick suppresses the caution marks, it has never
+    // removed the deadline, and this surface may not be the one that does.
+    assert.equal(rows.length, 1, 'a ticked deadline is still coming up');
+    assert.equal(rows[0].done, true, 'and is drawn as done');
+    assert.ok(/✓/.test(rows[0].text), 'with the tick glyph rather than the alarm');
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: the upcoming list caps at eight rows and expands in place', async () => {
+    // Ten ahead, so the cap has something to hide. The cap is a COUNT and not a
+    // date horizon: any number of days would have been arbitrary, and a count
+    // limits the block's height without inventing one.
+    const notes = [];
+    for (let i = 1; i <= 10; i++) {
+      notes.push(F.calNote('n-' + i, dayFromToday(i), { title: 'Item ' + i, docPageId: 'p-1' }));
+    }
+    const page = await openWithUpList(seedDb({
+      docPages: [F.docPage('p-1')], calendarNotes: notes, deadlines: []
+    }));
+
+    const before = await page.evaluate(function () {
+      return {
+        rows: document.querySelectorAll('.doc-cal-up-row').length,
+        head: (document.querySelector('.doc-cal-up-head') || {}).textContent,
+        more: (document.querySelector('.doc-cal-up-more') || {}).textContent
+      };
+    });
+    assert.equal(before.rows, 8, 'eight rows show');
+    assert.equal(before.head, 'Coming up (10)', 'but the head counts every item, not the shown ones');
+    assert.equal(before.more, '+ 2 more', 'and the button names how many are hidden');
+
+    await page.evaluate(function () { document.querySelector('.doc-cal-up-more').click(); });
+    await page.waitFor(function () {
+      return document.querySelectorAll('.doc-cal-up-row').length === 10;
+    }, { message: 'the list to expand' });
+    const after = await page.evaluate(function () {
+      return {
+        rows: document.querySelectorAll('.doc-cal-up-row').length,
+        more: document.querySelectorAll('.doc-cal-up-more').length,
+        stored: /doc-cal-up|upAll/.test(localStorage.getItem('track_db') || '')
+      };
+    });
+    assert.equal(after.rows, 10, 'all ten show once expanded');
+    assert.equal(after.more, 0, 'and the button is gone');
+    // Expansion is a view preference, not content: it must reach no slot key.
+    assert.equal(after.stored, false, 'expanding stores nothing in track_db');
+    await page.close();
+  });
+
+  await t.test('GUARD: the upcoming list is not a .cal-doc-row', async () => {
+    const page = await openWithUpList(upDb());
+    // Seven existing Documentations cases select .cal-doc-row / .cal-cell
+    // broadly across .doc-cal and take the first match or a raw count, and four
+    // Progress cases count "!" marks by a "Due " tooltip prefix. This asserts
+    // the new rows cannot be mistaken for any of them. It passes on both sides
+    // of a doctored baseline BY DESIGN — its job is to fail when someone later
+    // "unifies" the two row classes.
+    const leak = await page.evaluate(function () {
+      return {
+        rows: document.querySelectorAll('.doc-cal .cal-doc-row').length,
+        acts: document.querySelectorAll('.doc-cal .cal-doc-row-acts').length,
+        cells: document.querySelectorAll('.doc-cal-up .cal-cell, .doc-cal-up .cal-grid').length,
+        due: Array.prototype.filter.call(document.querySelectorAll('.doc-cal-up [title]'),
+          function (b) { return (b.getAttribute('title') || '').indexOf('Due ') === 0; }).length
+      };
+    });
+    assert.equal(leak.rows, 0, 'with no day selected the day-panel row class appears nowhere');
+    assert.equal(leak.acts, 0, 'and the list offers no edit controls to be counted');
+    assert.equal(leak.cells, 0, 'nor any month-cell class');
+    assert.equal(leak.due, 0, 'and no tooltip begins "Due "');
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: the upcoming list writes nothing', async () => {
+    const page = await openWithUpList(upDb());
+    // Wait for the block's OWN docPages write to land before the baseline, or
+    // that pending write settles mid-case and reads as a change the click made.
+    await page.waitFor(function () {
+      return /"type":"calendar"/.test(localStorage.getItem('track_db') || '');
+    }, { message: 'the calendar block to reach track_db' });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    await page.evaluate(function (ds) {
+      Array.prototype.find.call(document.querySelectorAll('.doc-cal-up-row'), function (r) {
+        return r.getAttribute('data-up-date') === ds;
+      }).querySelector('.doc-cal-up-main').click();
+    }, dayFromToday(40));
+    await page.waitFor(function () { return !!document.querySelector('.doc-cal .cal-detail'); },
+      { message: 'the day panel' });
+    const after = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    assert.equal(after, before, 'reading and jumping are not edits');
+    await page.close();
+  });
+
   await t.test('a day note with a time moves to the hour grid, and clearing it moves it back', async () => {
     const db = seedDb({ calendarNotes: [], deadlines: [], docPages: [F.docPage('p-1')] });
     const page = await open('documentations.html', { db });

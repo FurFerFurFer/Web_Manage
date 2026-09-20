@@ -1006,6 +1006,32 @@ The feature works and is documented in README. These are the edges it does not c
 - **The starred rollup cannot be expanded.** A starred parent shows one row; there is no
   affordance to see which descendants it stands for without scrolling to the tree below.
 
+### "Coming up": what it deliberately does not cover
+
+The list at the foot of a calendar block works and is documented in README. These are the
+edges it does not reach, each a choice rather than an oversight:
+
+- **It looks forward only.** An item dated before today is absent, and the empty message
+  names the cutoff so that reads as a boundary rather than a loss. Finding a past note still
+  means clicking its day, or using the Progress day-notes-and-deadlines browser, which is the
+  surface that already offers search and an `All / Notes / Deadlines` split. A "show past"
+  toggle here would need a second cutoff and somewhere to remember it, and the block
+  currently stores nothing about the list at all.
+- **Only day notes and deadlines.** Milestones, goal tasks, supporting actions, MM/SIR
+  sessions, MG focus and a pasted timetable are not listed, even though the filter chips can
+  hide them from the grid. Those all *do* mark the grid already — by dot, bar or backdrop —
+  so they were never the unreachable ones. Adding them would need a sweep of
+  `buildDaySchedule` per day over an open-ended range, which is a different cost from the two
+  arrays this reads directly.
+- **The cap is a count, not a horizon.** Eight rows, then `+ N more`. A workspace with a
+  deadline three years out lists it once everything nearer is expanded. A date horizon was
+  considered and rejected: any number of days would have been arbitrary, and a count is
+  self-limiting without inventing one.
+- **Expansion is not remembered.** `+ N more` resets on re-mount, deliberately — how far one
+  reader scrolled a list is not something the document should store. If it ever needs to
+  persist, it is a browser key like `track_home_cal_hidden`, not a block key, because it is a
+  view preference rather than content.
+
 ### `buildToLearnTree` has no cycle guard
 
 Found while building Quest, and **not** fixed there — it is outside that scope, and

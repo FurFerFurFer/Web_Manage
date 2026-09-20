@@ -5,7 +5,7 @@
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
   'use strict';
   // Presentation only: choreography observes resolved travel. No input, collision,
-  // root motion or controller writes. Angles in radians, distances in scene units.
+  // root motion or controller writes. Angles in radians; poses use model units, contact points use world units.
   const TAU=Math.PI*2,clamp=(n,a=0,b=1)=>Math.max(a,Math.min(b,n)),mix=(a,b,t)=>a+(b-a)*t;
   const ease=t=>{t=clamp(t);return t*t*(3-2*t);},wrap=t=>((t%1)+1)%1;
   const sides=['left','right'],sign=side=>side==='left'?-1:1;
@@ -56,9 +56,9 @@
       [side+'WristX']:0,[side+'WristZ']:0,[side+'FootPitch']:0,[side+'FootYaw']:0});
     p.rightElbow=-.48;return p;
   }
-  const world=(s,x,z)=>[s.position[0]+Math.cos(s.facing)*x+Math.sin(s.facing)*z,
+  const toWorld=(s,x,z)=>[s.position[0]+Math.cos(s.facing)*x+Math.sin(s.facing)*z,
     s.position[2]-Math.sin(s.facing)*x+Math.cos(s.facing)*z];
-  const local=(s,point)=>{const x=point[0]-s.position[0],z=point[1]-s.position[2];
+  const toLocal=(s,point)=>{const x=point[0]-s.position[0],z=point[1]-s.position[2];
     return [Math.cos(s.facing)*x-Math.sin(s.facing)*z,Math.sin(s.facing)*x+Math.cos(s.facing)*z];};
   function soleOffset(pitch,toe){
     const d=dimensions,a=pitch+toe;
@@ -78,6 +78,9 @@
     p[side+'AnkleZ']=-roll-p.pelvisRoll;p[side+'Toe']=target.toe||0;
   }
   function create(tuning){
+    const scale=tuning.characterScale||1;
+    const world=(s,x,z)=>toWorld(s,x*scale,z*scale);
+    const local=(s,p)=>toLocal(s,p).map(n=>n/scale);
     let state;
     function reset(motion){
       const sample=motion.sample;
@@ -110,12 +113,12 @@
       const rate=property('rate'),duty=plan?.duty??property('duty');
       // Do not jump body height when the next foot replaces an old stride plan
       // during acceleration. The blend supplies one shared landing height.
-      const reach=Object.entries(state.weights).reduce((v,[key,w])=>v+w*sets[key].speed/sets[key].rate*sets[key].duty*.5,0);
+      const reach=Object.entries(state.weights).reduce((v,[key,w])=>v+w*sets[key].speed/scale/sets[key].rate*sets[key].duty*.5,0);
       const knee=property('landingKnee'),{thigh,shin}=dimensions;
       const length2=thigh*thigh+shin*shin+2*thigh*shin*Math.cos(knee);
       const land=dimensions.ankleHeight+.01+Math.sqrt(Math.max(.3,length2-reach*reach));
       const stance=duty/rate,flight=(.5-duty)/rate,push=property('push');
-      const gravity=tuning.gravity,out=gravity*flight/2-push/flight,incoming=out-gravity*flight;
+      const gravity=tuning.gravity/scale,out=gravity*flight/2-push/flight,incoming=out-gravity*flight;
       if(c>=duty){const t=(c-duty)/rate;return land+push+out*t-gravity*t*t/2;}
       const s=clamp(c/duty),s2=s*s,s3=s2*s;
       return (2*s3-3*s2+1)*land+(s3-2*s2+s)*stance*incoming+
@@ -133,7 +136,7 @@
             // Freeze geometry for one stride. Changing sets never changes a foot's
             // support boundary half-way through its planted phase.
             f.plan={duty:property('duty'),rate:Math.max(.55,state.cadence),weights:{...state.weights}};
-            f.plan.reach=clamp(state.speed/f.plan.rate*f.plan.duty*.5,.02,.54);
+            f.plan.reach=clamp(state.speed/scale/f.plan.rate*f.plan.duty*.5,.02,.54);
             f.earlyLift=false;
           }
           const plan=f.plan,at=local(sample,f.point),yaw=Math.atan2(Math.sin(sample.facing-f.plantFacing),Math.cos(sample.facing-f.plantFacing));
@@ -144,20 +147,20 @@
               // Strike at the substep's actual phase. The last swing ends here with
               // a backwards local tangent, so its world velocity reaches zero.
               f.plantFacing=sample.facing;
-              f.groundPoint=world(sample,sign(side)*dimensions.hipWidth,plan.reach-state.speed*c/plan.rate+soleOffset(0,0).z);
+              f.groundPoint=world(sample,sign(side)*dimensions.hipWidth,plan.reach-state.speed/scale*c/plan.rate+soleOffset(0,0).z);
             }
             // The forefoot stays on the ground while the heel rises. Holding the
             // ankle fixed during toe-off made the foot rotate through the floor.
             f.pitch=property('toeOff')*ease((c/plan.duty-.25)/.75);f.toe=-f.pitch;
             const sole=soleOffset(f.pitch,f.toe);
-            f.point=[f.groundPoint[0]-Math.sin(f.plantFacing)*sole.z,f.groundPoint[1]-Math.cos(f.plantFacing)*sole.z];
+            f.point=[f.groundPoint[0]-Math.sin(f.plantFacing)*sole.z*scale,f.groundPoint[1]-Math.cos(f.plantFacing)*sole.z*scale];
             f.height=-sole.y;f.yaw=Math.atan2(Math.sin(sample.facing-f.plantFacing),Math.cos(sample.facing-f.plantFacing));
           }else{
             if(f.support||f.swingStart===undefined){
               f.swingStart=c;f.swingX=at[0];f.swingZ=at[1];f.swingHeight=f.height-h;f.swingPitch=f.pitch;f.swingToe=f.toe;
               // Capture lift-off velocity with the current clock. A live speed
               // divided by an old slow stride rate explodes during a restart.
-              f.swingTangent=-state.speed*(1-c)/Math.max(.55,state.cadence);
+              f.swingTangent=-state.speed/scale*(1-c)/Math.max(.55,state.cadence);
             }
             const q=clamp((c-f.swingStart)/Math.max(.04,1-f.swingStart));
             const tangent=f.swingTangent;
@@ -205,7 +208,7 @@
       state.turn=mix(state.turn,clamp(motion.turnRate,-9,9),1-Math.exp(-12*dt));
       const yawDelta=Math.atan2(Math.sin(sample.facing-state.lastFacing),Math.cos(sample.facing-state.lastFacing));
       state.yawLag=clamp((state.yawLag-yawDelta)*Math.exp(-14*dt),-.30,.30);state.lastFacing=sample.facing;
-      const air=!sample.grounded&&(motion.takeoffAge!==null||motion.airTime>.18||(motion.airTime>.10&&sample.vertical<-2));
+      const air=!sample.grounded&&(motion.takeoffAge!==null||motion.airTime>.18||(motion.airTime>.10&&sample.vertical/scale<-2));
       const domain=sample.paused?'ground':sample.climbing?'climb':sample.gliding?'glide':sample.detaching?'detach':air?'air':'ground';
       const moving=domain==='ground'&&!sample.paused&&sample.charge===0&&(state.speed>.22||Math.abs(state.turn)>.5);
       const changed=domain!==state.domain,transition=changed||moving!==state.moving;
@@ -228,8 +231,8 @@
       const p=neutral(),w=state.weight,turn=state.turn;
       if(domain==='ground'){
         const targets=groundFeet(sample,dt,moving);
-        const impact=motion.impactSpeed>2&&motion.landingAge!==null&&motion.landingAge<.36?
-          curve([[0,0],[.07,1],[.18,.55],[.36,0]],motion.landingAge)*clamp(motion.impactSpeed/9)*.13:0;
+        const impact=motion.impactSpeed/scale>2&&motion.landingAge!==null&&motion.landingAge<.36?
+          curve([[0,0],[.07,1],[.18,.55],[.36,0]],motion.landingAge)*clamp(motion.impactSpeed/scale/9)*.13:0;
         const brake=clamp(-state.accel/25)*(moving?1:1-ease(state.stopAge/.4));
         const entry=curve([[0,0],[.06,1],[.18,.65],[.35,0]],state.entryAge)*w;
         p.pelvisY=mix(dimensions.restPelvis,supportedBody(),w*clamp(state.speed/3))-impact-sample.charge*.21-brake*.045-entry*.025;
@@ -265,7 +268,7 @@
           leg(p,side,f);p[side+'FootPitch']=f.pitch;p[side+'FootYaw']=f.yaw||0;
         }
       }else if(domain==='climb'){
-        const delta=Math.max(0,motion.climbDistance-state.lastClimb);state.climbPhase+=delta/2.2;
+        const delta=Math.max(0,motion.climbDistance-state.lastClimb);state.climbPhase+=delta/scale/2.2;
         if(delta>1e-7){
           const velocity=motion.velocity||[0,0,0],speed=Math.max(.01,motion.climbSpeed);
           state.climbVertical=mix(state.climbVertical,clamp(velocity[1]/speed,-1,1),blend);
@@ -316,10 +319,10 @@
       for(const key of Object.keys(p))p[key]+=(state.offset[key]||0)*decay;
       state.pose=p;state.domain=domain;state.moving=moving;state.lastClimb=motion.climbDistance;
     }
-    function result(){return {pose:{...state.pose},phase:state.phase*TAU,cycles:state.cycles,
+    function result(){return {scale,pose:{...state.pose},phase:state.phase*TAU,cycles:state.cycles,
       climbPhase:state.climbPhase*TAU,domain:state.domain,gait:state.gait,weights:{...state.weights},cadence:state.cadence,
       moving:state.moving,settled:!state.moving&&state.stopAge>=.36,
-      feet:Object.fromEntries(sides.map(side=>[side,{point:[...state.feet[side].point],groundPoint:[...state.feet[side].groundPoint],from:[...state.feet[side].from],support:state.feet[side].support,height:state.feet[side].height,pitch:state.feet[side].pitch}]))};}
+      feet:Object.fromEntries(sides.map(side=>[side,{point:[...state.feet[side].point],groundPoint:[...state.feet[side].groundPoint],from:[...state.feet[side].from],support:state.feet[side].support,height:state.feet[side].height*scale,pitch:state.feet[side].pitch}]))};}
     function update(motion,dt,reduced=false){
       if(!state)return reset(motion);
       dt=Number.isFinite(dt)?clamp(dt,0,.1):0;if(!dt)return result();

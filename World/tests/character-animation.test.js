@@ -7,6 +7,7 @@ function actor(hz=120){
   return {step(speed,patch={}){z+=speed/hz;motion=Motion.advance(motion,sample({position:[0,.9,z],sprinting:speed>Flight.tuning.walkSpeed,...patch}),1/hz);pose=rig.update(motion,1/hz);return pose;},
     get pose(){return pose;},get motion(){return motion;},reset(patch){motion=Motion.reset(sample(patch));z=motion.sample.position[2];pose=rig.reset(motion);return pose;}};
 }
+const S=Flight.tuning.worldScale;
 const modes=[['walk',5.2],['jog',8],['run',12],['dash',16.2]];
 test('grounded loading and push-off give the body upward momentum before either foot releases',t=>{
   const measured=[];
@@ -26,7 +27,7 @@ test('grounded loading and push-off give the body upward momentum before either 
       }
       if(older&&[older,before,p].every(frame=>!frame.feet.left.support&&!frame.feet.right.support)){
         const acceleration=(p.pose.pelvisY-2*before.pose.pelvisY+older.pose.pelvisY)*120*120;
-        gravityError=Math.max(gravityError,Math.abs(acceleration+Flight.tuning.gravity));airChecks++;
+        gravityError=Math.max(gravityError,Math.abs(acceleration*S+Flight.tuning.gravity));airChecks++;
       }
       older=before;before=p;
     }
@@ -108,7 +109,7 @@ test('dash retains its own deliberate cadence instead of rapid limb cycling',()=
 test('every gait recovers its feet beneath the body instead of a split-leg lunge',()=>{
   for(const [name,speed] of modes){const a=actor();for(let i=0;i<240;i++)a.step(speed);
     for(let i=0;i<480;i++){const p=a.step(speed);
-      for(const f of Object.values(p.feet))assert.ok(Math.abs(f.point[1]-a.motion.sample.position[2])<.62,name+' excessive fore/aft reach');
+      for(const f of Object.values(p.feet))assert.ok(Math.abs(f.point[1]-a.motion.sample.position[2])/S<.62,name+' excessive fore/aft reach');
     }
   }
 });
@@ -152,7 +153,7 @@ test('walk-jog-run-dash and back keep phase, compact reach and continuous joints
       assert.ok(p.cycles>=previous.cycles,'crossing a set boundary cannot rewind the stride');
       for(const side of ['left','right']){
         assert.ok(Math.abs(p.pose[side+'Hip']-previous.pose[side+'Hip'])<.40,'changing set must not snap the hip');
-        assert.ok(Math.abs(p.feet[side].point[1]-a.motion.sample.position[2])<.70,'a speed transition cannot stretch the step');
+        assert.ok(Math.abs(p.feet[side].point[1]-a.motion.sample.position[2])/S<.70,'a speed transition cannot stretch the step');
       }
       previous=p;
     }
@@ -172,7 +173,7 @@ test('release finishes the recovery step and rests both feet; a blocked sprint s
   const a=actor();for(let i=0;i<120;i++)a.step(Flight.tuning.runSpeed);
   for(let i=0;i<120;i++)a.step(0,{sprinting:true});
   assert.equal(a.pose.settled,true);assert.equal(a.pose.moving,false);
-  for(const foot of Object.values(a.pose.feet)){assert.equal(foot.support,true);assert.equal(foot.height,.105);}
+  for(const foot of Object.values(a.pose.feet)){assert.equal(foot.support,true);assert.equal(foot.height,.105*S);}
   const cycles=a.pose.cycles;for(let i=0;i<60;i++)a.step(0,{sprinting:true});assert.equal(a.pose.cycles,cycles);
 });
 test('takeoff, apex and reach for landing have different poses without a rest-pose reset',()=>{

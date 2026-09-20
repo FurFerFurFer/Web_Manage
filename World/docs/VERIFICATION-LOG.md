@@ -699,3 +699,209 @@ This correction does not show that the local approach is exhausted. No paid cand
 was found necessary or parked as a later purchase decision, and no user hard gate stopped
 the increment. Review side-on walk/run posture first, then all four set transitions,
 90°/180° turns, stop/restart, running jump/landing, climb/detach and notebook clipping.
+
+## 2026-09-19 — evidence closure for the September 15–17 foot-ground push-off increment
+
+This entry records the previously shipped push-off code, before any character-scale
+change. The starting tree was clean at `5e247de`. No runtime or test source was changed
+for this verification. The current files already contain animation **v5**, rig **v4**,
+the push-off cases and the README description.
+
+### Reproduced failing-first evidence
+
+Ran `node /tmp/track-world-push-before-20260915/World/tests/character-animation.test.js`:
+**13 passed, 1 failed**. The scratch runtime and index still match every SHA-256 in
+`/tmp/track-world-push-before-20260915/baseline-hashes.json`; the test file is identical
+to the current test. This is the preserved pre-change code, not a doctored repository copy.
+The load-bearing failure is **body velocity at foot release**, in
+`grounded loading and push-off give the body upward momentum before either foot releases`:
+the base tier is falling at **−2.466811 u/s** instead of rising. Its diagnostic also
+measures downward release in jog/run/dash, and zero load-to-release rise in all four.
+
+Ran `node World/tests/character-animation.test.js`: **14 passed**. Its new case checks
+each set's body rise, positive release velocity, heel rise, supporting-knee extension
+and airborne gravity arc. Existing cadence/contact/continuity and transition cases still
+cover all four historical set keys. These are kinematic constraints, not a naturalness test.
+
+| Set | Pre-change minimum release velocity (u/s) | Current minimum release velocity (u/s) | Current load-to-release rise (u) | Current heel rise (u) |
+| --- | ---: | ---: | ---: | ---: |
+| walk (base) | −2.466811 | 0.813637 | 0.089024 | 0.053382 |
+| jog | −3.579092 | 1.124094 | 0.081173 | 0.053553 |
+| run | −4.936562 | 1.225173 | 0.080321 | 0.053119 |
+| dash | −6.020634 | 1.225312 | 0.081082 | 0.052229 |
+
+The implementation ties pelvis loading/push/flight to support, holds the forefoot while
+the heel rises, and prevents a recovering swing leg from lowering the pelvis. The rig
+counters parent rotations to maintain the requested foot orientation. Animation observes
+the controller; it supplies no movement impulse to it.
+
+### Sequential browser rerun and verdict
+
+Ran the following separately, waiting for each process to exit before starting the next,
+using **Node v22.23.2 / Google Chrome 152.0.7977.75** and the existing isolated CDP harness:
+
+| Command | Passed | Failed | TAP duration |
+| --- | ---: | ---: | ---: |
+| `node World/tests/sky.test.js` | 8 | 0 | 28.83 s |
+| `node World/tests/map.test.js` | 5 | 0 | 73.77 s |
+| `node World/tests/flight.test.js` | 12 | 0 | 106.13 s |
+
+The previously interrupted map selection and flight climb/detach cases both pass.
+**No product regression was reproduced. The historical CDP closure's cause remains
+unproven.** In particular, the preserved `/tmp/track-world-push-browser-suites.py`
+uses blocking `subprocess.run` inside a loop, and its result JSON contains the same
+sky/map/flight failures. That last recorded attempt was sequential; its existence
+contradicts treating parallel execution as an established cause. The old logs contain
+`CDP connection closed`, without a browser crash reason. The current passing rerun
+closes the verification debt, but does not retrospectively diagnose those disconnects.
+
+The flight suite also measures the actual Babylon hierarchy, independently of the
+pure solver. In the nominal cadence fixture, the visible toe sole remains on its
+planted ground point while the ankle rises:
+
+| Set | Sole-contact samples | Maximum sole error (u) | Complete pushes | Minimum rendered release velocity (u/s) | Minimum rendered rise (u) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| walk (base) | 496 | 0.000003887 | 13 | 0.813639 | 0.089024 |
+| jog | 346 | 0.000007197 | 15 | 1.120691 | 0.081173 |
+| run | 225 | 0.000008350 | 16 | 1.225176 | 0.080321 |
+| dash | 162 | 0.000010951 | 17 | 1.225319 | 0.081082 |
+
+Logs: `/tmp/track-world-debt-20260919-{sky,map,flight}.log` and
+`/tmp/track-world-debt-20260919-animation-{before,current}.log`.
+The September 17–18 interrupted logs remain at `/tmp/track-world-push-final-<suite>.log`.
+`node --check` passed for `character-animation.js`, `character-rig.js` and both changed
+test scripts (`character-animation.test.js`, `flight.test.js`). Comparing current
+runtime/index hashes with the push-off baseline changes only animation, rig and index;
+scene, controller, motion feed, input/camera and stamina source are unchanged.
+
+This is a fresh **three-browser-suite baseline plus the animation suite**, not a claim
+that all twelve README suites ran today. The full sequential run belongs after the
+separately gated scale implementation. No new dependency, download, purchase, external
+service, Track runtime/data change, commit or push occurred. Naturalness, exact reference
+parity and sustained hardware performance remain unverified. The later September 19
+rulings govern subsequent work; this evidence does not reopen joint-angle tuning.
+
+## 2026-09-19 — scale decision preparation and reference-timing inspection
+
+Task 1 above was recorded before beginning this work. Runtime and tests remain unchanged
+at `5e247de`; **no scale change has been implemented**. The proposed k=1.30 step/leg
+table and the pending jump/gravity/step-up/camera choice are in the comparison and draft.
+Production-path research and new traversal animation have not begun.
+
+Used the installed GStreamer `matroskademux`, `vp8dec`, `videorate` and `pngenc` to
+decode local clips at 30 samples/s into `/tmp/track-world-scale-reference-20260919`.
+The first classified-target inspection was `08-42-45`; the next was the user-reported
+1x `11-28-38`. Only non-combat/allowed windows were viewed. Side-view comparisons also
+inspected `09-46-46` and `21-31-32`. No video, asset or dependency was fetched externally.
+The frame batches contain 597, 643, 148 and 418 samples respectively. Sampling is not
+source-frame timing recovery; manual event locations have a one/two-sample uncertainty.
+
+Inspection artifacts include `original-run-detail.jpg`, `original-phase-identity.png`,
+`baseline-cycle-detail.jpg`, `baseline-later.jpg`, `baseline-airborne-evidence.jpg`,
+`baseline-end-ground.jpg`, `side-run-cycle-detail.jpg` and `base-tier-cycle-detail.jpg`
+under that temporary directory. The last two side views show approximate same-leg
+recurrences at 1.00/1.67/2.33 s and 6.00/6.67/7.33 s respectively (~1.5 recorded cycles/s).
+The original sprint passage repeats around 6.07/6.50/6.93 s (~2.3 recorded cycles/s).
+
+**Absolute playback-speed classification remains unresolved.** The proposed timing
+baseline contains visible airborne rise/descent and held leg poses, including the
+9.1→9.6→10.6→11.6 s sequence captured in `baseline-airborne-evidence.jpg`. The later
+side view is settling, without an established full slow-walk cycle. Treating those
+sequences as steady running would create a false comparison. An initial coarse
+fourfold-rate impression was withdrawn for that reason. A trial image-mask diagnostic
+also failed to isolate the legs and supplied no measurement; none of its correlation
+output is used. No reliable real-time full-cycle rate is claimed for this baseline,
+and its user-reported 1x status has not been silently changed.
+
+The comparison's clip index records the unresolved verdicts and retains both permanently
+pose-only clips. It also corrects the inverted quarter-speed arithmetic: recorded time
+is divided by four, while cadence is multiplied by four. The demo's 1.70/1.88/2.05/2.20
+Hz rates remain untouched. Task 2b is therefore **partly measured, not complete**; a
+trustworthy running timing baseline or confirmation of the usable source timing is
+still needed. This finding does not authorize retuning.
+
+The required gate is the user's September 19 scale ruling and hand-off: growing the body
+and scene conflicts with frozen world-unit jump, gravity, step-up and camera quantities.
+Both concrete choices are prepared for the user, and implementation is held for the
+answer. The projected table is not a shipped measurement or a claimed reference fit.
+No new naturalness, reference-parity or hardware-performance claim is made.
+
+Final documentation review: `git diff --check -- World` passed and relative file links
+in all four edited documents resolved. `git status --short --branch` showed only those
+four World documents modified; no runtime, test, index or Track file changed in this run.
+
+
+## 2026-09-20 — uniform 1.30 scale, Option A
+
+**Scope:** uniform character/scene scale, approved jump/gravity/step-up/camera scaling,
+with fixed ground speeds and accepted cadence. No new gait curves, clip timing retune,
+newly referenced traversal choreography or production-source research. The separate
+launch/glide/climb/detach scaling question remains pending; those speeds are untouched.
+
+**Failing first:** copied pre-change World runtime/index into
+`/tmp/track-world-scale-before-20260920`, with SHA-256 receipts for all 15 runtime/index
+files. Added only the new tests to that tree. All 15 hashes still match after testing.
+The pure flight case failed on `approved jump impulse must scale with the body`
+(`/tmp/track-world-scale-before-core.log`). The rendered Chrome case failed on the actual
+hip→knee→ankle chain: **0.9500000183**, expected **1.235**
+(`/tmp/track-world-scale-before-browser.log`). **That rendered-bone failure is load-bearing:**
+changing a metadata label or camera alone cannot pass it. An earlier scratch attempt had
+only a load timeout because the server rejects symlinked files; copying the local engine
+and shared modules into scratch resolved that setup error before the meaningful failure.
+No production source was doctored, and no dependency was fetched.
+
+**Focused after checks:** animation **14/14**; rendered scale + ground checks **2/2**.
+Measured rendered leg **1.2349999274**, collider **[0.455,1.144,0.455]**, camera distance
+**11.44**. Bridge x/z **12.35/6.5**, deck **0.5525**; Cloudrest z **72.8**, pad **25.064**.
+Rendered forefoot errors for base/jog/run/dash stayed below **0.000019 u** on the flat
+fixture, with positive body velocity at release in all four sets. Accepted full-cycle
+rates remain **1.70/1.88/2.05/2.20 Hz**; contact and continuity checks cover all four.
+Notebook transfer retains local scale 1 under the uniformly scaled root; maximum sampled
+world displacement per 1/60 s transfer frame was **0.1027 u**. These are geometric checks,
+not proof of naturalness, terrain adaptation or notebook clearance in every pose.
+
+**Test maintenance:** expected world-space dimensions/route coordinates scale with k;
+model-space posture and angular continuity bounds stay unchanged. One camera case compared
+snapshots across separate protocol calls and failed on a **1.1e-14 u** collision-settling
+change. It now compares immediately before/after Home in one event turn, preserving its
+strict no-teleport assertion without changing the controller or widening its tolerance.
+The first suite output is `/tmp/track-world-scale-final-camera.log`.
+
+**Syntax/cache:** Node checks passed for all six changed runtime scripts and the changed
+animation, flight-core, flight, map, sky and camera tests. Cache queries: flight-core **6**,
+character-animation **6**, character-rig **5**, sky-scene **2**, map-view **5**, scene **22**.
+`git diff --check -- World` passed. Track runtime files already dirty in another session
+were left untouched; no Track data, download, dependency, install, purchase, commit or push.
+
+**Limits:** side-view clips establish pose sequence but not a world-unit leg length.
+k=1.30 applies the user's base-tier priority, not an asserted recovered reference scale.
+The timing-calibration problem remains as recorded in the preceding entry. Automated
+checks cannot establish naturalness or Genshin parity. The same rigid model and its seams
+remain visible. Physical laptop performance and the user's scale acceptance are unproven.
+
+**Sequential required-suite run:** all twelve README suites ran in order, one browser at
+a time, via `/tmp/track-world-rebuild-browser-suites.py`; results are in
+`/tmp/track-world-scale-suite-results.json` and `/tmp/track-world-scale-final-*.log`.
+Core **10/10**, sky-core **3/3**, map-core **4/4**, flight-core **8/8**, stamina-core
+**18/18**, character-motion **4/4**, character-animation **14/14**, browser **7/7**,
+sky **8/8**, map **5/5**. Camera initially **3/5** (one failed child plus its parent);
+after the same-event sampling correction it passed **5/5** in
+`/tmp/track-world-scale-camera-rerun.log`.
+
+The full flight suite reported **8/10**, with two failures: the charged launch height,
+and a hold-to-lock test beginning after a fixed-duration tap without ensuring a grounded
+press. The latter test now explicitly waits for the body to settle on the floor before
+starting a grounded-only dash; no input or stamina runtime changed. The route's ordinary
+jump, wall-first grab, climb while reading, outward detach, ledge top-out, charge cancel,
+rendered body/contact, exhaustion and instruction checks all passed before the launch
+failure. The route stopped at launch: **Cloudrest/Windward landing, airborne notebook
+reading there, elevated-island clearance and last-island recovery were not reached** in
+this scale run. They are not claimed green from the earlier pre-scale run.
+
+**Open gate:** Option A changed normal jump/gravity, step-up and camera only. The separately
+asked launch/glide/climb/detach rescale still has no answer. With the current 34 maximum
+launch impulse and 23.4 gravity, even the continuous-time apex of the feet is only
+`0.234 + 34²/(2×23.4) = 24.93485`, below Cloudrest's **25.064** pad. The simulation's
+finite-step apex is lower. The failed height assertion is consistent with this concrete
+unreachable route, not evidence of a mysterious animation defect. The gate is recorded
+in NOTES and disclosed beside the ground-playable build; no silent retune was made.

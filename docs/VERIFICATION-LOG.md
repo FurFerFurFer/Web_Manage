@@ -1998,3 +1998,109 @@ The `selfTest` compression ratios are not predictive of real workspaces: the `ba
 On 2026-08-05, after `firestore.rules` was published in the console, the user confirmed the live signed-in path reaching `✓ synced` and continuing to sync normally on the real project. That closes the gap the pre-revert baseline could only reason about structurally: the legacy → v2 migration succeeds against real Firestore under the published rules.
 
 Still unverified, and out of reach from this environment: the exact chunk count and cloud byte size of the real workspace, `backup/v1` contents, multi-device conflict behavior, and the `permission-denied` banner against the live project rather than the in-memory double.
+
+### "Coming up" under a Documentations calendar block (2026-09-20)
+
+The defect closed here was **reachability**, not rendering. A day note and a deadline are not
+`TC.CATS` categories, so neither draws a month-cell dot; the only mark either leaves on a
+calendar block's grid is the ownership edge bar, which `ownedDates` builds from the block's
+own scope alone. An item authored on another documentation page, or filed in the Progress
+Schedule, therefore left **no trace whatsoever** on the grid and could be found only by
+clicking the day it happened to sit on. The new list at the foot of the block shows every day
+note and deadline dated on or after the local today, from every origin, with no click.
+
+- Changed: `documentations.html`, `styles/styles.css`, and `?v=11 → ?v=12` for
+  `styles/styles.css` in all five pages. **No shared script changed**, so `calendar-core.js`
+  stayed at `?v=8` and Home was untouched. Exporting its `shownFn` was considered and
+  rejected: it would have pulled a two-page shared script and a version bump on Home into a
+  change with no behaviour there, to remove a one-line `!hidden.includes(k)` this component
+  already spells twice. The half that carries the risk — *which* key an item answers to — is
+  `TC.originKey`, called rather than re-spelled.
+- The block's stored shape is unchanged, `{id, type:'calendar', hidden, scope}`: the list is
+  always on and its expansion is ephemeral, so **nothing was migrated and nothing needed to be**.
+- `node tests/run.js`, final tree: 17 suites. `calendar-core` and `schema` swept under UTC,
+  Pacific/Kiritimati (UTC+14), Pacific/Midway (UTC-11), America/Los_Angeles and
+  Asia/Kathmandu with identical results; `true-storage-core`, `graph-layout`,
+  `doc-table-core`, `schedule-paste-core`, `quest-core` and `cdp-cleanup` once each; then the
+  browser suite. Browser subtests went **250 → 258** (`await t.test` declarations 226 → 234).
+- Eight new browser cases: the list renders with no day clicked and carries all three origins
+  with only the owned rows marked; a past note *and* a past deadline are both omitted and the
+  empty state names the cutoff; clicking a row 40 days out moves the grid's month as well as
+  the selection; the category filter empties list and grid together; a ticked deadline stays
+  listed and struck; the list caps at eight and expands in place, storing nothing; the list
+  writes nothing; and a guard that the new rows are not `.cal-doc-row`.
+
+**Fail-first — four doctored baselines, disjoint singletons.** Each is one file with one
+rule reversed, served through `TRACK_TEST_ROOT` from a scratch tree of symlinks to the repo
+plus the doctored `documentations.html`; each was refused if byte-identical to the
+repository. No doctored copy was placed in the repository.
+
+| Rule reversed | Plan | Failed | The message |
+| --- | --- | --- | --- |
+| the `>= todayDs` cut dropped | 1..7 | `omits a past item and names the cutoff`, alone | `expected: 1, actual: 3` |
+| `show(TC.originKey(...))` dropped | 1..7 | `honours the category filter`, alone | `expected: 1, actual: 4` |
+| the row calls `setSelDs`, not `goToDay` | 1..7 | `opens that day, month included`, alone | `notStrictEqual 'September 2026'` |
+| the eight-row cap removed | 1..8 | `caps at eight rows and expands in place`, alone | `expected: 8, actual: 10` |
+
+The control run against the real repository was `1..8` with no failures. The cap baseline is a
+singleton for a structural reason worth recording: every other case's fixture holds fewer
+than `UP_CAP` items, so none of them *can* notice the cap — which is what makes its own case
+load-bearing rather than incidental.
+
+The cap case was written last, after a review found the cap and its `+ N more` expander were
+the one user-visible branch in the feature that no case touched. The first full run of the
+final tree was stopped ~15 subtests in to add it, rather than shipping the branch untested and
+reporting it as a gap.
+
+Two things about that evidence had to be *fixed* before it was worth anything, and both are
+the existing lessons biting:
+
+- **The first cutoff baseline was not a singleton.** The shared fixture held the past item,
+  so dropping the cut moved the row count in every count-asserting case — the cutoff
+  baseline would have failed four cases and the other two baselines' failure sets would have
+  sat *inside* it. Each case now owns the data it needs: the shared db holds only items that
+  are ahead, and the cutoff case carries its own past note and past deadline.
+- **The filter case waited for the right answer.** Its first form waited for the row count to
+  reach 1, so the filter baseline died on a 15-second `waitFor` timeout — which says the
+  control was unreachable and says nothing about the claim. It now waits for the write to
+  land (`"hidden":["doc"]` in `track_db`) and then asserts, which is why that baseline reports
+  `expected: 1, actual: 4` instead.
+
+**Narrowing.** The baselines were run through a task-owned `--require` preload that wraps the
+parent's `TestContext` in a Proxy binding every method to the real context, so non-matching
+children are never declared while the parent still launches the browser and registers its
+after-hook. `--test-name-pattern` cannot narrow this file at all. Reading the **plan count**
+(`1..8`) rather than the summary line mattered: an early run's summary read `# pass 7` for six declared
+children plus the parent. The preload is not in the repository, and it left no stray process.
+
+**The guard case will not fail today, and that is its job.** Seven existing Documentations
+cases select `.cal-doc-row` / `.cal-cell` broadly across `.doc-cal` and take the first match
+or a raw count (`browser.test.js` 511, 589, 1119, 1137, 1382, 1391, 5955), and four Progress
+cases count `!` marks by a `"Due "` tooltip prefix (687, 1234, 1295, 1615). Rows in the new
+list would have been silently counted as day-panel rows had they borrowed the class. They use
+a `doc-cal-up-*` namespace, carry no `.cal-doc-row-acts`, and tooltip `Go to <date>`. The
+guard passes on both sides of every baseline **by design** — it exists to fail when a later
+pass "unifies" the two row classes.
+
+**Contention, and what it cost.** The first full run of the final code failed exactly two
+subtests — `TOUCH: an armed chip dropped on a row lands before it` and the `GUARD` beside it
+— both on `waitFor timed out … (last value: "threw: CDP connection closed")`, the documented
+contention signature, during navigation rather than on any assertion. Subtests 184-186
+passed immediately after, so the browser died and the harness recovered. The mechanism was
+ruled out rather than assumed: `rg` confirms no `doc-cal-up*` class name appears outside
+`documentations.html`, and `body.docs-page` is never set on `progress.html`, so the shared
+stylesheet cannot reach that page. Concurrent load at the time: GNOME `tracker-extract` at
+~15%, and **another agent session actively editing `World/`** (4 modified files at preflight,
+15 by mid-run, mtimes minutes old). A 14-day-old orphaned headless Chrome (PID 61936) was
+found idle at 0.1% CPU — listed, not killed, and not the cause.
+
+A malformed stored date is now load-bearing rather than cosmetic. `schema.js` only *warns* on
+one, and `'tomorrow' >= '2026-09-20'` is **true** under the string compare these lists are
+built on, so junk would have reached `new Date(ds + 'T12:00:00')` and thrown a `RangeError`
+out of a React render — emptying the whole page, not just the block. `CAL_DAY_RE` is that
+guard, and the one inline copy of the same regex already in the file (`dueOk`) now points at
+it rather than spelling it a second time.
+
+Not verified, as always in this environment: print output on paper, real touch hardware, the
+live Firebase project, and real multi-device behaviour. The new list's print rules were
+asserted as CSS and read, never rendered to PDF.

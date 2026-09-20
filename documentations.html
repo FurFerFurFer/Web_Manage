@@ -18,7 +18,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=11">
+  <link rel="stylesheet" href="styles/styles.css?v=12">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -921,6 +921,27 @@
     // difference is a docPageId pointing back at the page that added them.
 
     const CAL_DATE_FMT = {weekday:'long', year:'numeric', month:'long', day:'numeric'};
+    // The "Coming up" list's date. Short deliberately: that list carries one date
+    // per row and the long form would push the title off a narrow page. No year —
+    // the rows are ordered and the year is readable from the month once it turns.
+    const CAL_UP_FMT = {weekday:'short', day:'numeric', month:'short'};
+
+    // A well-formed local day string. schema.js only WARNS on a malformed date,
+    // so a stored one can be anything — and 'tomorrow' >= '2026-09-20' is TRUE
+    // under the string compare these lists are built on, which would carry the
+    // junk through to new Date(ds + 'T12:00:00') and throw a RangeError out of
+    // toLocaleDateString. A throw escaping a React render empties the whole page,
+    // so the format test is the guard, not decoration.
+    const CAL_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+    // The short date a "Coming up" row carries. Total by construction: the regex
+    // above is the only thing standing between stored junk and a blank page, and
+    // the noon anchor is this project's standing rule — a DST shift can never
+    // push the parsed day onto its neighbour.
+    const fmtUpDay = ds => {
+      if (!CAL_DAY_RE.test(ds || '')) return String(ds || '');
+      return new Date(ds + 'T12:00:00').toLocaleDateString(undefined, CAL_UP_FMT);
+    };
 
     // read-only day timeline; a JSX port of renderCalDaySchedule in index.html
     function CalDaySched({day, ds}) {
@@ -1427,6 +1448,10 @@
       const [cur, setCur] = useState(() => { const d = new Date(); return {y: d.getFullYear(), m: d.getMonth()}; });
       const [selDs, setSelDs] = useState(null);
       const [showFilters, setShowFilters] = useState(false);
+      // Whether the "Coming up" list is showing past its cap. Ephemeral like
+      // showFilters and deliberately NOT a block key: it is how far one reader
+      // has scrolled a list, not something the document should remember.
+      const [upAll, setUpAll] = useState(false);
       const [composer, setComposer] = useState(null);            // null | 'note' | 'deadline'
       const [editing, setEditing] = useState(null);              // null | {kind, id}
       const [noteDraft, setNoteDraft] = useState({title:'', detail:''});
@@ -1444,10 +1469,73 @@
       const hidden = block.hidden || [];
       const hiddenKey = hidden.join(',');
       const opts = {hidden};
+      // Today as a LOCAL calendar day, for the grid's "today" cell and for the
+      // cutoff the "Coming up" list is built on — one definition, not two.
+      const todayDs = TC.toDateStr(new Date());
 
       const buckets = useMemo(() => TC.buildBuckets(slot, cur.y, cur.m, opts), [slot, cur.y, cur.m, hiddenKey]);
       const ms = useMemo(() => TC.buildMilestoneLanes(slot, cur.y, cur.m, opts), [slot, cur.y, cur.m, hiddenKey]);
       const day = selDs ? TC.buildDaySchedule(slot, selDs, opts) : null;
+
+      // ── "Coming up" ────────────────────────────────────────────────────────
+      // Day notes and deadlines leave almost no mark on the month grid: they are
+      // not in TC.CATS, so they get no category dot, and the only thing they do
+      // draw is the ownership edge bar — which ownedDates builds for THIS
+      // calendar's items alone. Another page's deadline, or anything filed from
+      // the Schedule, was invisible until its day happened to be clicked. This
+      // list is that missing surface.
+      //
+      // Deliberately NOT month-scoped, unlike buckets and ms above: what a
+      // document's calendar is asked for is what is still ahead, so paging the
+      // grid to August must not empty it. That is why `cur` is not a dependency.
+      //
+      // Read-only by construction — every row is a link to its own day, where the
+      // panel already carries the ✎ ✕ ✓ controls and the ownership gate deciding
+      // who may press them. No writer lives here, and none may be added without
+      // re-deciding the .cal-doc-row-acts note in the render below.
+      const UP_CAP = 8;
+      const upcoming = useMemo(() => {
+        // The same predicate shownFn applies in calendar-core.js, where
+        // buildDaySchedule filters these very arrays; only the Array branch is
+        // needed, because block.hidden is always an array here. The half that
+        // actually carries risk — WHICH key an item answers to, since anything
+        // authored from Documentations answers to 'doc' rather than to its own
+        // kind — is TC.originKey: the one definition, called rather than
+        // re-spelled. Getting that wrong would make the list and the grid
+        // disagree about what the Filter chips just switched off.
+        const show = k => !hidden.includes(k);
+        const rows = [];
+        // The cut is on the item's OWN date, never TC.blockDay(): a note whose
+        // block was dragged onto another day still belongs to the day it was
+        // filed on. That is the same split buildDaySchedule keeps between
+        // `blocks` and `calNotes`, and the same one progress.html's day-notes
+        // browser keeps for its "on or after" list.
+        const ahead = x => CAL_DAY_RE.test(x && x.date || '') && x.date >= todayDs;
+        (slot.calendarNotes || []).forEach(n => {
+          if (!ahead(n) || !show(TC.originKey(n, 'daynote'))) return;
+          rows.push({key: 'n:' + n.id, kind: 'note', ds: n.date, item: n,
+            at: TC.noteBlockStart(n)});
+        });
+        (slot.deadlines || []).forEach(d => {
+          if (!ahead(d) || !show(TC.originKey(d, 'deadline'))) return;
+          // Listed ONCE, on its due day. A row per caution day would turn a
+          // three-week run-up into twenty-one rows; the count rides in the meta
+          // instead, exactly as the day panel spells it. A TICKED deadline stays
+          // listed and is struck through — the tick suppresses the "!" marks, it
+          // has never removed the deadline, and this surface may not be the one
+          // place that takes it away.
+          rows.push({key: 'd:' + d.id, kind: 'deadline', ds: d.date, item: d,
+            at: String(d.time || '')});
+        });
+        // Same ordering progress.html's day-notes-and-deadlines browser uses —
+        // date, then time, then title — so two lists of the same data can never
+        // disagree about which comes first. An untimed note sorts at its block
+        // start for the same reason it does there.
+        rows.sort((a, b) => String(a.ds).localeCompare(String(b.ds))
+          || String(a.at).localeCompare(String(b.at))
+          || String(a.item.title || '').localeCompare(String(b.item.title || '')));
+        return rows;
+      }, [slot, hiddenKey, todayDs]);
 
       // "Exclusively editable" scope: this page, or this page and everything
       // nested under it. Items from any other page stay visible but read-only.
@@ -1699,7 +1787,7 @@
         const stranded = TC.dlStrandedBlockDays(dl, {date: due, cautionDates: days});
         // One gate for both modes now that both type a due day.
         const valid = TC.dlDraftValid(dlDraft) && !stranded.length;
-        const dueOk = /^\d{4}-\d{2}-\d{2}$/.test(due || '');
+        const dueOk = CAL_DAY_RE.test(due || '');
         const cauAnchor = cauMonth || (dueOk
           ? {y: Number(due.slice(0, 4)), m: Number(due.slice(5, 7)) - 1}
           : {y: cur.y, m: cur.m});
@@ -1871,7 +1959,6 @@
       };
 
       const shownLanes = Math.min(ms.laneCount, TC.MS_MAX_LANES);
-      const todayDs = TC.toDateStr(new Date());
       const firstCol = TC.firstDay(cur.y, cur.m);
       const dayCount = TC.dim(cur.y, cur.m);
 
@@ -2137,6 +2224,59 @@
           )}
 
           {!day && <div className="doc-cal-hint doc-chrome">Pick a day to see what is on it, or to add a day note or deadline.</div>}
+
+          {/* What is still ahead, with no day clicked. Sits at the FOOT of the
+              block on purpose: putting it between the grid and the detail panel
+              would push the answer to a cell click down past eight rows, so the
+              existing interaction stays exactly where it was and this is added
+              underneath it.
+
+              Deliberately NOT .cal-doc-row / .cal-cell / .cal-grid, and with no
+              .cal-doc-row-acts anywhere — the same rule the caution picker
+              carries above. Existing Documentations cases select those classes
+              broadly across .doc-cal and take the first match or a raw count, so
+              a row reusing one would be silently counted as a day-panel row or a
+              month cell. For the same reason no tooltip here may begin "Due ":
+              four Progress cases count the "!" marks by that prefix. */}
+          <div className="doc-cal-up" data-doc-cal-upcoming={upcoming.length}>
+            <div className="doc-cal-up-head">Coming up ({upcoming.length})</div>
+            {(upAll ? upcoming : upcoming.slice(0, UP_CAP)).map(r => {
+              const o = originOf(r.item);
+              const done = r.kind === 'deadline' && TC.dlDone(r.item);
+              const timed = r.kind === 'deadline' ? !!r.item.time : TC.noteTimed(r.item);
+              const cau = r.kind === 'deadline' ? TC.dlCautionCount(r.item) : 0;
+              return (
+                <div key={r.key} data-up-date={r.ds} data-up-kind={r.kind}
+                  className={"doc-cal-up-row"+(o.kind==='own'?' own':'')+(done?' done':'')}>
+                  {/* A real button rather than a clickable row, exactly as the
+                      caution row is: the origin chip beside it is already a
+                      button, and pressing that must open the page without also
+                      moving the calendar. goToDay moves the MONTH as well as the
+                      selection, which is what a row in November needs. */}
+                  <button type="button" className="doc-cal-up-main"
+                    title={'Go to ' + r.ds} onClick={()=>goToDay(r.ds)}>
+                    <span className="doc-cal-up-date">{fmtUpDay(r.ds)}</span>
+                    {' '}{r.kind === 'deadline' ? (done ? '✓' : '⏰') : '📌'}
+                    {timed && <React.Fragment>{' '}<span className="cal-item-time">{r.item.time}</span></React.Fragment>}
+                    {' '}{r.item.title || (r.kind === 'deadline' ? 'Deadline' : 'Note')}
+                    {cau > 0 && <span className="cal-item-meta"> · {cau} caution {cau === 1 ? 'day' : 'days'}</span>}
+                    {r.item.detail && <span className="cal-item-meta"> · {r.item.detail}</span>}
+                  </button>
+                  <CalOriginChip origin={o} onOpenPage={onOpenPage} />
+                </div>
+              );
+            })}
+            {!upAll && upcoming.length > UP_CAP && (
+              <button type="button" className="doc-cal-up-more doc-chrome"
+                onClick={()=>setUpAll(true)}>+ {upcoming.length - UP_CAP} more</button>
+            )}
+            {/* Names the cutoff rather than saying "nothing yet": a list that
+                silently starts at today has to say so, or an item filed
+                yesterday reads as lost. */}
+            {!upcoming.length && (
+              <div className="doc-cal-up-empty">Nothing on or after {todayDs}.</div>
+            )}
+          </div>
         </div>
       );
     }

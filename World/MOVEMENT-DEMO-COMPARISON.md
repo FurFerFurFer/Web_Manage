@@ -48,9 +48,9 @@ controller values, not measured reference speeds.
 | --- | --- | --- |
 | Start / stop | Camera-relative walk at **5.2** units/s and run at **12**; Shift dashes at **16.2** and either settles back to the walk or locks the run. The walk was raised from 3.85 on 2026-09-13 at the user's request; the run has been 12 in `flight-core.js` and the 6.6 this table previously carried was stale. Ground exponential rates remain start 18/s, stop 24/s, sharp turn 24/s. Fixed 60 Hz collision simulation | User's judgment of the speeds and body recovery; common-scale speed parity remains unmeasured, and the reference gives no world units to measure against |
 | Turn / camera | Facing eases through the shortest angle at 20/s; avatar/camera position interpolates between collision steps. Upright orbit; bounded pitch; mouse drag, Q/E and R/F; Home resets only the camera | Preserve the accepted orbit and user-reported camera drag while integrating the humanoid; reference parity remains unmeasured |
-| Jump / land | 6.2 upward impulse, gravity 18, short input buffer/coyote window, bounded step-up. Running jumps preserve velocity. Body poses gather the legs, open the arms asymmetrically and extend for landing; compression recovers into the current stride | Body timing and silhouette against the recorded jumps; no jump-arc change was requested |
-| Launch | Hold X in a Windseed ring for up to 1.2 s, release for 22–34 upward impulse; taps below 12% are ignored | User's particular slingshot reference and preferred charge/launch feel |
-| Glide | Space deploys only with four jump heights of clearance beneath the feet (about 4.3 m); launch apex uses the same gate. An open glider persists below it. WASD steers toward 8 units/s at an 8/s response rate; descent capped at 2.4; released movement brakes at 12/s. Canopy opening blends visually; landing folds it and smoothly changes horizontal speed | Reference steering, glide angle and canopy appearance |
+| Jump / land | 8.06 upward impulse, gravity 23.4, short input buffer/coyote window, 0.312 bounded step-up (Option A, uniform 1.30× scale). Running jumps preserve velocity. Body poses gather the legs, open the arms asymmetrically and extend for landing; compression recovers into the current stride | Body timing and silhouette against the recorded jumps; relative height/airtime preserved; fixed ground speed reduces horizontal gap coverage |
+| Launch | Hold X in a Windseed ring for up to 1.2 s, release for 22–34 upward impulse; taps below 12% are ignored. These unscaled values cannot complete the enlarged Cloudrest route; the additional traversal decision is pending | User's particular slingshot reference and preferred charge/launch feel |
+| Glide | Space deploys only with four jump heights of clearance beneath the feet (about 5.55 world units); launch apex uses the same gate. An open glider persists below it. WASD steers toward 8 units/s at an 8/s response rate; descent capped at 2.4; released movement brakes at 12/s. Canopy opening blends visually; landing folds it and smoothly changes horizontal speed | Reference steering, glide angle and canopy appearance |
 | Climb / let go | Space checks climbing first: detach if attached, otherwise grab a nearby wall before considering jump/glide. W/S move vertically and A/D sideways toward 2.2 units/s at an 18/s response rate; reached ledges allow stepping up. Reading holds immediately. Detach pushes away along the wall normal at 3 units/s with a small 2.2 upward impulse | Irregular surfaces, corners and full reference traversal/animation fidelity |
 | Reading in flight | Input goes to the companion; inertia, gravity and weather continue; charge is cancelled; active glide descends | Physical comfort and readability; no protective relocation when a panel opens |
 | Falling / recovery | No damage or reward loss; return to the last landed island or garden start | Review checkpoint placement and feel; camera is not forcibly spun by a fall |
@@ -212,19 +212,19 @@ speed section above).
 
 | File (`Screencast from …`) | Size | Speed | Use | Establishes |
 | --- | ---: | --- | --- | --- |
-| `2026-09-13 08-42-45.webm` | 637x579 | 1x or 0.25x — **classify first** | whole | Ground movement, sprint entry, jump/land, stop/restart. The 2.05 Hz run rate was reasoned from this clip |
+| `2026-09-13 08-42-45.webm` | 637x579 | **Unresolved**; inspected first, ~2.3 recorded cycles/s | non-combat before ~16 s | Ground movement, sprint entry, jump/land, stop/restart. Baseline cadence comparison is not established; see September 19 measurement below |
 | `2026-09-13 09-05-56.webm` | 637x579 | n/a | — | Demo recording, not reference |
 | `2026-09-13 16-57-19.webm` | 637x579 | 1x or 0.25x | whole | More ground movement |
 | `2026-09-13 17-52-28.webm` | 272x243 | 1x or 0.25x | superseded | Climbing, different character. Superseded by `11-13-41` |
 | `2026-09-13 20-00-22.webm` | 350x377 | n/a | — | **Rejected demo** recording |
-| `2026-09-15 21-31-32.webm` | 361x372 | 1x or 0.25x | whole | Base-tier locomotion side-on, support/push-off/airborne |
-| `2026-09-19 09-46-46.webm` | 407x409 | 1x or 0.25x | whole | Aether side-on **run**, ending in a **stop** |
+| `2026-09-15 21-31-32.webm` | 361x372 | **Unresolved**; ~1.5 recorded cycles/s | whole | Base-tier locomotion side-on, support/push-off/airborne; same recorded cadence as `09-46-46`, absolute factor unestablished |
+| `2026-09-19 09-46-46.webm` | 407x409 | **Unresolved**; ~1.5 recorded cycles/s | movement before ~3.7 s | Aether side-on run; the ending is a paused airborne stride, not established deceleration |
 | `2026-09-19 09-50-07.webm` | 216x268 | 1x or 0.25x | superseded | Climbing from behind. Superseded by `11-13-41` |
 | `2026-09-19 09-51-20.webm` | 448x353 | n/a | **NONE** | **REJECTED** — winged combat hover, not a glide |
 | `2026-09-19 11-09-09.webm` | 392x315 | **SPED UP** | **10.5-13.2 s** | **Glide** side-on; glide-to-landing from behind. **Pose only** |
 | `2026-09-19 11-13-41.webm` | 453x380 | **SPED UP** | **0-16.5 s** | **Climbing, two side-on VAULTS, rapid climb**, side-on run, idle, roof descent. **Pose only** |
 | `2026-09-19 11-14-14.webm` | 453x380 | 1x or 0.25x | **0-15 s, 20.8-29 s** | 15 s **glide**; 8 s **FREE FALL** |
-| `2026-09-19 11-28-38.webm` | 453x380 | **1x — CONFIRMED** | **0-19.4 s** | **THE TIMING BASELINE.** Side-on **stop**, **walk**, **idle**, running |
+| `2026-09-19 11-28-38.webm` | 453x380 | **1x — user-reported; cadence calibration unresolved** | **0-19.4 s** | Reinspection shows airborne jump/landing sequences and settling; a clean repeated running cycle has not been established |
 | `2026-09-19 11-36-25.webm` | 453x380 | 1x or 0.25x | **0.6-4.5 s** | **LIGHT LANDING** into a run |
 | `2026-09-19 11-43-26.webm` | 463x385 | 1x or 0.25x | low value | Cliff-edge run (rear); rest is combat under captions |
 | `2026-09-19 11-44-03.webm` | 463x385 | 1x or 0.25x | **~4.5-6.5 s** | **Ledge takeoff**; ends in water |
@@ -270,10 +270,47 @@ Four rules follow, and the first two are load-bearing:
 **One specific number is now worth resolving.** The 2.05 Hz run rate was reasoned from "the
 run's approximately half-second cycle" seen in `08-42-45.webm`. That clip is **not** one of
 the two sped-up ones, so it is 1x or 0.25x. If 1x, the original reasoning was roughly sound.
-If 0.25x, the true cycle was about **two seconds**, and the rate was derived four times too
-fast. Classify `08-42-45.webm` first; it is the highest-value single classification in the
-library. (Prior expectation: a quarter-speed run reads as obvious slow motion and the
-observer recorded half a second, so **1x is likely** — but likely is not measured.)
+If 0.25x, a recorded half-second cycle represents **0.125 seconds of source time**, or
+8 cycles/s. The earlier "two seconds / four times too fast" statement inverted the
+conversion and is withdrawn. Classify `08-42-45.webm` first; a prior expectation is not
+an empirical classification.
+
+#### September 19 measurement — recorded cadence established, absolute speed unresolved
+
+Decoded the local originals with the installed GStreamer VP8 decoder and resampled at
+30 frames/s. Counts use successive recurrences of the **same leg**, not alternating
+footfalls. Paused frames and combat are excluded. These are manual phase observations,
+not extracted joints or native source timestamps; event placement is approximate to a
+sample or two.
+
+| Clip, inspected in this order | Recorded same-leg recurrences | Full cycles per recorded second | Real-time rate if 1x | Real-time rate if 0.25x |
+| --- | --- | ---: | ---: | ---: |
+| `08-42-45` | Folded-heel phase around 6.07, 6.50, 6.93 s | **~2.3** (roughly 2.1–2.5 allowing endpoint uncertainty) | ~2.3 Hz | ~9.2 Hz |
+| `11-28-38` | No sufficiently clear repeated steady running cycle established in the inspected passages | **Not reported** | Not established | Not established |
+| `09-46-46` | Same near-leg phase around 1.00, 1.67, 2.33 s | **~1.5** | ~1.5 Hz | ~6.0 Hz |
+| `21-31-32` | Same side-view leg phase around 6.00, 6.67, 7.33 s | **~1.5** | ~1.5 Hz | ~6.0 Hz |
+
+For comparison, the demo remains **base 1.70 / jog 1.88 / run 2.05 / dash 2.20 Hz**.
+No rate, support window, joint angle or set key was changed. The two matching side-view
+clips provide a relative timing check; they do not independently establish a 1x factor.
+
+**Why classification is still open:** detailed inspection does not support the earlier
+description of `11-28-38` as uninterrupted running on a flat plaza. At approximately
+9.1 s the character is near the floor, at 9.6–10.6 s the feet and shadow separate clearly
+while an asymmetric airborne pose is held, and at 11.6 s the feet return to the floor.
+Earlier passages repeat similar airborne sequences. The 14.4–16.7 s side view settles
+from a bent stance rather than providing a complete slow-walk cycle. Flat terrain does
+not rule out a jump. Counting these held poses as strides would produce a false cadence;
+an initial coarse comparison doing so was discarded. The **user's reported 1x status is
+preserved**, but it has not supplied the requested gait calibration. This is not proof
+that the clip is quarter speed, and no factor is silently reassigned.
+
+The final pause overlay in `09-46-46` freezes a stride with one foot raised; it is not
+evidence of the character stopping. These inspection corrections supersede the affected
+older descriptions below. Other unclassified clips remain unclassified. `11-13-41` and
+`11-09-09` remain permanently pose-only under the user's explicit unknown-speed ruling.
+Resolving a reliable absolute timing baseline is still needed to finish Task 2b; it
+does not authorize changing the accepted rhythm or delay preparing the scale decision.
 
 ### Every OTHER reference clip is a YouTube capture, and its SPEED IS NOT RELIABLE
 
@@ -492,6 +529,24 @@ scales the character; see the `k` table in
 [draft §4](TRACK-WORLD-CONCEPT-DRAFT.md#4-player-perspective-and-movement). The airborne
 share is `(0.5 - support) / 0.5` and is a property of the gait design, independent of leg
 length — scaling changes the stride, not the flight.
+
+**Scale checkpoint implemented September 20:** the selected **k=1.30**
+makes the leg **1.235 u** and approximate stature **2.47 u**. Applying the existing
+ruling, without changing speed or cadence, gives:
+
+| Tier | Current step (u), unchanged | Step / leg at k=1.30 |
+| --- | ---: | ---: |
+| base (`walk`) | 1.5294 | **1.238** |
+| jog | 2.1277 | **1.723** |
+| run | 2.9268 | **2.370** |
+| dash | 3.6818 | **2.981 — deliberate exceedance** |
+
+This keeps the base within the ruling's selected jog band. The inspected side views
+establish pose/contact sequences, but do not calibrate a world-unit leg length; no exact
+reference fit or final visual acceptance is claimed. The selected scale is 1.30: it satisfies the ruling's
+base-tier priority, rather than a world-unit measurement recovered from the clips. The
+user approved proportional jump/gravity/step-up/camera scaling. Visual acceptance and
+the additional launch/glide/climb/detach decision remain pending.
 
 ### Additional local videos inspected after the user's timing/reach correction
 

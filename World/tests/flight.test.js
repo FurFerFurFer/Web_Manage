@@ -3,6 +3,32 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {Browser}=require('../../tests/lib/cdp');
 const {startServer}=require('../tools/serve');
 
+test('character scale reaches the rendered legs, scene surfaces, collision body and camera',{timeout:60000},async t=>{
+  const server=await startServer(0);let browser,page;
+  try{
+    browser=await Browser.launch();page=await browser.newPage();
+    await page.goto('http://127.0.0.1:'+server.address().port,{waitFor:()=>!!window.WorldDemo});
+    await page.evaluate(()=>document.getElementById('enter').click());
+    await page.waitFor(()=>WorldDemo.snapshot().world.grounded);
+    const measured=await page.evaluate(()=>{
+      const B=BABYLON,scene=B.Engine.Instances[0].scenes[0],s=WorldDemo.snapshot();
+      const point=name=>{const n=scene.getTransformNodeByName('traveler-'+name);n.computeWorldMatrix(true);return n.getAbsolutePosition();};
+      const leg=B.Vector3.Distance(point('leftHip'),point('leftKnee'))+B.Vector3.Distance(point('leftKnee'),point('leftAnkle'));
+      const focus=new B.Vector3(...s.world.motion.renderPosition).add(new B.Vector3(0,.65*1.30,0));
+      return {leg,collider:scene.getMeshByName('player-collider').ellipsoid.asArray(),
+        camera:B.Vector3.Distance(scene.activeCamera.position,focus),landmarks:s.map.landmarks};
+    });
+    t.diagnostic(JSON.stringify({scale:measured}));
+    assert.ok(Math.abs(measured.leg-1.235)<.0001,'actual rendered hip-knee-ankle chain must grow to 1.235 u; got '+measured.leg);
+    measured.collider.forEach((n,i)=>assert.ok(Math.abs(n-[.455,1.144,.455][i])<1e-10,'collider scales with the body'));
+    assert.ok(Math.abs(measured.camera-11.44)<.001,'camera framing scales with the character');
+    const bridge=measured.landmarks.find(p=>p.id==='bridge'),island=measured.landmarks.find(p=>p.id==='cloudrest');
+    assert.ok(Math.abs(bridge.x-12.35)<.001&&Math.abs(bridge.y-.5525)<.001&&Math.abs(bridge.z-6.5)<.001,'bridge deck and location share the scale');
+    assert.ok(Math.abs(island.z-72.8)<.001&&Math.abs(island.y-25.064)<.001,'island spacing and launch deck share the scale');
+    assert.deepEqual(page.errors,[]);
+  }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}
+});
+
 test('ground movement responds promptly and releases into a short smooth stop',{timeout:60000},async t=>{
   const server=await startServer(0);let browser,page;
   try{
@@ -20,7 +46,7 @@ test('ground movement responds promptly and releases into a short smooth stop',{
         notebookParent:scene.getTransformNodeByName('traveler-notebook').parent.name};
     });
     assert.equal(rig.kind,'articulated-botanical-traveler');assert.equal(rig.decorative,true);
-    assert.deepEqual(rig.collider,[.35,.88,.35],'human proportions do not change the collision body');
+    rig.collider.forEach((n,i)=>assert.ok(Math.abs(n-[.455,1.144,.455][i])<1e-10,'collision scales with the character'));
     assert.equal(rig.leftElbowParent,'traveler-leftShoulder');assert.equal(rig.leftKneeParent,'traveler-leftHip');
     assert.equal(rig.notebookParent,'traveler-carry-socket');
     const animationProof=await page.evaluate(()=>{
@@ -29,7 +55,7 @@ test('ground movement responds promptly and releases into a short smooth stop',{
       const B=BABYLON,engine=new B.NullEngine(),scene=new B.Scene(engine),root=new B.TransformNode('test-root',scene);
       const mat=new B.StandardMaterial('test-material',scene),character=createWorldCharacter(scene,root,
         {cloth:mat,skin:mat,boots:mat,gold:mat,book:mat,shadows:{addShadowCaster(){}}});
-      const sample=patch=>({position:[0,.9,0],facing:0,vertical:0,grounded:true,climbing:false,gliding:false,detaching:false,sprinting:true,charge:0,paused:false,...patch});
+      const sample=patch=>({position:[0,.9*1.30,0],facing:0,vertical:0,grounded:true,climbing:false,gliding:false,detaching:false,sprinting:true,charge:0,paused:false,...patch});
       let motion=WorldCharacterMotion.reset(sample()),x=0,z=0,checks=0,maxError=0,previousBook=null,maxBookStep=0;
       character.reset(motion);
       const gaitProof=[];
@@ -39,7 +65,7 @@ test('ground movement responds promptly and releases into a short smooth stop',{
         x=0;z=0;checks=0;maxError=0;motion=WorldCharacterMotion.reset(sample());character.reset(motion);
         for(let i=0;i<1200;i++){
           const facing=Math.max(0,i-180)*.004;x+=Math.sin(facing)*speed/120;z+=Math.cos(facing)*speed/120;
-          motion=WorldCharacterMotion.advance(motion,sample({position:[x,.9,z],facing}),1/120);
+          motion=WorldCharacterMotion.advance(motion,sample({position:[x,.9*1.30,z],facing}),1/120);
           root.position.set(x,0,z);root.rotation.y=facing;character.update(motion,1/120);
           const pose=character.snapshot();
           if(i>240){
@@ -103,7 +129,7 @@ test('ground movement responds promptly and releases into a short smooth stop',{
       assert.ok(proof.minPushRise>.025,proof.name+' rendered body must rise from loading into push-off');
       assert.ok(proof.maxSoleError<.01,proof.name+' forefoot must stay planted through heel rise, error '+proof.maxSoleError);
       assert.ok(proof.seated<.15,proof.name+' rendered thighs both stay forward for '+(proof.seated*100).toFixed(1)+'% of the cycle');
-      assert.ok(proof.lowestPelvis>.87,proof.name+' rendered pelvis must not collapse');
+      assert.ok(proof.lowestPelvis>.87*1.30,proof.name+' rendered pelvis must not collapse');
       assert.ok(proof.forwardKneeDegrees<{walk:48,jog:50,run:53,dash:55}[proof.name],proof.name+' rendered forward knee envelope');
     }
     assert.ok(animationProof.maxBookStep<.20,'notebook transfer and reversal must not teleport');
@@ -273,7 +299,7 @@ test('playable flight route: deliberate launch, two islands, unpaused reading an
         }else if(released!==null&&state.environment.elapsed-released>=.3){resolve();return;}
         requestAnimationFrame(sample);
       }requestAnimationFrame(sample);
-    }),{code,axis,value});
+    }),{code,axis,value:value*1.30});
     await click('#enter');
     await wait(()=>WorldDemo.snapshot().world.grounded);
     await t.test('ordinary jumps ignore a second Space press instead of deploying the glider',async()=>{
@@ -291,8 +317,8 @@ test('playable flight route: deliberate launch, two islands, unpaused reading an
         function sample(){
           const probe=window.climbCameraProbe;if(!probe.running)return;
           const position=WorldDemo.snapshot().world.position;
-          const distance=BABYLON.Vector3.Distance(scene.activeCamera.position,new BABYLON.Vector3(position[0],position[1]+.65,position[2]));
-          if(distance<1.5){probe.close++;if(head.visibility>=.5)probe.blocked++;}
+          const distance=BABYLON.Vector3.Distance(scene.activeCamera.position,new BABYLON.Vector3(position[0],position[1]+.65*1.30,position[2]));
+          if(distance<1.5*1.30){probe.close++;if(head.visibility>=.5)probe.blocked++;}
           requestAnimationFrame(sample);
         }requestAnimationFrame(sample);
       });
@@ -306,7 +332,7 @@ test('playable flight route: deliberate launch, two islands, unpaused reading an
       await wait(()=>window.climbCameraProbe.close>3);
       await capture('climb-close-camera');
       await key('Home');await key('Home','keyup');
-      await key('KeyW');await wait(()=>WorldDemo.snapshot().world.position[1]>5.25);await key('KeyW','keyup');
+      await key('KeyW');await wait(()=>WorldDemo.snapshot().world.position[1]>5.25*1.30);await key('KeyW','keyup');
       await click('[data-panel="notebook"]');await click('[data-note-id]');
       const held=await state();
       await page.evaluate(()=>{const input=document.getElementById('note-draft');input.focus();input.dispatchEvent(new KeyboardEvent('keydown',{code:'Space',bubbles:true}));});
@@ -326,11 +352,11 @@ test('playable flight route: deliberate launch, two islands, unpaused reading an
       const detached=await state();assert.equal(detached.flight.climbing,false);assert.equal(detached.flight.gliding,false);
       assert.ok(detached.characterMotion.detachments>0,'a detach event survives until the rendered frame');
       assert.equal(detached.characterMotion.notebook,'carried');
-      assert.ok(detached.position[1]<=before.position[1]+.3,'the outward push is small, not a full jump');
+      assert.ok(detached.position[1]<=before.position[1]+.3*1.30,'the outward push is small, not a full jump');
       await wait(()=>WorldDemo.snapshot().world.grounded);
       await walkTo('KeyW',2,16.85);
       await key('Space');await key('Space','keyup');await wait(()=>WorldDemo.snapshot().world.flight.climbing);
-      await key('KeyW');await wait(()=>WorldDemo.snapshot().world.grounded&&WorldDemo.snapshot().world.position[1]>6);await key('KeyW','keyup');
+      await key('KeyW');await wait(()=>WorldDemo.snapshot().world.grounded&&WorldDemo.snapshot().world.position[1]>6*1.30);await key('KeyW','keyup');
       assert.equal((await state()).flight.climbing,false,'upward input can step onto the reached ledge');
       assert.equal((await state()).flight.gliding,false);
       const framing=await page.evaluate(()=>{window.climbCameraProbe.running=false;return window.climbCameraProbe;});
@@ -352,14 +378,14 @@ test('playable flight route: deliberate launch, two islands, unpaused reading an
     await key('KeyX');await wait(()=>WorldDemo.snapshot().world.flight.charge===1);
     await capture('launch-charge');await key('KeyX','keyup');await key('KeyW');
     await wait(()=>WorldDemo.snapshot().world.flight.gliding);
-    assert.ok((await state()).position[1]>25,'charged launch reaches above the first island');
+    assert.ok((await state()).position[1]>25*1.30,'charged launch reaches above the first island');
     assert.equal((await state()).gliderVisible,true);
     assert.equal((await state()).characterMotion.mode,'glide');
     assert.equal((await state()).characterMotion.notebook,'stowed');
     await wait(()=>WorldDemo.snapshot().world.character.notebook==='stowed'&&WorldDemo.snapshot().world.character.joints.leftShoulder[0]<-2.5);
     assert.ok((await state()).character.joints.rightShoulder[0]<-2.5,'both gliding arms rise toward the canopy cords');
     await capture('island-flight');
-    await wait(()=>WorldDemo.snapshot().world.position[2]>=55.4);await key('KeyW','keyup');
+    await wait(()=>WorldDemo.snapshot().world.position[2]>=55.4*1.30);await key('KeyW','keyup');
     await t.test('gliding keeps descending while the notebook owns keyboard input',async()=>{
       await click('[data-panel="notebook"]');await click('[data-note-id]');
       const before=await state();
@@ -383,26 +409,26 @@ test('playable flight route: deliberate launch, two islands, unpaused reading an
       assert.equal((await state()).flight.gliding,false);
       await wait(()=>WorldDemo.snapshot().world.grounded);
     });
-    await key('KeyD');await wait(()=>WorldDemo.snapshot().world.position[0]>5.2);
+    await key('KeyD');await wait(()=>WorldDemo.snapshot().world.position[0]>5.2*1.30);
     await key('Space');await wait(()=>!WorldDemo.snapshot().world.grounded&&WorldDemo.snapshot().world.vertical>0);
-    await key('Space','keyup');await wait(()=>WorldDemo.snapshot().world.position[0]>7.5);await key('Space');await key('Space','keyup');
-    await wait(()=>WorldDemo.snapshot().world.position[0]>=20.5);await key('KeyD','keyup');
+    await key('Space','keyup');await wait(()=>WorldDemo.snapshot().world.position[0]>7.5*1.30);await key('Space');await key('Space','keyup');
+    await wait(()=>WorldDemo.snapshot().world.position[0]>=20.5*1.30);await key('KeyD','keyup');
     await wait(()=>WorldDemo.snapshot().world.grounded&&WorldDemo.snapshot().world.flight.island==='windward');
     assert.deepEqual((await state()).flight.visited,['cloudrest','windward']);
     await capture('windward');
     await t.test('missing an island returns to the last solid checkpoint',async()=>{
-      await key('KeyW');await wait(()=>WorldDemo.snapshot().world.position[2]>61);
+      await key('KeyW');await wait(()=>WorldDemo.snapshot().world.position[2]>61*1.30);
       await key('Space');await wait(()=>!WorldDemo.snapshot().world.grounded&&WorldDemo.snapshot().world.vertical>0);await key('Space','keyup');
-      await wait(()=>WorldDemo.snapshot().world.position[2]>63.5);await key('Space');await key('Space','keyup');
-      await wait(()=>WorldDemo.snapshot().world.position[2]>78);await key('KeyW','keyup');
+      await wait(()=>WorldDemo.snapshot().world.position[2]>63.5*1.30);await key('Space');await key('Space','keyup');
+      await wait(()=>WorldDemo.snapshot().world.position[2]>78*1.30);await key('KeyW','keyup');
       if((await state()).flight.gliding){await key('Space');await key('Space','keyup');}
       await wait(()=>WorldDemo.snapshot().world.grounded&&WorldDemo.snapshot().world.flight.island==='windward');
-      const recovered=await state();assert.ok(Math.abs(recovered.position[0]-21)<.1&&Math.abs(recovered.position[2]-57)<.1);
+      const recovered=await state();assert.ok(Math.abs(recovered.position[0]-21*1.30)<.1&&Math.abs(recovered.position[2]-57*1.30)<.1);
       assert.equal(recovered.flight.charge,0);assert.equal(recovered.flight.gliding,false);
     });
     await click('[data-panel="map"]');
     const atlas=await page.evaluate(()=>WorldDemo.snapshot().map.landmarks);
-    assert.ok(atlas.find(p=>p.id==='cloudrest').y>19&&atlas.find(p=>p.id==='windward').y>12,'map uses actual landing surfaces');
+    assert.ok(atlas.find(p=>p.id==='cloudrest').y>19*1.30&&atlas.find(p=>p.id==='windward').y>12*1.30,'map uses actual landing surfaces');
     await capture('island-map');
     assert.equal(await page.evaluate(()=>WorldDemo.snapshot().fixtureUnchanged),true);
     assert.deepEqual(page.errors,[]);
@@ -450,6 +476,11 @@ test('Shift dashes, a hold locks running, a short dash unsprints, and the bar ri
     assert.ok(Math.abs(tap.settled-start.speeds.walk)<.4,'a tap settles back to WALKING, measured '+tap.settled);
     assert.equal(tap.sprinting,false,'and stops reading as sprinting');
     // 2. A HOLD past x locks running, and letting go of Shift does not stop it.
+    // Dash initiation is grounded-only. The fixed-duration tap above can end
+    // just off a tread; do not turn that unrelated terrain phase into this input test.
+    const beforeHold=await page.evaluate(()=>{const s=WorldDemo.snapshot().world;return {grounded:s.grounded,position:s.position,vertical:s.vertical};});
+    t.diagnostic(JSON.stringify({beforeHold}));
+    await page.waitFor(()=>{const s=WorldDemo.snapshot().world;return s.grounded&&Math.hypot(s.motion.velocity[0],s.motion.velocity[2])<.01;});
     const hold=await page.evaluate(()=>new Promise(resolve=>{
       const canvas=document.getElementById('world'),key=(code,type)=>canvas.dispatchEvent(new KeyboardEvent(type,{code,bubbles:true}));
       key('KeyW','keydown');key('ShiftLeft','keydown');
