@@ -102,17 +102,21 @@ readable and editable without the scene.
   The avatar and following camera interpolate between fixed simulation positions.
   Collision and the four-jump-height gate use the actual simulation body.
 - The fixed botanical traveler uses a **local procedural rebuild on the existing rig**.
-  The character, notebook, glider and scene use a uniform **1.30× scale**. Model-local
-  thigh/shin lengths stay **0.49 / 0.46**; their rendered lengths are **0.637 / 0.598**
-  world units, for a **1.235-unit leg**. Overlapping torso volumes and shin-mounted
-  boot cuffs form the same articulated body. The collision ellipsoid, wall/ground probes,
-  stair heights, bridge widths and island spacing share the scale.
-  With the user's **Option A**, jump impulse is **8.06**, gravity **23.4**, bounded step-up
-  **0.312**, and camera distance **11.44** (zoom **3.9–16.9**). Relative jump height and
-  vertical airtime remain proportional. Ground speeds stay **5.2 / 12 / 16.2**, so
-  enlarged routes take 30% longer and horizontal jumps span less of an enlarged gap.
-  Framing remains similar because both body and camera distance grew; the intended
-  movement difference is reduced step length relative to the legs. Pose coordinates
+  The **body alone** carries a **1.30× scale** (`characterScale` in `flight-core.js`).
+  Model-local thigh/shin lengths stay **0.49 / 0.46**; their rendered lengths are
+  **0.637 / 0.598** world units, for a **1.235-unit leg**. Overlapping torso volumes and
+  shin-mounted boot cuffs form the same articulated body. What scales is the character's
+  own anatomy: the collision ellipsoid (**0.455 / 1.144 / 0.455**), the feet offset below
+  the collider centre, the limb reach used to probe walls and ledges, and eye/crown
+  heights. What does **not** scale is everything else — scene geometry, bridge widths,
+  stair heights, island spacing, camera distance **8.8**, jump impulse **6.2**, gravity
+  **18** and the bounded step-up **0.24** all keep their authored values.
+  Step length is `speed / (2 × cycle rate)`, so the longer leg is what cuts step/leg to
+  **1.238 / 1.723 / 2.370 / 2.981**. Ground speeds stay **5.2 / 12 / 16.2**, so
+  route lengths, crossing times and jump spans are exactly what they always were.
+  Framing changes on purpose: the camera stayed at 8.8 while the body grew, so the
+  character now sits larger in frame. The intended movement difference is reduced step
+  length relative to the legs. Pose coordinates
   remain local to the model; contacts and exported ankle heights use world units.
   Four independent motion sets own heel recovery, support timing, pelvis weight transfer,
   torso lean/counter-rotation and arm phrasing. At steady observed speeds 5.2 / 8 / 12 /
@@ -173,10 +177,13 @@ readable and editable without the scene.
   Launch apex deployment still works while a companion owns input when clearance permits it.
   WASD steers at 8 world units/second with a 2.4 units/second maximum gliding descent.
   Cloudrest and Windward Isle have real collision surfaces and checkpoint recovery.
-  **Current limitation:** launch/glide/climb/detach retain their earlier speeds pending
-  the separate traversal-scale decision. With the higher gravity and enlarged route,
-  the unchanged launcher cannot complete the Cloudrest route. Ground playtesting is
-  available; the island route needs that outstanding choice.
+  Launch/glide/climb/detach keep their authored speeds and need no rescale: the islands
+  stayed at their authored distance, so the unchanged **22+12** impulse reaches Cloudrest.
+  The two gateway piers are **1.5 units wide and 2.2 deep**, with **2.1 × 2.8 decorative
+  caps**, providing room to finish landing and brake with the enlarged collision body.
+  Extra depth extends behind the original front faces, keeping the approach and grab
+  positions unchanged. Pier height, the rest of the scene and all controller tuning
+  retain their authored values.
   [The movement comparison](MOVEMENT-DEMO-COMPARISON.md) records the reference target and
   the limits of what has actually been measured.
 - **Dash, locked running and sprint stamina, reviewed on 2026-09-13.** Shift is
@@ -261,13 +268,22 @@ readable and editable without the scene.
   rendered in the scene; the HTML layer supplies only controls and projected labels/hit
   targets. Stars use Track's `computeLayerLayout` plus saved `slot.pos` overrides, KS03
   colors and connections.
-  Labels may shift to avoid overlap; star positions do not. Larger-parent sizing is a demo
-  treatment: cycles share a size, and child sizes decrease along the condensed graph.
-  Pan the sky camera by dragging or arrow keys, zoom with the wheel or +/−, use **Fit all** /
-  Home, and search by name. Tab then Enter/Space selects a star. Filled petals mean reviews due;
+  The grounded viewpoint stays fixed while dragging rotates the displayed constellation
+  around a spherical sky. The fitted network's longer dimension spans **40°**; a drag
+  follows the pointer at **1× near the screen centre**, and held arrow keys rotate at
+  **20°/second**. These are the user's selected motion settings. Zoom with the wheel or
+  +/− changes field of view; **Fit all** / Home restores the initial orientation and fit.
+  Search and Tab selection bring an offscreen star back into view; Enter/Space opens it.
+  Labels and hit targets follow the same projected stars. Their de-overlap still uses
+  flat KS03 space, so separation under projection remains a dense-network proof gate.
+  Larger-parent sizing is a demo treatment: cycles share a size, and child sizes decrease
+  along the condensed graph. Filled petals mean reviews due;
   outlined petals mean reviewed, with exact counts in the label. The matching ground petals
   use the same canonical calendar result, including skipped and actual finished-day rules.
-  Pan/zoom never changes the stars' world positions. A celestial rendering pass keeps
+  Navigation changes only the display mapping: `sky-core.js`'s canonical KS03 coordinates
+  and saved `slot.pos` overrides remain unchanged, including MM 103 at **(510, 70)**.
+  **Reduce motion** retains direct dragging while skipping entry/return transitions;
+  the sky has no automatic drift or release coasting. A celestial rendering pass keeps
   knowledge visible through weather and foliage. There is no full-screen panel or tinted
   backdrop behind the constellation. The sky remains readable in daylight/rain.
   Weather and physics continue; stargazing holds the grounded avatar still.
@@ -345,6 +361,11 @@ sentinel remained byte-identical. No personal browser profile is used for that t
 
 ## Scale checkpoint playtest
 
+**Review status:** foot-ground push-off/body momentum (1) is rejected; checks 2–5 were
+judged “okay but not that good”. Body-animation work is stopped at the user's request,
+with no fix or further review planned. The checklist below is retained as a reference
+to that verdict, not a new request to test.
+
 Reload the local demo, enter the garden, and press **Home** to reset camera framing.
 The scale changes step-to-body proportions; it does not replace the rigid character model.
 
@@ -357,7 +378,9 @@ The scale changes step-to-body proportions; it does not replace the rigid charac
 4. **Run + Space, then walk up the terrace steps:** judge relative jump height, landing
    and clearance at the enlarged body size. Wheel zoom and Home should keep familiar framing.
 5. **Face a gateway pillar, Space, W, then Space to detach:** inspect wall clearance
-   and notebook carry/stow clipping. The climb choreography itself is unchanged.
+   and notebook carry/stow clipping. Grab again, climb onto the top and release W: the
+   widened pier should support the body without sliding to recovery. Climb choreography
+   itself is unchanged.
 
 Automated geometry/contact checks cannot establish naturalness or reference parity.
 
@@ -400,7 +423,8 @@ simultaneous forward thighs, pelvis collapse and maximum forward knee angle; nom
 cadences also pin the user-accepted rhythm. They cover transitions
 through all four sets and back, 90°/180° turns with the existing controller's steering,
 stopping/restarting, jump progression, directional climbing, held grips, reset and
-read-only sampling. The flight browser suite measures actual Babylon ankle positions
+read-only sampling. The flight browser suite also checks an off-centre gateway climb-top
+landing and a one-second supported hold after release. It measures actual Babylon ankle positions
 against contacts separately for all four sets, measures the rendered hips/knees in the
 actor's facing direction through turns, and checks full-size notebook transfer
 and mid-transfer reversal. Push-off cases require body rise and positive vertical velocity
@@ -515,6 +539,7 @@ documentation diff were reviewed; game/browser suites were not rerun for that fe
 | `scripts/stamina-core.js` | The one definition of sprint: the dash/hold-to-lock/short-dash-unsprint state machine, the KS03-streak budget it spends, recovery and the single `canSprint` gate, plus the read-only streak projection. Holds no date code — the day and its arithmetic are parameters |
 | `scripts/app.js` | Panel state, canonical calendar reads and memory-only drafts |
 | `scripts/sky-core.js` | Read-only KS03 projection, hierarchy sizing and canonical review cues |
+| `scripts/sky-motion.js` | Pure spherical display mapping and the user-selected sky control settings |
 | `scripts/sky-scene.js` | Celestial scene meshes, procedural light/petal textures and world-to-screen projection |
 | `scripts/sky-view.js` | Accessible sky controls and labels following the scene's projection |
 | `scripts/map-core.js` | North-up coordinates, destination bearings and explicit synthetic Quest mappings |

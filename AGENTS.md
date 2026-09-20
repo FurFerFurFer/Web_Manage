@@ -72,6 +72,7 @@ Active files:
 | `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, an explanation, and source-dump tags |
 | `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
 | `scripts/theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
+| `scripts/viewport.js` | The one definition, in JavaScript, of what counts as a phone (`window.TrackViewport`): `PHONE_PX`, `PHONE_QUERY`, `isPhone`, `subscribe`. Reads `window.matchMedia` and NOTHING else — no `document`, no storage, no date code — which is what keeps its suite offline and unswept |
 | `scripts/schema.js` | The canonical slot definition (`window.TrackSchema`): the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
 | `scripts/storage-guard.js` | The one `track_db` load boundary (`loadDB` — parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, both banners (`window.TrackStorage`) |
 | `scripts/firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
@@ -85,7 +86,7 @@ Active files:
 | `docs/` | User-facing paste specifications for the Track application |
 | `World/` | The Track World game project — concept draft, its reference imagery, and its own `AGENTS.md`, which governs every change inside that directory. Nothing there is part of the Track runtime, and nothing there may write Track data |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -99,7 +100,40 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=12`, `scripts/schema.js?v=7`, `scripts/calendar-core.js?v=7`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-widget.js?v=2`, `scripts/true-storage-core.js?v=2`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=1`, `scripts/quest-core.js?v=2`, `scripts/theme.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
+Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=13`, `scripts/schema.js?v=8`, `scripts/calendar-core.js?v=8`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-widget.js?v=2`, `scripts/true-storage-core.js?v=2`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
+
+The phone layout lives at **`max-width: 720px`**, and `--phone-tabbar-h` is the **one
+definition** of the bottom tab bar's height. It is `0px` on `:root` and set only inside
+that block, so a rule reserving room for the bar — the three `h-screen-nav` utilities, the
+notes widget's inset — reads the var **unconditionally** and is a no-op on a desktop by
+*arithmetic*, not by a second copy of the rule inside a media query. Never re-spell 52px,
+and never add a desktop/phone pair where reading the var would do.
+
+The **one deliberate exception** is the shell's `padding-bottom`, which stays inside the
+media query: `.app-page #root > div` is (1,1,1) and therefore also beats a Tailwind
+utility, so an unconditional `padding-bottom: 0px` would strip the bottom padding from a
+shell that sets its own — `true-storage.html`'s no-workspace screen is `min-h-screen … p-6`.
+Reading a 0px var is only free where nothing else is declaring that property. Three more
+rules follow:
+
+- The **720 is a TWIN**: `styles.css` and `scripts/viewport.js` both spell it, because CSS
+  cannot read a JS constant and JS cannot read an `@media` rule. `tests/viewport.test.js`
+  pins the stylesheet's whole `max-width` set (`[460, 640, 720]`) rather than filtering
+  for 720, so a stray 719 beside it fails too and a fourth breakpoint has to be added on
+  purpose. Moving a phone rule off 720 without that file is how `isPhone()` starts lying
+  to four pages with nothing on screen to say so.
+- **`phoneNow()` and `useIsPhone()` are not interchangeable.** `phoneNow()` is for a lazy
+  `useState` initializer — a one-shot read at mount. `useIsPhone()` follows the viewport
+  live. `progress.html`'s `timelineMode` must use the first: wiring the hook in would look
+  identical on screen and then overwrite a WEEK the user chose by hand, on the next
+  rotation.
+- A pane hidden on a phone is **hidden, not unmounted, wherever a mount-only effect binds
+  to a ref.** The Schedule's timeline binds two `useEffect(…, [])` to `containerRef` (the
+  scroll-to-08:00 and the non-passive Shift+wheel listener), so unmounting it once leaves
+  that listener on a dead node for the rest of the session with no error anywhere — it
+  toggles inline `display` instead. `GoalTabsPanel`'s visually identical split has no such
+  effect and *is* unmounted. A change that made the two uniform would break one of them,
+  and `tests/browser.test.js` asserts the timeline stays in the DOM while hidden.
 
 A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
 than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,
@@ -838,6 +872,7 @@ node --check scripts/graph-layout.js
 node --check scripts/doc-table-core.js
 node --check scripts/schedule-paste-core.js
 node --check scripts/quest-core.js
+node --check scripts/viewport.js
 ```
 
 Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
@@ -846,7 +881,7 @@ Then run the committed suite — it is the only automated check that sees the in
 node tests/run.js
 ```
 
-It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+It runs `tests/calendar-core.test.js` and `tests/schema.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js`, `tests/quest-core.test.js`, `tests/viewport.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
 
 - Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
 - A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.

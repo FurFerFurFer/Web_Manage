@@ -6,6 +6,7 @@
   <title>Documentations</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
+  <script src="scripts/viewport.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=8"></script>
   <script src="scripts/calendar-core.js?v=8"></script>
@@ -18,7 +19,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=12">
+  <link rel="stylesheet" href="styles/styles.css?v=13">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -2807,7 +2808,7 @@
           {/* Header */}
           <header className="docs-header sticky top-0 z-10 flex items-center gap-3 border-b border-gray-800 bg-gray-900/90 px-3 py-2 backdrop-blur-sm">
             <a href="index.html" className="text-xs text-gray-600 transition-colors hover:text-gray-300">← TRACK</a>
-            <span className="text-xs font-bold tracking-widest text-gray-300">DOCUMENTATIONS</span>
+            <span className="docs-header-title text-xs font-bold tracking-widest text-gray-300">DOCUMENTATIONS</span>
             {slotName && <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">{slotName}</span>}
             <SyncChip dbSize={dbSize} />
             <div className="flex-1"></div>
@@ -2891,12 +2892,16 @@
 
             {/* Editor */}
             <main className="docs-editor min-w-0 flex-1 overflow-y-auto">
+              {/* docs-editor-body below is a styling hook, not decoration: the
+                  phone block in styles.css has to reach THAT column to drop
+                  max-w-3xl and px-10, and `.docs-editor > div` would also match
+                  the empty-state message in the other branch. */}
               {!activePage ? (
                 <div className="flex h-full items-center justify-center text-xs text-gray-600">
                   Select or create a page from the sidebar.
                 </div>
               ) : (
-                <div className="mx-auto max-w-3xl px-10 py-10 font-sans">
+                <div className="docs-editor-body mx-auto max-w-3xl px-10 py-10 font-sans">
                   {/* breadcrumb */}
                   {ancestors.length > 0 && (
                     <div className="docs-toolbar mb-2 flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
@@ -2993,6 +2998,29 @@
               )}
             </main>
           </div>
+
+          {/* PHONE NAV — one of four (progress.html, sir-ks02.html,
+              true-storage.html carry the others). The shared half is
+              .track-tabbar in styles.css; this <nav> is the documented twin,
+              and it is a twin because each page is its own inline-Babel React
+              app with no module system — the same reason this file carries its
+              own genId().
+
+              This page has no views to switch between, so its bar is actions
+              rather than tabs. ☰ PAGES drives the SAME sidebarFull state as the
+              sidebar's own ⛶: one state, two entry points, so they can never
+              disagree about whether the drawer is open. The drawer covers this
+              bar at z-index 50 while it is open, which is why the way back out
+              lives inside the drawer. */}
+          <nav className="track-tabbar" data-tabbar="documentations" aria-label="Sections">
+            <button type="button" className="track-tabbar-btn" data-tabbar-tab="pages"
+              aria-current={sidebarFull ? 'page' : undefined}
+              onClick={()=>setSidebarFull(f=>!f)}>☰ PAGES</button>
+            <button type="button" className="track-tabbar-btn" data-tabbar-tab="add"
+              onClick={()=>addPage(null)}>＋ PAGE</button>
+            <a className="track-tabbar-btn track-tabbar-home" data-tabbar-tab="home"
+              href="index.html" aria-label="Track home">⌂</a>
+          </nav>
 
           {showDumpModal && (
             <SourceDumpModal dumps={dumpsSnapshot.dumps} mms={dumpsSnapshot.mms}

@@ -92,6 +92,33 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
 
 ## 4. Player perspective and movement
 
+- **Visual verdict and stop instruction (2026-09-20).** After the latest playable
+  hand-back, the user said: **“2-5 is okay but not that good but 1 is as bad as always”**
+  and **“just note it No plan of fixing”**. Playtest 1 is the foot-ground push-off and
+  body-momentum relationship in walking/running; it remains rejected. Playtests 2–5
+  cover gait transitions and stop/restart, 90°/180° turns, running jump/landing, and
+  climb/top-out/detach with notebook handling; their quality is only “okay but not that
+  good”. Passing automated checks does not overrule this verdict. **Record the result
+  and stop: no further body-animation fix, investigation, replacement proposal or
+  playtest is planned.** This supersedes the continuation/review queue below unless
+  the user explicitly reopens the work.
+- **Current increment — local production reaffirmed (2026-09-20).** The user's latest
+  continuation explicitly selects **local procedural rebuild on the existing rig** and
+  closes the production question. This supersedes the pending research direction in
+  September 19 ruling 1 for this increment. Keep distinct walk/jog/run/dash sets, body
+  momentum and adapted jump/fall/land/climb motion. No skinned model, authored clips,
+  purchase, Blender or glTF loader. Preserve the current controller and fixed ground
+  speeds; animation only observes it. Ship the local result and distinguish automated
+  behavior evidence from the user's visual acceptance. The two original September 13
+  clips establish no climb/glide/notebook motion; later footage is separately indexed.
+  No claim that a paid tool is necessary has been demonstrated.
+- **Gateway fit — Option A selected (2026-09-20).** Keep the body at 1.30× and the authored
+  world/controller scale. Widen only the two gateway piers and their decorative caps so
+  the existing climb-top route fits the body. The implementation uses **1.5 width × 2.2
+  depth** with **2.1 × 2.8 caps**, extending rearward with the original front faces kept
+  fixed: the initial 1.5-square trial did not leave enough forward landing/braking room. This is the selected local geometry fix, with no collider, input,
+  speed or animation retuning.
+
 - The world is explored from a third-person perspective.
 - The initial controls use keyboard and mouse on the user's computer.
 - **Movement decision (2026-09-07):** **Breath of the Wild** is the selected reference for
@@ -292,8 +319,10 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
      the jog at 1.72x and the run at 2.37x, and leaves the **dash at 2.98x as a deliberate,
      stated exceedance** — not a defect, and not something to report as a gap. Derive the
      final value against the reference clips and **report the resulting table** rather than
-     asserting a fit. **The scene rescales with the character** — bridge widths, step
-     heights, island spacing and camera distance are all in the same world units.
+     asserting a fit. ~~**The scene rescales with the character**~~ — **SUPERSEDED on 2026-09-20,
+     see Option A below.** Rescaling the scene, the camera and the controller together
+     with the body is a similarity transform: it renders identically and its only
+     perceptible effect is that fixed speeds cover 30% less of an enlarged world.
 
      **This ruling collides with the frozen controller values, and that collision is the
      user's to settle.** Jump impulse 6.2, gravity 18, the bounded step-up and the camera
@@ -303,20 +332,34 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
      together preserves the feel but edits the frozen list. Present both with a
      recommendation and **stop**; do not resolve it quietly in either direction.
 
-     **Option A selected by the user on September 20:** at **k=1.30**, scale jump
-     impulse/gravity to **8.06 / 23.4**, bounded step-up to **0.312**, and camera distance
-     to **11.44** with zoom bounds **3.9–16.9**. The user also requires a concrete
-     playtest checklist for every change. This closes the jump/gravity/step-up/camera
-     question; do not ask it again. Vertical airtime and jump height relative to the
-     body stay proportional. Ground speeds remain fixed, so route crossing takes 30%
-     longer and horizontal jump reach covers less of an enlarged gap.
+     **Option A, as the user settled it on 2026-09-20 after seeing it built.** The
+     first build of this ruling scaled the body, the scene, the camera, the jump and
+     gravity all by k. The user's verdict on that build was that it had changed nothing
+     visible except a speed decrease, and that verdict is arithmetically right: a uniform
+     similarity transform of scene plus camera is invisible by construction, and the only
+     term left unscaled was speed, so the sole perceptible effect was 30% longer crossings.
 
-     **Additional traversal choice pending:** scaling launch, glide and climbing speeds
-     and detach impulse was omitted from the earlier question. With the approved higher
-     gravity, unchanged Windseed launch cannot sustain the enlarged Cloudrest route.
-     Recommend scaling these remaining traversal quantities by 1.30; preserve input,
-     response and stamina timing. A separate structured question is awaiting the user's
-     answer. This does not reopen Option A or authorize a new motion set.
+     **The body scales; nothing else does.** `characterScale = 1.30` lives in
+     `flight-core.js` and reaches the rig, the animation's model→world conversion, the
+     collider, the feet offset, limb reach and eye height — and stops there. The scene,
+     the camera (8.8), jump (6.2), gravity (18) and the bounded step-up (.24) keep their
+     authored values. Step length is `speed / (2 * cycle rate)`, so with the speeds pinned
+     and the cadence accepted on 2026-09-15, the longer leg is what cuts step/leg to
+     **1.238 / 1.723 / 2.370 / 2.981**. Those ratios depend on leg length, speed and cadence,
+     not scene extent. Keeping the world and camera at their authored size preserves
+     route travel times and makes the larger body visible.
+
+     **This also dissolved the pending traversal question.** Launch, glide, climbing and
+     detach speeds needed no rescale once the islands stayed at their authored distance:
+     Cloudrest is reachable again with the unchanged 22+12 impulse, and no frozen
+     controller value was edited in either direction.
+
+     **Gateway clearance failure, before the local widening selected above.** The
+     existing climb-top route fell from the narrow pier with the enlarged body. The
+     initial explanation treated the full collider width as a required flat footprint;
+     September 20's early-release control disproved that explanation. Forward landing
+     and braking room also matters. The selected local widening supplies that room;
+     it does not change the controller or establish animation fidelity.
 
   4. **Climbing, falling and gliding stay UNBUILT until the user supplies footage.** The
      user has undertaken to record Aether climbing, falling, landing and gliding in Genshin
@@ -533,7 +576,7 @@ demo. Ground-level stars and a separate mind-map panel do not fulfill this requi
   including mind maps without a review due. It does not combine other slots' knowledge.
 - Stars represent the existing mind maps and preserve their identity and relationships.
   They are representations of knowledge, not earned collectibles or one star per review.
-- Looking, moving the camera, and inspecting a star must not rearrange KS03, change its
+- Looking, moving the displayed sky, and inspecting a star must not rearrange KS03, change its
   saved positions, or complete a review. Full MM editing is available through deliberate
   actions in the selected star's detail view, under Section 10's interaction contract.
 - Overdue reviews never make the grove wither or destroy stars. The sky's knowledge
@@ -547,6 +590,22 @@ uses a 1.6-second upward transition and a 1.1-second return, with movement locke
 both, early Esc reversal and a reduced-motion skip. These durations are implementation
 tuning, not prescribed reference timings. G still requires grounded entry inside the
 Grove; the MM panel also offers an explicitly named travel shortcut.
+
+**Confirmed stargazing motion, clarified 2026-09-20:** after entry the viewpoint stays
+fixed in the Grove. Dragging or sliding rotates the displayed constellation around a
+spherical sky, with a slight curve suggesting travel around the world. This supersedes
+the demo's flat plane and translating sky camera. The user chose **A / A / A**:
+**40°** across the fitted network's longer dimension, **1× pointer-following drag near
+the screen centre**, and **20°/second** for held arrow keys. These numbers are selected;
+comfort and the resulting feel still require the laptop playtest. Zoom changes the
+field of view; Fit all and Home restore the initial orientation and fit. Labels and hit
+targets follow the projected stars, and keyboard/search navigation can bring a star
+back into view. The canonical KS03 coordinates, including saved manual positions, stay
+read-only: the spherical placement and rotation are a display mapping. Preserve the
+1.6-second entry, 1.1-second Esc return, early cancellation and movement lock. Reduce
+motion skips those transitions while preserving direct manipulation, without automatic
+drift or release coasting. This decision does not approve changes to the sky's look,
+hierarchy sizing, dense-network treatment or the real-data read boundary.
 
 **Confirmed sky treatment, clarified 2026-09-09:** stars and connections appear directly
 in the 3D sky, rather than in an SVG chart or a separate full-screen panel. Readable labels

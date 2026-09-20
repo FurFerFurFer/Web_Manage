@@ -6,6 +6,7 @@
   <title>SIR × KS02 × MG</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
+  <script src="scripts/viewport.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=8"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
@@ -17,7 +18,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=12">
+  <link rel="stylesheet" href="styles/styles.css?v=13">
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="app-page ks02-page">
@@ -3241,13 +3242,19 @@
         onUntagStorage:untagStorage,
       };
 
+      /* The ONE view table for this page. The header below and the phone bar at
+         the bottom of this component both map it, so a view added here appears
+         in both places or in neither. */
+      const VIEWS = [["calendar","CAL"],["ks02","KS02"],["mg","MG"],["ks03","KS03"],["kolb","KOLB"],["srch","SRCH"]];
+      const goToView = v => { setView(v); setSelectedMM(null); setSelectedKolbId(null); setKs02SelectedStage(null); };
+
       return (
         <div className="min-h-screen bg-gray-950 text-gray-100 font-mono text-sm select-none">
           <div className="flex items-center justify-between px-3 py-3 bg-gray-900 border-b border-gray-800">
             <a href="index.html" className="text-gray-600 hover:text-gray-300 transition-colors text-xs">← TRACK</a>
             <div className="flex gap-1">
-              {[["calendar","CAL"],["ks02","KS02"],["mg","MG"],["ks03","KS03"],["kolb","KOLB"],["srch","SRCH"]].map(([v,l])=>(
-                <button key={v} onClick={()=>{setView(v);setSelectedMM(null);setSelectedKolbId(null);setKs02SelectedStage(null);}}
+              {VIEWS.map(([v,l])=>(
+                <button key={v} onClick={()=>goToView(v)}
                   className={`px-2 py-1 rounded text-xs font-bold transition ${view===v?"bg-white text-gray-950":"text-gray-400 hover:text-white"}`}>{l}</button>
               ))}
             </div>
@@ -3692,6 +3699,29 @@
             </div>
           )}
           {view==="srch"&&selectedMM&&currentMM&&<MMDetail mm={currentMM} {...mmDetailProps} initialMode="ks03"/>}
+
+          {/* PHONE NAV — one of four (progress.html, documentations.html and
+              true-storage.html carry the others). The shared half is
+              .track-tabbar in styles.css; this <nav> is the documented twin,
+              and it is a twin because each page is its own inline-Babel React
+              app with no module system.
+
+              It maps VIEWS, the same table the header above maps. Six views,
+              `← TRACK` and three +buttons in one header row do not fit a phone;
+              here the views are under the thumb and the header keeps the
+              actions. data-tabbar="ks02" is load-bearing: true-storage.html
+              carries the same `ks02-page` body class, so the VALUE is the only
+              thing that tells the two bars apart. */}
+          <nav className="track-tabbar" data-tabbar="ks02" aria-label="Sections">
+            {VIEWS.map(([v,l])=>(
+              <button key={v} type="button" className="track-tabbar-btn"
+                data-tabbar-tab={v}
+                aria-current={view===v ? 'page' : undefined}
+                onClick={()=>goToView(v)}>{l}</button>
+            ))}
+            <a className="track-tabbar-btn track-tabbar-home" data-tabbar-tab="home"
+              href="index.html" aria-label="Track home">⌂</a>
+          </nav>
 
           {addMMModal&&(
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 overflow-y-auto">

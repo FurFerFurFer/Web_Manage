@@ -140,6 +140,44 @@ The shared interface currently provides:
 - Visible keyboard focus, reduced-motion handling, and 44px primary touch targets.
 - Responsive Home cards and horizontally scrollable app navigation on narrow screens.
 - A full-screen Universal calendar on every device, with its day detail as a side column above 720px and a bottom sheet at or below it.
+- A phone interface on all four React pages at 720px and below — see below.
+
+### The phone interface
+
+At `max-width: 720px` the four React pages lay themselves out for a phone. Above
+that width nothing changes: every rule that reserves room for the phone chrome
+reads `--phone-tabbar-h`, which is `0px` outside the breakpoint, so the desktop
+result is unchanged by arithmetic rather than by a second set of rules.
+
+- **A bottom tab bar** on `progress.html`, `sir-ks02.html`, `documentations.html`
+  and `true-storage.html`, carrying that page's sections plus a `⌂` home slot.
+  Each page renders its header tabs and its bar from one tab table, so the two
+  cannot list different sections. The bar scrolls sideways rather than shrinking
+  a target below 44px.
+- **The Schedule opens in DAY mode** on a phone. Week mode applies
+  `TOTAL_W` (56 + 7 × 140 = 1036px), which a 390px screen could only show four
+  columns of. Week is still one tap away, and a mode chosen by hand survives
+  rotation — the phone check is a one-shot read at mount, not a live binding.
+- **The two 65/35 splits become one pane plus a switcher**: the goal detail's
+  TASKS / PROGRESSION, and the Schedule's day-mode GRID / TASKS. The goal panes
+  are unmounted; the schedule panes are *hidden*, because the timeline binds two
+  mount-only effects to a ref.
+- **The Documentations sidebar becomes a drawer.** Its 240px column was 62% of a
+  390px screen and `shrink-0` forbade it giving any back, leaving the editor
+  about 70px of text. It is now hidden, opened full-screen from the bar's
+  `☰ PAGES`, and closed by picking a page, by `✕`, or by Escape. Its header also
+  scrolls and drops the redundant `DOCUMENTATIONS` word, which was the page's
+  only remaining source of horizontal overflow.
+- **The notes widget floats above the bar**, by CSS alone — `notes-widget.js` is
+  unchanged.
+
+`scripts/viewport.js` (`window.TrackViewport`) is the one definition of the
+breakpoint in JavaScript: `PHONE_PX`, `PHONE_QUERY`, `isPhone()` and a
+`subscribe()` that returns its own disposer. It reads `window.matchMedia` and
+nothing else — no `document`, no storage, no dates — which is what lets
+`tests/viewport.test.js` run offline. The 720 is necessarily spelled in both
+that file and `styles.css`; that suite pins the stylesheet's whole set of
+breakpoints so the two cannot drift apart silently.
 
 ### Mind maps and knowledge structure
 
@@ -1073,6 +1111,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, timetable blocks, PDF export |
 | `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, explanation, and source-dump tags |
 | `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry, the deadline rules, and `refOccupies` — the one test for which days a pasted timetable entry falls on (`window.TrackCalendar`) |
+| `scripts/viewport.js` | The one definition, in JavaScript, of what counts as a phone (`window.TrackViewport`) — `PHONE_PX`, `PHONE_QUERY`, `isPhone()` and a `subscribe()` returning its own disposer. Reads `window.matchMedia` and nothing else: no `document`, no storage, no date code |
 | `scripts/theme.js` | Initial appearance selection, the Grit/Night switch, persistence, and cross-tab updates. Holds the one normaliser that aliases the superseded `light` and maps an appearance to a `color-scheme` keyword |
 | `scripts/schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
 | `scripts/storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
@@ -1083,7 +1122,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
 | `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`) — membership, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Read by `progress.html` and `index.html`, so neither can drift. Holds no date code; the day is a parameter |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
-| `styles/styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling, and component states |
+| `styles/styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling (including the whole phone layout and `--phone-tabbar-h`), and component states |
 | `docs/` | User-facing paste specifications, and the verification evidence log |
 | `World/` | Separate synthetic Track World demo, concept and reference imagery; see its README for run/test details and its AGENTS for rules. Nothing in it is part of the Track runtime or writes Track data |
 | `firestore.rules` | Firestore security rules, versioned for review; published by hand in the Firebase console |
@@ -1134,6 +1173,7 @@ Track-website/
     ├── true-storage-core.test.js
     ├── graph-layout.test.js
     ├── doc-table-core.test.js
+    ├── viewport.test.js
     ├── cdp-cleanup.test.js
     ├── browser.test.js
     └── lib/
@@ -1487,8 +1527,9 @@ It runs three layers:
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
 | Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, column widths normalising to a conserved total and following a row or column change, band geometry and the row/column move that permutes `rows`, `merges` and `colWidths` together, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
+| Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer |
 
 The first two offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
@@ -1496,8 +1537,8 @@ That sweep is the point, not a detail: `calendar-core.js` exists to turn instant
 into *local* calendar days and `schema.js` stamps a new slot with one, and the
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
 machine running in UTC. `true-storage-core.test.js`, `graph-layout.test.js`,
-`doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js` and
-`cdp-cleanup.test.js` run **once**: none of those modules holds any date code, so a
+`doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`,
+`viewport.test.js` and `cdp-cleanup.test.js` run **once**: none of those modules holds any date code, so a
 sweep would cost five runs and prove the same thing. The last two have to *earn*
 that rather than merely claim it — one reads days, the other expires a tick at the
 end of one — so each suite carries a structural case that greps its module, with
@@ -1631,6 +1672,7 @@ node --check scripts/graph-layout.js
 node --check scripts/doc-table-core.js
 node --check scripts/schedule-paste-core.js
 node --check scripts/quest-core.js
+node --check scripts/viewport.js
 ```
 
 Then the committed suite, which is the fastest way to find out whether a change

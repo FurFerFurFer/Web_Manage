@@ -14,17 +14,18 @@
   <script defer src="/track-core/quest-core.js?v=1"></script>
   <script defer src="/track-core/graph-layout.js?v=1"></script>
   <script defer src="scripts/demo-core.js?v=8"></script>
-  <script defer src="scripts/flight-core.js?v=6"></script>
+  <script defer src="scripts/flight-core.js?v=7"></script>
   <script defer src="scripts/stamina-core.js?v=3"></script>
   <script defer src="scripts/character-motion.js?v=3"></script>
-  <script defer src="scripts/character-animation.js?v=6"></script>
-  <script defer src="scripts/character-rig.js?v=5"></script>
+  <script defer src="scripts/character-animation.js?v=7"></script>
+  <script defer src="scripts/character-rig.js?v=6"></script>
   <script defer src="scripts/sky-core.js?v=1"></script>
-  <script defer src="scripts/sky-view.js?v=4"></script>
-  <script defer src="scripts/sky-scene.js?v=2"></script>
+  <script defer src="scripts/sky-motion.js?v=1"></script>
+  <script defer src="scripts/sky-view.js?v=5"></script>
+  <script defer src="scripts/sky-scene.js?v=4"></script>
   <script defer src="scripts/map-core.js?v=2"></script>
-  <script defer src="scripts/map-view.js?v=5"></script>
-  <script defer src="scripts/scene.js?v=22"></script>
+  <script defer src="scripts/map-view.js?v=6"></script>
+  <script defer src="scripts/scene.js?v=25"></script>
   <script defer src="scripts/app.js?v=20"></script>
 </head>
 <body>
@@ -36,8 +37,8 @@
     <p id="sky-description">Looking up into the Grove’s sky…</p>
     <div class="sky-tools"><button id="sky-out" class="secondary" aria-label="Zoom out">−</button><button id="sky-in" class="secondary" aria-label="Zoom in">+</button><button id="sky-fit" class="secondary">Fit all</button><label for="sky-find">Find a mind map</label><input id="sky-find" type="text" placeholder="Name…"></div>
     <div id="sky-results" class="sky-results" hidden></div>
-    <div id="sky-map" class="sky-map" role="group" aria-label="Mind map constellation. Drag to pan, scroll to zoom, or Tab to a star." tabindex="0"></div>
-    <p class="sky-legend">✿ Review due · ✓ Reviewed · no petals: no reviews today <span>Drag to pan · scroll to zoom</span></p>
+    <div id="sky-map" class="sky-map" role="group" aria-label="Mind map constellation. Drag or hold arrow keys to rotate the stars, scroll to zoom, or Tab to a star." tabindex="0"></div>
+    <p class="sky-legend">✿ Review due · ✓ Reviewed · no petals: no reviews today <span>Drag to rotate stars · scroll to zoom</span></p>
   </section>
   <header class="identity"><span class="world-mark" aria-hidden="true">✧</span><div><span>Track World</span><strong>Clockgarden</strong></div></header>
   <button id="minimap" class="minimap" data-panel="map" aria-label="Open world map" hidden><canvas id="minimap-canvas" aria-hidden="true"></canvas><span class="map-north" aria-hidden="true">N</span><span class="minimap-caption">World map <kbd>M</kbd></span></button>

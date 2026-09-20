@@ -2,14 +2,22 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const Flight=require('../scripts/flight-core');
 
-test('the approved scale preserves relative jump height and airtime while ground speeds stay fixed',()=>{
-  const t=Flight.tuning,k=1.30;
-  assert.ok(Math.abs(t.jumpSpeed-8.06)<1e-10,'approved jump impulse must scale with the body');
-  assert.ok(Math.abs(t.gravity-23.4)<1e-10,'approved gravity must preserve jump time');
-  assert.ok(Math.abs((t.jumpSpeed**2/(2*t.gravity))/k-6.2**2/36)<1e-10);
-  assert.ok(Math.abs(2*t.jumpSpeed/t.gravity-2*6.2/18)<1e-10);
-  assert.ok(Math.abs(Flight.MIN_GLIDE_HEIGHT/k-4*6.2**2/36)<1e-10);
+test('ruling 3 scales the body by 1.30',()=>{
+  assert.equal(Flight.tuning.characterScale,1.30);
+});
+
+test('the character scale reaches the body alone: no controller or traversal value moves with it',()=>{
+  const t=Flight.tuning;
+  // Option A (2026-09-20). Scaling the scene, the camera and these controller values
+  // WITH the body is a similarity transform: it renders identically and its only
+  // perceptible effect is that fixed speeds cover 30% less of an enlarged world.
+  // Every one is pinned at its authored size so that cannot come back silently.
+  assert.equal(t.jumpSpeed,6.2);assert.equal(t.gravity,18);
   assert.equal(t.walkSpeed,5.2);assert.equal(t.runSpeed,12);
+  assert.equal(t.glideSpeed,8);assert.equal(t.climbSpeed,2.2);assert.equal(t.descent,2.4);
+  assert.equal(t.launchMin,22);assert.equal(t.launchExtra,12);
+  assert.equal(t.detachSpeed,3);assert.equal(t.detachUp,2.2);
+  assert.ok(Math.abs(Flight.MIN_GLIDE_HEIGHT-4*6.2**2/36)<1e-10,'the glide floor follows the unscaled jump');
 });
 
 test('ground starts, reversals and braking stay responsive at 30/60/120 fps',()=>{

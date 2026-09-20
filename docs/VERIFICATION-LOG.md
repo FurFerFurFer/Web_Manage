@@ -2018,7 +2018,9 @@ note and deadline dated on or after the local today, from every origin, with no 
   `TC.originKey`, called rather than re-spelled.
 - The block's stored shape is unchanged, `{id, type:'calendar', hidden, scope}`: the list is
   always on and its expansion is ephemeral, so **nothing was migrated and nothing needed to be**.
-- `node tests/run.js`, final tree: 17 suites. `calendar-core` and `schema` swept under UTC,
+- `node tests/run.js`, final tree: **all 17 suites passed, 258 browser subtests, zero
+  failures** (~26.5 min under load; `md5sum` of `documentations.html`, `styles/styles.css`
+  and `tests/browser.test.js` identical at both ends of the run). The suites: `calendar-core` and `schema` swept under UTC,
   Pacific/Kiritimati (UTC+14), Pacific/Midway (UTC-11), America/Los_Angeles and
   Asia/Kathmandu with identical results; `true-storage-core`, `graph-layout`,
   `doc-table-core`, `schedule-paste-core`, `quest-core` and `cdp-cleanup` once each; then the
@@ -2086,8 +2088,10 @@ pass "unifies" the two row classes.
 subtests — `TOUCH: an armed chip dropped on a row lands before it` and the `GUARD` beside it
 — both on `waitFor timed out … (last value: "threw: CDP connection closed")`, the documented
 contention signature, during navigation rather than on any assertion. Subtests 184-186
-passed immediately after, so the browser died and the harness recovered. The mechanism was
-ruled out rather than assumed: `rg` confirms no `doc-cal-up*` class name appears outside
+passed immediately after, so the browser died and the harness recovered. **The re-run
+passed both**, which is the one-variable control the rule asks for: a different pair failing
+each run is contention, the same case failing twice is not. The mechanism was also ruled out
+rather than assumed: `rg` confirms no `doc-cal-up*` class name appears outside
 `documentations.html`, and `body.docs-page` is never set on `progress.html`, so the shared
 stylesheet cannot reach that page. Concurrent load at the time: GNOME `tracker-extract` at
 ~15%, and **another agent session actively editing `World/`** (4 modified files at preflight,
@@ -2104,3 +2108,127 @@ it rather than spelling it a second time.
 Not verified, as always in this environment: print output on paper, real touch hardware, the
 live Firebase project, and real multi-device behaviour. The new list's print rules were
 asserted as CSS and read, never rendered to PDF.
+
+**Styling was measured, not assumed.** A task-owned smoke asserted computed styles in both
+appearances rather than trusting that the rules parsed: the list's top border resolves to
+`1px` (so the stylesheet is applied at all), an owned row is tinted and carries its inset bar
+(`rgb(221,231,223)` on Grit, `rgba(127,185,143,0.15)` on Night), a ticked row computes
+`line-through`, the date column is `88px`, and `.doc-cal` causes no horizontal overflow on
+either. A separate structural check confirmed the screen rules sit at nesting depth 0 and the
+print additions inside `@media print` — a rule that parses but never applies looks identical
+to a working one in every other check.
+
+**The commit is not this work's alone.** At 10:23, mid-run, a concurrent session committed
+`79fed86 "DOC calen show"`, sweeping this feature in beside unrelated `World/` changes: 27
+files, of which 11 are this work and 16 are `World/`. Nothing was lost — `git diff HEAD` is
+empty for every file here, all eight new cases are in the commit including the cap case added
+last, and `?v=12` went in with them. A commit rewrites no working-tree bytes, which is why
+the run straddling it still saw one tree. Recorded because the history now attributes this
+change to a message about something else, and because a later session reading `git log` will
+not find it where it would expect.
+
+### A phone interface on the four React pages (2026-09-20)
+
+Reported as "the phone interface looked TERRIBLE, it's just a left cropped version of full
+screen", naming `documentations.html` and its left tab specifically.
+
+**The diagnosis was not what the symptom suggested, and measuring is what caught it.** The
+viewport meta is correct on all five pages. The cause is that four of the five have no
+responsive rules at all — there is not one `sm:`/`md:`/`lg:` prefix in the repository, and
+`styles.css`'s only width queries (720px, 460px, 640px) serve the Home hub and the Universal
+calendar. So `w-60 shrink-0`, `w-[65%]`, `grid-cols-7` and the schedule's
+`TOTAL_W = 56 + 7 × 140 = 1036px` resolve to desktop values at every width, and
+`body.app-page { overflow-x: hidden }` **clips** the result. On documentations the sidebar was
+240px of a 390px screen — 62%, with `shrink-0` forbidding it to give any back — leaving the
+editor about 70px of text once `px-10` came off.
+
+**The overflow on documentations was NOT the sidebar.** Hiding the sidebar left the page still
+441px wide at a 390px viewport. A sweep for elements outside the viewport found the fixed tab
+bar at `[0…441]`, which looked like the culprit; removing it from the DOM left `scrollWidth`
+at 441 unchanged, so it was *reporting* the inflation, not causing it. Measuring the header's
+children found it: `← TRACK` 36 + `DOCUMENTATIONS` 118 + workspace chip 66 + sync chip 72 +
+theme toggle 76, with gaps and padding, came to 440px inside a 390px box. `progress.html` and
+`sir-ks02.html` never showed this because their headers already scroll unconditionally
+(styles.css, `.progress-page` and `.ks02-page`); this header never got that treatment. Fixed
+by scrolling it and dropping the redundant title word, which the other three pages do not have
+either. Recorded because the obvious suspect was wrong twice in a row and only the
+one-variable removal test settled it.
+
+**Fail-first: three doctored baselines, each ONE reversed rule, in scratch trees under
+`TRACK_TEST_ROOT`, never in the repository.** Each tree symlinked the pages and copied
+`tests/` for real (`require` and `__dirname` resolve through the realpath and would have
+loaded the repository's own suite), printed the root it served, and refused to run if the
+tree was byte-identical to the repository.
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| B1 | the shell's `padding-bottom: var(--phone-tabbar-h)` removed | **only** the four `PHONE/<page>` cases |
+| B2 | `:not(.docs-sidebar-full)` dropped from the sidebar hide rule | **only** `PHONE/DOCUMENTATIONS`'s drawer case |
+| B3 | the schedule split reverted to desktop-only 65/35 | **only** `PHONE/PROGRESS`'s day-mode split case |
+
+The three failure sets are **pairwise disjoint**, which is the evidence that each per-surface
+case is load-bearing and that a forgotten copy cannot hide behind a passing sibling. A fourth
+baseline, in `tests/viewport.test.js` alone, moved every `max-width: 720px` in `styles.css` to
+719 and failed exactly one case — the breakpoint twin — leaving the other eight green.
+
+**Two cases were added because reviewing the coverage showed a gap the suite could not see.**
+Neither the crop assertion nor the tab-reachability assertion can detect a reverted 65/35
+switcher: 65% + 35% still sums to 100%, so the result is a 253px timeline beside a 136px
+matrix — unusable, and not an overflow. The two splits now have a case each, and they assert
+**opposite** things on purpose. The schedule's hidden pane must stay **in the DOM**, because
+two `useEffect(…, [])` bind to `containerRef` (the scroll-to-08:00 and the non-passive
+Shift+wheel listener) and unmounting it once would leave that listener on a dead node for the
+rest of the session with no error anywhere. The goal detail's panes **are** unmounted, because
+`GoalProgressPanel` has no `useEffect` at all. A later pass that "made the two splits uniform"
+has to break one case or the other; it cannot satisfy both.
+
+**What the crop assertion actually measures, and why it is two assertions.**
+`overflow-x: hidden` on `body.app-page` propagates to the viewport, making it a clipping
+scroll container — still a scroll container, so content overflowing RIGHT does enter its
+scrollable overflow region and `documentElement.scrollWidth` still grows. It is blind to the
+LEFT, where the scrollable overflow region is clamped at the padding-box origin: a page pushed
+off the left reports a tidy 390 while being unreadable, which is the exact shape the user
+reported. The second assertion sweeps `#root *` for any painted element outside
+`[0, clientWidth]` whose nearest non-`visible` ancestor is the viewport itself — so an element
+a container scrolls, or one deliberately clipped, does not count. `document.body` is skipped
+when finding an element's clipper: `getComputedStyle` reports its *computed* `hidden`, but its
+*used* value is `visible` because the value was propagated, and counting body as a deliberate
+clipper would make every escapee "intentional" and the assertion vacuous. The sweep is scoped
+to `#root *` because `index.html`'s `.cal-panel` and `.quest-panel` are full-bleed by design
+(`margin-inline: calc(50% - 50vw)`) and escape the viewport on purpose — they measured
+`[-7…1273]` at 1280px and are not a defect.
+
+**One rule was corrected by reading, not by a test.** The shell's `padding-bottom` was
+commented as unconditional but written inside the media query. Making it match the comment
+would have been wrong: `.app-page #root > div` is (1,1,1) and therefore also beats a Tailwind
+utility, so an unconditional `padding-bottom: 0px` would have stripped the bottom padding from
+`true-storage.html`'s no-workspace screen (`min-h-screen … p-6`) on every desktop. Reading a
+0px var is only free where nothing else declares that property. The comment and the AGENTS
+rule now record the exception and its reason.
+
+**A run's exit code was reported wrongly here and is worth recording.** The baseline script
+ended with `( cd "$REPO" && node tests/run.js | tail -30 )` and then read `$?` — which is
+`tail`'s, not node's. It printed `REAL EXIT=0` over a run whose own summary said
+`1 of 18 suites failed`. This is the lesson already in AGENTS ("a trailing grep makes a
+passing run exit 1"), met from the other direction: a pipe can also make a *failing* run look
+clean. Re-running the same bytes with no pipe was fully green (267/267), and the tree md5 was
+identical before and after both runs, so the earlier pair of failures did not survive a second
+run — consistent with the measured contention (`tracker-extract` at 49.7%, load 3.50, and the
+run taking 22.9 min against the ~13.6 min this file records for load ~2.5). The failing cases
+cannot be named, because `tail -30` discarded the messages before they were read. That is the
+cost of the mistake, and it is why the run was repeated rather than explained away.
+
+**Also corrected mid-task:** 40 Chrome processes were present and initially read as
+contention. They are 15 days old and at 0.0% CPU — orphans from a previous session, not this
+task's, and not a CPU source. The real load was GNOME's `tracker-extract`. This is the lesson
+in AGENTS ("read pcpu, time and /proc/loadavg, never the process count") failing to be applied
+on first reading of the list; the `etime` column said `15-05:38:06` and was read as hours.
+
+**Not covered, and not claimable from here:** real touch hardware, which is the whole point of
+this change and is permanently unverifiable in this environment — 390x844 with
+`Emulation.setTouchEmulationEnabled` is the closest it gets. Also not covered: notched
+safe-area insets (`viewport-fit=cover` is deliberately not set, so every `env()` resolves to 0;
+see NOTES Proposal 16), printed output, the live Firebase project, and real multi-device
+behaviour. Within the app, the phone layout has had no pass over the KS03 and True Storage
+pan/zoom canvases, the MG levels accordion, the Kolb editor, or the several `w-[528px]`-class
+popups in `progress.html` that carry no viewport cap — all named in NOTES Proposal 16.

@@ -6,6 +6,7 @@
   <title>Progress & Schedule</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
+  <script src="scripts/viewport.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=8"></script>
   <script src="scripts/quest-core.js?v=2"></script>
@@ -16,7 +17,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=12">
+  <link rel="stylesheet" href="styles/styles.css?v=13">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -248,6 +249,30 @@
       return window.TrackStorage && window.TrackStorage.newId
         ? window.TrackStorage.newId()
         : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    }
+
+    /* ── phone ────────────────────────────────────────────────────────────────
+       scripts/viewport.js is the ONE definition of the breakpoint; this is the
+       React adapter, and it is one of four copies for the same reason uid()
+       above is a delegate rather than a shared import — each page is its own
+       inline-Babel app with no module system.
+
+       Almost every phone rule in this app is CSS. These two exist because two
+       decisions change WHAT RENDERS rather than how it looks: the Schedule
+       opening in DAY mode instead of on a 1036px week grid, and the two 65/35
+       splits becoming one pane plus a switcher.
+
+       phoneNow() is for a lazy useState initializer — a one-shot read at mount
+       that must NOT be re-read, or rotating the phone would yank a mode the
+       user chose by hand. useIsPhone() is for layout that should follow the
+       viewport live. They are deliberately not interchangeable. */
+    const phoneNow = () => !!(window.TrackViewport && window.TrackViewport.isPhone());
+    function useIsPhone() {
+      const [phone, setPhone] = useState(phoneNow);
+      useEffect(() => (window.TrackViewport
+        ? window.TrackViewport.subscribe(setPhone)
+        : undefined), []);
+      return phone;
     }
 
     // A day note's `time` is optional and its ABSENCE is meaningful: without one
@@ -4158,6 +4183,10 @@
 
     function GoalTabsPanel({ goals, setGoals, mms, sirDoneMap }) {
       const [activeGoalId, setActiveGoalId] = useState(goals[0]?.id || null);
+      // Which half of the 65/35 detail split a phone is showing. Desktop
+      // renders both and ignores this.
+      const isPhone = useIsPhone();
+      const [goalPane, setGoalPane] = useState('tasks'); // 'tasks' | 'progress'
       const [adding, setAdding]             = useState(false);
       const [newTitle, setNewTitle]         = useState('');
       const [dragTabFromIdx, setDragTabFromIdx] = useState(null);
@@ -4339,12 +4368,30 @@
             )}
           </div>
 
-          {/* Detail view */}
+          {/* Detail view — 65/35 on a desktop, one pane plus a switcher on a
+              phone, where 65% of 390px leaves the task tree unreadable.
+
+              Conditional rendering is safe HERE and is not safe for the
+              schedule's visually identical split: GoalProgressPanel has no
+              useEffect at all and GoalNode holds no mount-once listener, so
+              unmounting a pane loses nothing. The schedule's timeline binds two
+              empty-dep effects to a ref and therefore has to be hidden instead. */}
           {activeGoal ? (
-            <div className="flex-1 flex min-h-0 overflow-hidden">
+            <div data-goal-split className="flex-1 flex min-h-0 overflow-hidden">
+
+              {isPhone && (
+                <div className="track-segmented m-2 self-start" data-goal-switch>
+                  {[['tasks','TASKS'],['progress','PROGRESSION']].map(([p,l])=>(
+                    <button key={p} type="button" data-goal-pane-btn={p}
+                      aria-current={goalPane===p ? 'true' : undefined}
+                      onClick={()=>setGoalPane(p)}>{l}</button>
+                  ))}
+                </div>
+              )}
 
               {/* Left: original task management */}
-              <div className="w-[65%] flex-shrink-0 overflow-y-auto border-r border-gray-800 py-5 px-4">
+              {(!isPhone || goalPane === 'tasks') && (
+              <div data-goal-pane="tasks" className="w-[65%] flex-shrink-0 overflow-y-auto border-r border-gray-800 py-5 px-4">
                 <div className="flex items-center gap-2 mb-4 px-1">
                   <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: goalColor }} />
                   <span className="text-xs font-bold text-gray-300 tracking-wide truncate">{activeGoal.title}</span>
@@ -4358,9 +4405,11 @@
                   inDetailView={true}
                 />
               </div>
+              )}
 
               {/* Right: progress panel */}
-              <div className="w-[35%] flex-shrink-0 overflow-y-auto p-6">
+              {(!isPhone || goalPane === 'progress') && (
+              <div data-goal-pane="progress" className="w-[35%] flex-shrink-0 overflow-y-auto p-6">
                 <div className="text-[10px] tracking-widest text-gray-700 mb-6">PROGRESSION</div>
                 <GoalProgressPanel
                   node={activeGoal}
@@ -4370,6 +4419,7 @@
                   goals={goals}
                 />
               </div>
+              )}
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center">
@@ -5134,8 +5184,24 @@
       const [dlCalMonth,  setDlCalMonth]  = useState(null);
       const [sirSessionPopup, setSirSessionPopup] = useState(null);
 
-      const [timelineMode,  setTimelineMode]  = useState(() => linkedDay ? 'day' : 'week'); // 'week' | 'day'
+      /* 'week' | 'day'. A phone opens on DAY, and that one word removes the
+         biggest single source of horizontal overflow on this page: week mode
+         applies TOTAL_W (56 + 7 × 140 = 1036px) to the header and the grid, and
+         `body.app-page { overflow-x: hidden }` clips the excess rather than
+         letting it scroll — so a phone showed Sunday through Wednesday and no
+         way to reach Thursday.
+
+         phoneNow(), NOT useIsPhone(): this is a lazy initializer, so it reads
+         once at mount and nothing re-reads it. That is the point. Wiring the
+         live hook in here would make rotating the phone overwrite a WEEK the
+         user had just chosen by hand, which is the opposite of helpful. */
+      const [timelineMode,  setTimelineMode]  = useState(() => (linkedDay || phoneNow()) ? 'day' : 'week');
       const [dayFocusDate,  setDayFocusDate]  = useState(() => new Date(linkedDay || today));
+
+      /* Which half of the day-mode 65/35 split a phone is showing. Desktop
+         renders both and ignores this. */
+      const isPhone = useIsPhone();
+      const [phonePane, setPhonePane] = useState('timeline'); // 'timeline' | 'matrix'
       const [openComments,     setOpenComments]     = useState(new Set());
       const [openMMComments,   setOpenMMComments]   = useState(new Set());
       const [noteDrafts,       setNoteDrafts]       = useState({});
@@ -5196,6 +5262,11 @@
       const daysRef         = useRef(null);
       const searchRef       = useRef(null);
       const shiftScrollRef  = useRef(0);
+      // The hour the phone's timeline pane was scrolled to, carried across a
+      // switch to the TASKS pane and back. Chrome drops scrollTop when an
+      // element loses its layout box, and the pane is hidden rather than
+      // unmounted (see the timeline's own style comment for why).
+      const phoneScrollRef  = useRef(0);
       // moved   = finger travelled past TOUCH_SLOP, so the gesture is not a tap (whatever else happens)
       // dragging = we took the gesture over from the browser (armed block) — preventDefault, follow, commit on release
       const touchRef        = useRef(null); // { type, item, offsetY, startX, startY, moved, dragging }
@@ -5240,6 +5311,14 @@
           containerRef.current.scrollTop = headerH + (8 - START_HOUR) * pxPerHour;
         }
       }, []);
+
+      /* Put the phone's timeline pane back where it was. useLayoutEffect, not
+         useEffect: the element regains its layout box in this commit, and
+         restoring after paint would show the top of the day for a frame. */
+      React.useLayoutEffect(() => {
+        if (isPhone && phonePane === 'timeline' && containerRef.current)
+          containerRef.current.scrollTop = phoneScrollRef.current;
+      }, [phonePane, isPhone]);
 
       // Shift + wheel → navigate one day left or right (1 notch = 1 day)
       useEffect(() => {
@@ -6617,7 +6696,8 @@
         <div className="flex flex-col h-full">
 
           {/* Nav bar */}
-          <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-800">
+          <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-800"
+            data-sched-nav data-timeline-mode={timelineMode}>
             {schedView === 'timeline' && <>
               {timelineMode === 'week' ? <>
                 <button onClick={() => { const d = new Date(anchor); d.setDate(d.getDate()-1); setAnchor(d); }}
@@ -6644,6 +6724,27 @@
                     className={`text-xs px-2 py-1 font-bold transition ${timelineMode===m?'bg-gray-700 text-white':'text-gray-600 hover:text-gray-300'}`}>{l}</button>
                 ))}
               </div>
+              {/* The phone's half of the day-mode 65/35 split. It lives HERE,
+                  in the nav bar, and not inside the timeline wrapper below —
+                  that wrapper's onClick cancels the touch model's armed state
+                  (see its comment), so a switcher inside it would un-arm
+                  whatever the user had just armed on every pane change. */}
+              {isPhone && timelineMode === 'day' && (
+                <div className="track-segmented" data-sched-switch>
+                  {[['timeline','GRID'],['matrix','TASKS']].map(([p,l])=>(
+                    <button key={p} type="button" data-sched-pane={p}
+                      aria-current={phonePane===p ? 'true' : undefined}
+                      onClick={()=>{
+                        // Chrome drops scrollTop when an element loses its
+                        // layout box, so the hour the user was looking at has
+                        // to be carried across by hand.
+                        if (phonePane === 'timeline' && containerRef.current)
+                          phoneScrollRef.current = containerRef.current.scrollTop;
+                        setPhonePane(p);
+                      }}>{l}</button>
+                  ))}
+                </div>
+              )}
             </>}
             {schedView === 'calendar' && <span className="flex-1" />}
             <div className="flex gap-1 ml-auto">
@@ -6673,8 +6774,26 @@
             <div className="flex flex-1 overflow-hidden"
               onClick={() => { setSelectedForResize(null); setSelectedForDrag(null); setMatrixArmedId(null); }}>
               <div ref={containerRef}
+                data-sched-timeline
                 className="overflow-auto relative select-none"
-                style={{ width: timelineMode === 'day' ? '65%' : '100%', flex: timelineMode === 'week' ? '1 1 0%' : undefined }}>
+                style={{
+                  width: isPhone ? '100%' : (timelineMode === 'day' ? '65%' : '100%'),
+                  flex: timelineMode === 'week' ? '1 1 0%' : undefined,
+                  /* HIDDEN, never unmounted, and that is not a preference. Two
+                     useEffect(…, []) below bind to containerRef.current — the
+                     scroll-to-08:00 and the non-passive `wheel` listener for
+                     Shift+wheel day navigation. Their deps are empty, so they
+                     never re-run: unmount this node once and that listener stays
+                     attached to a dead element for the rest of the session, with
+                     no error anywhere. display:none is the only toggle that
+                     keeps the node alive.
+
+                     `undefined` rather than 'block' so rotating back above the
+                     breakpoint restores the element's own default with nothing
+                     to reset. */
+                  display: (isPhone && timelineMode === 'day' && phonePane !== 'timeline')
+                    ? 'none' : undefined
+                }}>
 
             {/* Day header — sticky to top of scroll container */}
             <div ref={headerRef}
@@ -8098,11 +8217,16 @@
 
               {/* Eisenhower Matrix Panel — day mode only */}
               {timelineMode === 'day' && (
-                <div className="flex-shrink-0 border-l border-gray-800 flex flex-col overflow-hidden" style={{ width: '35%' }}>
+                <div data-sched-matrix className="flex-shrink-0 border-l border-gray-800 flex flex-col overflow-hidden"
+                  style={{
+                    width: isPhone ? '100%' : '35%',
+                    // Same reasoning as the timeline above: hidden, not unmounted.
+                    display: (isPhone && phonePane !== 'matrix') ? 'none' : undefined
+                  }}>
                   <div className="flex-shrink-0 px-3 py-2 border-b border-gray-800">
                     <span className="text-xs font-bold text-gray-400 tracking-widest uppercase">Task Priority</span>
                   </div>
-                  <div className="flex-1 min-h-0 grid grid-cols-2 grid-rows-2 overflow-hidden">
+                  <div data-matrix-grid className="flex-1 min-h-0 grid grid-cols-2 grid-rows-2 overflow-hidden">
                     {[
                       { key: 'ui',   label: 'DO NOW',    sub: 'Urgent · Important',      hdr: '#7f1d1d', color: '#ef4444' },
                       { key: 'niu',  label: 'SCHEDULE',  sub: 'Not Urgent · Important',  hdr: '#1e3a5f', color: '#3b82f6' },
@@ -10099,6 +10223,24 @@
         [linChanges]
       );
 
+      /* The ONE tab table for this page. The header below and the phone bar at
+         the bottom of this component both map it, which is what stops the bar
+         from becoming a second, driftable list of sections — add a tab here and
+         it appears in both places or in neither.
+
+         `short` is the phone label: seven full names do not fit 390px, and a
+         bar that scrolls to reach a tab is a worse bar. `accent` is the
+         header's existing per-tab underline colour, moved rather than changed. */
+      const TABS = [
+        ['progress',   'PROGRESS',   'PROG',  'border-indigo-500 text-indigo-300'],
+        ['milestones', 'MILESTONES', 'MILE',  'border-cyan-500 text-cyan-300'],
+        ['quest',      'QUEST',      'QUEST', 'border-amber-500 text-amber-300'],
+        ['schedule',   'SCHEDULE',   'SCHED', 'border-indigo-500 text-indigo-300'],
+        ['actions',    'ACTIONS',    'ACTS',  'border-indigo-500 text-indigo-300'],
+        ['mindmaps',   'MIND MAPS',  'MM',    'border-indigo-500 text-indigo-300'],
+        ['mg',         'MG',         'MG',    'border-emerald-500 text-emerald-300'],
+      ];
+
       return (
         <div className="h-screen bg-gray-950 text-gray-300 font-mono flex flex-col text-xs overflow-hidden">
 
@@ -10109,77 +10251,21 @@
               ← TRACK
             </a>
 
-            <button
-              onClick={() => setTab('progress')}
-              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
-                tab === 'progress'
-                  ? 'border-indigo-500 text-indigo-300'
-                  : 'border-transparent text-gray-600 hover:text-gray-400'
-              }`}
-            >
-              PROGRESS
-            </button>
-            <button
-              onClick={() => setTab('milestones')}
-              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
-                tab === 'milestones'
-                  ? 'border-cyan-500 text-cyan-300'
-                  : 'border-transparent text-gray-600 hover:text-gray-400'
-              }`}
-            >
-              MILESTONES
-            </button>
-            <button
-              onClick={() => setTab('quest')}
-              data-tab-quest
-              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
-                tab === 'quest'
-                  ? 'border-amber-500 text-amber-300'
-                  : 'border-transparent text-gray-600 hover:text-gray-400'
-              }`}
-            >
-              QUEST
-            </button>
-            <button
-              onClick={() => setTab('schedule')}
-              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
-                tab === 'schedule'
-                  ? 'border-indigo-500 text-indigo-300'
-                  : 'border-transparent text-gray-600 hover:text-gray-400'
-              }`}
-            >
-              SCHEDULE
-            </button>
-            <button
-              onClick={() => setTab('actions')}
-              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
-                tab === 'actions'
-                  ? 'border-indigo-500 text-indigo-300'
-                  : 'border-transparent text-gray-600 hover:text-gray-400'
-              }`}
-            >
-              ACTIONS
-            </button>
-            <button
-              onClick={() => setTab('mindmaps')}
-              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
-                tab === 'mindmaps'
-                  ? 'border-indigo-500 text-indigo-300'
-                  : 'border-transparent text-gray-600 hover:text-gray-400'
-              }`}
-            >
-              MIND MAPS
-            </button>
-            <button
-              onClick={() => setTab('mg')}
-              className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
-                tab === 'mg'
-                  ? 'border-emerald-500 text-emerald-300'
-                  : 'border-transparent text-gray-600 hover:text-gray-400'
-              }`}
-            >
-              MG
-            </button>
+            {/* The same TABS table the phone bar maps. `data-tab-quest` is a
+                test hook that predates this lift and is kept on the tab it was
+                attached to. */}
+            {TABS.map(([key, label, , accent]) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                {...(key === 'quest' ? { 'data-tab-quest': true } : {})}
+                className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
+                  tab === key ? accent : 'border-transparent text-gray-600 hover:text-gray-400'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
 
             <div className="flex items-center gap-4 ml-auto">
               {streak > 0 && (
@@ -10288,6 +10374,27 @@
               />
             </div>
           )}
+
+          {/* PHONE NAV — one of four (documentations.html, sir-ks02.html and
+              true-storage.html carry the others). The shared half is
+              .track-tabbar in styles.css; this <nav> is the documented twin,
+              and it is a twin because each page is its own inline-Babel React
+              app with no module system — the same reason this file carries its
+              own dlDone and noteTimed.
+
+              It maps TABS, the same table the header above maps, so the two
+              cannot list different sections. Seven tabs at the top of a phone
+              are a two-handed reach; here they are under the thumb. */}
+          <nav className="track-tabbar" data-tabbar="progress" aria-label="Sections">
+            {TABS.map(([key, , short]) => (
+              <button key={key} type="button" className="track-tabbar-btn"
+                data-tabbar-tab={key}
+                aria-current={tab === key ? 'page' : undefined}
+                onClick={() => setTab(key)}>{short}</button>
+            ))}
+            <a className="track-tabbar-btn track-tabbar-home" data-tabbar-tab="home"
+              href="index.html" aria-label="Track home">⌂</a>
+          </nav>
         </div>
       );
     }

@@ -91,15 +91,31 @@ test('browser suites', skipUnlessChrome, async t => {
      deliberately guarded against overwriting, so the stale data wins silently.
      The second tab of a two-tab test must pass fresh:false, or it erases the
      state the first tab is under test with. */
-  const open = async (file, { db = null, raw = null, hash = '', fresh = true, extra = null } = {}) => {
+  const open = async (file, { db = null, raw = null, hash = '', fresh = true, extra = null,
+                              viewport = null } = {}) => {
     const page = await browser.newPage();
     if (fresh) await page.clearStorage(server.origin);
+    /* BEFORE goto, and that is not cosmetic. A phone case's real subject is a
+       lazy useState initializer that reads TrackViewport.isPhone() exactly once,
+       at mount — progress.html's timelineMode is the one that matters. Set the
+       viewport after mount and the page has already decided it is a desktop, so
+       the case measures a RESIZE instead of a phone: it fails for the wrong
+       reason today, and would pass for the wrong reason the moment anything
+       subscribes. The existing 820x1180 call at the iPad case sets it after
+       open() on purpose — that case's subject is CSS, which re-evaluates. */
+    if (viewport) await page.setViewport(...viewport);
     if (raw !== null) await page.seedRaw(raw, extra || {});
     else if (db || extra) await page.seed(db || {}, extra || {});
     await page.goto(server.url(file) + hash);
     await page.skipFirebase();
     return page;
   };
+
+  /* One phone, spelled once. 390x844 is an iPhone 14/15 in portrait — the
+     narrowest mainstream device, and comfortably inside the 720px breakpoint.
+     deviceScaleFactor 3 and touch are what make it a phone rather than a narrow
+     desktop window: touch is what activates `@media (hover: none)`. */
+  const PHONE = [390, 844, { mobile: true, deviceScaleFactor: 3, touch: true }];
 
   /* index.html has several file inputs. Pick the one wired to importSlot, or a
      dump importer runs and the test "passes" having imported nothing. */
@@ -9500,5 +9516,355 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.deepEqual(realErrors(page), []);
       await page.close();
     }
+  });
+
+  // ── 17. The phone interface ───────────────────────────────────────────────
+  /* Every case here runs at 390x844 with touch, set BEFORE goto (see open()).
+
+     WHAT "NOT CROPPED" MEANS, and why it takes two assertions rather than one.
+     `body.app-page { overflow-x: hidden }` propagates to the viewport, which
+     makes the viewport a clipping scroll container. That container is still a
+     scroll container, so content overflowing RIGHT still enters its scrollable
+     overflow region and documentElement.scrollWidth still grows — that half of
+     the check is real. It is blind to the other half: the scrollable overflow
+     region is clamped at the padding-box origin, so anything pushed off the
+     LEFT contributes nothing and scrollWidth reports a tidy 390 for a page the
+     user cannot read. That is precisely the "left-cropped" shape this whole
+     change exists to fix, so a single scrollWidth assertion would pass on the
+     bug it is named for. The sweep below is the second half.
+
+     The sweep is scoped to `#root *` deliberately. index.html's .cal-panel and
+     .quest-panel are full-bleed by design (`margin-inline: calc(50% - 50vw)`,
+     documented at styles.css:1567) and escape the viewport on purpose; a sweep
+     that included them would fail on a feature. index.html has no #root, so
+     scoping to it excludes the Home page structurally rather than by exception.
+
+     And `document.body` is skipped when looking for an element's clipper:
+     getComputedStyle reports its COMPUTED `hidden`, but its USED value is
+     `visible` because the value was propagated to the viewport. Counting body
+     as a deliberate clipper would make every escapee "intentional" and the
+     whole assertion vacuous. */
+
+  const NOT_CROPPED = function () {
+    var de = document.documentElement;
+    var vw = de.clientWidth;
+
+    /* An element outside the viewport is fine if the user can still REACH it
+       (an ancestor scrolls) or if someone clipped it on purpose. Walk up to the
+       first ancestor whose overflow-x is not `visible`:
+         auto | scroll -> reachable by scrolling (the week grid, the headers)
+         hidden | clip -> a deliberate local clip (truncation)
+         neither       -> the VIEWPORT is the clipper, and that is the bug. */
+    function clipperOf(el) {
+      for (var p = el.parentElement; p; p = p.parentElement) {
+        if (p === de || p === document.body) break;
+        var ox = getComputedStyle(p).overflowX;
+        if (ox !== 'visible') return ox;
+      }
+      return 'viewport';
+    }
+
+    var escaped = [], all = document.querySelectorAll('#root *');
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (!el.getClientRects().length) continue;
+      var r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      if (r.left >= -1 && r.right <= vw + 1) continue;
+      if (clipperOf(el) !== 'viewport') continue;
+      escaped.push(el.tagName.toLowerCase()
+        + (el.className && el.className.baseVal === undefined
+            ? '.' + String(el.className).trim().split(/\s+/).slice(0, 3).join('.') : '')
+        + ' [' + Math.round(r.left) + '…' + Math.round(r.right) + ']');
+    }
+    return {
+      vw: vw, scrollWidth: de.scrollWidth, clientWidth: de.clientWidth,
+      escaped: escaped.slice(0, 8), escapedCount: escaped.length
+    };
+  };
+
+  /* Every tab must be reachable by a TAP, not merely present in the DOM. A
+     bar that renders under the notes FAB, or whose buttons are 6px tall, would
+     satisfy a querySelectorAll count and fail a finger. elementFromPoint at the
+     centre is what a finger actually resolves to. */
+  const TABBAR = function () {
+    var bar = document.querySelector('.track-tabbar');
+    if (!bar) return { bar: null };
+    var br = bar.getBoundingClientRect();
+    var shell = document.querySelector('#root > div');
+    var tabs = Array.prototype.map.call(bar.querySelectorAll('[data-tabbar-tab]'), function (b) {
+      var r = b.getBoundingClientRect();
+      var hit = document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                          Math.round(r.top + r.height / 2));
+      return {
+        tab: b.dataset.tabbarTab,
+        h: Math.round(r.height),
+        hit: hit === b ? 'self' : (b.contains(hit) ? 'child'
+             : (hit ? hit.tagName.toLowerCase() + '.' + String(hit.className).trim().split(/\s+/)[0] : 'null'))
+      };
+    });
+    return {
+      bar: bar.dataset.tabbar,
+      barTop: Math.round(br.top), barH: Math.round(br.height),
+      vh: document.documentElement.clientHeight,
+      shellPadBottom: shell ? getComputedStyle(shell).paddingBottom : null,
+      barHeightCss: getComputedStyle(bar).height,
+      tabs: tabs
+    };
+  };
+
+  /* One case per page, never one loop with four iterations. A rule forgotten at
+     one of several surfaces is this repository's recurring bug, and a shared
+     loop reports the first failure and stops — letting three surfaces hide
+     behind one. The data-tabbar VALUE is what makes the four failure sets
+     disjoint: both sir-ks02.html and true-storage.html carry `ks02-page`, so a
+     case that only asserted "a .track-tabbar exists" would pass on the other
+     page's markup. */
+  const phoneCase = (file, tabbar, tabs) =>
+    t.test('PHONE/' + tabbar.toUpperCase() + ': not cropped, and every tab is reachable by tap', async () => {
+      const page = await open(file, { db: seedDb(), viewport: PHONE });
+      await page.waitFor(function () {
+        var r = document.getElementById('root');
+        return !!r && r.children.length > 0;
+      }, { message: file + ' mounting at a phone width' });
+
+      // the claim this case is NAMED for, first
+      const m = await page.evaluate(NOT_CROPPED);
+      assert.equal(m.scrollWidth, m.clientWidth,
+        file + ' overflows to the RIGHT at ' + m.vw + 'px (scrollWidth ' + m.scrollWidth + ')');
+      assert.deepEqual(m.escaped, [],
+        file + ' has ' + m.escapedCount + ' element(s) outside the viewport that nothing scrolls '
+        + 'and nothing deliberately clips — the viewport is the clipper, which is a crop');
+
+      const b = await page.evaluate(TABBAR);
+      assert.equal(b.bar, tabbar, 'this page renders ITS OWN bar, not a sibling page\'s');
+      assert.deepEqual(b.tabs.map(x => x.tab), tabs);
+      for (const tab of b.tabs) {
+        assert.ok(tab.h >= 44, tabbar + ' tab "' + tab.tab + '" is ' + tab.h + 'px tall, under the 44px target');
+        assert.ok(tab.hit === 'self' || tab.hit === 'child',
+          tabbar + ' tab "' + tab.tab + '" is covered by ' + tab.hit + ' — present but untappable');
+      }
+
+      /* The mechanism, not just the result: the shell reserves exactly the
+         bar's height. Asserting the two numbers are EQUAL is what fails if
+         --phone-tabbar-h is dropped from one side, which a visual check at one
+         viewport height would not catch. */
+      assert.equal(b.shellPadBottom, b.barHeightCss,
+        'the shell reserves ' + b.shellPadBottom + ' for a bar that is ' + b.barHeightCss
+        + ' tall — content will sit under the bar');
+      assert.equal(b.barTop + b.barH, b.vh, 'the bar sits on the bottom edge');
+
+      assert.deepEqual(realErrors(page), []);
+      await page.close();
+    });
+
+  await phoneCase('progress.html', 'progress',
+    ['progress', 'milestones', 'quest', 'schedule', 'actions', 'mindmaps', 'mg', 'home']);
+  await phoneCase('documentations.html', 'documentations', ['pages', 'add', 'home']);
+  await phoneCase('sir-ks02.html', 'ks02',
+    ['calendar', 'ks02', 'mg', 'ks03', 'kolb', 'srch', 'home']);
+  await phoneCase('true-storage.html', 'true-storage', ['multiverse', 'tree', 'home']);
+
+  await t.test('PHONE/PROGRESS: the schedule opens in DAY mode, and an explicit WEEK survives', async () => {
+    /* DAY is the whole reason this page stopped being cropped: week mode applies
+       TOTAL_W (56 + 7 x 140 = 1036px), and a 390px screen showed four of the
+       seven columns with no way to reach the rest.
+
+       The second half is the one that could regress quietly. timelineMode reads
+       phoneNow() from a LAZY INITIALIZER, so it is a one-shot read at mount;
+       wiring the live useIsPhone() hook in instead would look identical here
+       and then overwrite a WEEK the user had just chosen, on the next rotation. */
+    const page = await open('progress.html', { db: seedDb(), hash: '#schedule', viewport: PHONE });
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-nav]'); },
+      { message: 'the schedule nav bar' });
+
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-sched-nav]').dataset.timelineMode;
+    }), 'day', 'a phone opens the schedule in DAY mode');
+
+    // choose WEEK by hand, then change the viewport under it
+    await page.evaluate(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('[data-sched-nav] button'),
+        function (x) { return x.textContent.trim() === 'WEEK'; });
+      b.click();
+      return true;
+    });
+    // wait for the WRITE to land, then assert — never wait for the right answer
+    await page.waitFor(function () {
+      return document.querySelector('[data-sched-nav]').dataset.timelineMode === 'week';
+    }, { message: 'WEEK being applied' });
+
+    await page.setViewport(720, 844, { mobile: true, deviceScaleFactor: 3, touch: true });
+    await page.setViewport(...PHONE);
+    await sleep(120);
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-sched-nav]').dataset.timelineMode;
+    }), 'week', 'a viewport change must NOT overwrite a mode the user chose by hand');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE/PROGRESS: the goal detail shows ONE pane at a time, and UNMOUNTS the other', async () => {
+    /* The second of the two 65/35 splits, and the one that is deliberately NOT
+       handled the same way as the schedule's. GoalProgressPanel has no
+       useEffect at all and GoalNode holds no mount-once listener, so these
+       panes are unmounted rather than hidden — and the `inDom` assertion below
+       is what makes that a decision rather than an accident. A future change
+       that "made the two splits uniform" would have to break either this case
+       or the schedule's; it cannot satisfy both. */
+    const page = await open('progress.html', { db: seedDb(), viewport: PHONE });
+    await page.waitFor(function () { return !!document.querySelector('[data-goal-split]'); },
+      { message: 'the goal detail split' });
+
+    const read = function () {
+      var sw = document.querySelector('[data-goal-switch]');
+      var tasks = document.querySelector('[data-goal-pane="tasks"]');
+      var prog = document.querySelector('[data-goal-pane="progress"]');
+      var split = document.querySelector('[data-goal-split]');
+      return {
+        switcher: !!sw,
+        stacked: split ? getComputedStyle(split).flexDirection : null,
+        inDom: { tasks: !!tasks, progress: !!prog },
+        width: {
+          tasks: tasks ? Math.round(tasks.getBoundingClientRect().width) : null,
+          progress: prog ? Math.round(prog.getBoundingClientRect().width) : null
+        }
+      };
+    };
+
+    const a = await page.evaluate(read);
+    assert.equal(a.switcher, true, 'a phone offers the TASKS/PROGRESSION switcher');
+    assert.equal(a.stacked, 'column', 'and the split stacks rather than sitting side by side');
+    assert.deepEqual(a.inDom, { tasks: true, progress: false },
+      'only the shown pane is mounted — the opposite of the schedule split, on purpose');
+    assert.equal(a.width.tasks, 390,
+      'the task tree takes the whole width, not 65% of it (' + a.width.tasks + 'px)');
+
+    await page.evaluate(function () {
+      document.querySelector('[data-goal-pane-btn="progress"]').click(); return true;
+    });
+    await page.waitFor(function () {
+      return !!document.querySelector('[data-goal-pane="progress"]');
+    }, { message: 'the PROGRESSION pane' });
+
+    const b = await page.evaluate(read);
+    assert.deepEqual(b.inDom, { tasks: false, progress: true }, 'switching swaps which is mounted');
+    assert.equal(b.width.progress, 390,
+      'and it also takes the whole width, not 35% (' + b.width.progress + 'px)');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE/PROGRESS: day mode shows ONE pane at a time, full width, and keeps the other alive', async () => {
+    /* A separate case from the DAY-default one above, deliberately: these are
+       two independent doors to the same feature and a shared case would let one
+       hide behind the other. The crop and tab-reachability assertions in the
+       PHONE/PROGRESS case cannot see this at all — 65% + 35% still sums to 100%,
+       so a reverted switcher produces a 253px timeline beside a 136px matrix,
+       which is unusable and not technically an overflow.
+
+       "Keeps the other alive" is the half that is easy to get wrong and
+       impossible to see: the hidden pane must still be IN THE DOM. Two
+       useEffect(…, []) in SchedulePanel bind to containerRef and never re-run,
+       so unmounting the timeline once leaves the Shift+wheel day navigation
+       attached to a dead node for the rest of the session, silently. */
+    const page = await open('progress.html', { db: seedDb(), hash: '#schedule', viewport: PHONE });
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-timeline]'); },
+      { message: 'the schedule timeline' });
+
+    const read = function () {
+      var t = document.querySelector('[data-sched-timeline]');
+      var m = document.querySelector('[data-sched-matrix]');
+      var sw = document.querySelector('[data-sched-switch]');
+      var vis = el => !!el && el.getClientRects().length > 0;
+      return {
+        switcher: !!sw,
+        inDom: { timeline: !!t, matrix: !!m },
+        visible: { timeline: vis(t), matrix: vis(m) },
+        width: {
+          timeline: t && vis(t) ? Math.round(t.getBoundingClientRect().width) : null,
+          matrix: m && vis(m) ? Math.round(m.getBoundingClientRect().width) : null
+        }
+      };
+    };
+
+    const a = await page.evaluate(read);
+    assert.equal(a.switcher, true, 'a phone in day mode offers the GRID/TASKS switcher');
+    assert.deepEqual(a.visible, { timeline: true, matrix: false }, 'it opens on the timeline');
+    assert.equal(a.width.timeline, 390,
+      'and the timeline takes the whole width, not 65% of it (' + a.width.timeline + 'px)');
+    assert.deepEqual(a.inDom, { timeline: true, matrix: true },
+      'both panes are in the DOM; only one is drawn');
+
+    await page.evaluate(function () {
+      document.querySelector('[data-sched-pane="matrix"]').click(); return true;
+    });
+    await page.waitFor(function () {
+      var m = document.querySelector('[data-sched-matrix]');
+      return !!m && m.getClientRects().length > 0;
+    }, { message: 'the TASKS pane being shown' });
+
+    const b = await page.evaluate(read);
+    assert.deepEqual(b.visible, { timeline: false, matrix: true }, 'switching shows the other pane');
+    assert.equal(b.width.matrix, 390,
+      'which also takes the whole width, not 35% (' + b.width.matrix + 'px)');
+    assert.equal(b.inDom.timeline, true,
+      'and the timeline is HIDDEN, not unmounted — its mount-only wheel listener '
+      + 'would otherwise be bound to a dead node for the rest of the session');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE/DOCUMENTATIONS: the sidebar is a drawer, opened from the bar', async () => {
+    /* 240px of `w-60 shrink-0` was 62% of this screen, and shrink-0 forbade it
+       giving any back — the editor was left about 70px of text column once its
+       px-10 padding came off. The drawer itself already existed
+       (.docs-sidebar-full); what was missing was hiding the column the rest of
+       the time, and a way back in once the ⛶ inside it was hidden too. */
+    const page = await open('documentations.html',
+      { db: seedDb({ docPages: [F.docPage('p1', { title: 'Synthetic page' })] }), viewport: PHONE });
+    await page.waitFor(function () { return !!document.querySelector('.docs-sidebar'); },
+      { message: 'the sidebar element' });
+
+    const shut = await page.evaluate(function () {
+      var s = document.querySelector('.docs-sidebar');
+      var m = document.querySelector('.docs-editor');
+      return { rects: s.getClientRects().length, full: s.classList.contains('docs-sidebar-full'),
+               editorW: Math.round(m.getBoundingClientRect().width) };
+    });
+    assert.equal(shut.rects, 0, 'the 240px column is not drawn on a phone');
+    assert.equal(shut.full, false);
+    assert.equal(shut.editorW, 390, 'so the editor gets the whole width, not 150px of it');
+
+    // open it the way a finger does: tap where the bar's PAGES tab is drawn
+    await page.evaluate(function () {
+      var b = document.querySelector('[data-tabbar-tab="pages"]');
+      var r = b.getBoundingClientRect();
+      var el = document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                         Math.round(r.top + r.height / 2));
+      if (el) el.click();
+      return true;
+    });
+    await page.waitFor(function () {
+      var s = document.querySelector('.docs-sidebar');
+      return !!s && s.classList.contains('docs-sidebar-full');
+    }, { message: 'the drawer opening from a tap on the bar' });
+
+    const open_ = await page.evaluate(function () {
+      var s = document.querySelector('.docs-sidebar');
+      var r = s.getBoundingClientRect();
+      var row = s.querySelector('[data-doc-row]');
+      return { w: Math.round(r.width), h: Math.round(r.height),
+               rowH: row ? Math.round(row.getBoundingClientRect().height) : null };
+    });
+    assert.equal(open_.w, 390, 'the drawer takes the whole width');
+    assert.ok(open_.rowH >= 44,
+      'and its rows are 44px targets (' + open_.rowH + 'px) — a finger, not a cursor');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
   });
 });

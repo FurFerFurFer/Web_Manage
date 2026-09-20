@@ -7,7 +7,20 @@ function actor(hz=120){
   return {step(speed,patch={}){z+=speed/hz;motion=Motion.advance(motion,sample({position:[0,.9,z],sprinting:speed>Flight.tuning.walkSpeed,...patch}),1/hz);pose=rig.update(motion,1/hz);return pose;},
     get pose(){return pose;},get motion(){return motion;},reset(patch){motion=Motion.reset(sample(patch));z=motion.sample.position[2];pose=rig.reset(motion);return pose;}};
 }
-const S=Flight.tuning.worldScale;
+const S=Flight.tuning.characterScale;
+test('a 1.30x body is what cuts step length against leg length, the speeds untouched',()=>{
+  // Ruling 3: step = speed/(2*cycle rate). With the speeds pinned and the cadence
+  // accepted on 2026-09-15, the leg is the only free term -- so these ratios hold
+  // ONLY because the body grew while the speeds did not. Scaling the world with it
+  // leaves every ratio here unchanged and buys nothing but a slower crossing.
+  const leg=(Animation.dimensions.thigh+Animation.dimensions.shin)*S;
+  assert.ok(Math.abs(leg-1.235)<1e-9,'scaled hip-knee-ankle chain, got '+leg);
+  for(const [name,speed,rate,expected] of [['walk',5.2,1.70,1.238],['jog',8,1.88,1.723],
+    ['run',12,2.05,2.370],['dash',16.2,2.20,2.981]]){
+    const ratio=speed/(2*rate)/leg;
+    assert.ok(Math.abs(ratio-expected)<.001,name+' step/leg '+ratio.toFixed(3)+', expected '+expected);
+  }
+});
 const modes=[['walk',5.2],['jog',8],['run',12],['dash',16.2]];
 test('grounded loading and push-off give the body upward momentum before either foot releases',t=>{
   const measured=[];

@@ -969,6 +969,43 @@ mechanism. `tests/lib/cdp.js`'s `page.rejectDialogs` only answers **native** dia
 DOM-modal implementation makes every existing destructive-control case unable to see the
 prompt at all, so those cases must be rewritten in the same change rather than after it.
 
+## Proposal 16: Finish the Phone Interface
+
+The phone layout ships and is documented in README ("The phone interface"). Three things
+were deliberately left out of it, and one of them is visible.
+
+**The five banners sit on top of the tab bar.** `storage-guard.js` (bottoms 160 and 210)
+and `firebase-sync.js` (bottoms 14, 60, 110) position themselves with inline
+`el.style.cssText`, so the trick that lifted the notes widget — a stylesheet rule at higher
+specificity reading `--phone-tabbar-h` — cannot reach them: an inline declaration wins
+without `!important`, and the project does not use `!important` outside the print block.
+`#fb-sync-banner` at `bottom: 14px` therefore lands squarely on the bar's right-hand tabs,
+with a winning z-index (9998 against 46). Fixing it means editing both scripts to read the
+custom property (or to add the offset themselves) and bumping both `?v` values. It is
+cosmetic and only appears while a banner is showing, which is why it was not folded into
+the layout change.
+
+**`viewport-fit=cover` is not set, so every `env(safe-area-inset-*)` resolves to 0.** That
+is harmless today: all five uses, the new tab bar included, are written as `max(…, env())`
+or `calc(X + env())`, so they are correct with 0 and correct without change if the meta is
+ever added. Adding it is not a one-line change — it makes the layout viewport span the
+physical display, which requires auditing every edge-anchored fixed surface in the same
+commit: the five banners, `#nw-btn` / `#nw-panel`, `#fb-overlay`, `.theme-toggle`,
+`.cal-detail` and the quest panels. Three of those are inline styles in JavaScript. It is
+also precisely the change whose only observable effect is on notched hardware, which this
+environment can never verify — so it wants a real device in hand, not a test.
+
+**Per-page phone polish beyond the shell.** The bar, the shell reservation, the Schedule's
+DAY default, the two pane switchers and the Documentations drawer are done. Not yet looked
+at on a phone in any depth: the KS03 and True Storage pan/zoom canvases (they handle touch
+already, but nothing has measured whether a node is reachable at 390px), the MG levels
+accordion, the Kolb editor, and the several `w-[528px]`-class popups in `progress.html`
+that carry no `max-w-[…vw]` cap the way the Documentations modals do.
+
+One smaller thing, found while measuring and left alone deliberately: the `.ks02-page`
+header measures ~57px at ≤720px, not the 52px `h-screen-nav` subtracts
+(`padding-block: 0.375rem` around a `min-height: 2.75rem` button). It predates this work.
+
 ## Track World: Computer Feasibility
 
 The game project lives entirely in [`World/`](World/) and has its own
@@ -983,7 +1020,9 @@ identify the unresolved risks and candidate next checks.
   before expanding the world or recommending purchases.
 - Define game-state ownership and safe competing-note-edit recovery before real writes;
   coordinate with Proposal 4 rather than assuming the current sync merges note edits.
-- Keep phone/iPad versions and mobile requirements deferred.
+- Keep phone/iPad versions and mobile requirements deferred **for World**. The Track
+  application itself now has a phone layout (README, "The phone interface"); this line is
+  about the game project only, whose canvas and input model are a separate problem.
 
 ## Additional Small Ideas
 

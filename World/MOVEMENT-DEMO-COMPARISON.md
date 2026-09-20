@@ -48,9 +48,9 @@ controller values, not measured reference speeds.
 | --- | --- | --- |
 | Start / stop | Camera-relative walk at **5.2** units/s and run at **12**; Shift dashes at **16.2** and either settles back to the walk or locks the run. The walk was raised from 3.85 on 2026-09-13 at the user's request; the run has been 12 in `flight-core.js` and the 6.6 this table previously carried was stale. Ground exponential rates remain start 18/s, stop 24/s, sharp turn 24/s. Fixed 60 Hz collision simulation | User's judgment of the speeds and body recovery; common-scale speed parity remains unmeasured, and the reference gives no world units to measure against |
 | Turn / camera | Facing eases through the shortest angle at 20/s; avatar/camera position interpolates between collision steps. Upright orbit; bounded pitch; mouse drag, Q/E and R/F; Home resets only the camera | Preserve the accepted orbit and user-reported camera drag while integrating the humanoid; reference parity remains unmeasured |
-| Jump / land | 8.06 upward impulse, gravity 23.4, short input buffer/coyote window, 0.312 bounded step-up (Option A, uniform 1.30× scale). Running jumps preserve velocity. Body poses gather the legs, open the arms asymmetrically and extend for landing; compression recovers into the current stride | Body timing and silhouette against the recorded jumps; relative height/airtime preserved; fixed ground speed reduces horizontal gap coverage |
-| Launch | Hold X in a Windseed ring for up to 1.2 s, release for 22–34 upward impulse; taps below 12% are ignored. These unscaled values cannot complete the enlarged Cloudrest route; the additional traversal decision is pending | User's particular slingshot reference and preferred charge/launch feel |
-| Glide | Space deploys only with four jump heights of clearance beneath the feet (about 5.55 world units); launch apex uses the same gate. An open glider persists below it. WASD steers toward 8 units/s at an 8/s response rate; descent capped at 2.4; released movement brakes at 12/s. Canopy opening blends visually; landing folds it and smoothly changes horizontal speed | Reference steering, glide angle and canopy appearance |
+| Jump / land | 6.2 upward impulse, gravity 18, short input buffer/coyote window, 0.24 bounded step-up. Only the character is 1.30×; scene and controller retain authored units. Running jumps preserve velocity. Body poses gather the legs, open the arms asymmetrically and extend for landing; compression recovers into the current stride | Body timing and silhouette against the recorded jumps; controller height/airtime and horizontal span unchanged; the larger body changes their visual proportions |
+| Launch | Hold X in a Windseed ring for up to 1.2 s, release for 22–34 upward impulse; taps below 12% are ignored. The islands retain their authored spacing; the existing launch reaches Cloudrest | User's particular slingshot reference and preferred charge/launch feel |
+| Glide | Space deploys only with four jump heights of clearance beneath the feet (about 4.27 world units); launch apex uses the same gate. An open glider persists below it. WASD steers toward 8 units/s at an 8/s response rate; descent capped at 2.4; released movement brakes at 12/s. Canopy opening blends visually; landing folds it and smoothly changes horizontal speed | Reference steering, glide angle and canopy appearance |
 | Climb / let go | Space checks climbing first: detach if attached, otherwise grab a nearby wall before considering jump/glide. W/S move vertically and A/D sideways toward 2.2 units/s at an 18/s response rate; reached ledges allow stepping up. Reading holds immediately. Detach pushes away along the wall normal at 3 units/s with a small 2.2 upward impulse | Irregular surfaces, corners and full reference traversal/animation fidelity |
 | Reading in flight | Input goes to the companion; inertia, gravity and weather continue; charge is cancelled; active glide descends | Physical comfort and readability; no protective relocation when a panel opens |
 | Falling / recovery | No damage or reward loss; return to the last landed island or garden start | Review checkpoint placement and feel; camera is not forcibly spun by a fall |
@@ -545,8 +545,10 @@ This keeps the base within the ruling's selected jog band. The inspected side vi
 establish pose/contact sequences, but do not calibrate a world-unit leg length; no exact
 reference fit or final visual acceptance is claimed. The selected scale is 1.30: it satisfies the ruling's
 base-tier priority, rather than a world-unit measurement recovered from the clips. The
-user approved proportional jump/gravity/step-up/camera scaling. Visual acceptance and
-the additional launch/glide/climb/detach decision remain pending.
+body alone is enlarged. Jump 6.2, gravity 18, step-up .24, camera 8.8 and all traversal
+speeds keep their authored values. The former traversal-rescale question is closed;
+visual acceptance remains pending. The separately approved gateway widening preserves
+its climb-top landing without resizing the world.
 
 ### Additional local videos inspected after the user's timing/reach correction
 
@@ -575,7 +577,8 @@ review is required; no skinned asset or paid tool has been demonstrated necessar
 <a id="production-options-awaiting-direction"></a>
 ### Production options — historical research, local path selected
 
-The user selected the **existing local procedural rig** on September 14. The structured
+The user reaffirmed the **existing local procedural rig** in the latest September 20
+continuation, closing the intervening research question for this increment. The structured
 question is closed; there is no paid-option blocker or pending purchase for this increment.
 The table below preserves September 13 research only. Prices/licences have not been
 rechecked for this rebuild and must be verified before any later decision depends on them.

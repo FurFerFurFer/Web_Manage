@@ -4,37 +4,30 @@
 
 - **Phase:** P1-P3 in progress, Step 2: prove the defining experience in the small scene.
   P4 onward is untouched; real Track reads/writes remain separately gated.
-- **Next increment:** the user's
-  [four rulings of 2026-09-19](TRACK-WORLD-CONCEPT-DRAFT.md#4-player-perspective-and-movement),
-  in this order, with the September 19 hand-off's scale checkpoint:
-  1. **Scale playtest and remaining traversal decision.** Review the 1.30× build with
-     the [README checklist](README.md#scale-checkpoint-playtest): foot support/push-off,
-     forward reach and seated silhouette in the base/run first; then dash transitions,
-     turns, jump/steps, wall clearance and notebook clipping. Do not change joint curves
-     before this checkpoint is accepted. The user's **Option A** for jump/gravity,
-     step-up and camera is closed in draft §4; do not ask it again.
-     **Pending traversal choice:** launch 22–34→28.6–44.2, glide 8/2.4→10.4/3.12,
-     climb 2.2→2.86 and detach 3/2.2→3.9/2.86 need the separate answer already requested.
-     Without proportional launch/glide tuning the enlarged Cloudrest route is unreachable.
-     Complete that gated correction and rerun affected traversal checks once answered.
-  2. **Reference timing, read-only:** resolve the `11-28-38` timing-baseline discrepancy
-     documented in the comparison before assigning absolute clip speeds. Keep the
-     accepted four rates unchanged. `08-42-45` has an observed ~2.3 full cycles per
-     recorded second; it is not yet an established real-time rate.
-  3. **STOP after the scale build and full sequential verification.** Hand back for
-     visual acceptance; do not author the newly referenced traversal motions first.
-  4. **QUEUED after scale acceptance or an explicit instruction to proceed:**
-     **production-path research, READ-ONLY.** Name skinned/rigged character and authored-
-     animation candidates with licence, real cost and laptop impact; recommend one.
-     **Download, install and buy nothing.**
-- **Do NOT do:** a slow-walk gait (the user does not want one in the game); a rename of the
-  four `sets` keys in `character-animation.js`; a **heavy landing or roll** (descoped); any
-  change to 5.2/12/16.2; any change to the 1.70/1.88/2.05/2.20 Hz rates; any further
-  joint-angle tuning of the rigid rig before the scale and research land. Climbing, gliding
-  and falling are **no longer on this list** — ruling 4 closed once their footage arrived.
-- **Gates:** the art/content production gate is **reopened for READ-ONLY research**.
-  Downloads, installs, dependencies, spending and external services still require an
-  answer before proceeding.
+- **Next increment: Memory Grove sky motion laptop playtest.** Judge the fixed viewpoint
+  and rotating constellation using the selected **40° curve / 1× centre drag /
+  20°/second arrows** in [draft §5.7](TRACK-WORLD-CONCEPT-DRAFT.md#57-memory-grove-and-the-ks03-sky).
+  Try drag, zoom, Fit all/Home, keyboard/search selection and entry/Esc with Reduce motion
+  both on and off. Report motion comfort and any label/hit-target separation; do not
+  retune the selected numbers or change the look without another user decision.
+- **Sky follow-ups await direction:** the real-data read/export scope, dense networks,
+  cycles/disconnected groups and the concept-reference readability findings are reports,
+  not authorized implementation. Keep the three-MM synthetic fixture and storage gate.
+- **Body-animation work stopped; no next increment or fix planned.** Foot-ground
+  push-off/body momentum in walking and running (playtest 1) remains **rejected**.
+  Playtests 2–5 are **okay but not that good**, not strong visual acceptance. The user's exact
+  verdict and instruction are recorded in [draft §4](TRACK-WORLD-CONCEPT-DRAFT.md#4-player-perspective-and-movement).
+  Do not resume tuning, investigate another remedy, schedule another review or propose
+  a production replacement unless the user explicitly reopens the work. The motion
+  backlog and unresolved timing questions below are inactive, not a queued fix plan.
+  The existing local procedural production selection remains closed.
+- **Do NOT do:** lower 5.2/12/16.2, retune 1.70/1.88/2.05/2.20 Hz, rename the four set
+  keys, add a slow-walk control or a heavy landing/roll, or return to small adjustments
+  of one shared gait. Preserve the distinct sets and the coordinated support/push trajectory.
+- **Gates:** purchases, downloads, installs, dependencies, external services and any
+  different production approach require an explicit answer. If the local result has an
+  evidenced remaining gap, name what is visible and distinguish evidence from a guess;
+  a later alternative must not block shipping the local result.
 - **Preserve:** walk **5.2**, run **12**, dash **16.2**, current dash/hold/unsprint and stamina
   tuning, camera drag, Space priority and glide clearance. Preserve full-cycle rates
   **1.70 / 1.88 / 2.05 / 2.20 Hz**. Do not lower speeds for the gait. Include all four sets
@@ -90,8 +83,10 @@
 - **After visual acceptance:** perform the physical laptop proof in **PLAN §25.13**, then
   continue the information/action inventory and dense sky/Quest/map proofs.
 
-**Reading order:** [AGENTS.md](AGENTS.md) → this block → draft **§4** →
-[MOVEMENT-DEMO-COMPARISON.md](MOVEMENT-DEMO-COMPARISON.md) → relevant README/source/tests.
+**Reading order:** [AGENTS.md](AGENTS.md) → this block → draft **§5.7** → README's MM-sky
+paragraph → `sky-core.js`, `sky-motion.js`, `sky-scene.js`, `sky-view.js`,
+`storage-isolation.js` and the sky tests. Draft §4 and the movement comparison apply only
+if the user explicitly reopens the stopped body-animation work.
 Read concept and PLAN by slice only; PLAN §25.13 is needed only for hardware proof.
 Do not read `vendor/`, the root verification log, or spawn subagents for this increment.
 
@@ -112,13 +107,10 @@ Do not read `vendor/`, the root verification log, or spawn subagents for this in
   not net ground travel. Do not silently retune either behavior or the numeric budget.
   Keep the zero-streak exhaustion regression and the current dash/hold/unsprint contracts.
   Extending stamina to climbing, gliding or swimming needs separate direction.
-- **Joint-angle tuning of the rigid rig is CLOSED as a remedy** (ruling 1, 2026-09-19).
-  Four rounds of it — leg reach, limb rate, seated posture, foot-ground push-off — each
-  passed its own tests and each was rejected on the next thing down. The cause is the rig,
-  not the angles: rigid primitives hinged at points read as mechanical at every angle. Do
-  not open a fifth round. The airborne intervals in the base tier are **correct** and
-  settled; never impose a no-flight gait on it. Proportion work is now the scale ruling,
-  and identity work waits on the production path.
+- **Rigid-body visual limits still need user review.** Inspect joint/clothing seams and
+  the foot-to-body relationship without claiming that more angle tuning or a paid model
+  must solve them. The selected local approach remains authoritative. The base tier's
+  airborne intervals are accepted; do not impose a no-flight gait or a new slow-walk control.
 - Compare the charged launch and two-island glide route with the user's slingshot
   reference on the physical laptop. Tune trajectories, controls and landing feel; design
   additional geography only after the sustained performance route passes.
@@ -154,9 +146,8 @@ Do not read `vendor/`, the root verification log, or spawn subagents for this in
   gliding and free fall now exists — see the comparison for the exact usable windows.
   Tune from the user's observations; controller checks do not
   count as movement-feel acceptance. Terrain-adaptive foot/hand placement, detailed fingers
-  and smooth skinning stay out of scope for the rigid rig. A **skinned/authored replacement
-  is now under READ-ONLY research** (ruling 1) and still retains its install/spending gates:
-  research and recommend, acquire nothing.
+  and smooth skinning stay out of scope for the selected rigid rig. A replacement approach
+  needs a new user decision; no paid candidate is currently selected or required.
 - Create a garden home separate from the sanctuaries; their detailed designs remain open.
 - Use visual reminders with gentle sounds; settle sound design and grouping.
 - Audit remaining desktop map/Quest reference differences before claiming parity,

@@ -258,10 +258,36 @@ class Page {
      Chrome's headless default happens to be 800x600, which is narrow enough to
      reproduce most of them — but a case that only tests what it means to test
      because of a default nobody chose is one harness upgrade away from silently
-     testing nothing, so a width-dependent case states its width. */
-  async setViewport(width, height) {
-    await this.session.send('Emulation.setDeviceMetricsOverride',
-      { width, height, deviceScaleFactor: 1, mobile: false });
+     testing nothing, so a width-dependent case states its width.
+
+     `opts` is purely ADDITIVE: called with two arguments this sends exactly
+     what it always sent (mobile:false, deviceScaleFactor:1, touch untouched),
+     which is what keeps the existing desktop call sites honest rather than
+     quietly re-pointing them at a phone.
+
+     Touch is a SEPARATE domain call on purpose, not a field of the metrics
+     override. `mobile: true` changes LAYOUT — the viewport meta is honoured and
+     scrollbars become overlay — but it leaves navigator.maxTouchPoints at 0 and
+     `(hover: hover)` true. A "phone" case built on the metrics alone would
+     therefore miss every `@media (hover: none)` rule, including the one at
+     styles.css:3039 that makes the documentations row actions reachable by a
+     finger at all — the case would pass while testing a desktop with a narrow
+     window. Passing `touch` explicitly also lets a case turn hover back ON at a
+     phone width, which is the control for "is this rule width-driven or
+     pointer-driven". */
+  async setViewport(width, height, opts) {
+    const o = opts || {};
+    await this.session.send('Emulation.setDeviceMetricsOverride', {
+      width, height,
+      deviceScaleFactor: o.deviceScaleFactor == null ? 1 : o.deviceScaleFactor,
+      mobile: !!o.mobile
+    });
+    // Default touch to whatever `mobile` says, but let a case override either way.
+    const touch = o.touch === undefined ? !!o.mobile : !!o.touch;
+    if (touch || o.touch !== undefined) {
+      await this.session.send('Emulation.setTouchEmulationEnabled',
+        { enabled: touch, maxTouchPoints: touch ? 5 : 0 });
+    }
   }
 
   async close() {

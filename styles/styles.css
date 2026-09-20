@@ -832,19 +832,28 @@ body.home h1 {
 }
 
 /* ── shared utilities (sir-ks02.html, progress.html) ──────── */
+/* Each subtracts its page header, and then --phone-tabbar-h, which is 0px
+   above the phone breakpoint — so these three stay byte-identical on a desktop
+   by ARITHMETIC rather than by a second media query, and there is no phone
+   variant to keep in step. See "phone layout" near the end of this file; that
+   is the one definition of the bar's height and nothing may re-spell it.
+
+   The vh/dvh pair has to be repeated in full: a browser without dvh drops the
+   second declaration entirely, so folding the var into only one of them would
+   silently leave that browser reserving no room for the bar. */
 .h-screen-nav {
-  height: calc(100vh - 52px);
-  height: calc(100dvh - 52px);
+  height: calc(100vh - 52px - var(--phone-tabbar-h));
+  height: calc(100dvh - 52px - var(--phone-tabbar-h));
 }
 
 .max-h-screen-nav {
-  max-height: calc(100vh - 52px);
-  max-height: calc(100dvh - 52px);
+  max-height: calc(100vh - 52px - var(--phone-tabbar-h));
+  max-height: calc(100dvh - 52px - var(--phone-tabbar-h));
 }
 
 .max-h-screen-nav-sm {
-  max-height: calc(100vh - 96px);
-  max-height: calc(100dvh - 96px);
+  max-height: calc(100vh - 96px - var(--phone-tabbar-h));
+  max-height: calc(100dvh - 96px - var(--phone-tabbar-h));
 }
 
 /* horizontal drag-reorder indicator */
@@ -3058,14 +3067,327 @@ button.cal-doc-origin:hover {
   }
 }
 
+/* ── phone layout ──────────────────────────────────────────────────────────
+   Everything that makes the four React pages usable on a phone, in one place.
+
+   THE PROBLEM THIS SOLVES. index.html is hand-written CSS and has been
+   responsive since the 720px/460px blocks above. The four React pages are
+   Tailwind, and Tailwind here is used as a fixed-width desktop layout language
+   — there is not one `sm:`/`md:`/`lg:` prefix in the repository. So `w-60
+   shrink-0`, `w-[65%]`, `grid-cols-7` and the schedule's 1036px week grid all
+   resolve to desktop values at every width, and `body.app-page { overflow-x:
+   hidden }` CLIPS the result. A phone therefore showed the left slice of a
+   desktop page with no way to reach the rest. The fix is to stop PRODUCING the
+   overflow; do not "fix" it by unclipping, which would only trade a crop for a
+   body-level horizontal scrollbar on every page at every width.
+
+   --phone-tabbar-h IS THE ONE DEFINITION OF THE BAR'S HEIGHT. It is 0px above
+   the breakpoint, so every rule that reserves room for the bar — the shell's
+   padding below, the three h-screen-nav utilities above, the notes widget's
+   inset — is written ONCE, unconditionally, and is a no-op on a desktop. Read
+   the var; never re-spell the number. That is the whole reason there is no
+   second copy of any of those rules inside the media query.
+
+   THE BREAKPOINT IS A TWIN. 720 is spelled here and in scripts/viewport.js,
+   because CSS cannot read a JS constant and JS cannot read an @media rule.
+   tests/viewport.test.js pins the whole set of max-width breakpoints in this
+   file, so moving a phone rule off 720 fails there rather than silently making
+   TrackViewport.isPhone() lie to four pages. */
+
+:root {
+  --phone-tabbar-h: 0px;
+}
+
+/* The bottom tab bar.
+
+   ONE definition of the material; FOUR per-page JSX call sites — progress.html,
+   sir-ks02.html, documentations.html and true-storage.html. They cannot share a
+   component: each page is its own inline-Babel React app with no module system,
+   the same reason progress.html carries its own copies of dlDone and noteTimed.
+   What is shared is this class contract. What is per-page is the tab TABLE —
+   and each page renders its header tabs and its bar from that ONE table, so the
+   two can never disagree within a page.
+
+   The JSX deliberately carries NO Tailwind class. There is then no utility on
+   these elements to beat, so the CDN's after-our-link injection cannot tie with
+   anything here and the specificity question does not arise at all.
+
+   z-index 46: above the page header (10) and the fixed theme toggle (45), so
+   nothing sits on the nav; BELOW .docs-sidebar-full (50), which covers it
+   deliberately, because while that drawer is open it IS the navigation. Far
+   below the notes widget (9000) and the storage/sync banners (9998). It sits
+   inside #root's `isolation: isolate`, exactly as .docs-sidebar-full does.
+
+   backdrop-filter is safe here and is not safe at .docs-sidebar-full: the
+   hazard there is becoming a containing block for a FIXED DESCENDANT, and this
+   bar has none. */
+.track-tabbar {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  :root {
+    /* 3.25rem = 52px, the same header height h-screen-nav already subtracts.
+       env() resolves to 0 without viewport-fit=cover, which no page opts into
+       — harmless here, and correct without change if one ever does. */
+    --phone-tabbar-h: calc(3.25rem + env(safe-area-inset-bottom));
+  }
+
+  .app-page .track-tabbar {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 46;
+    display: flex;
+    align-items: stretch;
+    height: var(--phone-tabbar-h);
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--color-border-subtle);
+    background: rgba(var(--color-surface-rgb), 0.96);
+    backdrop-filter: blur(8px);
+    /* Eight slots do not always fit 360px. The bar scrolls rather than
+       crushing its targets below 44px — the same escape hatch the progress and
+       ks02 headers already use above. */
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .app-page .track-tabbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app-page .track-tabbar-btn {
+    flex: 1 1 auto;
+    min-width: 3rem;
+    min-height: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.25rem;
+    border: 0;
+    border-top: 2px solid transparent;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-family: monospace;
+    font-size: 0.5625rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  /* The last slot on every bar, and the reason the four read as one component.
+     `← TRACK` sits at the top-left of every page, which is the worst place on a
+     phone for the control people press most. */
+  .app-page .track-tabbar-home {
+    flex: 0 0 auto;
+    min-width: 2.75rem;
+    font-size: 0.875rem;
+  }
+
+  .app-page .track-tabbar-btn[aria-current="page"] {
+    border-top-color: var(--color-primary);
+    color: var(--color-text);
+  }
+
+  /* Keep content out from under the bar. One rule, four pages, no arithmetic —
+     Tailwind's preflight makes everything border-box, so padding on an
+     h-screen shell shrinks the CONTENT box and the flex-1 panes inside it end
+     at the bar rather than behind it.
+
+     This is the ONE room-reserving rule that sits INSIDE the media query
+     rather than reading the 0px var unconditionally like the h-screen-nav trio
+     and the notes widget, and the reason is specificity rather than taste:
+     (1,1,1) beats a Tailwind utility, so an unconditional `padding-bottom: 0px`
+     would also override a shell that sets its own — true-storage.html's
+     no-workspace screen is `min-h-screen … p-6`, and it would silently lose its
+     bottom padding on a desktop. Inside the block, a desktop never sees the
+     declaration at all. */
+  .app-page #root > div {
+    padding-bottom: var(--phone-tabbar-h);
+  }
+
+  /* All four shells are Tailwind h-screen / min-h-screen, i.e. `vh`, while the
+     bar is fixed and therefore sits at the DYNAMIC bottom. With a phone's URL
+     bar showing, a vh shell is taller than the visible area and its padding
+     lands below the fold. Everything else in this file already prefers dvh
+     (the h-screen-nav trio, body.app-page, #root, .cal-panel,
+     .docs-sidebar-full); the shells were the gap. (1,1,1) beats .h-screen. */
+  .progress-page #root > div,
+  .docs-page #root > div {
+    height: 100dvh;
+  }
+
+  /* One selector, two pages: sir-ks02.html and true-storage.html both carry
+     `app-page ks02-page`. That is fine here and fatal in a test, which is why
+     each bar carries its own data-tabbar value. */
+  .ks02-page #root > div {
+    min-height: 100dvh;
+  }
+
+  /* A segmented switcher, for the two places a 65/35 desktop split becomes one
+     pane at a time. Same no-Tailwind reasoning as the bar above. */
+  .app-page .track-segmented {
+    flex: 0 0 auto;
+    display: inline-flex;
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: 0.25rem;
+  }
+
+  .app-page .track-segmented > button {
+    min-height: 2.25rem;
+    padding: 0 0.625rem;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-family: monospace;
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .app-page .track-segmented > button[aria-current="true"] {
+    background: var(--color-surface-strong);
+    color: var(--color-text);
+  }
+
+  /* ── documentations ──
+     The header was the page's ONLY source of horizontal overflow on a phone,
+     and it was measured rather than guessed: `← TRACK`, the title, the
+     workspace chip, the sync chip and the theme toggle came to 440px inside a
+     390px box, so the toggle sat 50px off the right edge with `overflow-x:
+     hidden` clipping it away. progress.html and sir-ks02.html never had this
+     because their headers already scroll unconditionally (see .progress-page
+     and .ks02-page above); this header is the one that never got that
+     treatment. Scoped to the phone block rather than made unconditional like
+     theirs, because nothing about the desktop header needs changing.
+
+     Scrolling is the SAFETY NET, not the plan: a workspace name is user data
+     and can be any length, so the header has to survive one that does not fit.
+     Hiding the title below is what means a scroll is not normally needed. */
+  .docs-header {
+    gap: 0.5rem;
+    max-width: 100vw;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .docs-header::-webkit-scrollbar {
+    display: none;
+  }
+
+  .docs-header > * {
+    flex: 0 0 auto;
+  }
+
+  /* The word DOCUMENTATIONS costs 118px of a 390px header to say what the page
+     you are looking at already says. The other three pages carry no title word
+     at all, so dropping it here makes the four headers consistent rather than
+     making this one an exception. */
+  .docs-header .docs-header-title {
+    display: none;
+  }
+
+  /* The drawer already existed: .docs-sidebar-full above is already
+     `position: fixed; inset: 0` with 44px rows. All that was missing on a phone
+     was hiding the 240px column the rest of the time — it was 62% of a 390px
+     screen, and `shrink-0` forbade it giving any of that back, which left the
+     editor about 70px of text once its px-10 padding was taken off.
+
+     :not() is LOAD-BEARING, not tidiness. .docs-sidebar.docs-sidebar-full sets
+     no `display` of its own, so a bare hide rule sitting later in this file
+     would win over it and the drawer could never open at all. */
+  body.app-page .docs-sidebar:not(.docs-sidebar-full) {
+    display: none;
+  }
+
+  /* The ⛶ toggle lives INSIDE the aside, so hiding the aside hides its own
+     opener. The bottom bar's ☰ PAGES is the way in — the same sidebarFull
+     state, not a second one — and the drawer's own ✕ (already a 44px target
+     under .docs-sidebar-full above), Escape, and picking a page are the three
+     ways out. The drawer covers the bar at z-index 50 while it is open, which
+     is why the way out has to live inside it.
+
+     Reaches the inner column through its own hook rather than
+     `.docs-editor > div`, which would also match the empty-state message. */
+  .docs-editor .docs-editor-body {
+    max-width: none;
+    padding-inline: 0.875rem;
+    padding-block: 1.25rem;
+  }
+
+  /* ── progress ──
+     The goal detail's 65/35 columns. The switcher renders one pane at a time,
+     so these only have to stop the surviving pane being 65% of a phone. */
+  .progress-page [data-goal-split] {
+    flex-direction: column;
+  }
+
+  .progress-page [data-goal-pane] {
+    width: 100%;
+    /* the shorthand is what beats .flex-shrink-0 */
+    flex: 1 1 auto;
+    border-right: 0;
+  }
+
+  /* The Eisenhower matrix. BOTH axes have to be overridden: grid-rows-2 is
+     `repeat(2, minmax(0,1fr))` and would squash four stacked quadrants into two
+     rows rather than letting them scroll. */
+  .progress-page [data-matrix-grid] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-auto-rows: minmax(9rem, auto);
+    overflow-y: auto;
+  }
+
+  /* ── notes widget ──
+     notes-widget.js injects its own <style> at runtime, later in <head> than
+     this file, with bare #id selectors — (1,0,0). `body.app-page #nw-btn` is
+     (1,1,1) and wins on SPECIFICITY, so source order cannot matter and the
+     script needs no edit and no ?v bump.
+
+     width/height on the panel ARE inline (set by its render() on every draw),
+     and no stylesheet declaration can beat a style attribute without
+     !important. max-width/max-height are different properties and still clamp
+     the inline used value — so the panel is CONSTRAINED here rather than
+     resized, and a size the user dragged is still there when they rotate back. */
+  body.app-page #nw-panel {
+    max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - var(--phone-tabbar-h) - 32px);
+  }
+}
+
+/* Deliberately OUTSIDE the media query: --phone-tabbar-h is 0px above the
+   breakpoint, so this computes to the widget's own literal 16px on a desktop
+   and needs no second rule. 16px and not 1rem for exactly that reason — 1rem
+   would quietly move the button for anyone running a non-16px root font. */
+body.app-page #nw-btn,
+body.app-page #nw-panel {
+  bottom: calc(var(--phone-tabbar-h) + 16px);
+}
+
 /* ── documentations print / export ────────────────────────── */
 @media print {
+  /* A4 is ~794px at 96dpi so the phone block usually does not match, but a
+     narrower print context would — and then the shell would reserve room for a
+     bar that print hides anyway, putting a blank strip on the last page. */
+  :root {
+    --phone-tabbar-h: 0px;
+  }
+
   body.docs-page {
     background: #fff !important;
   }
 
   body.docs-page .docs-header,
   body.docs-page .docs-sidebar,
+  body.docs-page .track-tabbar,
   body.docs-page .docs-toolbar,
   body.docs-page .docs-addmenu,
   body.docs-page .doc-chrome,

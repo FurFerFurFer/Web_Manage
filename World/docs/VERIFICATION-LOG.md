@@ -905,3 +905,175 @@ launch impulse and 23.4 gravity, even the continuous-time apex of the feet is on
 finite-step apex is lower. The failed height assertion is consistent with this concrete
 unreachable route, not evidence of a mysterious animation defect. The gate is recorded
 in NOTES and disclosed beside the ground-playable build; no silent retune was made.
+
+## 2026-09-20 — the scale narrowed to the body alone; the scene reverted
+
+**Why.** The user reviewed the uniform 1.30 build recorded in the entry above and
+reported that it had changed nothing visible except a speed decrease. That verdict is
+arithmetically correct and the build was doing what it was told: scaling the body, the
+scene AND the camera by the same factor is a similarity transform, so it renders
+identically frame for frame — jump included, since `2v/g` is unchanged when impulse and
+gravity scale together. The one term left unscaled was speed, so the only perceptible
+effect of the whole increment was that fixed speeds covered 30% less of an enlarged
+world. The user chose to keep the 1.30 body and return everything else to its authored
+size.
+
+**What changed.** `worldScale` became `characterScale` and now reaches the character's
+own anatomy only: the rig root, the animation's model↔world conversion, the collision
+ellipsoid, the feet offset below the collider centre, the limb reach used to probe walls
+and ledges, and eye/crown heights. `scene.js`, `map-view.js`, `sky-scene.js` and
+`flight-core.js` were restored from `HEAD` and the body scaling re-applied to 28 sites in
+`scene.js` rather than un-picking ~50 world sites by hand; the whole of the reverted diff
+was verified scaling-only first, so no behavioural fix was dropped. Jump **6.2**, gravity
+**18**, step-up **0.24**, camera **8.8** and every traversal speed are back at their
+authored values — the frozen list was un-edited, not edited again. The separately pending
+launch/glide/climb/detach rescale is **dissolved**: with the islands at their authored
+distance the unchanged 22+12 impulse reaches Cloudrest, and `height means clearance above
+the island` passes.
+
+**Failing first.** Two doctored baselines in a scratch tree, `scripts/` and `tests/`
+copied for real, never symlinked, each differing from the repository in exactly one line.
+**A** set `characterScale` to 1.00; **B** restored `jumpSpeed:6.2*characterScale,
+gravity:18*characterScale`. Their failure sets are **disjoint**: A fails `ruling 3 scales
+the body by 1.30` and `a 1.30x body is what cuts step length against leg length`, B fails
+`the character scale reaches the body alone`. Reaching disjointness required splitting the
+first flight-core case in two — as one case it asserted two independent claims and B's
+failure set was a strict subset of A's, which proves neither case load-bearing on its own.
+
+**Results.** Offline suites, all green: core 10, sky-core 3, map-core 4, flight-core **9**,
+stamina-core 18, character-motion 4, character-animation **15**. Browser suites run
+sequentially, one at a time: browser 7/7, camera 5/5, sky 8/8, map 5/5. `map` and `sky`
+had also been scaled by the previous session and their world coordinates were reverted;
+`sky` had been passing only through its `++frames>500` escape hatch, so that was a false
+pass rather than a real one.
+
+**flight 11/13 — the two failures are real, isolated, and NOT flakiness.**
+`Space grabs the wall first, climbing owns input, and Space detaches outward without
+gliding` and its parent route case fail. A one-variable control — the whole tree copied
+with `characterScale` 1.00 and nothing else touched — passes both, failing only the two
+body-scale assertions it is designed to fail. That control was initially invalid: the
+repository run was at load 20.14 and the control at 9.94, two variables rather than one,
+so the repository suite was re-run at load 8.17 and failed the same case a third time.
+The control also failed *everything* on its first attempt, which is a broken harness
+rather than a regression — `World/tools/serve.js` maps `/track-core/` to a sibling
+`scripts/` the scratch tree lacked.
+
+**The cause, measured.** Stepping the failing subtest by hand showed every mechanic
+working with the 1.30 body: the grab succeeds (`climbing: true`, normal `[0,0,-1]`), the
+yaw wait, the close-camera probe and the climb to `y > 5.25` all pass. It is the **ledge
+top-out** that fails, and the state at failure is `[0, 1.177, -6]` — the spawn point,
+i.e. checkpoint recovery after a fall. The gateway pier top is **1.1** wide against a
+**0.91**-wide collider, so the usable landing window fell from **±0.200** to **±0.095**
+off centre while the route's own approach lands **0.169** off centre: it overhangs by
+0.074 and falls. This is geometry, and it is the predicted cost of a larger body in an
+unchanged world. **The case was not loosened to go green**; the decision is open in NOTES
+with three named options.
+
+**Not verified.** Naturalness, reference parity and the user's acceptance of the size are
+not established by any of this — only a playtest can settle them. Real touch hardware,
+the live Firebase project, multi-device behaviour and print output remain outside this
+environment. Two earlier probes of the pier approach were discarded as unfaithful before
+the third reproduced the suite's own frame-accurate `walkTo`: the first polled every
+150 ms, which at 5.2 u/s walks 0.78 units between samples and produced an overshoot that
+was an artifact of the probe rather than a property of the build.
+
+**Grounded-hold rerun:** **1/1** in `/tmp/track-world-scale-sprint-rerun.log`.
+The diagnostic reproduced the missing precondition: before the hold the body was airborne,
+vertical velocity **−6.5**, after stepping off a tread. After settling, holding locked the
+run, release retained it, a short dash unlocked it, and exhaustion refused another burst.
+Peak dash speed was **16.2**. The on-screen stamina bar remained **46 px** to the side
+with anchor error below **0.001 px**. This fixes the test setup, not the dash controller.
+
+
+## 2026-09-20 — local-production continuation and gateway landing clearance
+
+**Scope and decisions.** The latest user instruction explicitly reselected the local
+procedural rig and closed the intervening production research question. The user then
+chose **A**, the local gateway geometry fix. This continuation preserves the existing
+four independent gait sets, coordinated forefoot/heel/body push-off and 1.30 character
+scale. Its runtime edit is limited to the two gateway piers and caps: **1.5 × 2.2** tops,
+**2.1 × 2.8** caps, centred at z **18.55** so their original front faces stay fixed.
+The accepted controller, speeds 5.2/12/16.2, cadence, jump/gravity and camera were unchanged.
+The draft records the selections; README describes the resulting build; NOTES now points
+to visual review. The comparison's stale whole-world scaling numbers were corrected.
+
+**Load-bearing failure, before the final fix.** A fresh physical copy at
+`/tmp/track-world-pier-before-20260920` contains the untouched pre-change runtime and
+index, with **15 SHA-256 hashes** recorded and rechecked. Only the new test was copied in;
+the final test is byte-identical in scratch and repository. In
+`/tmp/track-world-pier-before.log`, `gateway top-out supports the enlarged body after an
+off-centre approach and release` fails at **“climbing must reach a grounded pier top”**.
+The approach is x **6.168567**, z **17.067405**; no supported top is reached, and the body
+returns to the garden checkpoint **[0, 1.176667, -6]**. This is the load-bearing failure,
+not a static assertion of a chosen pier dimension and not a doctored runtime.
+
+**Diagnosis corrected during verification.** The first probe exceeded the protocol's
+20-second evaluation wait; that harness timeout was discarded, and observation moved to
+frame callbacks with an independently polled result. A **1.5-square** top reaches a
+landing but falls after release. An early-release control on the original 1.1-square top
+*passes*: `/tmp/track-world-pier-early-release-control.log`. Therefore the previous entry's
+claim that the entire collider width must fit flat on the pier was not an adequate causal
+explanation. The trace shows forward travel during the landing and subsequent braking
+need room too (`/tmp/track-world-pier-1.5-depth-trace.log`). A centred depth extension also
+blocked the old approach coordinate; the final geometry extends **rearward** instead.
+No controller tuning or existing route assertions were loosened.
+
+With the final geometry, the same new case passes in `/tmp/track-world-pier-after.log`
+and again in the full suite. It lands at **[6.168567, 6.856667, 18.904386]**, then remains
+**grounded**, out of climb/glide, at **[6.168567, 6.856667, 19.078998]** after one second
+with forward input released. The original wall-grab/read/detach/top-out route also passes.
+
+**Final verification.** Node **22.23.2**, Chrome **152.0.7977.75**, existing local Babylon
+engine. All twelve README suites ran **sequentially**, with one graphics browser at a
+time. `/tmp/track-world-local-suite-results.json` records exits/durations and
+`/tmp/track-world-local-final-*.log` holds their output:
+
+core **10/10**, sky-core **3/3**, map-core **4/4**, flight-core **9/9**, stamina-core **18/18**, character-motion **4/4**, character-animation **15/15**, browser **7/7**, camera **5/5**, sky **8/8**, map **5/5**, flight **14/14**. **102 passing tests**, zero failures.
+
+The full route includes ordinary double-Space refusal, wall-first grab, held reading grip,
+outward detach, gateway top-out, charge cancellation, both island landings, notebook
+reading in flight, elevated-island clearance and checkpoint recovery. The existing dash,
+hold/lock/unsprint, exhaustion and stamina-bar checks pass unchanged.
+
+Rendered gait samples cover **walk/jog/run/dash** separately. Maximum visible forefoot
+sole error is below **0.000012 world units**; minimum upward hip velocity at release is
+**0.697 / 1.016 / 1.113 / 1.106 u/s**, with body rise greater than **0.097 u** in all four.
+Notebook transfer/reversal's largest sampled step is **0.1027 u**; this is continuity
+coverage, not an intersection/clearance guarantee. Offline cases cover the accepted
+cadences, foot contact, transitions, 90°/180° turns, stopping/restarting and frame rates.
+
+`node --check` passed for all six runtime scripts and six tests touched across this
+increment, including the final scene and regression. `scene.js` loads as **?v=24**;
+the retained body-scale cache queries are flight-core **7**, character-animation **7**,
+character-rig **6**, sky-scene **3**, map-view **6**. No new dependency, download, install,
+purchase, external service, Track runtime/data edit, commit or push was made.
+
+**Visual inspection and limits.** A fresh local real-rig stage captured **24 side views**
+(six phases per set), with **no browser errors**; metadata is
+`/tmp/track-world-body-current-visual.json`, images `/tmp/track-world-body-current-*.png`.
+Inspected walk phases 0/1, jog 3, run 1 and dash 3, plus the actual gateway-top screenshot
+`/tmp/track-world-climb-ledge.png`. Heel folding, differing torso/arm poses and the supported
+gateway landing are visible. Rigid knee/elbow/clothing seams remain visible too. The
+original reference's decoded overview, run detail and jump sequence, plus the September 15
+side-on load/push sequence, were re-inspected. These establish phase relationships, not
+exact 3D joint angles or forces. Absolute clip-speed calibration remains unresolved.
+
+Automated checks and these static captures **do not establish naturalness, reference
+parity, notebook clearance in every pose or sustained laptop performance**. Climb/glide
+and notebook handling are adaptations, not motions copied from the two original clips;
+additional traversal footage is separately indexed, and the later vault/free-fall motion
+builds are still outside this checkpoint. No evidence demonstrates that only a paid asset
+or new tool can close the remaining visual gap; no paid decision is parked as a blocker.
+
+**Final scope review:** `git diff --check -- World` passed. Against this continuation's
+15-file runtime/index snapshot, only `scene.js` and its `index.html` cache query differ.
+Concurrent Track-only working-tree edits appeared during verification; they were left
+untouched and are not part of this World hand-back.
+
+
+## 2026-09-20 — user verdict recorded; body-animation work stopped
+
+Documentation only: recorded the user's visual verdict and stop instruction in draft §4,
+removed the active review/fix queue from NOTES, and labelled the README checklist as
+historical review context. No runtime or test changes. `git diff --check` passed for the
+changed World documentation; game/browser suites were not rerun for this note.

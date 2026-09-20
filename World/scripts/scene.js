@@ -98,8 +98,11 @@
     cylinder('clock-spire',.12,2.8,v(0,2,7),gold);
     sphere('clock-heart',[.36,.36,.36],v(0,2.35,7),glow);
     for(const x of [-6,6]) {
-      box('gateway-pier',[1.1,5.7,1.1],v(x,2.85,18),stone,true,true);
-      box('gateway-cap',[1.7,.35,1.7],v(x,5.8,18),stoneSide,false,true);
+      // Local landing clearance for the 1.30x body; world and controller units stay fixed.
+      // Extend behind the original front face, preserving the approach and grab.
+      // Depth includes room to finish landing and brake after releasing forward.
+      box('gateway-pier',[1.5,5.7,2.2],v(x,2.85,18.55),stone,true,true);
+      box('gateway-cap',[2.1,.35,2.8],v(x,5.8,18.55),stoneSide,false,true);
     }
     box('gateway-lintel',[13.2,.65,1.35],v(0,5.75,18),stone,false,true);
     const suspended=ring('hanging-clock',1.7,.09,v(0,4.8,18),gold); suspended.rotation.x=Math.PI/2;
@@ -584,7 +587,7 @@
       const obstruction=scene.pickWithRay(new B.Ray(focus,delta.normalize(),len),mesh=>mesh.checkCollisions&&mesh!==player);
       const safe=obstruction.hit?focus.add(delta.scale(Math.max(.45,obstruction.distance-.35))):desired;
       const normalPose={position:safe,rotation:B.Quaternion.RotationYawPitchRoll(yaw,pitch,0),fov:.85};
-      const skyPose=skyRenderer.pose(player.position.y+b(1.45))||normalPose;
+      const skyPose=skyRenderer.pose(player.position.y+b(1.45),player.position)||normalPose;
       if(skyMotion.phase==='entering'||skyMotion.phase==='leaving') {
         const entering=skyMotion.phase==='entering',destination=entering?skyPose:normalPose;
         skyMotion.elapsed+=Math.min(dt,.25);
