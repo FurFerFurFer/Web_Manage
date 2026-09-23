@@ -596,8 +596,9 @@ fixed in the Grove. Dragging or sliding rotates the displayed constellation arou
 spherical sky, with a slight curve suggesting travel around the world. This supersedes
 the demo's flat plane and translating sky camera. The user chose **A / A / A**:
 **40°** across the fitted network's longer dimension, **1× pointer-following drag near
-the screen centre**, and **20°/second** for held arrow keys. These numbers are selected;
-comfort and the resulting feel still require the laptop playtest. Zoom changes the
+the screen centre**, and **20°/second** for held arrow keys. The user reported that this
+motion worked in the September 21 laptop playtest; presentation and density feedback
+remain open below. Zoom changes the
 field of view; Fit all and Home restore the initial orientation and fit. Labels and hit
 targets follow the projected stars, and keyboard/search navigation can bring a star
 back into view. The canonical KS03 coordinates, including saved manual positions, stay
@@ -606,6 +607,14 @@ read-only: the spherical placement and rotation are a display mapping. Preserve 
 motion skips those transitions while preserving direct manipulation, without automatic
 drift or release coasting. This decision does not approve changes to the sky's look,
 hierarchy sizing, dense-network treatment or the real-data read boundary.
+
+**User playtest feedback (2026-09-21):** the fixed-viewpoint motion worked. The interface
+takes too much screen space, the graphics do not yet give a feeling of a universe of
+stars, and the user needs many MMs to judge whether the experience works. The current
+three-MM fixture cannot answer that last question. Interface footprint, star atmosphere,
+and the size/topology of a larger synthetic fixture remain open choices; no specific
+redesign or fixture expansion has been selected. Preserve the accepted motion settings.
+Real-data reads and exported-slot loading remain separately gated.
 
 **Confirmed sky treatment, clarified 2026-09-09:** stars and connections appear directly
 in the 3D sky, rather than in an SVG chart or a separate full-screen panel. Readable labels
@@ -1855,7 +1864,7 @@ it is not an actual-laptop playtest or graphics benchmark.
 | Unpaused panels | Panels suppress gameplay input while inertia, gravity, collision and environment continue; browser checks cover mid-jump reading, holding a climbing grip, gliding onto an island while editing notes, and cancellation of a held launch | Extend this contract to swimming and additional nested dialogs; no protective pause |
 | Traversal | Controller fluidity is accepted; the September 14 local procedural rebuild is selected and playable for visual review. Walk 5.2, run 12 and dash 16.2 remain fixed | Judge the four motion sets, compact reach and reference timing against the inspected ground/climb clips. Player glide/notebook references, complete grip geometry, speed/scale parity, stamina policy concerns and hardware proof remain open |
 | Evening and midnight | Default local clock, optional fixed test times, full dated Today buckets and Previous/Today/Next history; preview uses the after-20:00 note/caution/deadline trigger, with pure boundary tests | Extend browser suspend/resume and midnight coverage and add a category-specific unfinished-work rollup; no record rescheduling |
-| Memory Grove | The user accepted the fixed upward camera animation and Babylon celestial meshes in the live sky; projected labels support inspection, matched review petals, camera pan/zoom, search and animated return; movement stays locked throughout | Preserve the accepted experience while proving dense/long/empty rendered networks and completing selected-MM fidelity/actions; the small fixture does not close the full sky gate |
+| Memory Grove | The user accepted the fixed upward camera animation and Babylon celestial meshes in the live sky; projected labels support inspection, matched review petals, displayed-sky rotation/FOV zoom, search and animated return; movement stays locked throughout | Preserve the accepted experience while proving dense/long/empty rendered networks and completing selected-MM fidelity/actions; the small fixture does not close the full sky gate |
 | Quest and geographic map | Top-left minimap and starred HUD; full-screen canonical Quest list/details; scene-derived map; session pins with edit/cancel/removal; mapped Quest/landmark/pin navigation with bearing and distance | Prove reference coverage, dense/empty states, pin recovery and the separate real read adapter; add region/layer/gateway travel only with corresponding geography and rules |
 | Atmosphere | Clear/rain/snow/intense-rain/heavenly controls share precipitation, light, fog, wetness and snow cover; reduced motion stops particles; daylight/night is still an independent visual control | Prove sustained laptop rendering, add automatic occurrences and settle audio/flood behavior; a live connection retains separate provider/privacy decisions |
 | Data and performance | Isolated fixtures, memory-only drafts and behavior checks exist | Preserve isolation and report reset-on-reload; neither safe real edits nor sustained target-laptop performance has been proved |

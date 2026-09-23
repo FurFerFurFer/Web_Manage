@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const Sky=require('../scripts/sky-core'),Core=require('../scripts/demo-core');
+const Motion=require('../scripts/sky-motion');
 const context=vm.createContext({window:{},Date});
 for(const file of ['schema.js','calendar-core.js','graph-layout.js'])vm.runInContext(fs.readFileSync(path.resolve(__dirname,'../../scripts',file),'utf8'),context);
 const {TrackSchema:Schema,TrackCalendar:Cal,TrackGraphLayout:Layout}=context.window;
@@ -37,4 +38,43 @@ test('shared parents, cycles and disconnected nodes keep one star per MM and bou
   assert.equal(sky.edges.length,5);
   assert.ok(sky.nodes.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)&&n.radius>=10));
   assert.equal(Sky.project({mms:[]},Layout,Cal,'2026-09-09').nodes.length,0);
+});
+test('the spherical display spans the chosen 40 degrees without altering KS03 or manual overrides',()=>{
+  const slot=Core.fixture(Schema,Cal,'2026-09-09'),before=JSON.stringify(slot),sky=Sky.project(slot,Layout,Cal,'2026-09-09');
+  const original=JSON.stringify(sky),b=sky.bounds,cy=b.y+b.height/2;
+  const left=Motion.direction(b.x,cy,b),right=Motion.direction(b.x+b.width,cy,b);
+  const angle=Math.acos(left.reduce((sum,v,i)=>sum+v*right[i],0));
+  assert.ok(Math.abs(angle-40*Math.PI/180)<1e-12);
+  for(const node of sky.nodes)assert.ok(Math.abs(Math.hypot(...Motion.direction(node.x,node.y,b))-1)<1e-12);
+  assert.deepEqual(sky.nodes.filter(n=>n.id===103).map(n=>[n.x,n.y]),[[510,70]]);
+  assert.equal(JSON.stringify(sky),original);assert.equal(JSON.stringify(slot),before);
+});
+test('direct drag keeps the grabbed sky ray under the pointer at both fit and zoom',()=>{
+  const bounds={x:216,y:4,width:605,height:441},viewport={x:54,y:276,width:1172,height:367,screenWidth:1280,screenHeight:800};
+  for(const zoom of [1,.25]) {
+    const view={...bounds,width:bounds.width*zoom,height:bounds.height*zoom,rotation:Motion.identity()};
+    const from={x:640,y:400},to={x:840,y:450},optics=Motion.optics(view,bounds,viewport);
+    const source=Motion.apply([-optics.framing[0],-optics.framing[1],-optics.framing[2],optics.framing[3]],optics.ray(from.x,from.y));
+    const moved=Motion.drag(view,bounds,viewport,from,to);
+    const ray=Motion.apply(Motion.multiply(optics.framing,moved.rotation),source);
+    assert.ok(Math.abs(640+optics.focal*ray[0]/ray[1]-to.x)<1e-9);
+    assert.ok(Math.abs(400+optics.focal*ray[2]/ray[1]-to.y)<1e-9);
+    assert.deepEqual(view.rotation,[0,0,0,1]);
+  }
+});
+test('held arrows turn 20 degrees per second on a sphere and can recover any selected identity',()=>{
+  const sky=Sky.project(Core.fixture(Schema,Cal,'2026-09-09'),Layout,Cal,'2026-09-09'),bounds=sky.bounds;
+  const viewport={x:54,y:276,width:1172,height:367,screenWidth:1280,screenHeight:800};
+  const initial={...bounds,rotation:Motion.identity()};
+  const moved=Motion.arrows(initial,bounds,viewport,1,0,1);
+  assert.ok(Math.abs(2*Math.acos(moved.rotation[3])-20*Math.PI/180)<1e-12);
+  let around=initial;
+  for(let i=0;i<180;i++)around=Motion.arrows(around,bounds,viewport,1,0,.1);
+  assert.ok(Math.abs(Math.abs(around.rotation[3])-1)<1e-12,'18 seconds makes a full revolution without clamping');
+  for(const node of sky.nodes) {
+    const focused=Motion.focus(Motion.arrows(initial,bounds,viewport,1,0,9),node,bounds);
+    const ray=Motion.apply(focused.rotation,Motion.direction(node.x,node.y,bounds));
+    assert.ok(ray[1]>.9,'focus restores each star to the front of the sky');
+  }
+  assert.deepEqual(initial.rotation,[0,0,0,1]);
 });

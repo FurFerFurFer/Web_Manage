@@ -1077,3 +1077,63 @@ Documentation only: recorded the user's visual verdict and stop instruction in d
 removed the active review/fix queue from NOTES, and labelled the README checklist as
 historical review context. No runtime or test changes. `git diff --check` passed for the
 changed World documentation; game/browser suites were not rerun for this note.
+
+## 2026-09-21 — fixed-viewpoint Memory Grove sky
+
+The user selected A/A/A after diagnosis: a 40° fitted angular span, 1× direct dragging
+near the screen centre, and 20°/second held arrows. The displayed constellation now
+rotates on a sphere around a fixed grounded eye. `sky-motion.js` owns the pure display
+math; `sky-core.js`, canonical KS03 coordinates, MM 103's (510,70) override, the demo
+fixture and `storage-isolation.js` are unchanged. The sole shared-scene change passes
+the player's grounded location to the sky pose. Asset queries were advanced, the
+renderer header and README were corrected, and the decision is recorded in §5.7.
+
+**Before:** the September 20 local Chrome diagnostic measured a 200px drag moving the
+camera from x=-10 to x=-29.865962470477147 while the stars stayed still. A fixed-eye
+assertion against those captured pre-change values failed as expected. This is
+diagnostic fail-first evidence, not a claim that the final expanded suite was run
+against the old implementation.
+
+**Checks:** all graphics-heavy suites ran sequentially in isolated headless Chrome,
+with output redirected to files and tails inspected. The first sky browser run passed
+10/10. Review then found a held drag could survive a panel/sky exit; the input guard was
+fixed and a new regression added before the final sky run. That new case proves an
+inert/hidden sky keeps a finite, unchanged orientation after further pointer movement.
+
+| Command | Result | Log in `/tmp/` |
+| --- | --- | --- |
+| `node World/tests/sky-core.test.js` | 6/6 passed | `track-world-sky-motion-core.log` |
+| `node World/tests/sky.test.js` | 11/11 passed, 34.8 s | `track-world-sky-motion-browser-final.log` |
+| `node World/tests/camera.test.js` | 5/5 passed, 21.0 s | `track-world-sky-motion-camera.log` |
+| `node World/tests/map.test.js` | 5/5 passed, 71.4 s | `track-world-sky-motion-map.log` |
+
+The sky checks cover the accepted angular span/gain/rate, fixed camera position and
+orientation, spherical star motion, matching connection endpoints, projected HTML
+targets and click selection, FOV zoom, Fit all/Home, Tab recovery of a star behind the
+camera, inspection return, unchanged source coordinates/fixture, live weather/date
+cues, narrow layout, entry/early Esc/return and reduced-motion direct dragging.
+Syntax checks and `git diff --check -- World` passed. Runtime/test hashes remained
+unchanged across the final browser checks. Day and narrow sky screenshots were
+inspected; the current look was retained. The local server was started on port 8877
+for the user's playtest.
+
+**Limits and waiting decisions:** headless checks do not establish comfortable curve,
+speed or pointer feel, sustained laptop GPU performance, or dense-network readability.
+The flat label de-overlap remains a heuristic; this change does not solve its existing
+density limits. The real-data read/export scope, coincident shared-parent stars,
+ambiguous cycle connections, disconnected-group readability and concept-reference look
+were reported only. No part 2 implementation, Track runtime/data/cloud change,
+dependency, download or install was made. All those follow-ups still await user direction.
+
+## 2026-09-21 — sky motion playtest feedback recorded
+
+The user reported that the fixed-viewpoint sky change worked. They also reported that
+the interface takes too much space, the graphics lack a universe-of-stars feeling, and
+many MMs are needed to judge the experience. This is user playtest evidence for the
+motion, with interface, appearance and density acceptance still open. It does not
+establish sustained laptop performance or authorize real Track reads.
+
+Documentation only: recorded the verdict in draft §5.7 and README; replaced NOTES'
+completed motion-playtest request with the pending interface/appearance/larger-fixture
+choices. No runtime, fixture, tuning or data changes. `git diff --check -- World` passed;
+game/browser suites were not rerun for this feedback note.

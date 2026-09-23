@@ -17,6 +17,7 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       const B=BABYLON,scene=B.EngineStore.LastCreatedScene,eye=scene.activeCamera,engine=scene.getEngine(),forward=eye.getForwardRay().direction;
       const map=document.getElementById('sky-map').getBoundingClientRect();
       return {position:eye.position.asArray(),forward:forward.asArray(),up:eye.getDirection(B.Axis.Y).asArray(),fov:eye.fov,
+        links:Array.from(scene.getMeshByName('celestial-connections')?.getVerticesData(B.VertexBuffer.PositionKind)||[]),
         stars:scene.meshes.filter(mesh=>mesh.metadata?.skyMM!==undefined).map(mesh=>{
           const p=B.Vector3.Project(mesh.position,B.Matrix.Identity(),scene.getTransformMatrix(),eye.viewport.toGlobal(engine.getRenderWidth(),engine.getRenderHeight()));
           const target=document.querySelector('[data-sky-mm="'+mesh.metadata.skyMM+'"]'),box=target.getBoundingClientRect(),label=target.querySelector('.sky-star-label').getBoundingClientRect();
@@ -144,6 +145,10 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
         assert.ok(Math.abs(star.distance-original.distance)<1e-6,'MM '+star.id+' follows a spherical orbit');
       }
       assert.ok(rotated.stars.some((star,i)=>Math.abs(star.position[1]-eye.stars[i].position[1])>.01),'the motion curves in depth instead of translating a flat sheet');
+      for(const [i,edge] of moved.sky.edges.entries())for(const [end,id] of [edge.from,edge.to].entries()) {
+        const position=rotated.stars.find(star=>star.id===id).position,vertex=rotated.links.slice(i*6+end*3,i*6+end*3+3);
+        assert.ok(vertex.length===3&&vertex.every((v,axis)=>Math.abs(v-position[axis])<1e-5),'connection endpoints rotate with MM '+id);
+      }
       const target=rotated.stars.find(star=>star.id===102);
       await page.session.send('Input.dispatchMouseEvent',{type:'mousePressed',...target.screen,button:'left',buttons:1,clickCount:1});
       await page.session.send('Input.dispatchMouseEvent',{type:'mouseReleased',...target.screen,button:'left',buttons:0,clickCount:1});
@@ -159,7 +164,8 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       const zoomed=await camera();fixedEye(zoomed,eye);
       assert.ok((await snapshot()).sky.view.width<initial.sky.view.width);
       assert.ok(zoomed.fov<eye.fov,'zoom magnifies through camera field of view');
-      assert.deepEqual(zoomed.stars.map(s=>s.position),eye.stars.map(s=>s.position),'zoom leaves the spherical display mapping in place');
+      assert.deepEqual((await snapshot()).sky.view.rotation,initial.sky.view.rotation,'zoom preserves the chosen constellation orientation');
+      assert.ok(zoomed.stars.every((star,i)=>Math.abs(star.distance-eye.stars[i].distance)<1e-6),'zoom keeps the constellation on its sphere');
       const held=await page.evaluate(()=>new Promise(resolve=>{
         const map=document.getElementById('sky-map');map.focus();
         const before=WorldDemo.snapshot().sky.view.rotation;let first,last,elapsed=0;
@@ -267,6 +273,40 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       assert.equal(await page.evaluate(()=>document.getElementById('mm-observation').value),'A thought before stargazing');
       await click('#memory-sky');assert.equal((await snapshot()).skyActive,true,'selected record can return to the same sky');
       assert.equal((await snapshot()).panel,null);
+    });
+    await t.test('opening an MM panel or leaving the sky cancels a held pointer drag',async()=>{
+      const begin=async()=>{
+        const point=await page.evaluate(()=>{
+          const map=document.getElementById('sky-map'),rect=map.getBoundingClientRect();
+          for(const fy of [.2,.8,.5])for(const fx of [.1,.3,.5]) {
+            const point={x:rect.left+rect.width*fx,y:rect.top+rect.height*fy};
+            if(document.elementFromPoint(point.x,point.y)===map)return point;
+          }
+          throw new Error('No empty sky position for held-pointer check');
+        });
+        await page.session.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',buttons:1,clickCount:1});
+        await page.session.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x+35,y:point.y+10,button:'left',buttons:1});
+        await frames(2);return {x:point.x+80,y:point.y+20};
+      };
+      for(const exit of ['panel','sky']) {
+        const point=await begin();
+        if(exit==='panel')await click('[data-panel="memory"]');else await key('Escape');
+        const held=(await snapshot()).sky.view;
+        await page.session.send('Input.dispatchMouseEvent',{type:'mouseMoved',...point,button:'left',buttons:1});
+        await frames(3);
+        const current=await snapshot();
+        assert.deepEqual(current.sky.view,held,'a held drag cannot rotate the '+(exit==='panel'?'inert':'hidden')+' sky');
+        assert.ok(current.sky.view.rotation.every(Number.isFinite));
+        await page.session.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',buttons:0,clickCount:1});
+        if(exit==='panel') {
+          assert.equal((await snapshot()).panel,'memory','releasing the cancelled drag does not dismiss the MM panel');
+          await key('Escape');await frames(3);
+        } else {
+          assert.equal((await snapshot()).skyActive,false);
+          await page.waitFor(()=>WorldDemo.snapshot().world.skyPhase==='garden');
+          await key('KeyG');await page.waitFor(()=>WorldDemo.snapshot().world.skyPhase==='viewing');
+        }
+      }
     });
     await t.test('an early exit reverses the animation, and reduced motion skips it',async()=>{
       await key('Escape');await page.waitFor(()=>WorldDemo.snapshot().world.skyPhase==='garden');

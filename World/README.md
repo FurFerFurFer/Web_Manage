@@ -288,7 +288,11 @@ readable and editable without the scene.
   backdrop behind the constellation. The sky remains readable in daylight/rain.
   Weather and physics continue; stargazing holds the grounded avatar still.
   A panel closes back to that sky, and leaving restores the
-  ordinary camera orientation without teleporting. Dense-network tuning remains a proof gate.
+  ordinary camera orientation without teleporting. The September 21 user playtest reports
+  that the motion works, while the interface occupies too much screen space and the graphics
+  do not yet convey a universe of stars. The demo still contains only three MMs and two
+  connections; a much larger MM sample is needed to judge the experience. Dense-network
+  tuning and visual acceptance remain open.
 - Read the synthetic workspace's full Quest tree and starred list directly from its tab.
   `TrackQuest.questTree` preserves chosen sibling order and context ancestors, skips aliases
   and promotes milestone children. `starRollup` supplies the parent grouping and counts.
@@ -444,8 +448,11 @@ tilt, an upright rendered view, removal of roll, reset without teleporting, drag
 actual pointer-capture release while walking, pointer release and typing isolation.
 The sky suite walks the real controller
 into the Grove, checks grounded entry, intermediate camera orientations and star reveal,
-movement locking, actual celestial scene meshes, the upward camera without avatar obstruction, graph selection and focus return,
-pan/zoom, live rain, changed-day petals, narrow bounds and restored camera orientation.
+movement locking, actual celestial scene meshes, the upward camera without avatar obstruction,
+fixed eye position/orientation through drag, spherical star/connection motion, projected hit
+targets, the selected arrow speed, field-of-view zoom, Fit all/Home and Tab recovery of stars
+behind the view. It also checks live rain, changed-day petals, narrow bounds and restored
+camera orientation.
 It also checks the ordinary MM panel's explicit Grove shortcut, rendered star silhouettes
 and draft retention when opening and returning from the sky, early cancellation and
 reduced-motion entry/return.

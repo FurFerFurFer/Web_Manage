@@ -4,15 +4,16 @@
 
 - **Phase:** P1-P3 in progress, Step 2: prove the defining experience in the small scene.
   P4 onward is untouched; real Track reads/writes remain separately gated.
-- **Next increment: Memory Grove sky motion laptop playtest.** Judge the fixed viewpoint
-  and rotating constellation using the selected **40° curve / 1× centre drag /
-  20°/second arrows** in [draft §5.7](TRACK-WORLD-CONCEPT-DRAFT.md#57-memory-grove-and-the-ks03-sky).
-  Try drag, zoom, Fit all/Home, keyboard/search selection and entry/Esc with Reduce motion
-  both on and off. Report motion comfort and any label/hit-target separation; do not
-  retune the selected numbers or change the look without another user decision.
-- **Sky follow-ups await direction:** the real-data read/export scope, dense networks,
-  cycles/disconnected groups and the concept-reference readability findings are reports,
-  not authorized implementation. Keep the three-MM synthetic fixture and storage gate.
+- **Next increment: scope the sky interface, star atmosphere and a larger MM playtest.**
+  Reclaim sky space from the interface, establish a universe-of-stars feeling, and provide
+  enough MMs to judge the experience. Present concrete options before implementation;
+  interface visibility, visual treatment, synthetic fixture size and topology remain open.
+  Preserve **40° curve / 1× centre drag / 20°/second arrows**; the user's motion verdict is
+  recorded in [draft §5.7](TRACK-WORLD-CONCEPT-DRAFT.md#57-memory-grove-and-the-ks03-sky).
+  Do not queue another unchanged three-star motion-acceptance playtest.
+- **Sky follow-ups await direction:** larger-fixture implementation, dense-network and
+  cycle/disconnected-group fixes, appearance changes and the real-data read/export scope.
+  The need for many MMs does not open the real-data gate; keep storage isolation intact.
 - **Body-animation work stopped; no next increment or fix planned.** Foot-ground
   push-off/body momentum in walking and running (playtest 1) remains **rejected**.
   Playtests 2–5 are **okay but not that good**, not strong visual acceptance. The user's exact
