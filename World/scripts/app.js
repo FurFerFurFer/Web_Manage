@@ -28,11 +28,11 @@
     if(!entered||activePanel)return;
     const result=world?.lookAtSky(true);
     if(!result?.ok){announce(result?.reason||'The garden is unavailable.');return;}
-    skyActive=true;$('sky-view').hidden=false;canvas.inert=true;world.setInputEnabled(false);
+    skyActive=true;document.body.dataset.sky='true';$('sky-view').hidden=false;canvas.inert=true;world.setInputEnabled(false);
     skyView.render(skyGraph(),true);$('leave-sky').focus();announce('Memory Grove sky opened. The garden keeps moving.');
   }
   function leaveSky() {
-    skyActive=false;$('sky-view').hidden=true;$('sky-view').inert=false;world?.lookAtSky(false);
+    skyActive=false;delete document.body.dataset.sky;$('sky-view').hidden=true;$('sky-view').inert=false;world?.lookAtSky(false);
     canvas.inert=!!activePanel;world?.setInputEnabled(!activePanel);canvas.focus();announce('Back in the Memory Grove.');
   }
   function openSkyFromMemory() {

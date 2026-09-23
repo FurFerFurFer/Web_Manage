@@ -211,5 +211,6 @@ Do not read `vendor/`, the root verification log, or spawn subagents for this in
   private release and recovery. Scope and approval gates remain in `AGENTS.md` and the
   concept draft; no installation or deployment follows automatically from this list.
 
-Phone/iPad gameplay remains deferred. If work becomes advanced or leaves the agreed
-plan, follow the Ultra escalation rule before continuing that part.
+Phone/iPad gameplay remains deferred. If work leaves the agreed plan, stop for
+direction; if it is beyond what can be done reliably, follow the Overcapability rule.
+Both are in `AGENTS.md`.

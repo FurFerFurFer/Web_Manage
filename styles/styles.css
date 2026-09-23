@@ -3017,7 +3017,16 @@ button.cal-doc-origin:hover {
   font-size: 0.9375rem;
 }
 
-.docs-sidebar-full .doc-row-acts {
+/* The second of the two rules that used to reveal the cluster unconditionally,
+   and the one that actually governs the full-screen drawer — the
+   @media (hover: none) block below is not enough on its own, because this rule
+   applies at every width whenever the drawer is open. Both had to move to the
+   armed state together, or arming looks implemented and changes nothing.
+
+   Measured before and after: with the cluster permanently on, five controls
+   took 228px of a 390px row and left the page title 42px. Armed-only gives
+   that width back to the name, which is the whole point of the change. */
+.docs-sidebar-full .doc-row-armed .doc-row-acts {
   display: flex;
 }
 
@@ -3033,20 +3042,40 @@ button.cal-doc-origin:hover {
   font-size: 1.0625rem;
 }
 
-/* A finger raises no :hover, so the hover-revealed row actions were invisible
-   on a phone and iPad — the second, independent half of why reordering did not
-   work there. Fixing the drag alone would have left them unreachable, so
-   `display: flex` below is load-bearing and must not be removed.
+/* A finger raises no :hover, so the hover-revealed ⠿ ⇅ ＋ ☆ ✕ cluster is
+   invisible on a phone and iPad — the second, independent half of why
+   reordering did not work there. That reachability guarantee is mandatory and
+   is still provided here; what changed is HOW.
 
-   The cluster is made VISIBLE here but deliberately NOT enlarged. Five 44px
+   This block used to show the cluster PERMANENTLY on any hover-less device,
+   and its comment said so was load-bearing and must not be removed. It has
+   been removed on purpose, and replaced rather than dropped: five controls on
+   every row cost ~100px of a 240px column, which is what cut every page name
+   so hard that the name was the thing you could not read. The cluster is now
+   revealed by ARMING — one tap on a row shows it, a second tap opens the page
+   (documentations.html's `rowTap`, gated on TrackViewport.isTouchPrimary()).
+   So a finger still reaches every control, in one extra tap, and an unarmed
+   row gives the whole width back to the title.
+
+   Do not restore the blanket rule without also removing the arm model, or
+   arming becomes a no-op that still costs a tap.
+
+   `(pointer: coarse)` rather than `(hover: none)`, matching
+   TrackViewport.isTouchPrimary() — the two must ask the same question or the
+   reveal rule and the arm gate disagree about who is holding the device. See
+   scripts/viewport.js for why coarse won: headless Chrome reports
+   `(hover: none)` at every viewport and cannot be made to say otherwise, so a
+   hover gate is untestable in both directions.
+
+   The cluster is revealed here but deliberately NOT enlarged. Five 44px
    targets need 220px in a 240px column, so sizing them up forced the row to
    wrap and doubled the height of every page row — which was tried, and
    reverted on request. The row therefore keeps its original one-line desktop
    layout, and the full-screen mode above is where 44px row targets live. Only
    ⛶ and ＋ are enlarged, because each sits alone on its own row with nothing
    to crowd. */
-@media (hover: none) {
-  .docs-sidebar .doc-row-acts {
+@media (pointer: coarse) {
+  .docs-sidebar .doc-row-armed .doc-row-acts {
     display: flex;
   }
 
@@ -3059,10 +3088,11 @@ button.cal-doc-origin:hover {
     min-height: 2.75rem;
   }
 
-  /* the ★ badge and the action cluster are both permanent now, and the ☆
-     button already shows ★ when a page is favourited, so the separate badge
-     would put two stars in one row */
-  .docs-sidebar .doc-fav-badge {
+  /* Only while armed. Unarmed, the cluster is gone and the ☆ button with it,
+     so the badge is the only thing left saying this page is a favourite —
+     which is the opposite of the old always-on case, where showing it would
+     have put two stars in one row. */
+  .docs-sidebar .doc-row-armed .doc-fav-badge {
     display: none;
   }
 }
@@ -3334,6 +3364,52 @@ button.cal-doc-origin:hover {
     /* the shorthand is what beats .flex-shrink-0 */
     flex: 1 1 auto;
     border-right: 0;
+  }
+
+  /* The Milestones 40/60 split, the third of the three and the one round 1
+     missed. Same shape as the goal detail above; the panes carry their widths
+     as INLINE styles (`flex: '0 0 40%'`), which no stylesheet rule can beat
+     without !important — so the switcher unmounts the pane it is not showing
+     and these rules only have to stop the surviving one being 40% of a phone. */
+  .progress-page [data-ms-split] {
+    flex-direction: column;
+  }
+
+  .progress-page [data-ms-pane] {
+    width: 100%;
+    flex: 1 1 auto;
+    border-right: 0;
+  }
+
+  /* The Schedule's control row. In day mode its children come to ~546px in a
+     390px box — `‹ › today`, the date, WEEK|DAY, the GRID|TASKS switcher and
+     TIMELINE|CALENDAR — so CALENDAR, being last, fell off the right edge and
+     was clipped away entirely. Wrapping rather than scrolling on purpose: the
+     complaint was that the control could not be CLICKED, and a row that
+     scrolls leaves it reachable but still invisible.
+
+     The long date goes on its own line first, so the controls below it wrap
+     into a predictable second row instead of leaving a ragged gap. Reached
+     through its own hook, not `> span`: the calendar sub-view renders a bare
+     `<span className="flex-1" />` spacer that would otherwise match too. */
+  .progress-page [data-sched-nav] {
+    flex-wrap: wrap;
+    row-gap: 0.375rem;
+  }
+
+  .progress-page [data-sched-nav] [data-sched-date] {
+    flex-basis: 100%;
+    order: -1;
+  }
+
+  /* `ml-auto` on the TIMELINE|CALENDAR group is what pushes it right on a
+     desktop, and on a wrapped row it is actively harmful: `margin-left: auto`
+     eats every pixel of free space on whatever line the item lands on, so
+     nothing can pack beside it and each group takes a line of its own. Left
+     in, this row wrapped to FIVE lines and 107px — measured, not guessed.
+     Neutralised, the groups pack and it settles at three. */
+  .progress-page [data-sched-nav] > .ml-auto {
+    margin-left: 0;
   }
 
   /* The Eisenhower matrix. BOTH axes have to be overridden: grid-rows-2 is

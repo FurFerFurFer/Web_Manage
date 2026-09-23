@@ -158,22 +158,46 @@ result is unchanged by arithmetic rather than by a second set of rules.
   `TOTAL_W` (56 + 7 × 140 = 1036px), which a 390px screen could only show four
   columns of. Week is still one tap away, and a mode chosen by hand survives
   rotation — the phone check is a one-shot read at mount, not a live binding.
-- **The two 65/35 splits become one pane plus a switcher**: the goal detail's
-  TASKS / PROGRESSION, and the Schedule's day-mode GRID / TASKS. The goal panes
-  are unmounted; the schedule panes are *hidden*, because the timeline binds two
-  mount-only effects to a ref.
+- **The three side-by-side splits become one pane plus a switcher**: the goal
+  detail's TASKS / PROGRESSION, Milestones' MILESTONES / CALENDAR, and the
+  Schedule's day-mode GRID / TASKS. The goal and Milestones panes are
+  unmounted; the schedule panes are *hidden*, because the timeline binds two
+  mount-only effects to a ref and unmounting it would strand them.
+- **The Schedule's control row wraps** into two or three lines. Unwrapped, its
+  children came to ~546px in a 390px box and `CALENDAR`, being last, was drawn
+  past the right edge and clipped away entirely. Wrapping rather than
+  scrolling, because a control you must swipe to find is still not one you can
+  see.
 - **The Documentations sidebar becomes a drawer.** Its 240px column was 62% of a
   390px screen and `shrink-0` forbade it giving any back, leaving the editor
   about 70px of text. It is now hidden, opened full-screen from the bar's
   `☰ PAGES`, and closed by picking a page, by `✕`, or by Escape. Its header also
   scrolls and drops the redundant `DOCUMENTATIONS` word, which was the page's
   only remaining source of horizontal overflow.
+- **A page row's `⠿ ⇅ ＋ ☆ ✕` cluster is revealed by ARMING, not permanently.**
+  On a machine with a fine pointer it reveals on hover, as it always did. Where
+  the primary pointer is coarse — a finger — the first tap on a row arms it and reveals the cluster, and a
+  second tap — anywhere on the row that is not one of those controls — opens the
+  page. Arming clears when another row is armed, when a page is opened, when the
+  drawer closes, and when you tap empty sidebar space. This replaced a rule that
+  showed all five controls on every row on any touch device: they cost 228px of
+  a 390px row and left the title 42px, which is why page names were the thing
+  you could not read. Unarmed, the title now gets 278px of that row.
 - **The notes widget floats above the bar**, by CSS alone — `notes-widget.js` is
   unchanged.
 
 `scripts/viewport.js` (`window.TrackViewport`) is the one definition of the
 breakpoint in JavaScript: `PHONE_PX`, `PHONE_QUERY`, `isPhone()` and a
-`subscribe()` that returns its own disposer. It reads `window.matchMedia` and
+`subscribe()` that returns its own disposer. It also owns
+`COARSE_POINTER_QUERY` / `isTouchPrimary()`, which is a question about the
+**input** rather than the screen — the documentation row's arm model is gated on
+that and never on `isPhone()`, because an iPad at 820px is not a phone yet is
+finger-driven, while a 1280px laptop with a touchscreen reports `pointer: fine`
+and rightly keeps one-click navigation. `(pointer: coarse)` rather than the more
+obvious `(hover: none)`: headless Chrome reports `(hover: none)` at every
+viewport and `Emulation.setEmulatedMedia` cannot override it, so a hover gate
+would be untestable in both directions and would silently put every desktop
+test case on the touch path. It reads `window.matchMedia` and
 nothing else — no `document`, no storage, no dates — which is what lets
 `tests/viewport.test.js` run offline. The 720 is necessarily spelled in both
 that file and `styles.css`; that suite pins the stylesheet's whole set of

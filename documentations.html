@@ -6,7 +6,7 @@
   <title>Documentations</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
-  <script src="scripts/viewport.js?v=1"></script>
+  <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=8"></script>
   <script src="scripts/calendar-core.js?v=8"></script>
@@ -19,7 +19,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=13">
+  <link rel="stylesheet" href="styles/styles.css?v=14">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -83,6 +83,17 @@
     const genId = () => window.TrackStorage && window.TrackStorage.newId
       ? window.TrackStorage.newId()
       : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+
+    /* Does this device reveal things on hover, or does it need a tap?
+       scripts/viewport.js is the one definition; this is the delegate, in the
+       same shape as genId() above and for the same reason — each page is its
+       own inline-Babel app with no module system.
+
+       Read at the CLICK, never rendered from, so it needs no subscription: a
+       mouse plugged in mid-session is picked up by the next tap. The fallback
+       is `false`, i.e. "assume a mouse", which keeps one-click navigation
+       working rather than demanding a second tap nobody could discover. */
+    const touchPrimary = () => !!(window.TrackViewport && window.TrackViewport.isTouchPrimary());
 
     // ?page=<id> deep link, the counterpart of progress.html's ?date=<ds>.
     // Day notes and deadlines authored here point back at their source page,
@@ -2284,7 +2295,7 @@
 
     // ── sidebar ──────────────────────────────────────────────────────────────
 
-    function PageTreeItem({page, pages, depth, activePageId, collapsed, onToggleCollapse, onSelect, onAddChild, onToggleFav, onDelete, onNest, onArrange, onTouchDragStart, touchDrop}) {
+    function PageTreeItem({page, pages, depth, activePageId, collapsed, onToggleCollapse, onSelect, onAddChild, onToggleFav, onDelete, onNest, onArrange, onTouchDragStart, touchDrop, armedId, onArm}) {
       const children = pages.filter(p => p.parentId === page.id);
       const isCollapsed = !!collapsed[page.id];
       // mouse drag-over feedback stays local to the row; never lifted to App
@@ -2298,15 +2309,29 @@
       const nestOn = nestDragOver || (tDrop && tDrop.mode === 'nest');
       const arrangeOn = arrangeDragOver
         || (tDrop && tDrop.mode === 'arrange' ? (tDrop.before ? 'before' : 'after') : null);
+
+      /* One tap where hover exists: open the page, since the ⠿ ⇅ ＋ ☆ ✕ cluster
+         is already reachable by hovering. Two taps where it does not: the first
+         ARMS this row and reveals the cluster, the second opens the page.
+
+         "Tap again, but not on a button" needs no guard of its own — every
+         control in the cluster already calls stopPropagation, so a second tap
+         landing on one of them never reaches this handler at all. */
+      function rowTap() {
+        if (!touchPrimary() || page.id === armedId) { onSelect(page.id); return; }
+        onArm(page.id);
+      }
+
       return (
         <div>
           <div className={"group flex items-center gap-1 rounded px-1 py-0.5 text-xs cursor-pointer "
               +(page.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')
+              +(page.id===armedId?' doc-row-armed':'')
               +(nestOn?' ring-1 ring-indigo-500 bg-indigo-950/30':'')
               +(arrangeOn==='before'?' border-t-2 border-green-500':arrangeOn==='after'?' border-b-2 border-green-500':'')}
             style={{paddingLeft: 'calc(4px + ' + depth + ' * var(--doc-indent, 14px))'}}
             data-doc-row={page.id}
-            onClick={()=>onSelect(page.id)}
+            onClick={rowTap}
             onDragOver={e=>{
               // the payload is unreadable during dragover, so sniff types, never getData.
               // stopPropagation is what makes the innermost row win over its ancestors.
@@ -2361,7 +2386,8 @@
               onToggleCollapse={onToggleCollapse} onSelect={onSelect}
               onAddChild={onAddChild} onToggleFav={onToggleFav} onDelete={onDelete}
               onNest={onNest} onArrange={onArrange}
-              onTouchDragStart={onTouchDragStart} touchDrop={touchDrop} />
+              onTouchDragStart={onTouchDragStart} touchDrop={touchDrop}
+              armedId={armedId} onArm={onArm} />
           ))}
         </div>
       );
@@ -2385,6 +2411,22 @@
       const [rootDragOver, setRootDragOver] = useState(false);
       // the sidebar filling the viewport. Ephemeral: never written to track_db.
       const [sidebarFull, setSidebarFull] = useState(false);
+      /* TAP TO ARM. A finger raises no :hover, so a page row's ⠿ ⇅ ＋ ☆ ✕
+         cluster used to be shown permanently on touch — five controls eating
+         ~100px of every row, which is why page names were cut so hard. Now the
+         first tap ARMS a row (revealing the cluster) and the second tap, if it
+         is not on one of those controls, opens the page. The controls already
+         stopPropagation, so "not on a control" needs no extra guard.
+
+         Gated on `(hover: none)` and NEVER on isPhone(): an iPad at 820px is
+         not a phone but raises no hover either, and a laptop with a
+         touchscreen is touch-capable but should keep one-click navigation.
+         Getting that backwards is what leaves a control permanently
+         unreachable — the exact bug the old blanket rule existed to fix.
+
+         One row at a time, so the state lives HERE rather than in the
+         recursive PageTreeItem. Ephemeral: never written to track_db. */
+      const [armedRowId, setArmedRowId] = useState(null);
       // touch drag: `dragging` is set once at touchstart (it renders the ghost),
       // `touchDrop` only when the row under the finger CHANGES, and the live
       // coordinates live in a ref so following the finger costs no re-render.
@@ -2416,7 +2458,7 @@
       // Escape is the second way out of full screen; the ✕ is the first.
       useEffect(() => {
         if (!sidebarFull) return;
-        const onKey = e => { if (e.key === 'Escape') setSidebarFull(false); };
+        const onKey = e => { if (e.key === 'Escape') { setSidebarFull(false); setArmedRowId(null); } };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
       }, [sidebarFull]);
@@ -2819,12 +2861,13 @@
             {/* Sidebar */}
             <aside ref={asideRef}
               className={"docs-sidebar flex w-60 shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900/60 p-2"
-                +(sidebarFull?' docs-sidebar-full':'')}>
+                +(sidebarFull?' docs-sidebar-full':'')}
+              onClick={e=>{ if (!e.target.closest('[data-doc-row]')) setArmedRowId(null); }}>
               <div className="docs-sidebar-top mb-2 flex items-center justify-between gap-2">
                 <span className="doc-side-label text-[10px] font-bold uppercase tracking-widest text-gray-600">
                   {sidebarFull ? 'All pages' : ''}
                 </span>
-                <button data-doc-fullscreen onClick={()=>setSidebarFull(f=>!f)}
+                <button data-doc-fullscreen onClick={()=>{setSidebarFull(f=>!f); setArmedRowId(null);}}
                   title={sidebarFull ? 'Exit full screen (Esc)' : 'Expand to full screen'}
                   aria-label={sidebarFull ? 'Exit full screen' : 'Expand to full screen'}
                   className="doc-side-full rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white">
@@ -2871,10 +2914,11 @@
                 <PageTreeItem key={p.id} page={p} pages={docPages} depth={0}
                   activePageId={activePageId} collapsed={collapsed}
                   onToggleCollapse={id=>setCollapsed(c=>({...c,[id]:!c[id]}))}
-                  onSelect={id=>{setActivePageId(id); setSidebarFull(false);}} onAddChild={addPage}
+                  onSelect={id=>{setActivePageId(id); setSidebarFull(false); setArmedRowId(null);}} onAddChild={addPage}
                   onToggleFav={toggleFav} onDelete={deletePage}
                   onNest={nestPage} onArrange={arrangePage}
-                  onTouchDragStart={startTouchDrag} touchDrop={touchDrop} />
+                  onTouchDragStart={startTouchDrag} touchDrop={touchDrop}
+                  armedId={armedRowId} onArm={setArmedRowId} />
               ))}
               <button onClick={()=>addPage(null)}
                 className="doc-side-addrow mt-2 rounded px-2 py-1 text-left text-xs text-gray-600 hover:bg-gray-800 hover:text-gray-300">
@@ -3015,7 +3059,7 @@
           <nav className="track-tabbar" data-tabbar="documentations" aria-label="Sections">
             <button type="button" className="track-tabbar-btn" data-tabbar-tab="pages"
               aria-current={sidebarFull ? 'page' : undefined}
-              onClick={()=>setSidebarFull(f=>!f)}>☰ PAGES</button>
+              onClick={()=>{setSidebarFull(f=>!f); setArmedRowId(null);}}>☰ PAGES</button>
             <button type="button" className="track-tabbar-btn" data-tabbar-tab="add"
               onClick={()=>addPage(null)}>＋ PAGE</button>
             <a className="track-tabbar-btn track-tabbar-home" data-tabbar-tab="home"

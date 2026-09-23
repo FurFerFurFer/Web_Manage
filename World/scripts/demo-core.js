@@ -13,7 +13,45 @@
           links:[{id:202,label:'Field journal reference',url:'https://example.com/garden-journal'}]},
         {id:102, name:'How water shapes a place', customColor:'#7ec7d1', type:'2', ksStage:'sir', parentIds:[101],
           currentMG:'Follow one ripple from its origin to the bank.',rating:2},
-        {id:103, name:'Light, color and observation', customColor:'#e9bd68', type:'1', ksStage:'sir', parentIds:[101]}
+        {id:103, name:'Light, color and observation', customColor:'#e9bd68', type:'1', ksStage:'sir', parentIds:[101]},
+        // A denser synthetic KS03 network: four parent depths, a parent cycle,
+        // three disconnected groups and several deliberately long names. Every
+        // entry carries customColor so the sky's colour contract stays exact.
+        {id:110, name:'Soil and what lives in it', customColor:'#9c8f6a', type:'2', ksStage:'sir', parentIds:[101], rating:2},
+        {id:111, name:'Roots, fungi and exchange', customColor:'#b08a5e', type:'2', ksStage:'sir', parentIds:[110]},
+        {id:112, name:'Reading a root cross-section under poor light', customColor:'#8d7f59', type:'1', ksStage:'sir', parentIds:[111]},
+        {id:113, name:'Mycelium networks', customColor:'#c2a878', type:'1', ksStage:'sir', parentIds:[111]},
+        {id:114, name:'Compost and decay', customColor:'#7f8a5c', type:'2', ksStage:'sir', parentIds:[110]},
+        {id:115, name:'Leaf shape and margin', customColor:'#86b06f', type:'2', ksStage:'sir', parentIds:[101],
+          currentMG:'Say the margin aloud before reaching for a name.'},
+        {id:116, name:'Toothed, lobed and entire margins', customColor:'#9ec47f', type:'1', ksStage:'sir', parentIds:[115]},
+        {id:117, name:'Venation patterns', customColor:'#7aa86a', type:'2', ksStage:'sir', parentIds:[115]},
+        {id:118, name:'Parallel versus reticulate', customColor:'#93bb86', type:'1', ksStage:'sir', parentIds:[117]},
+        {id:119, name:'Streams, banks and meander', customColor:'#6fb3c4', type:'2', ksStage:'sir', parentIds:[102]},
+        {id:120, name:'How a bank is undercut over a single wet season', customColor:'#5fa0b8', type:'1', ksStage:'sir', parentIds:[119]},
+        {id:121, name:'Rain, runoff and puddles', customColor:'#87c9d6', type:'2', ksStage:'sir', parentIds:[102]},
+        {id:122, name:'Colour temperature at dusk', customColor:'#e2a96b', type:'1', ksStage:'sir', parentIds:[103]},
+        {id:123, name:'Shadow edges', customColor:'#d9b982', type:'1', ksStage:'sir', parentIds:[103]},
+        {id:130, name:'Drawing from observation', customColor:'#a88fc4', type:'2', ksStage:'sir', parentIds:[], rating:3},
+        {id:131, name:'Line weight and confidence', customColor:'#9a7fbd', type:'2', ksStage:'sir', parentIds:[130]},
+        {id:132, name:'Holding a pencil for long observation sessions without fatigue', customColor:'#b6a3d2', type:'1', ksStage:'sir', parentIds:[131]},
+        {id:133, name:'Measuring by eye', customColor:'#8f74b4', type:'2', ksStage:'sir', parentIds:[130]},
+        {id:134, name:'Sighting with a pencil', customColor:'#a892c9', type:'2', ksStage:'sir', parentIds:[133]},
+        {id:135, name:'Transferring proportion to the page', customColor:'#bcaedb', type:'1', ksStage:'sir', parentIds:[134]},
+        {id:140, name:'Keeping a field notebook', customColor:'#c98f9c', type:'2', ksStage:'sir', parentIds:[]},
+        {id:141, name:'Dating and locating an entry', customColor:'#d7a4af', type:'1', ksStage:'sir', parentIds:[140]},
+        // A deliberate parent cycle. depths() must condense it rather than
+        // demand that each member outrank the others.
+        {id:150, name:'Naming what you see', customColor:'#d48f6f', type:'2', ksStage:'sir', parentIds:[152]},
+        {id:151, name:'Describing before naming', customColor:'#dfa584', type:'2', ksStage:'sir', parentIds:[150]},
+        {id:152, name:'Testing a name against the plant', customColor:'#c98263', type:'2', ksStage:'sir', parentIds:[151]},
+        {id:160, name:'The season itself', customColor:'#7f8f96', type:'anchor', ksStage:'sir', parentIds:[]},
+        {id:161, name:'Weather and what it changes', customColor:'#8fa7b0', type:'2', ksStage:'sir', parentIds:[160]},
+        {id:162, name:'Light through the year', customColor:'#a3bcc4', type:'2', ksStage:'sir', parentIds:[160]},
+        {id:163, name:'A long mind map name kept here on purpose, so label de-overlap is judged at density', customColor:'#98b3a6', type:'1', ksStage:'sir', parentIds:[160]},
+        {id:166, name:'Stones, paths and what grows between', customColor:'#a7ac94', type:'1', ksStage:'sir', parentIds:[160]},
+        {id:164, name:'Birds and their hours', customColor:'#cbb46e', type:'2', ksStage:'sir', parentIds:[]},
+        {id:165, name:'Insects at the water’s edge', customColor:'#d8c584', type:'1', ksStage:'sir', parentIds:[164]}
       ],
       pos:{103:{x:510,y:70}},
       goals:[
@@ -46,7 +84,13 @@
         {id:'review-1', mmId:103, date:day, repIndex:1, done:false},
         {id:'review-2', mmId:102, date:day, repIndex:0, done:true, finishDate:day},
         {id:'review-skip', mmId:101, date:day, repIndex:0, skipped:true},
-        {id:'review-next', mmId:101, date:next, repIndex:2, done:false}
+        {id:'review-next', mmId:101, date:next, repIndex:2, done:false},
+        // Petals across the denser network, so review cues are judged at density.
+        {id:'review-110', mmId:110, date:day, repIndex:0, done:false},
+        {id:'review-115', mmId:115, date:day, repIndex:1, done:true, finishDate:day},
+        {id:'review-131', mmId:131, date:day, repIndex:0, done:false},
+        {id:'review-150', mmId:150, date:day, repIndex:2, done:false},
+        {id:'review-163', mmId:163, date:day, repIndex:0, done:true, finishDate:day}
       ],
       kolbs:[{id:301,mmId:101,date:day,isReflectingOnPrev:true,level:'3',
         experience:'I compared two leaves beside the bridge.',mgLookLike:'Name the leaf edge without guessing.',

@@ -6,14 +6,14 @@
   <meta name="theme-color" content="#264d45">
   <title>Clockgarden · Track World demo</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="styles/demo.css?v=21">
+  <link rel="stylesheet" href="styles/demo.css?v=22">
   <script defer src="scripts/storage-isolation.js?v=1"></script>
   <script defer src="vendor/babylonjs-9.25.0/babylon.js?v=1"></script>
   <script defer src="/track-core/schema.js?v=7"></script>
   <script defer src="/track-core/calendar-core.js?v=7"></script>
   <script defer src="/track-core/quest-core.js?v=1"></script>
   <script defer src="/track-core/graph-layout.js?v=1"></script>
-  <script defer src="scripts/demo-core.js?v=8"></script>
+  <script defer src="scripts/demo-core.js?v=9"></script>
   <script defer src="scripts/flight-core.js?v=7"></script>
   <script defer src="scripts/stamina-core.js?v=3"></script>
   <script defer src="scripts/character-motion.js?v=3"></script>
@@ -22,23 +22,26 @@
   <script defer src="scripts/sky-core.js?v=1"></script>
   <script defer src="scripts/sky-motion.js?v=1"></script>
   <script defer src="scripts/sky-view.js?v=5"></script>
-  <script defer src="scripts/sky-scene.js?v=4"></script>
+  <script defer src="scripts/sky-scene.js?v=5"></script>
   <script defer src="scripts/map-core.js?v=2"></script>
   <script defer src="scripts/map-view.js?v=6"></script>
-  <script defer src="scripts/scene.js?v=25"></script>
-  <script defer src="scripts/app.js?v=20"></script>
+  <script defer src="scripts/scene.js?v=26"></script>
+  <script defer src="scripts/app.js?v=21"></script>
 </head>
 <body>
   <canvas id="world" tabindex="0" aria-label="Clockgarden. WASD moves; tap Shift to dash, hold it for about 1 second to lock running, and tap again to unsprint. Space grabs a nearby wall, or lets go with an outward push while climbing. Otherwise Space jumps or opens the glider above a drop of four jump heights. Hold X on a Windseed launcher and release to launch. Drag to look. Q/E turn, R/F tilt. Home resets the camera. Scroll zooms."></canvas>
   <div class="world-vignette" aria-hidden="true"></div>
   <div id="world-destination" class="world-destination" role="img" aria-label="Navigation destination" hidden><small id="world-destination-distance"></small><svg viewBox="0 0 24 32" aria-hidden="true"><path d="M12 2 22 12 12 30 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></div>
   <section id="sky-view" class="sky-view" aria-labelledby="sky-title" hidden>
-    <div class="sky-heading"><div><small>Memory Grove · grounded stargazing</small><h1 id="sky-title">Mind maps among the stars</h1></div><button id="leave-sky" class="secondary">Return to garden <kbd>Esc</kbd></button></div>
+    <div class="sky-bar">
+      <div class="sky-heading"><small>Memory Grove · grounded stargazing</small><h1 id="sky-title">Mind maps among the stars</h1></div>
+      <p class="sky-legend">✿ Review due · ✓ Reviewed · no petals: no reviews today <span>Drag to rotate stars · scroll to zoom</span></p>
+      <div class="sky-tools"><button id="sky-out" class="secondary" aria-label="Zoom out">−</button><button id="sky-in" class="secondary" aria-label="Zoom in">+</button><button id="sky-fit" class="secondary">Fit all</button><label for="sky-find">Find a mind map</label><input id="sky-find" type="text" placeholder="Name…"></div>
+      <button id="leave-sky" class="secondary">Return to garden <kbd>Esc</kbd></button>
+      <div id="sky-results" class="sky-results" hidden></div>
+    </div>
     <p id="sky-description">Looking up into the Grove’s sky…</p>
-    <div class="sky-tools"><button id="sky-out" class="secondary" aria-label="Zoom out">−</button><button id="sky-in" class="secondary" aria-label="Zoom in">+</button><button id="sky-fit" class="secondary">Fit all</button><label for="sky-find">Find a mind map</label><input id="sky-find" type="text" placeholder="Name…"></div>
-    <div id="sky-results" class="sky-results" hidden></div>
     <div id="sky-map" class="sky-map" role="group" aria-label="Mind map constellation. Drag or hold arrow keys to rotate the stars, scroll to zoom, or Tab to a star." tabindex="0"></div>
-    <p class="sky-legend">✿ Review due · ✓ Reviewed · no petals: no reviews today <span>Drag to rotate stars · scroll to zoom</span></p>
   </section>
   <header class="identity"><span class="world-mark" aria-hidden="true">✧</span><div><span>Track World</span><strong>Clockgarden</strong></div></header>
   <button id="minimap" class="minimap" data-panel="map" aria-label="Open world map" hidden><canvas id="minimap-canvas" aria-hidden="true"></canvas><span class="map-north" aria-hidden="true">N</span><span class="minimap-caption">World map <kbd>M</kbd></span></button>

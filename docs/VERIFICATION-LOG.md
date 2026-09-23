@@ -2232,3 +2232,97 @@ see NOTES Proposal 16), printed output, the live Firebase project, and real mult
 behaviour. Within the app, the phone layout has had no pass over the KS03 and True Storage
 pan/zoom canvases, the MG levels accordion, the Kolb editor, or the several `w-[528px]`-class
 popups in `progress.html` that carry no viewport cap — all named in NOTES Proposal 16.
+
+### Phone interface, round 2: Milestones, the Schedule nav, and tap-to-arm (2026-09-20)
+
+Three fixes from using round 1 on a real device: Milestones was still a side-by-side split
+on a phone (missed — the goal detail and Schedule got switchers, it did not), `CALENDAR` in
+the Schedule could not be clicked, and the Documentations rows showed all five controls all
+the time on touch.
+
+**The Schedule clipping was partly self-inflicted, and is recorded as such.** That control
+row has no wrap and no scroll, and in day mode its children come to ~546px in a 390px box:
+`‹ › today`, the date, `WEEK|DAY`, the `GRID|TASKS` switcher and `TIMELINE|CALENDAR` last.
+It already overflowed at ~428px before round 1, but the `GRID|TASKS` switcher added in round
+1 put another ~118px into that row, and `CALENDAR`, being last, is what fell off. Fixed by
+wrapping rather than scrolling — the complaint was that the control could not be *clicked*,
+and a row you must swipe to reach is still one you cannot see.
+
+**Two measurement mistakes, both caught before they became conclusions.**
+
+The nav appeared to wrap into FIVE lines. It was three. `align-items: center` gives
+differently-sized children on the same line different `top` values, so counting distinct
+tops overcounts; grouping by overlapping vertical bands reports it correctly. The corrected
+counter went into the browser case with a comment saying why, because the naive version is
+the one anybody writes first. A real fix did come out of investigating it: `margin-left:
+auto` on a wrapped flex line consumes all free space on whatever line the item lands on, so
+nothing can pack beside it — `ml-auto` is now neutralised at this breakpoint.
+
+Forty Chrome processes were read as contention. Their `etime` column said `15-05:38:06` —
+fifteen days, not two hours — and `lstart` confirmed `Sat Sep 5`. All at 0.0% CPU, orphans
+from an earlier session. The real load was GNOME `tracker-extract` at ~50%. Exactly the
+lesson already in AGENTS, failed on first reading of the column.
+
+**The arm model silently did nothing, and one assertion caught it.** TWO rules revealed the
+cluster: the `@media (hover: none)` block, and `.docs-sidebar-full .doc-row-acts`, which
+governs the drawer at every width. Moving only the first to `.doc-row-armed` left the
+cluster permanently visible and looked implemented. Measured, unarmed, before and after:
+the cluster took **228px of a 390px row and left the title 42px**; with both rules moved,
+the title gets **278px**. That is the whole of "the freed space is filled by the page name" —
+no second mechanism was needed, because `display: none` already returns the width to the
+existing `flex-1 truncate` span. AGENTS gained the general rule: when a control's visibility
+moves behind a new condition, grep every rule that sets its `display` before believing it.
+
+**THE GATE CHANGED DURING IMPLEMENTATION, from `(hover: none)` to `(pointer: coarse)`, and
+the reason is measured.** `(hover: none)` is the semantically obvious query and was tried
+first. Headless Chrome reports it **at every viewport, with or without touch emulation** —
+so every existing desktop case silently took the new two-tap path, which is how
+`the sidebar expands to full screen and closes on picking a page` broke. An
+`Emulation.setEmulatedMedia` helper was added to pin `hover` and **measured doing nothing**:
+that domain does not override `hover` or `pointer`. The helper was removed again rather than
+shipped with a comment that was false. `(hover: none)` was therefore untestable in BOTH
+directions — neither path could be asserted deliberately.
+
+`(pointer: coarse)` is both semantically better and observable. Coarse means the PRIMARY
+input is a finger, so a touchscreen laptop reports `pointer: fine` and correctly keeps
+one-click; and it reads false on a desktop, true under touch emulation. Both paths were then
+verified directly, one variable apart:
+
+```
+A  desktop 1280x900, no touch   coarse:false  ->  one click opens the page
+B  390x844 + touch emulation    coarse:true   ->  tap 1 arms (editor unchanged,
+                                                  cluster 228px), tap 2 opens
+```
+
+`styles.css`'s docs-row block asks the same query for the same reason; two spellings of "a
+finger" in one codebase is how they drift apart.
+
+**A second self-inflicted test failure, worth recording because the fixture caused it.** The
+new arm case asserted "the first tap did NOT open the page" against a single-page fixture —
+but this page auto-selects a page on mount, so it was already open and the assertion could
+never mean what it said. Re-seeded with two pages so the editor starts on the *other* one
+and the tap has somewhere to move it from. A fixture that makes an assertion unprovable
+fails for a reason that has nothing to do with the claim.
+
+**Fail-first: three doctored baselines**, scratch trees under `TRACK_TEST_ROOT`, `tests/`
+copied not symlinked, each printing the root it served and refusing a tree byte-identical to
+the repository:
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| B1 | Milestones panes rendered unconditionally | RESULTS PENDING |
+| B2 | `flex-wrap` dropped from the Schedule nav | RESULTS PENDING |
+| B3 | `.docs-sidebar-full` reveals the cluster unarmed again | RESULTS PENDING |
+
+B3 is deliberately the mistake that actually happened rather than an invented one.
+
+`node tests/run.js`: **18 suites, 270/270 browser subtests, zero failures**, exit code read
+from node itself and not through a pipe — the previous entry records that trap from the
+other direction. `md5sum` of the tree identical at both ends of the run.
+
+**Not covered, and the point of the whole change:** real touch hardware. 390x844 with
+`Emulation.setTouchEmulationEnabled` is the closest this environment gets, and whether two
+taps to open a documentation page feels right rather than merely correct is a judgement no
+test here can make. Also unchanged from round 1: `viewport-fit=cover` is still unset, the
+sync banners still land on the tab bar, and the pan/zoom canvases, MG accordion and
+uncapped `w-[528px]` popups still have no phone pass — all in NOTES Proposal 16.

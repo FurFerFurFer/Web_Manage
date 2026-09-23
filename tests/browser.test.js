@@ -6627,6 +6627,15 @@ test('browser suites', skipUnlessChrome, async t => {
 
   const openDocTree = async () => {
     const page = await open('documentations.html', { db: docTreeDb() });
+    /* These are the DESKTOP sidebar cases and they are the MOUSE path: one
+       click on a row opens the page, and the ⠿ ⇅ ＋ ☆ ✕ cluster reveals on
+       hover rather than on arming. Nothing is pinned here because nothing needs
+       to be — with no touch emulation the page reports `pointer: fine`, which
+       is exactly what a desktop reports. That is also why the arm gate is
+       `(pointer: coarse)` and not `(hover: none)`: headless Chrome reports
+       `(hover: none)` at every viewport and cannot be overridden, so a hover
+       gate would have put every one of these cases on the touch path and left
+       the mouse path untested. */
     await page.waitFor(function () { return !!document.querySelector('[data-doc-row="p-b"]'); },
       { message: 'the sidebar page tree (with data-doc-row hooks)' });
     return page;
@@ -6694,30 +6703,17 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('the handles are reachable without a hover-capable pointer', async () => {
-    /* Half two of the failure. Even a working touch drag is unusable while the
-       cluster is display:none, and headless Chrome reports `hover: hover`, so
-       assert the RULE exists rather than emulating the medium. */
+  await t.test('the handles opt out of the browser pan gesture', async () => {
+    /* What remains of the old "reachable without a hover-capable pointer" case.
+       That case asserted a @media (hover: none) rule existed showing the
+       cluster PERMANENTLY; the cluster is now revealed by arming instead, and
+       reachability is covered behaviourally under real touch emulation by
+       PHONE/DOCUMENTATIONS below — which is a stronger check than reading a
+       rule, because it measures a rect rather than a stylesheet.
+
+       This half is still worth its own case: the handle must claim the gesture
+       from the scroller, or a drag scrolls the sidebar instead. */
     const page = await openDocTree();
-    const found = await page.evaluate(function () {
-      var out = [];
-      for (var i = 0; i < document.styleSheets.length; i++) {
-        var rules; try { rules = document.styleSheets[i].cssRules; } catch (e) { continue; }
-        for (var j = 0; j < rules.length; j++) {
-          var media = rules[j];
-          if (media.type !== CSSRule.MEDIA_RULE) continue;
-          if (media.conditionText.replace(/\s/g, '').indexOf('hover:none') < 0) continue;
-          for (var k = 0; k < media.cssRules.length; k++) {
-            var r = media.cssRules[k];
-            if (r.selectorText) out.push({ sel: r.selectorText, display: r.style.display });
-          }
-        }
-      }
-      return out;
-    });
-    assert.ok(found.some(r => r.sel.indexOf('.doc-row-acts') >= 0 && r.display === 'flex'),
-      'a @media (hover: none) rule shows the row action cluster');
-    // and the handles must opt out of the browser's own pan gesture
     const touchAction = await page.evaluate(function () {
       var h = document.querySelector('[data-doc-handle="arrange"]');
       return h ? getComputedStyle(h).touchAction : null;
@@ -9813,6 +9809,208 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(b.inDom.timeline, true,
       'and the timeline is HIDDEN, not unmounted — its mount-only wheel listener '
       + 'would otherwise be bound to a dead node for the rest of the session');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE/PROGRESS: Milestones shows ONE pane at a time, full width', async () => {
+    /* The third of the three 40/60-ish splits, and the one round 1 missed. Its
+       panes carry their widths as INLINE styles (`flex: '0 0 40%'`), which no
+       stylesheet rule can beat without !important — so the switcher has to
+       unmount, and `inDom` is what proves it did rather than merely hiding. */
+    const page = await open('progress.html', { db: seedDb(), viewport: PHONE });
+    await page.waitFor(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('header button'),
+        function (x) { return x.textContent.trim() === 'MILESTONES'; });
+      if (b) b.click();
+      return !!document.querySelector('[data-ms-split]');
+    }, { message: 'the Milestones split' });
+
+    const read = function () {
+      var l = document.querySelector('[data-ms-pane="list"]');
+      var c = document.querySelector('[data-ms-pane="calendar"]');
+      return {
+        switcher: !!document.querySelector('[data-ms-switch]'),
+        dir: getComputedStyle(document.querySelector('[data-ms-split]')).flexDirection,
+        inDom: { list: !!l, calendar: !!c },
+        width: { list: l ? Math.round(l.getBoundingClientRect().width) : null,
+                 calendar: c ? Math.round(c.getBoundingClientRect().width) : null }
+      };
+    };
+
+    const a = await page.evaluate(read);
+    assert.equal(a.switcher, true, 'a phone offers the MILESTONES/CALENDAR switcher');
+    assert.equal(a.dir, 'column', 'and the split stacks rather than sitting side by side');
+    assert.deepEqual(a.inDom, { list: true, calendar: false }, 'it opens on the list');
+    assert.equal(a.width.list, 390,
+      'which takes the whole width, not 40% of it (' + a.width.list + 'px)');
+
+    await page.evaluate(function () {
+      document.querySelector('[data-ms-pane-btn="calendar"]').click(); return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-ms-pane="calendar"]'); },
+      { message: 'the CALENDAR pane' });
+
+    const b = await page.evaluate(read);
+    assert.deepEqual(b.inDom, { list: false, calendar: true }, 'switching swaps which is mounted');
+    assert.equal(b.width.calendar, 390,
+      'and the calendar also takes the whole width, not 60% (' + b.width.calendar + 'px)');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE/PROGRESS: the Schedule nav wraps so CALENDAR stays TAPPABLE', async () => {
+    /* Reported directly: "I can't click on calendar cus it's clipped out". In
+       day mode that row's children come to ~546px in a 390px box, and CALENDAR
+       is the last of them, so it fell off the right edge into the viewport clip.
+
+       `elementFromPoint` is the assertion that matters, not presence and not
+       even the rect: the button was always in the DOM with a sane-looking
+       width, it was simply drawn past the edge where no finger could land. */
+    const page = await open('progress.html', { db: seedDb(), hash: '#schedule', viewport: PHONE });
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-nav]'); },
+      { message: 'the schedule nav bar' });
+
+    const m = await page.evaluate(function () {
+      var nav = document.querySelector('[data-sched-nav]');
+      var vw = document.documentElement.clientWidth;
+      var cal = Array.prototype.find.call(nav.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'CALENDAR'; });
+      if (!cal) return { calendar: null };
+      var r = cal.getBoundingClientRect();
+      var hit = document.elementFromPoint(Math.round(r.left + r.width / 2),
+                                          Math.round(r.top + r.height / 2));
+      /* align-items:center puts differently-sized children on one line at
+         different `top` values, so distinct tops OVERCOUNT the rows. Group by
+         overlapping vertical bands instead — getting this wrong reported five
+         lines for a three-line row. */
+      var bands = [];
+      Array.prototype.forEach.call(nav.children, function (c) {
+        if (!c.getClientRects().length) return;
+        var cr = c.getBoundingClientRect();
+        var mid = cr.top + cr.height / 2;
+        for (var i = 0; i < bands.length; i++) {
+          if (mid > bands[i].top && mid < bands[i].bottom) {
+            bands[i].top = Math.max(bands[i].top, cr.top);
+            bands[i].bottom = Math.min(bands[i].bottom, cr.bottom);
+            return;
+          }
+        }
+        bands.push({ top: cr.top, bottom: cr.bottom });
+      });
+      return {
+        vw: vw, wrap: getComputedStyle(nav).flexWrap, rows: bands.length,
+        navRight: Math.round(nav.getBoundingClientRect().right),
+        calendar: { left: Math.round(r.left), right: Math.round(r.right),
+          hit: hit === cal ? 'self' : (cal.contains(hit) ? 'child'
+               : (hit ? hit.tagName.toLowerCase() : 'null')) }
+      };
+    });
+
+    assert.notEqual(m.calendar, null, 'the CALENDAR button renders at all');
+    assert.equal(m.calendar.hit, 'self',
+      'CALENDAR takes its own tap (got ' + m.calendar.hit + ' at '
+      + m.calendar.left + '–' + m.calendar.right + ' in a ' + m.vw + 'px viewport)');
+    assert.ok(m.calendar.right <= m.vw + 1,
+      'and is drawn inside the viewport, not past its right edge');
+    assert.equal(m.wrap, 'wrap', 'the row wraps rather than clipping');
+    assert.ok(m.rows >= 2 && m.rows <= 3,
+      'into a predictable 2-3 lines, not one clipped line and not a ragged pile (' + m.rows + ')');
+
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE/DOCUMENTATIONS: a row ARMS on the first tap and opens on the second', async () => {
+    /* The interaction that replaced a rule this stylesheet called load-bearing.
+       The old `@media (hover: none)` block showed all five controls on every
+       row permanently, because a finger raises no :hover and they would
+       otherwise be unreachable. That cost 228px of a 390px row and left the
+       page title 42px — measured, both numbers — which is why names were
+       unreadable. Arming re-provides the reachability in one extra tap.
+
+       TWO rules had to move together and only one of them is in the hover:none
+       block: `.docs-sidebar-full .doc-row-acts` governs the drawer at every
+       width. Changing one and not the other looks implemented and does nothing,
+       which is exactly what happened first time — hence the unarmed assertion
+       below, which is the one that caught it. */
+    /* TWO pages, and the one under test is deliberately NOT the one the editor
+       opens by itself. This page auto-selects a page on mount, so a single-page
+       fixture makes "the first tap did not open it" unprovable — the page is
+       already open and the assertion passes or fails for reasons that have
+       nothing to do with arming. Seeded the other way round, the editor starts
+       on 'Bravo' and the tap under test has somewhere to move it FROM. */
+    const page = await open('documentations.html', {
+      db: seedDb({ docPages: [
+        F.docPage('p0', { title: 'Bravo' }),
+        F.docPage('p1', { title: 'Thermodynamics and entropy — a long name' })
+      ] }),
+      viewport: PHONE
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-tabbar-tab="pages"]'); },
+      { message: 'the phone bar' });
+    await page.evaluate(function () {
+      document.querySelector('[data-tabbar-tab="pages"]').click(); return true;
+    });
+    await page.waitFor(function () {
+      return !!document.querySelector('.docs-sidebar-full [data-doc-row="p1"]');
+    }, { message: 'the drawer open with rows' });
+
+    const read = function () {
+      var row = document.querySelector('[data-doc-row="p1"]');
+      var acts = row.querySelector('.doc-row-acts');
+      var title = row.querySelector('span.flex-1');
+      return {
+        armed: row.classList.contains('doc-row-armed'),
+        display: getComputedStyle(acts).display,
+        actsW: Math.round(acts.getBoundingClientRect().width),
+        titleW: title ? Math.round(title.getBoundingClientRect().width) : null,
+        open: (function () {
+          var i = document.querySelector('.docs-editor input[placeholder="Untitled"]');
+          return i ? i.value : null;
+        })()
+      };
+    };
+    const tapRow = function () {
+      var r = document.querySelector('[data-doc-row="p1"]').getBoundingClientRect();
+      // 20px in: past the caret and icon, so this is the row itself and not a control
+      var el = document.elementFromPoint(Math.round(r.left + 20), Math.round(r.top + r.height / 2));
+      if (el) el.click();
+      return true;
+    };
+
+    const shut = await page.evaluate(read);
+    assert.equal(shut.display, 'none', 'unarmed, the five controls are not drawn');
+    assert.ok(shut.titleW > 200,
+      'so the page name gets the freed width (' + shut.titleW + 'px of 390) rather than ~42px');
+
+    await page.evaluate(tapRow);
+    await page.waitFor(function () {
+      var r = document.querySelector('[data-doc-row="p1"]');
+      return !!r && r.classList.contains('doc-row-armed');
+    }, { message: 'the row arming on the first tap' });
+
+    const armed = await page.evaluate(read);
+    assert.equal(armed.display, 'flex', 'the first tap reveals the cluster');
+    assert.ok(armed.actsW > 0,
+      'with a real rect — a finger can only reach what is actually drawn, and the '
+      + 'existing TOUCH_DRAG helper dispatches straight at the element so it cannot see this');
+    assert.equal(armed.open, shut.open,
+      'and the first tap did NOT navigate: the editor still shows whatever it showed before '
+      + '(' + shut.open + '), because the first tap is the arm');
+
+    await page.evaluate(tapRow);
+    await page.waitFor(function () { return !document.querySelector('.docs-sidebar-full'); },
+      { message: 'the second tap opening the page' });
+    assert.equal(await page.evaluate(function () {
+      var i = document.querySelector('.docs-editor input[placeholder="Untitled"]');
+      return i ? i.value : null;
+    }), 'Thermodynamics and entropy — a long name', 'the second tap opens it');
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('.doc-row-armed');
+    }), false, 'and nothing is left armed behind the closed drawer');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();

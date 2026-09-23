@@ -63,9 +63,10 @@ test('the module exports exactly the documented surface', () => {
   // Written out by hand on purpose: if an export is added or renamed, this is
   // the case that notices, the same way quest-core.test.js pins TrackQuest.
   assert.deepEqual(Object.keys(V).sort(),
-    ['PHONE_PX', 'PHONE_QUERY', 'isPhone', 'subscribe']);
+    ['COARSE_POINTER_QUERY', 'PHONE_PX', 'PHONE_QUERY', 'isPhone', 'isTouchPrimary', 'subscribe']);
   assert.equal(V.PHONE_PX, 720);
   assert.equal(V.PHONE_QUERY, '(max-width: 720px)');
+  assert.equal(V.COARSE_POINTER_QUERY, '(pointer: coarse)');
 });
 
 test('PHONE_QUERY is BUILT from PHONE_PX — the number is spelled once in the module', () => {
@@ -118,6 +119,34 @@ test('the module never reads document, which is what lets this suite run offline
 
 // ── behaviour with no matchMedia ───────────────────────────────────────────
 
+test('isTouchPrimary asks about the INPUT, and is independent of the width', () => {
+  /* The whole reason this exists separately from isPhone(): the two must be
+     able to disagree. A 1280px laptop with a touchscreen is not a phone and
+     should keep hover-reveal; an 820px iPad is not a phone either and must
+     still get the tap path, because it raises no :hover. A caller that reached
+     for isPhone() here would get the iPad wrong in the direction that leaves a
+     control permanently unreachable. */
+  const lists = {
+    '(max-width: 720px)': { matches: false, addEventListener() {}, removeEventListener() {} },
+    '(pointer: coarse)': { matches: true, addEventListener() {}, removeEventListener() {} }
+  };
+  globalThis.matchMedia = q => lists[q];
+  try {
+    vm.runInThisContext(fs.readFileSync(SRC, 'utf8'), { filename: 'viewport.js' });
+    const W = globalThis.TrackViewport;
+    assert.equal(W.isPhone(), false, 'a wide screen');
+    assert.equal(W.isTouchPrimary(), true, '...that is nevertheless touch-driven');
+
+    lists['(max-width: 720px)'].matches = true;
+    lists['(pointer: coarse)'].matches = false;
+    assert.equal(W.isPhone(), true, 'and the other way round');
+    assert.equal(W.isTouchPrimary(), false, '— a narrow window on a machine with a mouse');
+  } finally {
+    delete globalThis.matchMedia;
+    vm.runInThisContext(fs.readFileSync(SRC, 'utf8'), { filename: 'viewport.js' });
+  }
+});
+
 test('with no matchMedia, isPhone is false and subscribe returns a callable disposer', () => {
   /* This is the real environment of this suite, not a contrived one — plain
      Node has no matchMedia, and neither does a browser old enough to matter.
@@ -128,6 +157,9 @@ test('with no matchMedia, isPhone is false and subscribe returns a callable disp
   assert.equal(typeof globalThis.matchMedia, 'undefined',
     'the guard case is only a guard if the state it guards against is the one it runs in');
   assert.equal(V.isPhone(), false);
+  assert.equal(V.isTouchPrimary(), false,
+    'and false here means "assume a mouse", which keeps one-click navigation working '
+    + 'rather than demanding a second tap nobody can discover');
 
   const off = V.subscribe(() => { throw new Error('must not fire without matchMedia'); });
   assert.equal(typeof off, 'function');
@@ -164,8 +196,9 @@ test('isPhone and subscribe read a real matchMedia, and the disposer detaches', 
     // Re-run the module so it binds to the stub: the real one captured null.
     vm.runInThisContext(fs.readFileSync(SRC, 'utf8'), { filename: 'viewport.js' });
     const W = globalThis.TrackViewport;
-    assert.deepEqual(asked, ['(max-width: 720px)'],
-      'the module asks matchMedia for PHONE_QUERY, once, at load');
+    assert.deepEqual(asked, ['(max-width: 720px)', '(pointer: coarse)'],
+      'the module asks matchMedia for exactly its two queries, once each, at load — '
+      + 'pinned by hand so adding a third is a decision somebody takes on purpose');
 
     assert.equal(W.isPhone(), false);
     stub.matches = true;

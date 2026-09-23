@@ -72,7 +72,7 @@ Active files:
 | `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, an explanation, and source-dump tags |
 | `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
 | `scripts/theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
-| `scripts/viewport.js` | The one definition, in JavaScript, of what counts as a phone (`window.TrackViewport`): `PHONE_PX`, `PHONE_QUERY`, `isPhone`, `subscribe`. Reads `window.matchMedia` and NOTHING else — no `document`, no storage, no date code — which is what keeps its suite offline and unswept |
+| `scripts/viewport.js` | The one definition, in JavaScript, of what counts as a phone AND of what counts as a touch-primary device (`window.TrackViewport`): `PHONE_PX`, `PHONE_QUERY`, `COARSE_POINTER_QUERY`, `isPhone`, `isTouchPrimary`, `subscribe`. Reads `window.matchMedia` and NOTHING else — no `document`, no storage, no date code — which is what keeps its suite offline and unswept |
 | `scripts/schema.js` | The canonical slot definition (`window.TrackSchema`): the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
 | `scripts/storage-guard.js` | The one `track_db` load boundary (`loadDB` — parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, both banners (`window.TrackStorage`) |
 | `scripts/firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
@@ -100,7 +100,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=13`, `scripts/schema.js?v=8`, `scripts/calendar-core.js?v=8`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-widget.js?v=2`, `scripts/true-storage-core.js?v=2`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=1`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
+Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=14`, `scripts/schema.js?v=8`, `scripts/calendar-core.js?v=8`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-widget.js?v=2`, `scripts/true-storage-core.js?v=2`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
 
 The phone layout lives at **`max-width: 720px`**, and `--phone-tabbar-h` is the **one
 definition** of the bottom tab bar's height. It is `0px` on `:root` and set only inside
@@ -131,9 +131,29 @@ rules follow:
   to a ref.** The Schedule's timeline binds two `useEffect(…, [])` to `containerRef` (the
   scroll-to-08:00 and the non-passive Shift+wheel listener), so unmounting it once leaves
   that listener on a dead node for the rest of the session with no error anywhere — it
-  toggles inline `display` instead. `GoalTabsPanel`'s visually identical split has no such
-  effect and *is* unmounted. A change that made the two uniform would break one of them,
-  and `tests/browser.test.js` asserts the timeline stays in the DOM while hidden.
+  toggles inline `display` instead. `GoalTabsPanel`'s and `MilestonesPanel`'s visually
+  identical splits have no such effect and *are* unmounted (Milestones' one `useEffect(…, [])`
+  cancels its own rAF, so nothing outlives it). A change that made the three uniform would
+  break one of them, and `tests/browser.test.js` asserts the timeline stays in the DOM while
+  hidden and that the other two leave it.
+- **Reveal-on-touch is gated on `(pointer: coarse)`, NEVER on `isPhone()`, and never on
+  `(hover: none)`.** `TrackViewport` owns both queries because they answer different
+  questions: one is the screen, the other is the input. An iPad at 820px is not a phone but
+  is finger-driven, so a width gate leaves its controls permanently unreachable — the exact
+  bug the old blanket rule existed to fix; a laptop with a touchscreen is the mirror case,
+  reports `pointer: fine`, and must keep one-click navigation. `documentations.html`'s row
+  arm model (`rowTap`) is the current user, via the page-local `touchPrimary()` delegate,
+  and `styles.css`'s docs-row block asks the SAME query — two spellings of "a finger" in one
+  codebase is how they drift apart.
+  **`(hover: none)` is not usable as a gate here, and that is measured, not preference:**
+  headless Chrome reports it at every viewport with or without touch emulation, and
+  `Emulation.setEmulatedMedia` does not override it. A hover gate is therefore untestable in
+  BOTH directions and silently routes every desktop case down the touch path.
+- **A reveal rule can have more than one home.** The documentation row cluster was shown by
+  TWO rules — one in `@media (hover: none)` and one in `.docs-sidebar-full`, which governs
+  the drawer at every width. Moving only the first to the armed state looked implemented and
+  changed nothing on screen. When a control's visibility moves behind a new condition, grep
+  every rule that sets its `display` before believing the change landed.
 
 A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
 than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,

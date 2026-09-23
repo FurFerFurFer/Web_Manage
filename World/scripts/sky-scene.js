@@ -7,6 +7,41 @@
     const B=window.BABYLON,Motion=window.WorldSkyMotion,engine=scene.getEngine(),eye=new B.Vector3(-10,0,16);
     let graph=null,view=null,viewport=null,stars=[],links=null,reveal=0,dirty=true,rotation=Motion.identity(),radius=60;
     const point=(x,y)=>eye.add(B.Vector3.FromArray(Motion.apply(rotation,Motion.direction(x,y,graph.bounds))).scale(radius));
+    // The background universe: seeded, so every run and screenshot draws the same
+    // sky. Decoration only - no MM identity, never pickable, never projected into
+    // the HTML layer. It stays centred on the camera and turns with the displayed
+    // constellation, so a drag reads as turning the whole sky rather than sliding
+    // the mind maps across a fixed backdrop.
+    const field=(()=>{
+      let seed=0x5eed1e5;
+      const rand=()=>{seed=seed+0x6d2b79f5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};
+      const unit=v=>{const l=Math.hypot(...v);return v.map(n=>n/l);};
+      const tints=[[1,1,1],[.82,.9,1],[1,.93,.78],[.9,.95,1]];
+      const sphere=()=>{let v;do{const z=rand()*2-1,a=rand()*Math.PI*2,r=Math.sqrt(1-z*z);v=[r*Math.cos(a),z,r*Math.sin(a)];}while(v[1]<-.15);return v;};
+      // A faint band on a tilted great circle, the one cue that reads as a galaxy.
+      const n=unit([.35,.3,1]),e1=unit([n[2],0,-n[0]]),e2=[n[1]*e1[2]-n[2]*e1[1],n[2]*e1[0]-n[0]*e1[2],n[0]*e1[1]-n[1]*e1[0]];
+      const band=()=>{let v;do{const a=rand()*Math.PI*2,g=(rand()+rand()+rand()-1.5)*.16;v=unit(e1.map((c,i)=>c*Math.cos(a)+e2[i]*Math.sin(a)+n[i]*g));}while(v[1]<-.15);return v;};
+      const build=(name,count,size,direction,light)=>{
+        const positions=[],colors=[],indices=[];
+        for(let i=0;i<count;i++){const d=direction(),b=light(),t=tints[Math.floor(rand()*tints.length)];
+          positions.push(d[0]*90,d[1]*90,d[2]*90);colors.push(b*t[0],b*t[1],b*t[2],1);indices.push(i);}
+        const mesh=new B.Mesh(name,scene),data=new B.VertexData();
+        data.positions=positions;data.colors=colors;data.indices=indices;data.applyToMesh(mesh);
+        const material=new B.StandardMaterial(name+'-material',scene);
+        material.pointsCloud=true;material.pointSize=size;material.disableLighting=true;
+        material.emissiveColor=B.Color3.Black();material.diffuseColor=B.Color3.White();
+        material.alphaMode=B.Engine.ALPHA_ADD;material.needAlphaBlending=()=>true;material.alpha=0;
+        material.fogEnabled=false;material.disableDepthWrite=true;material.backFaceCulling=false;
+        mesh.material=material;mesh.isPickable=false;mesh.applyFog=false;mesh.infiniteDistance=true;
+        mesh.rotationQuaternion=B.Quaternion.Identity();mesh.isVisible=false;mesh.metadata={skyField:true};
+        return mesh;
+      };
+      return [
+        build('sky-field-dim',2400,1.5,sphere,()=>.18+.5*rand()**3),
+        build('sky-field-band',1800,1.5,band,()=>.1+.22*rand()),
+        build('sky-field-bright',160,2.6,sphere,()=>.65+.35*rand())
+      ];
+    })();
     function clear() {
       for(const star of stars){star.mesh.dispose();star.material.dispose(false,true);}
       stars=[];if(links)links.dispose();links=null;
@@ -63,6 +98,7 @@
       const optics=Motion.optics(view,graph.bounds,viewport);
       if(dirty) {
         rotation=Motion.multiply(optics.framing,view.rotation);
+        for(const mesh of field)mesh.rotationQuaternion=B.Quaternion.FromArray(rotation);
         for(const {node,mesh} of stars) {
           mesh.position.copyFrom(point(node.x,node.y));
           mesh.scaling.setAll(radius*Motion.direction(node.x,node.y,graph.bounds)[1]);
@@ -80,6 +116,7 @@
       reveal=value;
       for(const star of stars){star.material.alpha=value;star.mesh.isVisible=value>0;}
       if(links){links.alpha=value*.55;links.isVisible=value>0;}
+      for(const mesh of field){mesh.material.alpha=value;mesh.isVisible=value>0;}
     }
     function project() {
       if(!viewport)return [];
@@ -93,7 +130,9 @@
       return stars.map(({node,mesh})=>({id:node.id,...screen(mesh.position),label:screen(point(node.label.x,node.label.y)),
         labelWidth:Math.abs(screen(point(node.label.x+240,node.label.y)).x-screen(point(node.label.x,node.label.y)).x)}));
     }
-    return {sync,pose,setReveal,project,dispose:clear,
+    const fieldSnapshot=()=>({count:field.reduce((sum,mesh)=>sum+mesh.getTotalVertices(),0),visible:field.map(mesh=>mesh.isVisible),
+      alpha:field.map(mesh=>mesh.material.alpha),pickable:field.some(mesh=>mesh.isPickable),rotation:field.map(mesh=>mesh.rotationQuaternion.asArray())});
+    return {sync,pose,setReveal,project,fieldSnapshot,dispose:()=>{clear();for(const mesh of field){mesh.material.dispose();mesh.dispose();}},
       snapshot:()=>stars.map(({node,mesh})=>({id:node.id,position:mesh.position.asArray(),visible:mesh.isVisible}))};
   };
 })();

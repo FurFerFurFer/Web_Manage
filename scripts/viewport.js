@@ -37,10 +37,44 @@
   var PHONE_PX = 720;
   var PHONE_QUERY = '(max-width: ' + PHONE_PX + 'px)';
 
+  /* The other media query this app has to ask about, and it is deliberately
+     NOT a width. Whether a control reveals on hover or has to be tapped is a
+     question about the INPUT, not the screen: an iPad at 820px needs the tap
+     path as much as a 390px phone does, while a 1280px laptop with a
+     touchscreen should still reveal on hover. Keying that off isPhone() would
+     leave the iPad with a control it can never trigger — the exact bug the old
+     blanket reveal rule existed to fix.
+
+     `(pointer: coarse)` and not `(hover: none)`, which is the more obvious
+     spelling and was tried first. Two reasons, and the second is decisive.
+     Semantically, coarse means the PRIMARY input is a finger, which is exactly
+     the population that needs arming — a laptop with a touchscreen reports
+     `pointer: fine` and rightly keeps one-click. And practically: headless
+     Chrome reports `(hover: none)` at every viewport, with or without touch
+     emulation, and `Emulation.setEmulatedMedia` cannot override it — both
+     measured. So a hover gate is untestable in BOTH directions here, and would
+     have silently put every existing desktop case on the touch path.
+     `(pointer: coarse)` reads false on a desktop and true under touch
+     emulation, so both paths can be asserted.
+
+     styles.css must ask the SAME question — its docs-row block is
+     `@media (pointer: coarse)` for this reason. Two queries meaning "a finger"
+     in one codebase is how they drift apart.
+
+     No subscribe() for this one, on purpose. The pointer can change (a mouse
+     gets plugged in), but every caller asks at the moment of the click rather
+     than rendering from it, so a live read is enough. */
+  var COARSE_POINTER_QUERY = '(pointer: coarse)';
+
   var mql = window.matchMedia ? window.matchMedia(PHONE_QUERY) : null;
+  var coarseMql = window.matchMedia ? window.matchMedia(COARSE_POINTER_QUERY) : null;
 
   function isPhone() {
     return !!(mql && mql.matches);
+  }
+
+  function isTouchPrimary() {
+    return !!(coarseMql && coarseMql.matches);
   }
 
   /* Returns its own DISPOSER rather than exposing an unsubscribe(fn). One
@@ -68,7 +102,9 @@
   window.TrackViewport = {
     PHONE_PX: PHONE_PX,
     PHONE_QUERY: PHONE_QUERY,
+    COARSE_POINTER_QUERY: COARSE_POINTER_QUERY,
     isPhone: isPhone,
+    isTouchPrimary: isTouchPrimary,
     subscribe: subscribe
   };
 })();

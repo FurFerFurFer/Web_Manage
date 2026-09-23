@@ -15,25 +15,39 @@ button{min-width:44px}
 .quest-popup .interaction{position:static;transform:none;padding:10px 0 0;margin-top:10px;border-top:1px solid var(--line);border-radius:0;box-shadow:none;font-size:13px}#quest-open{display:block;min-height:44px;min-width:44px;padding:6px 0;border:0;border-radius:4px;background:transparent;font:18px Georgia,serif;text-align:left;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:5px}#quest-open:hover,#quest-open:focus-visible{color:var(--blue);text-decoration-color:currentColor}#quest-popup>small{display:block;color:var(--muted);margin-top:8px}
 @media(max-width:520px){.toolbelt{display:grid;grid-template-columns:repeat(3,1fr);width:100%}.toolbelt button{justify-content:center}.panel{bottom:150px}.quest-popup{bottom:150px;left:14px;max-width:calc(100vw - 28px)}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
-.sky-view{position:fixed;inset:108px 28px 118px;display:flex;flex-direction:column;padding:20px 26px 14px;color:#fffbea;z-index:1;min-height:0;pointer-events:none}
+/* Stargazing gives the sky the screen: the section spans edge to edge above the
+   toolbelt, and one compact strip replaces the stacked heading, description,
+   tools and legend. The bottom inset is the one guarantee kept: no star, label
+   or hit target is ever drawn beneath the toolbelt. */
+.sky-view{position:fixed;inset:12px 12px 106px;display:flex;flex-direction:column;gap:6px;color:#fffbea;z-index:1;min-height:0;pointer-events:none}
 .sky-view[inert]{opacity:.45}.sky-view button,.sky-view input,.sky-map{pointer-events:auto}
-.sky-heading{display:flex;justify-content:space-between;gap:15px;align-items:center}.sky-heading h1{font-size:28px;margin:7px 0}.sky-heading small{color:#f1f3de}.sky-heading button{flex-shrink:0}
-.sky-view>p{font-size:13px;margin:5px 0 10px;color:#fffbea}.sky-heading,.sky-view>p{text-shadow:0 1px 3px #071817,0 0 12px #071817}
-.sky-tools{display:flex;gap:8px;align-items:center}.sky-tools button{padding:6px 12px;white-space:nowrap}.sky-tools label{font-size:13px;margin-left:auto;white-space:nowrap;text-shadow:0 1px 4px #071817}.sky-tools input{max-width:240px;padding:9px}
+.sky-bar{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:6px 8px 6px 12px;background:#0f262cb8;border:1px solid #f3dfa74d;border-radius:10px;text-shadow:0 1px 3px #071817}
+.sky-heading{display:grid;gap:1px;min-width:0}.sky-heading h1{font-size:17px;line-height:1.2;margin:0}.sky-heading small{font-size:11px;color:#f1f3de}
+.sky-view>p{font-size:13px;margin:0 4px;color:#fffbea;text-shadow:0 1px 3px #071817,0 0 12px #071817}
+.sky-view[data-phase=viewing]>#sky-description{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.sky-tools{display:flex;gap:6px;align-items:center;margin-left:auto}.sky-tools button{padding:6px 12px;min-height:36px;white-space:nowrap}.sky-tools label{font-size:12px;white-space:nowrap}.sky-tools input{width:180px;padding:7px}
+#leave-sky{flex-shrink:0;min-height:36px;padding:6px 12px}
 .sky-map{position:relative;width:100%;flex:1;min-height:100px;touch-action:none;overflow:hidden;outline-offset:-3px}.sky-map:focus-visible{outline:1px solid #eee3b8}
 .sky-target{position:absolute;transform:translate(-50%,-50%);width:44px;height:44px;padding:0;background:none;border:0;border-radius:50%;color:#fffbea}
 .sky-target:hover,.sky-target:focus-visible{outline:2px solid #fff3be;outline-offset:3px;filter:none}
 .sky-star-label{position:absolute;display:block;text-align:center;font:14px \"Trebuchet MS\",sans-serif;line-height:1.35;overflow-wrap:anywhere;background:#142e35d9;padding:6px 9px;border-radius:4px;color:#fffbea;max-height:105px;overflow:auto}
+/* A label is a caption, never a target: at density one MM's label covers another
+   MM's star, and a clickable label would open the wrong mind map. The star and
+   Find remain the ways to open one; drags may start anywhere over a label. */
+.sky-star-label{pointer-events:none}
 .sky-star-label strong{font-weight:500}.sky-star-label small{display:block;font-size:11px;margin-top:4px;color:#f2dea7}
-.sky-legend{display:flex;justify-content:space-between;gap:12px;margin-bottom:0!important}
-.sky-results{display:flex;gap:6px;flex-wrap:wrap;max-height:130px;overflow:auto;padding:10px 0}.sky-results button{font-size:13px}
+.sky-legend{flex:1 1 200px;font-size:11px;margin:0;opacity:.9}.sky-legend span{display:none}
+/* Results overlay the sky rather than pushing the map down, so typing a search
+   never changes the map's rectangle and therefore never reframes the stars. */
+.sky-results{position:absolute;top:100%;right:0;z-index:1;margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;max-width:min(440px,100%);max-height:40vh;overflow:auto;padding:8px;background:#0f262ceb;border:1px solid #f3dfa74d;border-radius:8px}.sky-results button{font-size:13px}
 .sky-view:not([data-phase=viewing]) .sky-tools,.sky-view:not([data-phase=viewing]) .sky-map,.sky-view:not([data-phase=viewing]) .sky-results,.sky-view:not([data-phase=viewing]) .sky-legend{opacity:0;pointer-events:none}
 .sky-empty{position:absolute;inset:40% 0 auto;text-align:center;text-shadow:0 1px 4px #071817}
 .panel{z-index:3}.toolbelt,.day-bud{position:relative;z-index:4}.day-bud{position:fixed}#enter-sky{margin-top:10px;width:100%}
-@media(max-width:800px){.sky-view{inset:98px 14px 100px;padding:14px}.sky-heading h1{font-size:23px}.sky-heading small{font-size:11px}.sky-heading button{font-size:12px;padding:8px}.sky-heading kbd{display:none}.sky-tools{flex-wrap:wrap;gap:6px}.sky-tools label{margin-left:5px}.sky-tools input{flex:1;min-width:110px;max-width:none}.sky-legend span{display:none}.sky-view>p{font-size:12px}}
-@media(max-width:520px){.sky-view{bottom:150px}.sky-heading{align-items:flex-start}.sky-heading h1{font-size:20px}.sky-tools label{display:none}.sky-tools button{padding:6px 10px}.sky-tools input{width:100px}.sky-view>p{line-height:1.4}.sky-legend{font-size:10px!important}}
-@media(max-height:650px){.sky-view{top:90px;padding:10px 18px}.sky-heading h1{font-size:20px}.sky-view>p{margin:3px 0}.sky-tools button{min-height:36px}.sky-tools input{padding:6px}}
+@media(max-width:800px){.sky-view{inset:8px 8px 100px}.sky-tools{flex-basis:100%;margin-left:0}.sky-tools input{flex:1;min-width:110px;width:auto}#leave-sky kbd{display:none}.sky-legend{flex-basis:100%;font-size:10px}.sky-view>p{font-size:12px}}
+@media(max-width:520px){.sky-view{bottom:168px}.sky-tools label{display:none}.sky-tools button{padding:6px 10px}}
 .sky-view .secondary{color:var(--ink)}
+body[data-sky=true] .identity,body[data-sky=true] .minimap,body[data-sky=true] .day-bud,body[data-sky=true] .location,body[data-sky=true] .control-hint{display:none}
+body[data-sky=true] .bottom-ui{justify-content:center}
 .memory-sky-entry{display:flex;gap:14px;padding:18px 0 22px;margin-bottom:18px;border-bottom:1px solid var(--line)}
 .memory-sky-entry h2{font-size:22px;margin-bottom:8px}.memory-sky-entry p{margin-bottom:10px}
 .memory-sky-entry small{display:block;color:var(--muted);font-size:11px;margin-top:9px}
@@ -54,7 +68,7 @@ body[data-playing=true] .identity{left:50%;transform:translateX(-50%);top:24px}.
 @media(max-width:1000px){.world-map-layout{grid-template-columns:minmax(0,1fr) 275px}.quest-list{padding:20px}.quest-details{padding:28px}.map-controls{left:12px;bottom:12px;max-width:calc(100% - 24px)}.map-controls .secondary{padding:8px 10px;font-size:12px}}
 @media(max-width:800px){body[data-playing=true] .identity{display:none}.minimap{width:135px;height:135px;left:20px;top:18px}.quest-popup{left:20px;top:193px;width:270px;max-height:calc(100dvh - 335px)}.panel-full .panel-heading{padding:16px 20px;min-height:86px}.panel-full .panel-content{margin-bottom:98px}}
 @media(max-width:620px){.quest-layout{grid-template-columns:1fr;grid-template-rows:40% 60%}.quest-list{padding:14px 18px;border-right:0;border-bottom:1px solid var(--line)}.quest-details{padding:20px}.quest-details h2{font-size:27px}.quest-details p{font-size:14px}.quest-actions{margin-top:0;padding-top:12px}.world-map-layout{grid-template-columns:1fr;grid-template-rows:minmax(180px,55%) minmax(0,45%)}.map-details{padding:20px;border-left:0;border-top:1px solid var(--line)}.map-details h2{font-size:25px}.map-detail-symbol{display:none}.map-marker small{display:none}.map-filters{left:10px;top:8px;padding:2px 8px;gap:8px}.map-controls{bottom:8px;gap:4px;padding:4px}.map-controls>span{display:none}}
-@media(max-width:520px){.toolbelt{grid-template-columns:repeat(4,1fr)}.toolbelt button{flex-direction:column;gap:2px;padding:7px 3px;font-size:11px}.panel{bottom:168px}.panel-full .panel-content{margin-bottom:160px}.quest-popup{max-height:calc(100dvh - 385px)}.day-bud{right:12px}.day-bud button{padding:8px 12px}.day-bud svg{width:26px}.day-bud strong{font-size:19px}.day-bud small{font-size:9px}.sky-view{bottom:168px}}
+@media(max-width:520px){.toolbelt{grid-template-columns:repeat(4,1fr)}.toolbelt button{flex-direction:column;gap:2px;padding:7px 3px;font-size:11px}.panel{bottom:168px}.panel-full .panel-content{margin-bottom:160px}.quest-popup{max-height:calc(100dvh - 385px)}.day-bud{right:12px}.day-bud button{padding:8px 12px}.day-bud svg{width:26px}.day-bud strong{font-size:19px}.day-bud small{font-size:9px}}
 @media(max-height:600px) and (min-width:621px){.panel-full .panel-heading{min-height:68px;padding:10px 24px}.panel-full .panel-heading h1{font-size:27px}.panel-full .panel-content{margin-bottom:92px}.minimap{width:110px;height:110px;top:12px}.quest-popup{top:160px;max-height:calc(100dvh - 265px)}.quest-details{padding:20px}.map-details{padding:20px}}
 
 .sprint-stamina{position:fixed;left:0;top:0;z-index:3;width:7px;height:92px;transform:translate(var(--sprint-bar-offset,46px),-50%);border-radius:99px;background:#16292d5c;overflow:hidden;pointer-events:none;filter:drop-shadow(0 1px 3px #12262c66)}

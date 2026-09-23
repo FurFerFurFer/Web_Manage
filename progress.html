@@ -6,7 +6,7 @@
   <title>Progress & Schedule</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
-  <script src="scripts/viewport.js?v=1"></script>
+  <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=8"></script>
   <script src="scripts/quest-core.js?v=2"></script>
@@ -17,7 +17,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=13">
+  <link rel="stylesheet" href="styles/styles.css?v=14">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -3799,6 +3799,15 @@
       const selectedRowRef = useRef(null);
       const calendarScrollRef = useRef(null);
       const todayCellRef = useRef(null);
+      /* Which half of the 40/60 split a phone is showing. Desktop renders both
+         and ignores this. The hidden pane is UNMOUNTED, like GoalTabsPanel and
+         unlike the Schedule's visually identical split: the only mount-only
+         effect here is the rAF below that centres today's cell, and it cancels
+         itself in its own cleanup, so nothing is ever left bound to a dead
+         node. Remounting re-centres on today, which is what opening the tab
+         fresh already does. */
+      const isPhone = useIsPhone();
+      const [msPane, setMsPane] = useState('list'); // 'list' | 'calendar'
       const todayStr = toDateStr(new Date());
       const todayInMilestoneCalendar = todayStr >= MILESTONE_CAL_START && todayStr <= MILESTONE_CAL_END;
 
@@ -4035,8 +4044,18 @@
       }
 
       return (
-        <div className="flex-1 min-h-0 flex overflow-hidden">
-          <div className="min-w-0 overflow-y-auto border-r border-gray-800 p-4" style={{ flex: '0 0 40%' }}>
+        <div data-ms-split className="flex-1 min-h-0 flex overflow-hidden">
+          {isPhone && (
+            <div className="track-segmented m-2 self-start" data-ms-switch>
+              {[['list','MILESTONES'],['calendar','CALENDAR']].map(([p,l])=>(
+                <button key={p} type="button" data-ms-pane-btn={p}
+                  aria-current={msPane===p ? 'true' : undefined}
+                  onClick={()=>setMsPane(p)}>{l}</button>
+              ))}
+            </div>
+          )}
+          {(!isPhone || msPane === 'list') && (
+          <div data-ms-pane="list" className="min-w-0 overflow-y-auto border-r border-gray-800 p-4" style={{ flex: '0 0 40%' }}>
             <div className="flex items-center justify-between mb-4">
               <div className="text-gray-700 tracking-widest text-xs">
                 MILESTONES
@@ -4159,8 +4178,10 @@
               </div>
             )}
           </div>
+          )}
 
-          <div ref={calendarScrollRef} className="min-w-0 overflow-y-auto p-4" style={{ flex: '0 0 60%' }}>
+          {(!isPhone || msPane === 'calendar') && (
+          <div ref={calendarScrollRef} data-ms-pane="calendar" className="min-w-0 overflow-y-auto p-4" style={{ flex: '0 0 60%' }}>
             <div className="sticky top-0 z-10 -mx-4 -mt-4 px-4 pt-4 pb-3 bg-gray-950/95 border-b border-gray-900">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-gray-700 tracking-widest text-xs">CALENDAR 2026-2033</div>
@@ -4175,6 +4196,7 @@
               {milestoneMonths.map(renderCalendarMonth)}
             </div>
           </div>
+          )}
         </div>
       );
     }
@@ -6706,7 +6728,7 @@
                   className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400">&#8250;</button>
                 <button onClick={() => setAnchor(new Date(today))}
                   className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-500">today</button>
-                <span className="text-xs text-gray-500 flex-1">{weekLabel}</span>
+                <span data-sched-date className="text-xs text-gray-500 flex-1">{weekLabel}</span>
               </> : <>
                 <button onClick={() => { const d = new Date(dayFocusDate); d.setDate(d.getDate()-1); setDayFocusDate(d); }}
                   className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400">&#8249;</button>
@@ -6714,7 +6736,7 @@
                   className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400">&#8250;</button>
                 <button onClick={() => setDayFocusDate(new Date(today))}
                   className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-500">today</button>
-                <span className="text-xs text-gray-500 flex-1">
+                <span data-sched-date className="text-xs text-gray-500 flex-1">
                   {dayFocusDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
                 </span>
               </>}

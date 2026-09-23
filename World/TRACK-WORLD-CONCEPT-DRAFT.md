@@ -1972,8 +1972,8 @@ Keep the initial scope concrete; further installations retain their separate app
 
 This historical brief defines the implemented starting scope; the revised sequence above
 addresses its gaps and subsequent user feedback. It does not mark P1–P3 complete or replace
-their remaining exit checks. The user's Ultra escalation rule is recorded in
-[`World/AGENTS.md`](AGENTS.md#ultra-escalation-rule).
+their remaining exit checks. The user's Overcapability rule is recorded in
+[`World/AGENTS.md`](AGENTS.md#overcapability-rule).
 
 **Experience direction now recorded (2026-09-06):** Memory Grove with grounded stargazing,
 an always-readable KS03 star overlay, and full information and interaction for a selected MM

@@ -995,12 +995,18 @@ commit: the five banners, `#nw-btn` / `#nw-panel`, `#fb-overlay`, `.theme-toggle
 also precisely the change whose only observable effect is on notched hardware, which this
 environment can never verify — so it wants a real device in hand, not a test.
 
-**Per-page phone polish beyond the shell.** The bar, the shell reservation, the Schedule's
-DAY default, the two pane switchers and the Documentations drawer are done. Not yet looked
-at on a phone in any depth: the KS03 and True Storage pan/zoom canvases (they handle touch
-already, but nothing has measured whether a node is reachable at 390px), the MG levels
+**Per-page phone polish beyond the shell.** Done: the bar, the shell reservation, the
+Schedule's DAY default and its wrapped control row, all three pane switchers (goal detail,
+Milestones, Schedule day mode), the Documentations drawer, and the row arm model. Not yet
+looked at on a phone in any depth: the KS03 and True Storage pan/zoom canvases (they handle
+touch already, but nothing has measured whether a node is reachable at 390px), the MG levels
 accordion, the Kolb editor, and the several `w-[528px]`-class popups in `progress.html`
 that carry no `max-w-[…vw]` cap the way the Documentations modals do.
+
+**The arm model is only on the Documentations rows.** If it turns out to be the right idiom
+for hover-revealed controls generally, the other candidates are the Progress day-header
+button row and the Quest tab's row controls. Do not spread it on aesthetics alone: each
+surface costs a tap, and a control that already has a permanent target does not need it.
 
 One smaller thing, found while measuring and left alone deliberately: the `.ks02-page`
 header measures ~57px at ≤720px, not the 52px `h-screen-nav` subtracts

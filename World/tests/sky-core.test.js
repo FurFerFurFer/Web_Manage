@@ -14,8 +14,16 @@ test('the sky preserves the full KS03 arrangement, manual positions, colors and 
     const mm=slot.mms.find(m=>m.id===node.id),pos=slot.pos[node.id]||auto[node.id];
     assert.deepEqual([node.x,node.y,node.color],[pos.x,pos.y,mm.customColor]);
   }
-  assert.deepEqual(sky.edges,[{from:101,to:102},{from:101,to:103}]);
-  assert.deepEqual(sky.nodes.map(n=>[n.id,n.pending,n.reviewed]),[[101,0,0],[102,0,1],[103,1,0]]);
+  // Every resolvable parentId becomes one edge, de-duplicated, with dangling
+  // parents dropped. Computed independently of project() so it stays an oracle.
+  const known=new Set(slot.mms.map(mm=>mm.id));
+  assert.deepEqual(sky.edges,slot.mms.flatMap(mm=>[...new Set(mm.parentIds||[])].filter(id=>known.has(id)).map(id=>({from:id,to:mm.id}))));
+  assert.deepEqual(sky.edges.filter(e=>known.has(e.from)&&[101,102,103].includes(e.to)&&[101,102,103].includes(e.from)),
+    [{from:101,to:102},{from:101,to:103}],'the canonical three-MM arrangement is unchanged by the denser network');
+  const cues=new Map(sky.nodes.map(n=>[n.id,[n.pending,n.reviewed]]));
+  for(const [id,expected] of [[101,[0,0]],[102,[0,1]],[103,[1,0]],[110,[1,0]],[115,[0,1]],[131,[1,0]],[150,[1,0]],[163,[0,1]]])
+    assert.deepEqual(cues.get(id),expected,'review cues for MM '+id);
+  assert.equal(sky.nodes.filter(n=>cues.get(n.id).some(Boolean)).length,7,'only the seven MMs with a session today claim a petal');
   assert.ok(sky.nodes[0].radius>sky.nodes[1].radius);
   assert.equal(Sky.project(slot,Layout,Cal,'2026-09-10').nodes[0].pending,1);
   assert.equal(JSON.stringify(slot),before);

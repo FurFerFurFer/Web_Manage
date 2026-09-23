@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const {Browser}=require('../../tests/lib/cdp');
 const {startServer}=require('../tools/serve');
+const Motion=require('../scripts/sky-motion');
 test('grounded Grove sky, selection, live weather, review cues and camera return',{timeout:180000},async t=>{
   const server=await startServer(0);let browser,page;
   try {
@@ -120,8 +121,9 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
         return scene.pickWithRay(camera.getForwardRay(3),mesh=>mesh.name.startsWith('traveler-')).hit;
       });
       assert.equal(blockedByAvatar,false,'the avatar must not block the sky camera');
-      assert.equal(current.sky.nodes.length,3);assert.equal(current.sky.edges.length,2);
-      assert.equal(await page.evaluate(()=>BABYLON.EngineStore.LastCreatedScene.meshes.filter(mesh=>mesh.metadata?.skyMM!==undefined&&mesh.isVisible).length),3,'stars are visible Babylon scene meshes');
+      // The demo fixture's network: 35 MMs, 30 resolvable parent links.
+      assert.equal(current.sky.nodes.length,35);assert.equal(current.sky.edges.length,30);
+      assert.equal(await page.evaluate(()=>BABYLON.EngineStore.LastCreatedScene.meshes.filter(mesh=>mesh.metadata?.skyMM!==undefined&&mesh.isVisible).length),35,'stars are visible Babylon scene meshes');
       assert.equal(await page.evaluate(()=>document.querySelectorAll('#sky-map svg,#sky-map polygon').length),0,'the constellation is not an SVG picture');
       assert.deepEqual(current.sky.nodes.map(n=>({id:n.id,pending:n.pending,reviewed:n.reviewed})),current.world.reviewCues);
       assert.ok(current.sky.nodes.some(n=>!n.pending&&!n.reviewed),'not restricted to due MMs');
@@ -129,6 +131,60 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       assert.ok(Math.abs(current.world.position[0]-before.world.position[0])<.02);
       assert.ok(Math.abs(current.world.position[2]-before.world.position[2])<.02);
       await capture('sky-day');
+    });
+    await t.test('the sky takes the screen: one compact strip, the garden HUD steps aside, nothing under the toolbelt',async()=>{
+      const layout=await page.evaluate(()=>{
+        const rect=sel=>document.querySelector(sel).getBoundingClientRect().toJSON(),shown=sel=>getComputedStyle(document.querySelector(sel)).display!=='none';
+        const description=document.getElementById('sky-description');
+        return {flag:document.body.dataset.sky,map:rect('#sky-map'),bar:rect('.sky-bar'),view:rect('#sky-view'),tools:rect('.toolbelt'),
+          identity:shown('.identity'),minimap:shown('#minimap'),bud:shown('.day-bud'),toolbelt:shown('.toolbelt'),
+          hint:{text:description.textContent,width:description.getBoundingClientRect().width},screen:{w:innerWidth,h:innerHeight}};
+      });
+      assert.ok(layout.map.height>=layout.screen.h*.72,'the constellation gets most of the screen height: '+layout.map.height);
+      assert.ok(layout.map.width>=layout.screen.w-40,'and nearly all of its width: '+layout.map.width);
+      assert.ok(layout.bar.height<=64,'one compact strip: '+layout.bar.height);
+      assert.equal(layout.flag,'true');
+      assert.deepEqual([layout.identity,layout.minimap,layout.bud],[false,false,false],'the garden-only HUD steps aside');
+      assert.equal(layout.toolbelt,true,'the toolbelt stays reachable');
+      assert.ok(layout.view.bottom<=layout.tools.top,'no star, label or target is drawn beneath the toolbelt: sky bottom '+layout.view.bottom+', toolbelt top '+layout.tools.top);
+      assert.ok(layout.hint.text.length>0&&layout.hint.width<=1,'the usage hint stays in the accessibility tree without taking sky');
+      const typed=await page.evaluate(()=>{
+        const map=()=>document.getElementById('sky-map').getBoundingClientRect().toJSON(),before=map(),input=document.getElementById('sky-find');
+        input.value='a';input.dispatchEvent(new Event('input',{bubbles:true}));
+        const results=document.getElementById('sky-results'),out={before,during:map(),shown:!results.hidden,count:results.querySelectorAll('button').length};
+        input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));out.after=map();return out;
+      });
+      assert.ok(typed.shown&&typed.count>1,'the search actually showed results');
+      assert.deepEqual(typed.during,typed.before,'searching never resizes the map, so it never reframes the stars');
+      assert.deepEqual(typed.after,typed.before);
+    });
+    await t.test('a seeded universe turns with the constellation, darkens only what is drawn, and is never a target',async()=>{
+      const read=()=>page.evaluate(()=>{
+        const B=BABYLON,scene=B.EngineStore.LastCreatedScene,camera=scene.activeCamera,M=window.WorldSkyMotion;
+        const field=scene.getMeshByName('sky-field-bright'),local=B.Vector3.FromArray(field.getVerticesData(B.VertexBuffer.PositionKind).slice(0,3));
+        const drawn=B.Vector3.TransformCoordinates(local,field.computeWorldMatrix(true)).subtract(camera.position).normalize();
+        return {state:WorldDemo.snapshot().world,clear:[scene.clearColor.r,scene.clearColor.g,scene.clearColor.b],
+          vertex:{drawn:drawn.asArray(),expected:M.apply(field.rotationQuaternion.asArray(),local.normalizeToNew().asArray())},
+          stars:scene.meshes.filter(m=>m.metadata?.skyMM!==undefined).map(m=>({id:m.metadata.skyMM,dir:m.position.subtract(camera.position).normalize().asArray()})),
+          targets:document.querySelectorAll('#sky-map .sky-target').length};
+      });
+      const first=await read(),field=first.state.skyField;
+      assert.ok(first.clear.every((v,i)=>Math.abs(v-[.055,.095,.16][i])<1e-3),'the sky is drawn at night while stargazing: '+first.clear);
+      assert.ok(first.state.environment.night<.999,'while the live clock is not itself night: '+first.state.environment.night);
+      assert.ok(field.count>=4000,'thousands of background stars: '+field.count);
+      assert.deepEqual(field.visible,[true,true,true]);assert.deepEqual(field.alpha,[1,1,1]);assert.equal(field.pickable,false);
+      assert.equal(first.targets,first.stars.length,'the backdrop adds no HTML target');
+      assert.ok(first.vertex.drawn.every((v,i)=>Math.abs(v-first.vertex.expected[i])<1e-4),'Babylon draws the field with the MM stars\' rotation convention');
+      await drag(160,40);
+      const second=await read(),q1=field.rotation[0],q2=second.state.skyField.rotation[0];
+      assert.ok(q1.some((v,i)=>Math.abs(v-q2[i])>1e-4),'the drag turned the backdrop');
+      assert.ok(second.state.skyField.rotation.every(q=>q.every((v,i)=>Math.abs(v-q2[i])<1e-12)),'all three layers share one rotation');
+      const turn=Motion.multiply(q2,[-q1[0],-q1[1],-q1[2],q1[3]]);
+      for(const star of first.stars) {
+        const moved=second.stars.find(s=>s.id===star.id),predicted=Motion.apply(turn,star.dir);
+        assert.ok(predicted.every((v,i)=>Math.abs(v-moved.dir[i])<1e-3),'MM '+star.id+' turned exactly as the backdrop did');
+      }
+      await click('#sky-fit');await frames(3);
     });
     await t.test('drag rotates the displayed sky around a fixed eye and preserves KS03 coordinates',async()=>{
       const initial=await snapshot(),eye=await camera();aligned(eye);
@@ -227,8 +283,11 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       });
       await click('#close-panel');await page.waitFor(()=>WorldDemo.snapshot().world.environment.rain>.5);
       let current=await snapshot();assert.equal(current.skyActive,true);assert.equal(current.world.paused,false);
-      assert.deepEqual(current.sky.nodes.map(n=>n.pending),[1,0,0]);
-      assert.deepEqual(current.world.reviewCues.map(n=>n.pending),[1,0,0]);
+      // Only MM 101 has a session dated the fixture's next day; an unfinished
+      // review from an earlier day does not carry forward in Track's calendar.
+      const midnight=current.sky.nodes.map(n=>n.id===101?1:0);
+      assert.deepEqual(current.sky.nodes.map(n=>n.pending),midnight);
+      assert.deepEqual(current.world.reviewCues.map(n=>n.pending),midnight);
       await capture('sky-rain');
       await page.session.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await frames(3);
       const fit=await page.evaluate(()=>{
@@ -236,7 +295,7 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
         return {width:document.documentElement.scrollWidth,viewport:innerWidth,bottom:sky.bottom,toolbar:tools.top};
       });
       assert.ok(fit.width<=fit.viewport);assert.ok(fit.bottom<=fit.toolbar);
-      await page.evaluate(()=>{const input=document.getElementById('sky-find');input.value='water';input.dispatchEvent(new Event('input',{bubbles:true}));});
+      await page.evaluate(()=>{const input=document.getElementById('sky-find');input.value='shapes a place';input.dispatchEvent(new Event('input',{bubbles:true}));});
       assert.equal(await page.evaluate(()=>document.querySelectorAll('#sky-results button').length),1);
       await click('#sky-results button');assert.equal((await snapshot()).selectedMM,1);await click('#close-panel');
       await page.evaluate(()=>{const input=document.getElementById('sky-find');input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));});
@@ -246,6 +305,9 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
     assert.equal((await snapshot()).world.skyPhase,'leaving');
     await page.waitFor(()=>WorldDemo.snapshot().world.skyPhase==='garden');
     const after=await snapshot();assert.equal(after.skyActive,false);assert.equal(after.world.stargazing,false);
+    assert.deepEqual(after.world.skyField.visible,[false,false,false],'the backdrop leaves with the sky');
+    const hud=await page.evaluate(()=>({flag:document.body.dataset.sky,bud:getComputedStyle(document.querySelector('.day-bud')).display}));
+    assert.equal(hud.flag,undefined);assert.notEqual(hud.bud,'none','the Today bud returns with the garden');
     assert.deepEqual([after.world.yaw,after.world.pitch,after.world.roll],[before.world.yaw,before.world.pitch,before.world.roll]);
     assert.ok(after.world.cameraForward.every((v,i)=>Math.abs(v-before.world.cameraForward[i])<.002));
     await t.test('the ordinary MM panel visibly opens the star sky and retains its draft',async()=>{
@@ -260,7 +322,7 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       await page.waitFor(()=>WorldDemo.snapshot().world.skyPhase==='viewing');
       const opened=await snapshot();assert.equal(opened.skyActive,true);assert.equal(opened.panel,null);
       assert.equal(opened.world.inGrove,true);assert.equal(opened.world.grounded,true);
-      assert.equal(opened.world.skyStars.filter(star=>star.visible).length,3,'actual scene stars render');
+      assert.equal(opened.world.skyStars.filter(star=>star.visible).length,35,'actual scene stars render');
       const starPoint=await page.evaluate(()=>{
         const B=BABYLON,scene=B.EngineStore.LastCreatedScene,engine=scene.getEngine();
         const mesh=scene.meshes.find(mesh=>mesh.metadata?.skyMM===102);

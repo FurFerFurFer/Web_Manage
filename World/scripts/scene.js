@@ -162,9 +162,16 @@
       const peak=finish(B.MeshBuilder.CreateCylinder('distant-hill-'+i,{diameterTop:2,diameterBottom:28+i*2,height:12+i%3*5,tessellation:6},scene),material('hill-'+i,i%2?'#8fb5a1':'#93b4af'),v(-60+i*30,1,68+i%2*10));
       peak.rotation.y=i*.7;
     }
+    // The three authored stations greet the path; the rest of the network stands
+    // deeper in the grove on a phyllotaxis spiral, squashed along x so every
+    // plinth stays west of the grove boundary and leaves a walking corridor.
     const grovePositions=[[-13,15],[-16,18],[-11,20]],petalRings=[];
+    // Solved offline: >=2.3m between any two stations (plinth diameter 1.5),
+    // x <= -10.4, z >= 15, and every centre within 36.1m of the 38.5m floor's.
+    const groveSpot=k=>{const a=k*2.39996323,r=2.8+1.35*Math.sqrt(k);
+      return [-18.5+Math.cos(a)*r*.9,28+Math.sin(a)*r*.85];};
     hooks.mindMaps.forEach((node,i)=>{
-      const color=node.color,[x,z]=grovePositions[i]||[-13-Math.cos(i)*4,18+Math.sin(i)*4];
+      const color=node.color,[x,z]=grovePositions[i]||groveSpot(i-grovePositions.length);
       cylinder('grove-plinth-'+i,1.5,.45,v(x,.3,z),stone,true);
       const sm=material('star-material-'+i,color,.4);
       const star=finish(B.MeshBuilder.CreatePolyhedron('memory-star-'+i,{type:1,size:i===0?.7:.45},scene),sm,v(x,1.6,z));
@@ -607,24 +614,27 @@
       const avatarVisibility=Core.clamp((B.Vector3.Distance(camera.position,focus)-b(1.2)),0,1);
       avatarMeshes.forEach(mesh=>{mesh.visibility=avatarVisibility;});
       skyRenderer.setReveal(skyReveal);
-      const env=environment,dim=1-env.night*.76;
+      // Stargazing darkens what is DRAWN as the stars appear; the live weather
+      // and clock state in environment is never written, so every cue that
+      // reads it is unchanged and the garden returns to the real hour on exit.
+      const env=environment,night=Math.max(env.night,skyReveal),dim=1-night*.76;
       scene.clearColor=B.Color4.Lerp(new B.Color4(.68,.82,.83,1),new B.Color4(.34,.47,.5,1),env.rain);
       scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.12,.22,.28,1),env.storm*.65);
       scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.75,.81,.83,1),env.snow*.7);
       scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.74,.7,.83,1),env.halo*.65);
-      scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.055,.095,.16,1),env.night);
+      scene.clearColor=B.Color4.Lerp(scene.clearColor,new B.Color4(.055,.095,.16,1),night);
       scene.fogColor=new B.Color3(scene.clearColor.r,scene.clearColor.g,scene.clearColor.b);
       scene.fogDensity=.008+env.rain*.009+env.snow*.005+env.storm*.004;
-      sun.intensity=(.8-env.rain*.5)*dim;hemi.intensity=.65-env.rain*.13-env.night*.25;
-      hemi.diffuse=B.Color3.Lerp(c('#f2f3d6'),c('#809fcb'),env.night);
+      sun.intensity=(.8-env.rain*.5)*dim;hemi.intensity=.65-env.rain*.13-night*.25;
+      hemi.diffuse=B.Color3.Lerp(c('#f2f3d6'),c('#809fcb'),night);
       stone.diffuseColor=B.Color3.Lerp(c('#ddd9b8'),c('#9eae9e'),env.wetness);
       stone.diffuseColor=B.Color3.Lerp(stone.diffuseColor,c('#ecf0ec'),env.snowCover*.9);
       grass.diffuseColor=B.Color3.Lerp(c('#82ad72'),c('#e2eeee'),env.snowCover);
       leaf.diffuseColor=B.Color3.Lerp(c('#55936e'),c('#cfdfd8'),env.snowCover*.8);
       leafLight.diffuseColor=B.Color3.Lerp(c('#91b573'),c('#edf0e6'),env.snowCover*.8);
       stone.specularColor=new B.Color3(.06,.06,.06).scale(1+env.wetness*5);
-      water.diffuseColor=B.Color3.Lerp(c('#68b8ba'),c('#507e8c'),env.rain*.6+env.night*.4);
-      glow.emissiveColor=c('#f1dea0').scale(.2+env.night*.8);
+      water.diffuseColor=B.Color3.Lerp(c('#68b8ba'),c('#507e8c'),env.rain*.6+night*.4);
+      glow.emissiveColor=c('#f1dea0').scale(.2+night*.8);
       foliage.forEach(({mesh,phase,base})=>{mesh.rotation.z=base+(reduced?0:Math.sin(env.elapsed*1.3+phase)*.02*env.wind);});
       stars.forEach((star,i)=>{star.rotation.y=reduced?0:env.elapsed*.24;star.position.y=1.6+(reduced?0:Math.sin(env.elapsed+i)*.08);});
       rainMesh.setEnabled(env.rain>.02&&!reduced);rainMesh.alpha=env.rain*.5;
@@ -689,7 +699,7 @@
       snapshot(){return {characterScale:S,position:player.position.asArray(),grounded,sprinting,
         stamina:{value:stamina.value,max:staminaBudget,exhausted:stamina.exhausted},
         sprint:{locked:sprint.locked,held:sprint.held,speed:sprint.speed},player:playerProjection(),
-        motion:{velocity:velocity.asArray(),facing,renderPosition:renderPosition.asArray()},flight:flightStatus(),gliderVisible:glider.isEnabled(),effects:{rain:rainMesh.isEnabled(),snow:snowMesh.isEnabled(),halos:halos.some(h=>h.isEnabled())},inGrove:inGrove(),stargazing,skyPhase:skyMotion.phase,skyReveal,skyStars:skyRenderer.snapshot(),reviewCues:reviewCues.map(cue=>({...cue})),paused,inputEnabled,vertical,jumpBuffer,coyote,environment:{...environment},target:{...target},reduced,yaw,pitch,roll:0,
+        motion:{velocity:velocity.asArray(),facing,renderPosition:renderPosition.asArray()},flight:flightStatus(),gliderVisible:glider.isEnabled(),effects:{rain:rainMesh.isEnabled(),snow:snowMesh.isEnabled(),halos:halos.some(h=>h.isEnabled())},inGrove:inGrove(),stargazing,skyPhase:skyMotion.phase,skyReveal,skyStars:skyRenderer.snapshot(),skyField:skyRenderer.fieldSnapshot(),reviewCues:reviewCues.map(cue=>({...cue})),paused,inputEnabled,vertical,jumpBuffer,coyote,environment:{...environment},target:{...target},reduced,yaw,pitch,roll:0,
         characterMotion:{...characterMotion,sample:{...characterMotion.sample,position:[...characterMotion.sample.position]}},
         character:character.snapshot(),
         cameraForward:camera.getForwardRay().direction.asArray(),cameraUp:camera.getDirection(B.Axis.Y).asArray(),

@@ -24,13 +24,10 @@ directs Codex and playtests.
   is no package manager, build system or production asset pipeline.
 - No hosting, cloud service, store account, or subscription has been purchased or enabled.
 - Headless behavior checks are not a sustained target-hardware graphics benchmark.
-- The concept draft distinguishes selected demo direction from other proposals.
 
-Ordinary demo work within the agreed boundary does not need to be asked for twice.
-Changing the engine, committing to an art approach, spending money, installing additional
-dependencies, and touching Track's runtime remain stop-and-ask steps — see "Stop for
-direction" below. Do not ask again for the chosen Babylon.js
-browser direction; a change of engine or delivery would be a new decision.
+Ordinary demo work within the agreed boundary, and the chosen Babylon.js browser
+direction, need no re-approval. The stop-and-ask steps are under "Stop for direction"
+below.
 
 ## Directory Contents
 
@@ -45,12 +42,11 @@ browser direction; a change of engine or delivery would be a new decision.
 | `assets/images/` | Visual-development reference imagery. **Not production assets** and not runtime application assets |
 
 Everything belonging to this project goes here — concept documents, design decisions,
-research notes, reference imagery, and any future prototype. Do not scatter game material
+research notes, reference imagery, and the prototype. Do not scatter game material
 into the repository root, `docs/`, or the Track pages.
 
-The repository root keeps exactly one thing about this project: a **pointer**. `README.md`
-names the directory in its documentation map and file tree, and `NOTES.md` carries the
-Track World feasibility entry. Keep those as pointers; the substance lives here.
+The repository root holds only **pointers** to this project: an entry in `README.md` and
+one in `NOTES.md`. Keep them pointers; the substance lives here.
 
 ## Documentation Responsibilities
 
@@ -64,42 +60,21 @@ Track World feasibility entry. Keep those as pointers; the substance lives here.
   the deferred or open list, labelled as such. Section 24's review recommendations are
   explicitly proposals; do not rewrite them into settled direction.
 
-When this project grows past one document, it takes the same three-file split the root
-repository uses, scoped to `World/`:
+Run and test behaviour goes in `README.md`. Remaining work goes in `NOTES.md`,
+forward-looking only, opening with the "Start here" block defined in Required Workflow
+step 8. The concept draft stays the authority for product direction.
 
-| File | Source of truth |
-| --- | --- |
-| `World/README.md` | What actually exists and how to run it — created only once something exists |
-| `World/NOTES.md` | Unfinished work, open decisions, and roadmap — forward-looking only |
-| `World/AGENTS.md` | This file: mandatory procedure and safety rules |
-| `World/PLAN.md` | The proposed workflow and tool plan — phases, gates, tool research. Proposals only |
-
-Create `World/README.md` in the same change that lands the first thing it can describe —
-not before it, and never as a place to hold plans. Plans belong in the draft's
-open-decision sections until they are built.
-
-The three-file split now exists. Keep actual run/test behavior in README and remaining
-work in NOTES; the concept draft remains the authority for product direction.
-
-Two additions on 2026-09-12, both made to cut the tokens a session spends before it starts:
-
-- **`PLAN.md` holds the draft's Section 25**, which had grown larger than the concept it was
-  appended to, so a concept question dragged the whole delivery plan with it. Its `25.N`
-  numbering is unchanged, so existing "Section 25.6" references still resolve. It is
-  **proposals**, and the rule above against promoting a proposal by writing it down applies
-  to it exactly as it did in the draft.
-- **`NOTES.md` opens with a "Start here" block** — current phase, next increment, reading
-  order — rewritten at the end of every session. It is not a fourth document and not a
-  session diary: it is the first thing NOTES already existed to say, moved to the top and
-  kept current. NOTES stays forward-looking, so what a session *did* goes to README.
+`PLAN.md` holds the draft's Section 25 with its `25.N` numbering intact, so
+"Section 25.6"-style references resolve there. It is proposals only, and the rule above
+applies to it.
 
 ## Non-Negotiable Rules
 
 ### Track owns the data and the mutation boundary
 
 The Track application owns `track_db`. Section 18 of the concept draft lists fourteen
-data-safety guardrails and they are binding on any future implementation, not aspirational.
-The load-bearing ones, restated because they are the ones an implementation forgets:
+data-safety guardrails, and they are binding. The ones an implementation most often
+forgets:
 
 - Track remains the truthful source for goals, dates, notes, deadlines, reviews, and
   completion state. The game displays; it does not decide.
@@ -117,9 +92,8 @@ The load-bearing ones, restated because they are the ones an implementation forg
   Multi-record effects must be applied together and retries must not duplicate them.
   Camera motion, star selection, and inspection remain read-only. Missing command safety
   is unfinished implementation, not a reason to silently drop a confirmed MM feature.
-- This concept decision does not authorize live mutations, runtime changes, or cloud
-  deployment during documentation work. Those still follow the separately scoped Track
-  workflow below and the root project's applicable approval gates.
+- This decision does not authorize live mutations, runtime changes, or cloud deployment.
+  Those follow the Track workflow below and the root approval gates.
 - Unknown, failed, or pending synchronization is shown as such. Presentation must never
   imply a successful data change before Track has accepted it.
 
@@ -135,15 +109,12 @@ be exposed or loaded there.
 
 A task scoped to this directory changes files in this directory. Editing `index.html`,
 `progress.html`, `sir-ks02.html`, `documentations.html`, `true-storage.html`, `scripts/`,
-`styles/`, `firestore.rules`, or `tests/` is a **Track** change: it needs the root
-`AGENTS.md` workflow in full — the persistence-boundary search, the cross-page checks,
-`node tests/run.js`, a case seen failing first, and the browser smoke checks — and it needs
-to be raised as its own change rather than folded into game work.
+`styles/`, `firestore.rules`, or `tests/` is a **Track** change. It follows the root
+`AGENTS.md` workflow in full and is raised as its own change, never folded into game work.
 
-Reading those files to understand Track's real behaviour is expected and encouraged. The
-concept draft's accuracy depends on it: `scripts/calendar-core.js` holds the real rules for
-day notes, caution days, blocks, and reference timetables, and the draft's Section 24
-already records where loose wording contradicts them.
+Reading those files is expected: they define Track's behaviour, and the draft does not.
+`scripts/calendar-core.js` holds the rules for day notes, caution days, blocks and
+timetables. Section 24 of the draft records where its wording contradicts them.
 
 ### Reuse Track's meanings; do not invent parallel ones
 
@@ -226,18 +197,16 @@ lighting may not introduce independent transitions or alter traversal/data seman
 Notebook behavior follows Track: open to the list, + Add note, editable topic and body,
 automatic retention, Back, and confirmed Delete. Session edits are bound to note IDs;
 switching must never lose text or retarget it. Confirm deletion with a dialog that owns
-focus and Escape while the world keeps running. Cancelling it changes nothing. Live
-note creation/editing/deletion are confirmed product requirements, implemented only
-through the separately gated Track command/recovery boundary. The demo remains memory
-only with reload reset disclosed. Retain the identity, declined-deletion and empty-list
-browser cases; no explicit Save/Keep/Cancel-changes step belongs in the notebook.
+focus and Escape while the world keeps running. Cancelling it changes nothing. Live note
+writes are confirmed but go only through the gated Track command/recovery boundary above.
+The demo stays memory-only, with the reload reset disclosed. Retain the identity,
+declined-deletion and empty-list browser cases.
 
 ### Concept imagery is reference, not specification
 
-Images in `assets/images/` establish preferred rendering, mood, and identity. They are not
-screen specifications, not production assets, and not evidence of real-time performance.
-Do not treat a rendered concept image as a deliverable, a UI layout, or proof that the
-target hardware can draw it.
+Images in `assets/images/` set preferred rendering, mood, and identity. They are not
+deliverables, UI layouts, production assets, or proof that the target hardware can draw
+them.
 
 Keep them here rather than in the repository's application asset paths, and keep the
 repository free of large binaries that nothing references.
@@ -263,35 +232,38 @@ billing, and budget alerts do not cap charges.
 
 Read-only research and local inspection are allowed.
 
-## Ultra escalation rule
+## Overcapability rule
 
-The user requires an explicit warning when work becomes advanced or would go beyond the
-agreed plan. Before continuing that part, explain the specific complexity or scope change
-and ask the user to switch to **Ultra**. Pause the affected work until the user confirms
-the switch or gives another direction; do not claim to have changed the model or setting.
-A switch does not authorize expanded scope, installations, spending, or Track runtime
-changes. Routine work within the agreed demo boundary may continue while it remains
-straightforward.
+Stop and ask when a step needs skill, context, or certainty you do not have. Say so
+**before** starting it: a plausible result the user later finds is wrong costs more than
+the question.
+
+- **Name the specific limit.** "This is complex" is not a stop; "I cannot confirm this
+  renders without real touch hardware" is.
+- **Stop that part, not the session.** Finish what the limit does not touch, then report
+  what is left and why.
+- **Never claim to have changed a model, a setting, or your own capability.** Ask; the
+  user decides.
+- A go-ahead covers that part alone. It does not authorize expanded scope, installations,
+  spending, or Track runtime changes.
+
+Routine work inside the agreed demo boundary continues without asking. Work that leaves
+the agreed plan falls under **Stop for direction** below.
 
 ## Work within the context budget
 
-Every session in this repository starts by loading the root `AGENTS.md` automatically,
-before anything is read on purpose. That floor is paid on every session, so the discipline
-below is not fussiness — it is what keeps a session from compacting before the work starts,
-and a compacted session re-reads files, which costs more than reading them carefully once.
+Every session pre-loads the root `AGENTS.md`, so spend the remaining budget carefully: a
+session that compacts re-reads files, which costs more than reading them once.
 
-- **Read by slice, never whole.** `TRACK-WORLD-CONCEPT-DRAFT.md` is 113KB and `PLAN.md` is
-  88KB. `grep -n '^#'` for the section, then `Read` with `offset` and `limit`. Loading
-  either entire usually costs more than the change being made.
+- **Read by slice, never whole.** `TRACK-WORLD-CONCEPT-DRAFT.md` is ~140KB and `PLAN.md`
+  ~90KB. `grep -n '^#'` for the section, then `Read` with `offset` and `limit`.
 - **Never read or grep `vendor/`.** `babylon.js` alone is 8.3MB. Use Babylon's
   documentation; the local copy is there to be served, not read.
-- **Do not spawn subagents for `World/` work.** Each one starts cold and re-pays the entire
-  auto-loaded context before it does anything useful. Inline tool calls are strictly cheaper,
-  and this project's files are small enough to reach directly.
+- **Do not spawn subagents for `World/` work.** Each starts cold and re-pays the whole
+  auto-loaded context; inline tool calls are cheaper.
 - **Send test output to a file and read the tail.** `node tests/<suite>.test.js > /tmp/…
   2>&1`, then read the last ~40 lines and grep the file for what you need. Do **not** end a
-  pipeline in `grep` — the root `AGENTS.md` records a passing run reporting exit 1 because a
-  trailing `grep` matched nothing.
+  pipeline in `grep`: one that matches nothing makes a passing run exit 1.
 - **Prefer fewer, longer sessions.** The auto-loaded context is written to cache once per
   session and read cheaply after; many short sessions re-pay that write each time.
 - **Keep verification proportional and visible (user feedback, 2026-09-12).** Tell the
@@ -300,8 +272,7 @@ and a compacted session re-reads files, which costs more than reading them caref
   failure or unresolved concern. Run one graphics-heavy browser suite at a time on this
   laptop: overlapping SwiftShader browsers can cause contention and timeouts. Pure checks
   may run alongside it. Documentation-only feedback does not trigger game/browser suites.
-  Preserve the required traversal/shared-scene coverage above; passing automation proves
-  behavior, while the user's playtest judges movement feel.
+  Preserve the required traversal/shared-scene coverage above.
 
 ## Required Workflow
 
@@ -321,20 +292,15 @@ and a compacted session re-reads files, which costs more than reading them caref
    `World/` — the image is `assets/images/…` and the repository root is `../`.
    For anything built: **run it**, and report what was run, on what, and what was not
    covered. Code that was written and never executed is reported as exactly that.
-   `node tests/run.js` is unaffected by a `World/`-only change; if a task made it
-   applicable, that task edited Track and belongs under the root workflow.
+   `node tests/run.js` does not apply to a `World/`-only change.
 7. **Final review.** `git status --short`. Only intended files changed, no user work
    removed, no temporary artifact left behind, no personal data or credential added.
 8. **Rewrite `NOTES.md`'s "Start here" block.** Current phase, the single next
-   increment, and the reading order. It is the handover, and it is the reason the next
-   session does not have to reconstruct the state from a forty-item backlog or read the
-   concept draft to find out where the work got to. Keep it **forward-looking**: what the
-   last session did belongs in `README.md` as current behaviour, never here.
-9. **Ask for specific playtest feedback.** After each playable demo change, tell the
-   user which actions to try and what to report (for example, preview placement,
-   camera response, visibility or height alignment). Keep it a short numbered checklist
-   and distinguish automated checks from the user's physical playtest. The user
-   explicitly requested this for every demo update.
+   increment, and the reading order. It is a handover, not a session diary. Keep it
+   **forward-looking**: what this session did goes in `README.md` as current behaviour.
+9. **Ask for specific playtest feedback.** After each playable demo change, give a short
+   numbered checklist of actions to try and what to report, kept separate from what
+   automated checks already proved. The user requested this for every demo update.
 
 ## Stop for direction
 
@@ -342,23 +308,19 @@ Implementation is authorized; the commitments inside it are not. The concept dra
 roadmap, and a roadmap is still not a mandate — build what the user asked for, and stop for
 direction when a step would:
 
-- **Choose the engine, or browser versus native delivery.** The most expensive decision in
-  the project to reverse. Recommend one with reasons and let the user pick.
-- **Install anything, or reach an external service.** Not this file's to relax; the root
-  `AGENTS.md` owns it. Engine choice reaches this gate too, so it cannot be made quietly.
-- **Touch Track's runtime files, stored data, or cloud state.** Unchanged. That is a Track
-  change under the root workflow, not game work.
+- **Change the engine, or browser versus native delivery.** Babylon.js in the browser is
+  the current choice and the most expensive to reverse; recommend with reasons and let
+  the user pick.
+- **Install anything, or reach an external service.** The root `AGENTS.md` owns this gate.
+- **Touch Track's runtime files, stored data, or cloud state.** That is a Track change
+  under the root workflow, not game work.
 - **Commit to an art or content production approach.** Taste and cost, both the user's.
 - **Cost money**, once or recurring.
 
-Creating a scaffold, an asset pipeline, or a build is no longer on that list — but the
-tooling each of those needs usually is, so the install gate is where they get decided.
+A scaffold, asset pipeline or build needs no approval itself; the tooling it needs
+usually does, at the install gate.
 
-The draft's own suggested starting point is **one small scene on the current computer
-using synthetic Track data** — camera and movement, one coherent weather transition, a
-readable Today view, and notebook interaction — measured before anything larger is
-committed to. Synthetic data, always: a real personal Track export is
-never test data here either.
+Synthetic data, always: a real personal Track export is never test data here.
 
 ## Definition of Done
 
