@@ -2310,15 +2310,55 @@ the repository:
 
 | Baseline | Rule reversed | Failed |
 | --- | --- | --- |
-| B1 | Milestones panes rendered unconditionally | RESULTS PENDING |
-| B2 | `flex-wrap` dropped from the Schedule nav | RESULTS PENDING |
-| B3 | `.docs-sidebar-full` reveals the cluster unarmed again | RESULTS PENDING |
+| B1 | Milestones panes rendered unconditionally | `PHONE/PROGRESS: Milestones shows ONE pane at a time, full width`, alone |
+| B2 | `flex-wrap` dropped from the Schedule nav | `PHONE/PROGRESS: the Schedule nav wraps so CALENDAR stays TAPPABLE`, alone |
+| B3 | `.docs-sidebar-full` reveals the cluster unarmed again | `PHONE/DOCUMENTATIONS: a row ARMS on the first tap and opens on the second`, alone |
 
-B3 is deliberately the mistake that actually happened rather than an invented one.
+**Exactly disjoint singletons**, and each fired on the assertion its case is NAMED for rather
+than on some later one it also happens to touch — which is what makes each case fail-first
+evidence for its own claim:
+
+```
+B1  it opens on the list              {list:true, calendar:true} != {list:true, calendar:false}
+B2  CALENDAR takes its own tap        got null at 428-501 in a 390px viewport
+B3  unarmed, the controls not drawn   'flex' !== 'none'
+```
+
+B2's message is the reported symptom in numbers: the button is drawn from 428px to 501px in
+a 390px viewport, so `elementFromPoint` at its own centre returns `null`. It is in the DOM,
+it has a sane width, and no finger can land on it — which is why presence and rect were both
+rejected as the assertion and hit-testing was used instead. B3 is deliberately the mistake
+that actually happened rather than an invented one.
+
+Each baseline passed the other **17 of 18 suites**, including the whole five-timezone sweep
+and `viewport` itself. That is what says the reversal reached the phone layer and nothing
+else.
+
+**One false failure, kept in the record because how it was read is the point.** B2's first
+run also failed `malformed track_db (a slot is null)` on a 15s `true-storage.html mounting`
+timeout — the contention signature this log has recorded before, in the suite's heaviest
+section, which mounts five pages six times over. Its four siblings passed at ~13.4s each
+while it burned 33.5s, and load had risen from 1.54 to 4.11 (chrome 52%, `tracker-extract`
+43%, `tracker-miner-f` 21%). A `flex-wrap` on `.progress-page [data-sched-nav]` also has no
+mechanism by which it could stop `true-storage.html` mounting. None of that is a
+measurement, so the b2 tree was re-run **unchanged, the only variable being the run itself**:
+case 104 passed and the Schedule-nav case failed again, with the identical message. The set
+recorded above is the control's, not the first run's.
 
 `node tests/run.js`: **18 suites, 270/270 browser subtests, zero failures**, exit code read
 from node itself and not through a pipe — the previous entry records that trap from the
 other direction. `md5sum` of the tree identical at both ends of the run.
+
+**Committed by another session, and the baselines postdate it.** These edits were swept into
+`5cf2a19 "New system for codex"` (2026-09-23) alongside that session's World work; the
+runtime half of that commit is this change — the `styles.css?v=14` and `viewport.js?v=2`
+bumps across all five pages, plus the round-2 page and test edits. Nothing here was altered,
+only committed. The three baselines above were built and run *after* that commit, from a tree
+whose Track runtime and test files still carry their 2026-09-20 mtimes and are unmodified
+against it, so they exercise the same bytes the green run did. The recorded tree `md5sum`
+could not be reproduced in the later session — the formulation that generated it was lost
+with the scratchpad — so the mtimes and a clean `git status` are the evidence for that, and
+are stated as such rather than as a hash match.
 
 **Not covered, and the point of the whole change:** real touch hardware. 390x844 with
 `Emulation.setTouchEmulationEnabled` is the closest this environment gets, and whether two
