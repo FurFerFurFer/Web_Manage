@@ -23,7 +23,9 @@ test('synthetic fixture uses canonical shape and preserves calendar meanings wit
   assert.equal(Cal.buildDaySchedule(slot,'2026-09-08').deadlinesCaution.length,1);
   assert.equal(Cal.buildDaySchedule(slot,'2026-09-09').deadlinesCaution.length,0,'due day never warns');
   assert.equal(today.deadlines[0].done,true);
-  assert.equal(today.sir.length,2,'skipped review stays excluded');
+  const onDay=slot.sessions.filter(s=>s.date==='2026-09-06');
+  assert.equal(onDay.filter(s=>s.skipped).length,1,'the fixture seeds exactly one skipped review on the day');
+  assert.equal(today.sir.length,onDay.length-1,'skipped review stays excluded');
   assert.equal(today.refBlocks.length,1);
   assert.equal(today.refBlocks[0].detail,'Reference only · North terrace');
   assert.equal(today.mgCarried,true);

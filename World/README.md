@@ -285,14 +285,28 @@ readable and editable without the scene.
   **Reduce motion** retains direct dragging while skipping entry/return transitions;
   the sky has no automatic drift or release coasting. A celestial rendering pass keeps
   knowledge visible through weather and foliage. There is no full-screen panel or tinted
-  backdrop behind the constellation. The sky remains readable in daylight/rain.
-  Weather and physics continue; stargazing holds the grounded avatar still.
+  backdrop behind the constellation. While stargazing the sky is **drawn at night**
+  whatever the clock: the darkness follows the stars' fade-in and is a rendering blend,
+  so the live weather/clock state and every cue that reads it are untouched, and the
+  garden returns to the real hour on exit. Behind the MM stars sits a seeded field of
+  about 4,400 distant points with a faint band; it turns with the constellation, is never
+  pickable and adds no HTML target. Weather and physics continue; stargazing holds the
+  grounded avatar still.
+  The sky spans the screen above the toolbelt, under one compact strip holding the title,
+  legend key, zoom/Fit all/Find and **Return to garden**; search results overlay the sky
+  so typing never reframes it. The garden-only HUD (identity, minimap, Today bud, location
+  and control hints) steps aside while stargazing; the toolbelt, including Today, stays.
+  At 1280x800 the constellation gets 76% of the screen (previously 42%). No star, label
+  or target is drawn beneath the toolbelt. Labels are captions: the star or Find opens an
+  MM, so a label covering another MM's star at density cannot open the wrong one.
   A panel closes back to that sky, and leaving restores the
-  ordinary camera orientation without teleporting. The September 21 user playtest reports
-  that the motion works, while the interface occupies too much screen space and the graphics
-  do not yet convey a universe of stars. The demo still contains only three MMs and two
-  connections; a much larger MM sample is needed to judge the experience. Dense-network
-  tuning and visual acceptance remain open.
+  ordinary camera orientation without teleporting. The demo fixture holds 35 synthetic MMs
+  with 30 connections: four parent depths, a parent cycle, disconnected groups and long
+  names. The first three keep their authored Grove stations; the rest stand deeper in the
+  Grove on a spiral solved for at least 2.3 m between stations, all on the garden floor.
+  Label overlap at this density is visible and is the open dense-network question;
+  visual acceptance of the new strip, backdrop and night treatment awaits the laptop
+  playtest.
 - Read the synthetic workspace's full Quest tree and starred list directly from its tab.
   `TrackQuest.questTree` preserves chosen sibling order and context ancestors, skips aliases
   and promotes milestone children. `starRollup` supplies the parent grouping and counts.
@@ -455,7 +469,12 @@ behind the view. It also checks live rain, changed-day petals, narrow bounds and
 camera orientation.
 It also checks the ordinary MM panel's explicit Grove shortcut, rendered star silhouettes
 and draft retention when opening and returning from the sky, early cancellation and
-reduced-motion entry/return.
+reduced-motion entry/return. Two cases cover the sky's presentation: the map's share of
+the screen, the compact strip, the garden HUD stepping aside and returning, nothing drawn
+beneath the toolbelt, and search never resizing the map; and the background field's
+lit pixels (measured from the framebuffer with only the field toggled, because a mesh can
+be visible in the scene graph and draw black), its shared rotation with every MM star, the
+night rendering while the live clock is not night, and the absence of any extra target.
 The map suite checks scene-derived landmark coordinates, keyboard and pointer pan/zoom,
 pin creation/validation/edit/cancel/removal, literal Thai/HTML-like labels, pin/notebook
 draft retention across menus, mapped/unmapped Quest navigation, distance changes while
@@ -547,7 +566,7 @@ documentation diff were reviewed; game/browser suites were not rerun for that fe
 | `scripts/app.js` | Panel state, canonical calendar reads and memory-only drafts |
 | `scripts/sky-core.js` | Read-only KS03 projection, hierarchy sizing and canonical review cues |
 | `scripts/sky-motion.js` | Pure spherical display mapping and the user-selected sky control settings |
-| `scripts/sky-scene.js` | Celestial scene meshes, procedural light/petal textures and world-to-screen projection |
+| `scripts/sky-scene.js` | Celestial scene meshes, the seeded background star field, procedural light/petal textures and world-to-screen projection |
 | `scripts/sky-view.js` | Accessible sky controls and labels following the scene's projection |
 | `scripts/map-core.js` | North-up coordinates, destination bearings and explicit synthetic Quest mappings |
 | `scripts/map-view.js` | Geographic map/minimap, session-only pin drafts and destination locators |

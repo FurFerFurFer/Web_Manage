@@ -29,7 +29,9 @@
         data.positions=positions;data.colors=colors;data.indices=indices;data.applyToMesh(mesh);
         const material=new B.StandardMaterial(name+'-material',scene);
         material.pointsCloud=true;material.pointSize=size;material.disableLighting=true;
-        material.emissiveColor=B.Color3.Black();material.diffuseColor=B.Color3.White();
+        // With lighting disabled the standard material outputs emissive x vertex
+        // colour; a black emissive draws every star black, which adds nothing.
+        material.emissiveColor=B.Color3.White();
         material.alphaMode=B.Engine.ALPHA_ADD;material.needAlphaBlending=()=>true;material.alpha=0;
         material.fogEnabled=false;material.disableDepthWrite=true;material.backFaceCulling=false;
         mesh.material=material;mesh.isPickable=false;mesh.applyFog=false;mesh.infiniteDistance=true;

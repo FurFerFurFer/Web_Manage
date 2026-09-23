@@ -616,6 +616,27 @@ and the size/topology of a larger synthetic fixture remain open choices; no spec
 redesign or fixture expansion has been selected. Preserve the accepted motion settings.
 Real-data reads and exported-slot loading remain separately gated.
 
+**User decisions (2026-09-23), answering that feedback:** the user chose, from options
+presented with their trade-offs, **A+B / C / B**:
+
+- **Interface — full-bleed sky with one compact strip (A+B).** The sky spans the screen
+  above the toolbelt; heading, legend key, tools and Return share one strip; the usage hint
+  is kept for assistive technology only once viewing. While stargazing the garden-only HUD
+  (identity, minimap, Today bud, location, control hints) steps aside; the toolbelt stays,
+  and Today remains on it. Auto-hiding chrome on idle (option C) was **not** chosen.
+- **Atmosphere — background universe AND night while stargazing (C).** A seeded field of
+  distant stars with a faint band turns with the constellation. The sky is **drawn** at
+  night while stargazing, whatever the clock. This **supersedes** the daylight clause of the
+  2026-09-09 treatment below: stars no longer appear over a daylight sky. Rain, snow and the
+  live clock still run, and every date/review cue still reads the real hour.
+- **Fixture — about 30-40 synthetic MMs (B)** with four parent depths, a parent cycle,
+  disconnected groups and long names. Every MM keeps a physical Grove station.
+
+**Implementation choice pending the user's confirmation (2026-09-23):** at that density one
+MM's label covers another MM's star, and a clickable label opened the wrong mind map. Labels
+are therefore captions: the star and Find open an MM, and clicking a name no longer does.
+Label placement and hierarchy at density remain open and unchanged.
+
 **Confirmed sky treatment, clarified 2026-09-09:** stars and connections appear directly
 in the 3D sky, rather than in an SVG chart or a separate full-screen panel. Readable labels
 and inspection controls may overlay that scene. The special camera reveals the stars
@@ -1530,6 +1551,13 @@ controls and numeric tuning are provisional implementation choices for playtesti
 claims of exact reference parity or a settled stamina formula. The local clock, dated Today
 history and manual fantasy weather controls are integrated. This does not mark the full
 world, real Track connection, full MM actions or sustained hardware proof complete.
+
+**Sky presentation closed (2026-09-23):** the three questions left open by the 2026-09-21
+playtest are decided — full-bleed sky with one compact strip, a background universe with
+night rendering while stargazing, and a 30-40 MM synthetic fixture. Details and the
+superseded daylight clause are in [Section 5.7](#57-memory-grove-and-the-ks03-sky). Still
+open: label placement, hierarchy and long names at density; the label-as-caption choice
+awaits confirmation; visual acceptance and sustained hardware proof are not established.
 
 **Quest: current prototype and new Genshin interface direction (2026-09-09).** Track gained a Quest feature on
 2026-09-07 — a curated side list the user assembles from their existing goal tree and its

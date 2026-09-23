@@ -4,16 +4,22 @@
 
 - **Phase:** P1-P3 in progress, Step 2: prove the defining experience in the small scene.
   P4 onward is untouched; real Track reads/writes remain separately gated.
-- **Next increment: scope the sky interface, star atmosphere and a larger MM playtest.**
-  Reclaim sky space from the interface, establish a universe-of-stars feeling, and provide
-  enough MMs to judge the experience. Present concrete options before implementation;
-  interface visibility, visual treatment, synthetic fixture size and topology remain open.
-  Preserve **40° curve / 1× centre drag / 20°/second arrows**; the user's motion verdict is
-  recorded in [draft §5.7](TRACK-WORLD-CONCEPT-DRAFT.md#57-memory-grove-and-the-ks03-sky).
-  Do not queue another unchanged three-star motion-acceptance playtest.
-- **Sky follow-ups await direction:** larger-fixture implementation, dense-network and
-  cycle/disconnected-group fixes, appearance changes and the real-data read/export scope.
-  The need for many MMs does not open the real-data gate; keep storage isolation intact.
+- **Next increment: the user's laptop playtest of the 2026-09-23 sky (A+B / C / B).**
+  Full-bleed sky with one compact strip, a seeded background universe with night while
+  stargazing, and a 35-MM fixture — see [draft §5.7](TRACK-WORLD-CONCEPT-DRAFT.md#57-memory-grove-and-the-ks03-sky).
+  Record the verdict on each of the three separately, and on the **label-as-caption**
+  change (clicking a name no longer opens its MM), which is an implementation choice
+  pending confirmation. Preserve **40° curve / 1× centre drag / 20°/second arrows**.
+- **Sky decisions now evidenced and awaiting direction:** label placement, hierarchy and
+  long-name treatment at density (labels overlap heavily at Fit all and long names scroll
+  inside their label); whether the faint band reads at all; the Grove's 35 stations and
+  the minimap's crowded grove; and the real-data read/export scope. Present options
+  before changing any of them. The need for many MMs does not open the real-data gate;
+  keep storage isolation intact.
+- **Performance to confirm on the laptop:** the 35-station scene draws about 40 more calls
+  per frame than the three-station one (257 vs 217 at spawn) at +20% vertices (231k vs
+  193k). Headless timing is inconclusive under contention; the PLAN §25.13 gate decides.
+  The World browser suite runs close to its 150 s budget under heavy load on either tree.
 - **Body-animation work stopped; no next increment or fix planned.** Foot-ground
   push-off/body momentum in walking and running (playtest 1) remains **rejected**.
   Playtests 2–5 are **okay but not that good**, not strong visual acceptance. The user's exact
@@ -130,8 +136,9 @@ Do not read `vendor/`, the root verification log, or spawn subagents for this in
   small outward push; full reference climbing and vault animation still need their proofs.
 - Extend unpaused reading and input-focus checks to swimming when it arrives; opening a
   panel needs no protective landing or relocation.
-- Extend MM-sky proofs to dense networks, long labels, browser zoom, disconnected graphs
-  and cycles in the rendered view. Tune label placement, hierarchy sizing and Grove camera
+- Extend MM-sky proofs to browser zoom. The rendered view now carries a dense network,
+  long labels, disconnected groups and a parent cycle; their label treatment is open.
+  Tune label placement, hierarchy sizing and Grove camera
   framing against the chosen reference; preserve Track star positions and grounded entry.
   Preserve the accepted upward camera animation and scene-rendered constellation while
   extending coverage to those larger networks.

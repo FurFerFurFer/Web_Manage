@@ -174,6 +174,15 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       assert.ok(field.count>=4000,'thousands of background stars: '+field.count);
       assert.deepEqual(field.visible,[true,true,true]);assert.deepEqual(field.alpha,[1,1,1]);assert.equal(field.pickable,false);
       assert.equal(first.targets,first.stars.length,'the backdrop adds no HTML target');
+      // Visible in the scene graph is not visible on screen: measure the pixels the
+      // field actually contributes, same frame, with only the field toggled.
+      const lit=await page.evaluate(async()=>{
+        const scene=BABYLON.EngineStore.LastCreatedScene,engine=scene.getEngine(),field=['sky-field-dim','sky-field-band','sky-field-bright'].map(n=>scene.getMeshByName(n));
+        const read=async()=>{scene.render();const px=await engine.readPixels(0,0,engine.getRenderWidth(),engine.getRenderHeight(),true);
+          let n=0;for(let i=0;i<px.length;i+=4)if(px[i]+px[i+1]+px[i+2]>14+24+41+30)n++;return n;};
+        field.forEach(m=>m.setEnabled(false));const off=await read();field.forEach(m=>m.setEnabled(true));return (await read())-off;
+      });
+      assert.ok(lit>=500,'the backdrop lights real pixels on screen: '+lit);
       assert.ok(first.vertex.drawn.every((v,i)=>Math.abs(v-first.vertex.expected[i])<1e-4),'Babylon draws the field with the MM stars\' rotation convention');
       await drag(160,40);
       const second=await read(),q1=field.rotation[0],q2=second.state.skyField.rotation[0];

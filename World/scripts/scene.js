@@ -64,8 +64,8 @@
       const mesh=finish(B.MeshBuilder.CreateSphere(name,{diameter:1,segments:4},scene),mat,position,false,shadow);
       mesh.scaling.copyFrom(v(...size));return mesh;
     }
-    function ring(name, radius, thickness, position, mat) {
-      return finish(B.MeshBuilder.CreateTorus(name,{diameter:radius*2,thickness,tessellation:64},scene),mat,position);
+    function ring(name, radius, thickness, position, mat, tess = 64) {
+      return finish(B.MeshBuilder.CreateTorus(name,{diameter:radius*2,thickness,tessellation:tess},scene),mat,position);
     }
     // The route is deliberately small: arrival, clock ring, a water channel,
     // low stairs and one grove. All meshes are authored here as placeholders.
@@ -176,11 +176,13 @@
       const sm=material('star-material-'+i,color,.4);
       const star=finish(B.MeshBuilder.CreatePolyhedron('memory-star-'+i,{type:1,size:i===0?.7:.45},scene),sm,v(x,1.6,z));
       star.isPickable=true;star.metadata={mmIndex:i};stars.push(star);
-      ring('star-ring-'+i,.75,.045,v(x,.57,z),gold);
+      // A torus costs (tessellation+1)^2 vertices, and every MM gets a station:
+      // at 64 each station cost ~38k vertices, most of them in 10cm petals.
+      ring('star-ring-'+i,.75,.045,v(x,.57,z),gold,32);
       const petals=[];
       for(let j=0;j<8;j++) {
         const angle=j*Math.PI/4,position=v(x+Math.sin(angle)*.58,.59,z+Math.cos(angle)*.58);
-        const outline=ring('review-petal-'+i+'-'+j,.105,.024,position,gold);
+        const outline=ring('review-petal-'+i+'-'+j,.105,.024,position,gold,16);
         const fill=sphere('review-petal-fill-'+i+'-'+j,[.17,.035,.17],position,gold);
         petals.push({outline,fill});
       }

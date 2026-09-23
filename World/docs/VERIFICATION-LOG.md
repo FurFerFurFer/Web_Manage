@@ -1137,3 +1137,96 @@ Documentation only: recorded the verdict in draft §5.7 and README; replaced NOT
 completed motion-playtest request with the pending interface/appearance/larger-fixture
 choices. No runtime, fixture, tuning or data changes. `git diff --check -- World` passed;
 game/browser suites were not rerun for this feedback note.
+
+## 2026-09-23 — full-bleed sky, background universe, night stargazing and a 35-MM fixture
+
+The user chose **A+B / C / B** from presented options (recorded in draft §5.7): full-bleed
+sky with one compact strip; a background star field plus night rendering while stargazing;
+a 30-40 MM synthetic fixture. Motion settings (40° / 1× / 20°/s), KS03 coordinates, MM 103's
+(510,70) override and `storage-isolation.js` are unchanged. No Track runtime file, data or
+cloud state was touched; no dependency, download or install.
+
+Before starting, the 2026-09-21 sky work that had been left uncommitted was committed on its
+own (`88d2ef4`), after `sky-core` 6/6 and `git diff --check`, so this increment is separable.
+
+**History caveat.** Another session's commit `5cf2a19` ("New system for codex") swept in an
+**intermediate** state of this increment: it contains the black-drawing field and the 7.5x
+vertex cost described below. The commit that follows it carries the fixes, tests and
+documentation. Do not treat `5cf2a19` alone as a verified state of the sky.
+
+**Changes.** `demo-core.js`: 32 appended MMs (ids 110-166, four depths, a 150→151→152 cycle,
+three disconnected groups, long names, `customColor` on every entry so the colour contract
+stays exact) and five review sessions. `scene.js`: extra Grove stations on a spiral solved
+offline (≥2.3 m apart, x ≤ -10.4, z ≥ 15, every centre ≤36.1 m from the 38.5 m floor's
+centre; the three authored stations unchanged); a visual-only `night=max(env.night,
+skyReveal)` that never writes `environment`; torus tessellation right-sized for stations.
+`sky-scene.js`: seeded 4,360-point field (dim, band, bright) with `infiniteDistance`, sharing
+the MM rotation. `index.html`/`demo.css`/`app.js`: one `.sky-bar`, results as an overlay,
+`body[data-sky]` hiding the garden-only HUD, labels as captions.
+
+**What went wrong first, and how it was found.**
+
+- **The field drew black.** The backdrop case passed on flags (visible, alpha 1) while a
+  screenshot showed no background stars; four empty regions measured 0 lit pixels. A
+  framebuffer probe toggling only the field showed +0 px in every variant except opaque
+  blending, which *removed* 167 px — the points were drawn black. With lighting disabled the
+  standard material outputs emissive × vertex colour, and emissive was black. A pixel
+  assertion was added and **seen failing first ("lights real pixels on screen: 0")**, then
+  white emissive gave +1,870 px on the probe and the case passed.
+- **The fixture multiplied scene cost 7.5×.** Draw-call/vertex instrumentation (load-
+  independent) measured 193,309 → 1,443,005 vertices. Every torus used tessellation 64
+  ((64+1)² = 4,225 vertices) and each station carries nine, eight of them 10 cm petal
+  outlines. Station ring 32 and petal outlines 16 (helper default stays 64 for every other
+  ring) gave **231,165 vertices (+20%)**. Draw calls: 217 → 257 at spawn, 184 → 220 in the
+  Grove, 55 → 88 in the sky.
+- **A clickable label opened the wrong MM at density** ("clicking the visible scene star
+  opens that MM: 22 !== 1"), and the held-pointer helper found no empty sky at nine probe
+  points. Labels became `pointer-events: none`; both cases then passed. Recorded in §5.7 as
+  an implementation choice pending the user's confirmation.
+- **The bottom gutter missed by 2 px** (sky bottom 704, toolbelt top 702 at 1280x800);
+  96 → 106 px.
+- The `browser.test.js` parent timed out once (150 s budget). A one-variable control against
+  a real-copy tree of `88d2ef4` was contaminated by another session's headless Chrome at
+  ~520% CPU (load 14-18). After the vertex fix, interleaved runs under the same contention:
+  changed 150 s pass, baseline 143 s pass, changed 133 s pass. Both trees run near budget
+  under that load.
+
+**Fail-first by single-rule reversal** (real-copy scratch trees, each differing from the
+working tree in exactly one file; `sky.test.js` of the working tree):
+
+| Reversal | Fails | Message that fired |
+| --- | --- | --- |
+| field rotation line removed | case 5 (case 6 cascades) | `the drag turned the backdrop` |
+| `night=env.night` | case 5 only | `drawn at night while stargazing: 0.68,0.82,0.83` |
+| results `position:static` | case 4 only | `searching never resizes the map` |
+| old inset `108px 28px 118px` | case 4 only | `most of the screen height: 514` |
+| HUD rule removed | case 4 only | `the garden-only HUD steps aside` |
+
+Case 5 fails for two reversals on **different** assertions. The pre-change product with the
+new tests fails cases 4 and 5 on missing elements only, which is weak evidence and is not
+counted; the reversals above are the evidence.
+
+**Measured sky area** (map rectangle / screen): 1280x800 42% → 76%; 1920x1080 57% → 82%;
+390x844 36% → 57%.
+
+**Final commands** (sequential, tree hash unchanged across runs, load 9-13):
+
+| Command | Result |
+| --- | --- |
+| `node World/tests/{core,sky-core,map-core,flight-core,stamina-core,character-motion,character-animation}.test.js` | 10, 6, 4, 9, 18, 4, 15 — all pass |
+| `node World/tests/sky.test.js` | 12/12 subtests, 46 s |
+| `node World/tests/camera.test.js` | 5/5, 27 s |
+| `node World/tests/map.test.js` | 5/5, 70 s |
+| `node World/tests/flight.test.js` | 14/14, 128 s |
+| `node World/tests/browser.test.js` | 7/7 (twice, interleaved with baseline) |
+
+Assertions updated for the fixture, each re-derived from a rule rather than copied from
+output: sky-core edges now an independent oracle plus the canonical three-MM subset; review
+cues listed per MM; midnight pending = MM 101 only (the only session dated the next day;
+earlier unfinished reviews do not carry forward); `core` skipped-review exclusion as
+`sessions on day − 1`; the narrow search query `'water'` → `'shapes a place'`, since
+"Insects at the water's edge" now also matches.
+
+**Not covered:** laptop visual acceptance of the strip, backdrop, band and night treatment;
+real GPU frame times (PLAN §25.13); label placement at density (visible overlap and
+in-label scrollbars — reported, not changed); the minimap's crowded grove; browser zoom.
