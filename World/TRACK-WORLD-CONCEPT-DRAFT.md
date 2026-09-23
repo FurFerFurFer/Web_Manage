@@ -112,6 +112,12 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
   behavior evidence from the user's visual acceptance. The two original September 13
   clips establish no climb/glide/notebook motion; later footage is separately indexed.
   No claim that a paid tool is necessary has been demonstrated.
+  *Correction (2026-09-23):* this "latest continuation" was not a fresh choice. It was the
+  **identical September 14 prompt**, re-sent into Codex at 06:17 UTC one day after ruling 1,
+  "Decision already made" block included. Nobody asked which of the two contradicting
+  instructions the user meant, so it must not be read as the user withdrawing ruling 1.
+  The stop instruction above still governs all body-animation work until the user reopens
+  it. See [the retrospective](RETROSPECTIVE-2026-09-23.md#34-the-reopened-decision-was-closed-again-09-19--09-20).
 - **Gateway fit — Option A selected (2026-09-20).** Keep the body at 1.30× and the authored
   world/controller scale. Widen only the two gateway piers and their decorative caps so
   the existing climb-top route fits the body. The implementation uses **1.5 width × 2.2
@@ -264,8 +270,13 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
 
   1. **Production path REOPENED — research a skinned model, READ-ONLY.** The September 14
      "decision already made, do not re-open the gate" instruction reached this project
-     through a hand-off prompt, not from the user, and it closed the recommendation made on
-     September 13 without the user ever ruling on it. The user has now ruled: research
+     through a hand-off prompt. *Corrected 2026-09-23:* the user **did** choose "Local
+     procedural rebuild" in that Claude session (2026-09-14 13:39 UTC). The question they
+     answered left out Codex's September 13 diagnosis that the rigid rig cannot look like
+     the reference, and it priced the skinned route at "~$35" although free routes existed.
+     It was a real ruling made without the deciding information, not a ruling that never
+     happened. See [the retrospective](RETROSPECTIVE-2026-09-23.md#33-the-question-that-closed-it-was-lopsided-09-14).
+     With that information, the user has now ruled: research
      skinned/rigged character and authored-animation sources **read-only**, and present
      named candidates with licence, real cost and laptop impact, with a recommendation.
      **Download, install and buy nothing** — every gate in [AGENTS.md](AGENTS.md) "Stop for
