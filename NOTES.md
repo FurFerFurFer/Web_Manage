@@ -1055,16 +1055,6 @@ in README. These are the edges they leave open:
 - **Delete lives only in the single-note view.** Panes offer close, which deletes nothing,
   but not delete. That keeps the confirmation surface where it already was.
 
-### A caution-picker case fails on about twelve days a year
-
-`the due day and every day after it are not pickable` (`tests/browser.test.js`) seeds the
-due day at today+3 and probes today+4 as "a day after the deadline". When today+3 is the
-last day of a month, the probe lands in the next month, a cell the popup does not draw,
-so the case fails whatever the code does. It failed on 2026-09-27 against both HEAD and
-the notes work. The fix is in the test, not the page: probe a later day inside the drawn
-month, or navigate the popup forward first. It needs a decision on which one the case is
-meant to prove.
-
 ### Quest: what was deliberately left out
 
 The feature works and is documented in README. These are the edges it does not cover:

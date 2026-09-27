@@ -1148,21 +1148,30 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('the due day and every day after it are not pickable', async () => {
-    const { db, due } = cautionDb();
+    /* Mid-month on purpose. The picker draws the DUE day's month, so the day
+       after it must sit in that month too. This case used to put the due day at
+       today+3 and probe today+4, which failed whenever today+3 was a month's last
+       day (2026-09-30 → a probe of 10-01, a cell never drawn), whatever the
+       page did. The 14th, 15th and 16th exist in every month. */
+    const due = thisMonthDay(15), after = thisMonthDay(16), beforeDue = thisMonthDay(14);
+    const { db } = cautionDb({ date: due });
     const page = await openDlPopup({ db, due });
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
 
-    const state = await page.evaluate(function (a, b) {
-      var one = document.querySelector('[data-dl-caution-day="' + a + '"]');
-      var two = document.querySelector('[data-dl-caution-day="' + b + '"]');
-      return { dueDisabled: !!one && one.disabled, afterDisabled: !!two && two.disabled };
-    }, due, dayFromToday(4));
+    const state = await page.evaluate(function (a, b, c) {
+      function cell(v) { return document.querySelector('[data-dl-caution-day="' + v + '"]'); }
+      var one = cell(a), two = cell(b), three = cell(c);
+      return { dueDisabled: !!one && one.disabled, afterDisabled: !!two && two.disabled,
+               beforeOpen: !!three && !three.disabled };
+    }, due, after, beforeDue);
     assert.equal(state.dueDisabled, true, 'the due day is drawn red, never amber');
     assert.equal(state.afterDisabled, true, 'and a day after the deadline is not a run-up');
+    // The control: a picker that locked EVERY day would pass the two above.
+    assert.equal(state.beforeOpen, true, 'while the day before the deadline is still pickable');
 
     // Cancel path: clicking anyway must leave the stored bytes untouched.
     await clickCautionDay(page, due);
-    await clickCautionDay(page, dayFromToday(4));
+    await clickCautionDay(page, after);
     await sleep(150);
     assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
       'clicking a locked cell leaves track_db byte-identical');

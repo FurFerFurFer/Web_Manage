@@ -2458,3 +2458,26 @@ Date list, detail, picker, split, add overlay, send menu, sent — with no page 
 exercised by mouse and by emulated touch only), the live Firebase project, and two devices
 editing notes at once. Also not asserted: that a textarea selection made with real touch
 handles survives the press on Send — the case sets the selection programmatically.
+
+### The month-end caution-picker case, made date-independent (2026-09-27)
+
+`the due day and every day after it are not pickable` failed on HEAD and on the notes work
+alike (see the entry above): it put the due day at today+3 and probed today+4, and the picker
+draws only the due day's month, so on any day where today+3 is a month's last day the probe
+cell does not exist. Fixed in the test alone (the user's choice, option A): the due day is the
+**15th** of the current month and the probe the **16th**, so both are drawn every day of the
+year. A control assertion was added, the **14th is still pickable**, because a picker that
+locked every day would pass the other two.
+
+Fail-first is the record above: failing 2026-09-27 in the full run, twice against the working
+tree and once against a `git archive HEAD` control. Passing the same day after the change. Two
+doctored `progress.html` copies (the doctored page written as a real file, never through a
+symlink, repository md5 identical before and after) show each assertion is load-bearing:
+
+| Doctor | Rule reversed | Failed on |
+| --- | --- | --- |
+| after-pickable | `locked = ds === d.date` | `and a day after the deadline is not a run-up` |
+| lock-all | `locked = true` | `while the day before the deadline is still pickable` |
+
+`node tests/run.js` afterwards: **all 23 suites passed, browser 287/287** (plan count `1..287`,
+exit 0 read from node), at load ~2 — the first fully green run since the notes work landed.
