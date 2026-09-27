@@ -1360,6 +1360,568 @@ html[data-theme] #nw-content::placeholder {
   color: var(--color-text-muted);
 }
 
+/* ── notes: the Date tab, the picker, side by side ────────────
+   notes-widget.js injects only the floating panel's original CSS. Everything
+   the two kinds of note added lives here instead, structure and theme
+   together, straight from the tokens — so the side-by-side view follows Grit
+   and Night with no second copy to keep in step. Selectors that must beat an
+   injected rule are anchored on an id; the phone layout is in the 720 block. */
+
+.nw-tabs {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+
+.nw-tab {
+  min-height: 2.25rem;
+  padding: 0 0.85rem;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 600 13px/1 var(--font-ui);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.nw-tab:hover {
+  color: var(--color-text);
+}
+
+.nw-tab[aria-selected="true"] {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+#nw-panel .nw-date-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+#nw-panel .nw-date-today {
+  box-shadow: inset 3px 0 0 var(--color-accent-pending);
+}
+
+.nw-date-label {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.nw-date-preview,
+.nw-pick-preview {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nw-goto {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 12px;
+  color: var(--color-text-muted);
+  font: 12px var(--font-ui);
+}
+
+.nw-goto-input,
+.nw-picker-filter {
+  min-height: 2.25rem;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  color: var(--color-text);
+  font: 13px var(--font-ui);
+}
+
+.nw-section-label,
+.nw-send-menu-label {
+  padding: 10px 16px 4px;
+  color: var(--color-text-muted);
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nw-empty-msg {
+  padding: 16px;
+  color: var(--color-text-muted);
+  font: 12px/1.5 var(--font-ui);
+  text-align: center;
+}
+
+.nw-day-title,
+.nw-pick-title,
+.nw-pane-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font: 600 14px var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#nw-body #nw-content {
+  margin-bottom: 4px;
+}
+
+.nw-status {
+  flex-shrink: 0;
+  min-height: 1.5rem;
+  padding: 2px 14px 6px;
+  color: var(--color-text-muted);
+  font: 11px var(--font-ui);
+}
+
+.nw-status.nw-status-warn {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.nw-chip {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  font: 700 10px/1.4 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.nw-chip-date {
+  border-color: color-mix(in srgb, var(--color-accent-pending) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent-pending) 12%, transparent);
+  color: var(--color-accent-pending);
+}
+
+.nw-chip-sorted {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+}
+
+/* the picker — in the panel, and in a card over the side-by-side view */
+.nw-picker {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.nw-picker-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.nw-picker-filter {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.nw-picker-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px 0 8px;
+  overflow-y: auto;
+}
+
+.nw-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.nw-pick-row:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
+.nw-pick-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nw-pick-name,
+.nw-send-name {
+  overflow: hidden;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nw-pick-name {
+  font-weight: 600;
+}
+
+.nw-pick-new {
+  margin: 6px 12px;
+  min-height: 2.75rem;
+  padding: 0 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-text);
+  font: 600 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.nw-pick-new:hover {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-soft);
+}
+
+/* While side by side is open the page behind does not scroll. On BODY, not html:
+   body's overflow propagates to the viewport only while html's stays visible, and
+   (0,1,2) beats `body.app-page { overflow-x: hidden }` without a new scroll
+   container appearing anywhere. */
+html.nw-split-open body {
+  overflow: hidden;
+}
+
+/* side by side — the display is set inline by the widget (flex / none) */
+#nw-split {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--color-app-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+}
+
+.nw-split-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  min-height: 3.25rem;
+  padding: 4px 8px 4px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.nw-split-title {
+  color: var(--color-text);
+  font: 600 16px var(--font-display);
+}
+
+.nw-split-count {
+  color: var(--color-text-muted);
+  font: 12px var(--font-data);
+}
+
+.nw-split-spacer {
+  flex: 1;
+}
+
+.nw-split-add {
+  min-height: 2.75rem;
+  padding: 0 14px;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+  font: 600 13px var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nw-split-add:hover:not(:disabled) {
+  background: var(--color-primary-solid);
+  color: #ffffff;
+}
+
+.nw-split-add:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nw-split-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 10px;
+  overscroll-behavior: contain;
+}
+
+.nw-pane {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: border-color 0.15s;
+}
+
+.nw-pane:focus-within {
+  border-color: var(--color-primary-border);
+}
+
+/* The Send label goes when its PANE is narrow, not the viewport — four panes on
+   a laptop are as tight as one on a phone, and the title needs the room. */
+.nw-pane {
+  container-type: inline-size;
+}
+
+@container (max-width: 380px) {
+  .nw-send-label {
+    display: none;
+  }
+}
+
+.nw-pane.nw-pane-date {
+  border-top: 3px solid var(--color-accent-pending);
+}
+
+.nw-pane.nw-pane-sorted {
+  border-top: 3px solid var(--color-primary);
+}
+
+.nw-pane-flash {
+  animation: nw-pane-flash 0.9s var(--ease-ui);
+}
+
+@keyframes nw-pane-flash {
+  from { box-shadow: inset 0 0 0 3px var(--color-primary-border); }
+  to { box-shadow: inset 0 0 0 0 transparent; }
+}
+
+.nw-pane-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 4px 4px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.nw-pane-topic {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: 600 14px var(--font-ui);
+}
+
+.nw-pane-topic:hover {
+  border-color: var(--color-border-subtle);
+}
+
+.nw-pane-topic:focus {
+  border-color: var(--color-primary-border);
+  background: var(--color-app-bg);
+}
+
+.nw-pane-topic::placeholder,
+.nw-pane-text::placeholder {
+  color: var(--color-text-muted);
+}
+
+.nw-pane-text {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: 14px/1.65 var(--font-ui);
+  resize: none;
+}
+
+/* The shared focus ring is !important on `outline`; only its offset can move,
+   and pulling it inward keeps the pane's rounded clip from cutting it off. */
+#nw-split .nw-pane-text:focus-visible {
+  outline-offset: -4px;
+}
+
+.nw-send-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.nw-send-btn:hover {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary-text);
+}
+
+.nw-send-btn[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+.nw-divider {
+  position: relative;
+  flex: 0 0 10px;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.nw-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 2.5rem;
+  border-radius: 2px;
+  background: var(--color-border);
+  transform: translate(-50%, -50%);
+  transition: background 0.15s;
+}
+
+.nw-divider:hover::after,
+.nw-divider.nw-divider-active::after,
+.nw-divider:focus-visible::after {
+  background: var(--color-primary);
+}
+
+.nw-pick-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--color-app-bg) 72%, transparent);
+}
+
+.nw-pick-card {
+  display: flex;
+  flex-direction: column;
+  width: min(26rem, 100%);
+  max-height: min(34rem, 100%);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+}
+
+.nw-pick-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.nw-send-menu {
+  position: absolute;
+  z-index: 3;
+  min-width: 13rem;
+  max-width: calc(100% - 16px);
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+}
+
+.nw-send-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--color-text);
+  font: 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.nw-send-item:hover {
+  background: var(--color-surface-muted);
+}
+
+.nw-toast {
+  position: absolute;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  left: 50%;
+  z-index: 4;
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--color-text);
+  color: var(--color-app-bg);
+  font: 600 13px var(--font-ui);
+  box-shadow: var(--shadow-float);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.nw-toast.nw-toast-on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nw-pane-flash {
+    animation: none;
+  }
+
+  .nw-toast {
+    transition: none;
+  }
+}
+
 /* ── Firebase overlay and sync feedback ───────────────────── */
 html[data-theme] #fb-overlay {
   background: var(--color-app-bg) !important;
@@ -3437,6 +3999,32 @@ button.cal-doc-origin:hover {
     max-width: calc(100vw - 32px);
     max-height: calc(100dvh - var(--phone-tabbar-h) - 32px);
   }
+
+  /* Side by side becomes one above another. Each pane keeps a readable floor
+     and the column scrolls past it, so a fourth pane is still reachable. */
+  #nw-split .nw-split-body {
+    flex-direction: column;
+    padding: 8px;
+    overflow-y: auto;
+  }
+
+  #nw-split .nw-pane {
+    min-height: 10rem;
+  }
+
+  #nw-split .nw-divider {
+    flex-basis: 12px;
+    cursor: row-resize;
+  }
+
+  #nw-split .nw-divider::after {
+    width: 2.5rem;
+    height: 3px;
+  }
+
+  #nw-split .nw-split-bar {
+    padding-left: 12px;
+  }
 }
 
 /* Deliberately OUTSIDE the media query: --phone-tabbar-h is 0px above the
@@ -3471,6 +4059,7 @@ body.app-page #nw-panel {
   body.docs-page [data-theme-toggle-host],
   body.docs-page #nw-btn,
   body.docs-page #nw-panel,
+  body.docs-page #nw-split,
   body.docs-page #fb-overlay,
   body.docs-page #fb-sync-banner,
   body.docs-page #fb-sync-error,

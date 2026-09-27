@@ -2366,3 +2366,95 @@ taps to open a documentation page feels right rather than merely correct is a ju
 test here can make. Also unchanged from round 1: `viewport-fit=cover` is still unset, the
 sync banners still land on the tab bar, and the pan/zoom canvases, MG accordion and
 uncapped `w-[528px]` popups still have no phone pass — all in NOTES Proposal 16.
+
+### Notes, two kinds: Sorted and Date, side by side, and Send (2026-09-27)
+
+The floating notes widget now holds two kinds of note — the existing **Sorted** list and a new
+**Date** draft per local day (`dateNotes`, the 25th slot field) — with a full-screen
+side-by-side view of up to four notes and a **Send** that appends a highlighted selection to
+another open note. The rules live in a new pure module, `notes-core.js`, with its own offline
+suite swept under all five zones.
+
+**Three pre-existing save bugs, all one cause, each seen failing first against the unchanged
+widget** (`git show HEAD:scripts/notes-widget.js`, served from a scratch root). The 300ms
+content debounce read `state.activeId` when it FIRED, not when it was armed:
+
+```
+× within 300ms of typing           'A body' !== 'typed then closed'        — the typing was dropped
+← then open B within 300ms         B's content became 'A edited'           — A's text written INTO B
+← then reopen A within 300ms       editor showed 'A body', not the new text — the next keystroke saves stale over new
+```
+
+The first two cases were written against ids the widget has always had (`#nw-content`,
+`.nw-note-row`, `#nw-back-btn`) and landed and run **before** any widget change, so they failed
+on their assertion rather than on a missing control. The third was found while planning the
+baselines, not by a user: once the saver captured its note, the first two passed even with
+`render()`'s flush removed, which meant nothing pinned the flush. Reopening within the window
+is the case where the flush is load-bearing, and the pre-fix widget fails it too.
+
+**A real defect found by screenshot, not by the suite.** The first visual pass showed "Open
+another → Kolb" leaving two panes with Guitar theory gone. The hidden floating panel still held
+its picker DOM under `display: none`; `document.querySelector` reached that stale row first and
+its handler rebuilt the panes as `[origin, pick]`. No user can click a hidden row, but a
+selector can, and so can assistive tech — the panel now empties itself whenever it is hidden.
+A second one, from the viewport case's first run: the split measured **1265px of 1280**, because
+the page behind kept its scrollbar (and a wheel over the view scrolled the hidden page). The
+page now stops scrolling while the view is open, released on close; the case asserts both.
+
+**Doctored baselines**, one rule reversed per scratch root, `tests/` copied for real, each
+printing its served root and refusing a doctored file byte-identical to the repository's. Run
+over the 18 notes cases (plan count `1..18`) through a task-owned `--require` preload that
+Proxy-binds the parent `TestContext`:
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| capture | the saver persists to `state.active` when it fires | side-open saves, close-pane flush, both Send cases, deleted-note refusal |
+| no-render-flush | `render()` discards savers without flushing | reopen-at-once, **alone** |
+| store-blank | `withDateNote` stores blank text instead of deleting the day | emptying deletes the key; accepted clear deletes the day — plus offline `blank text DELETES the key` and `identity when unchanged` |
+| active-slot | the writer targets the active slot, not the captured one | workspace identity, **alone** — slot B gained `dateNotes["2026-09-27"]` |
+| send-replaces | Send sets the target's text instead of appending | both Send cases |
+| send-first | the menu ignores the choice and sends to the first target | the two-target Send case, **alone** |
+| utc-label | `noonOf(day)` → `new Date(day)` | offline `dayLabel` ×4 under **UTC-11 only**; passes in UTC and UTC+14 |
+
+`no-render-flush`, `store-blank` and `active-slot` are disjoint from every other set.
+`capture` is not disjoint and cannot be: every pane write passes through it, so its set
+necessarily contains the Send cases, and `send-first ⊂ send-replaces` for the same reason. The
+Send doctors still earn their place — each fires on the assertion its case is named for
+(`'send this idea\nand this' !== 'A body\nsend this idea\nand this'`, `'B body' !== 'B
+body\nfor beta only'`), which `capture` reaches by a different path. `utc-label` is the direct
+proof the new suite belongs in the swept list: UTC alone is blind to it.
+
+**A test arithmetic slip, caught by the failure message.** The first Send run failed with
+`'…and thi' !== '…and this'` — the case selected 15..37 for a 23-character span starting at
+15. The widget had sent exactly the selection it was given. The range is now computed with
+`.length` rather than counted by hand.
+
+**`node tests/run.js`: 22 of 23 suites passed; browser 285/287** (plan count `1..287`, read
+from the run, not the summary line), exit code 1 read from node directly. The offline sweep —
+now 15 swept runs, `notes-core` (19) beside `calendar-core` and `schema` in all five zones — and
+the seven unswept suites were all green. `md5sum` of the runtime tree identical at both ends of
+the run, HEAD unchanged (`b88495e`). Neither failure is this change, and each was settled by a
+control rather than by reading:
+
+- **`the due day and every day after it are not pickable` — a pre-existing, date-dependent test
+  bug, failing on HEAD too.** Control: `git archive HEAD` into a scratch root, the untouched
+  pre-change code AND tests, same day — it fails identically there. The case seeds the due day
+  at today+3 and probes today+4 as "a day after"; today (2026-09-27) makes the due day
+  **2026-09-30**, so the probe is 2026-10-01, a cell the popup — drawing the due day's month —
+  does not render, and `!!two` reads `false`. It fails whenever today+3 is a month's last day,
+  about twelve days a year. Left unfixed on purpose — it is another feature's test — and
+  recorded in NOTES.
+- **`a legacy caution span is migrated once, on load, and never again` — contention.** It timed
+  out waiting 15s for a migration that runs synchronously before React mounts. Load during the
+  run reached **7.95**, with `unattended-upgrades` at 62% CPU. Control: the same case against
+  HEAD passed, and against **this working tree it passed twice** at load ~2.3 — the one
+  variable being the run.
+
+The side-by-side view was also screenshot on `index.html` (Grit and Night, 1280x820 and
+390x844), `progress.html` and `documentations.html` (Night, both sizes) through the whole flow —
+Date list, detail, picker, split, add overlay, send menu, sent — with no page error on any.
+
+**Not covered:** real touch hardware (the divider and Send's selection-preserving press are
+exercised by mouse and by emulated touch only), the live Firebase project, and two devices
+editing notes at once. Also not asserted: that a textarea selection made with real touch
+handles survives the press on Send — the case sets the selection programmatically.

@@ -63,7 +63,8 @@
     docPages: 'list',
     trueStorages: 'list',
     trueStoragePos: 'map',
-    refSchedules: 'list'
+    refSchedules: 'list',
+    dateNotes: 'map'
   };
 
   var SLOT_KEYS = Object.keys(SLOT_FIELDS);

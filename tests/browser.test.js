@@ -3683,7 +3683,7 @@ test('browser suites', skipUnlessChrome, async t => {
     for (const key of ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
       'goals', 'saActions', 'saEntries', 'sourceDumps', 'notes', 'mmEntries', 'mgSchedule',
       'calendarNotes', 'deadlines', 'pos', 'levelTemplates', 'docPages',
-      'trueStorages', 'trueStoragePos']) {
+      'trueStorages', 'trueStoragePos', 'dateNotes']) {
       assert.deepEqual(imported[key], original[key], key + ' round-tripped unchanged');
     }
 
@@ -3696,7 +3696,7 @@ test('browser suites', skipUnlessChrome, async t => {
       'and the storage parent/child link');
 
     // The allow-list must not silently shrink back.
-    assert.equal(Object.keys(imported).length, 24, 'the imported slot carries all 24 canonical fields');
+    assert.equal(Object.keys(imported).length, 25, 'the imported slot carries all 25 canonical fields');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -3725,7 +3725,8 @@ test('browser suites', skipUnlessChrome, async t => {
     'id', 'name', 'createdAt', 'sessions', 'mms', 'kolbs', 'mgChanges',
     'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
     'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules'
+    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
+    'dateNotes'
   ];
 
   await t.test('every entry point creates a slot with the same canonical shape', async () => {
@@ -3942,9 +3943,11 @@ test('browser suites', skipUnlessChrome, async t => {
         assert.equal(await page.evaluate(function () { return !!document.getElementById('nw-btn'); }),
           true, file + ': the notes widget still mounted');
         await page.evaluate(OPEN_NOTES);
+        // …and its Date tab, the second reader of the slot
+        await page.evaluate(function () { document.querySelector('[data-nw-tab="date"]').click(); return true; });
         await sleep(150);
         assert.equal(await page.evaluate(READ_RAW), raw,
-          file + ': opening the notes widget wrote nothing');
+          file + ': opening the notes widget and its Date tab wrote nothing');
 
         // by now every reader on the page has run, so the user has been told
         assert.equal(await page.evaluate(function () {
@@ -5883,7 +5886,8 @@ test('browser suites', skipUnlessChrome, async t => {
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
     const FOREIGN = ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
-      'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes'];
+      'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes',
+      'dateNotes'];
     const before = await page.evaluate(function (keys) {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var s = (db.slots || [])[0] || {};
@@ -7582,7 +7586,8 @@ test('browser suites', skipUnlessChrome, async t => {
     const page = await open('progress.html', { db: CREATE_SEED(), hash: '#schedule' });
     await mountSchedule(page);
     const FOREIGN = ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
-      'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes'];
+      'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes',
+      'dateNotes'];
     const SNAP = function (keys) {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var s = (db.slots || [])[0] || {};
@@ -9296,7 +9301,7 @@ test('browser suites', skipUnlessChrome, async t => {
       var s = JSON.parse(localStorage.getItem('track_db')).slots[0];
       var out = {};
       ['mms', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
-        'sessions', 'kolbs', 'notes', 'pos', 'levelTemplates'].forEach(function (k) {
+        'sessions', 'kolbs', 'notes', 'dateNotes', 'pos', 'levelTemplates'].forEach(function (k) {
           out[k] = JSON.stringify(s[k]);
         });
       return out;
@@ -9311,7 +9316,7 @@ test('browser suites', skipUnlessChrome, async t => {
       var s = JSON.parse(localStorage.getItem('track_db')).slots[0];
       var out = {};
       ['mms', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
-        'sessions', 'kolbs', 'notes', 'pos', 'levelTemplates'].forEach(function (k) {
+        'sessions', 'kolbs', 'notes', 'dateNotes', 'pos', 'levelTemplates'].forEach(function (k) {
           out[k] = JSON.stringify(s[k]);
         });
       return out;
@@ -9510,6 +9515,547 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.deepEqual(await page.evaluate(attrs, 'data-quest-row'), ['root', 't1', 't2', 'r1'],
         'the panel survived the stored value ' + raw);
       assert.deepEqual(realErrors(page), []);
+      await page.close();
+    }
+  });
+
+  /* ── NOTES: the floating widget's saves ─────────────────────────────────
+     The content box saves on a 300ms debounce. It used to read WHICH note to
+     save into from `state.activeId` when the timer FIRED, not when it was armed —
+     so the last keystrokes before × were dropped (activeId was already null), and
+     ← then opening another note inside the window wrote the first note's text
+     into the second. Both cases act inside one evaluate, well under 300ms, and
+     are written against ids the widget has always had so they fail on their
+     assertion rather than on a missing control. */
+
+  const NOTE_OF = function (id) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var s = (db.slots || [])[0] || {};
+    return (s.notes || []).filter(function (n) { return n.id === id; })[0] || null;
+  };
+
+  await t.test('NOTES: typing and closing at once still saves the typing', async () => {
+    const page = await open('index.html', { db: seedDb({
+      notes: [F.note('n-a', F.localTs(2026, 3, 7), { topic: 'Alpha', content: 'A body' })]
+    }) });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('.nw-note-row').click();
+      var ta = document.getElementById('nw-content');
+      ta.value = 'typed then closed';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('[aria-label="Close notes"]').click();
+      return true;
+    });
+    await sleep(700);
+    assert.equal((await page.evaluate(NOTE_OF, 'n-a')).content, 'typed then closed',
+      'the keystrokes typed just before × were saved');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES: ← then opening another note never writes the first note\'s text into it', async () => {
+    const page = await open('index.html', { db: seedDb({
+      notes: [F.note('n-a', F.localTs(2026, 3, 7), { topic: 'Alpha', content: 'A body' }),
+        F.note('n-b', F.localTs(2026, 3, 8), { topic: 'Beta', content: 'B body' })]
+    }) });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelectorAll('.nw-note-row')[0].click();
+      var ta = document.getElementById('nw-content');
+      ta.value = 'A edited';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      document.getElementById('nw-back-btn').click();
+      document.querySelectorAll('.nw-note-row')[1].click();
+      return true;
+    });
+    await sleep(700);
+    assert.equal((await page.evaluate(NOTE_OF, 'n-b')).content, 'B body',
+      'the second note kept its own text');
+    assert.equal((await page.evaluate(NOTE_OF, 'n-a')).content, 'A edited',
+      'and the first note received its edit');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES: going back and reopening a note at once shows what was just typed', async () => {
+    /* The reopened editor reads storage. If the text typed a moment ago is still
+       waiting on its debounce, the editor shows the OLD text — and the next
+       keystroke saves old-plus-new over what was typed. Every navigation must
+       land a pending save before the next view reads. */
+    const page = await open('index.html', { db: seedDb({
+      notes: [F.note('n-a', F.localTs(2026, 3, 7), { topic: 'Alpha', content: 'A body' })]
+    }) });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const shown = await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('.nw-note-row').click();
+      var ta = document.getElementById('nw-content');
+      ta.value = 'A body, and more';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      document.getElementById('nw-back-btn').click();
+      document.querySelector('.nw-note-row').click();
+      return document.getElementById('nw-content').value;
+    });
+    assert.equal(shown, 'A body, and more', 'the reopened note shows the text just typed');
+    await page.close();
+  });
+
+  /* ── NOTES: Sorted and Date, side by side ─────────────────────────────────
+     `dateNotes` is a map keyed by LOCAL day; absence is an empty day and the key
+     is deleted, never set to '', when the text empties. Side opening puts up to
+     four notes in a full-screen view, and Send appends a selection to another
+     open note. Every case waits for the write to LAND, then asserts. */
+
+  const NOTES_SEED = over => seedDb(Object.assign({
+    notes: [F.note('n-a', F.localTs(2026, 3, 7), { topic: 'Alpha', content: 'A body' }),
+      F.note('n-b', F.localTs(2026, 3, 8), { topic: 'Beta', content: 'B body' }),
+      F.note('n-c', F.localTs(2026, 3, 9), { topic: 'Gamma', content: 'C body' })],
+    dateNotes: { '2026-03-09': F.dateNote('an older draft', F.localTs(2026, 3, 9)) }
+  }, over || {}));
+
+  const TODAY_IN = function () { return window.TrackSchema.localToday(); };
+  const SLOT0 = function () { return (JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || null; };
+  const TYPE_IN = function (sel, value) {
+    var ta = document.querySelector(sel);
+    ta.value = value;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  const OPEN_TODAY = function () {
+    document.getElementById('nw-btn').click();
+    document.querySelector('[data-nw-tab="date"]').click();
+    document.querySelector('.nw-date-today').click();
+    return true;
+  };
+  // Waits for track_db to differ from `before` — the write landing — and no more.
+  const landed = (page, before, message) => page.waitFor(function (b) {
+    return localStorage.getItem('track_db') !== b;
+  }, { args: [before], message: message || 'the write landing in track_db' });
+
+  // Today's Date note beside `second` ('sorted:<id>' or 'date:<day>'), through the UI.
+  const toSplit = async (page, second) => {
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(function (second) {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-tab="date"]').click();
+      document.querySelector('.nw-date-today').click();
+      document.querySelector('[data-nw-side-open]').click();
+      var tab = document.querySelector('[data-nw-picker-tab="' + second.split(':')[0] + '"]');
+      if (tab.getAttribute('aria-selected') !== 'true') tab.click();
+      document.querySelector('[data-nw-pick="' + second + '"]').click();
+      return true;
+    }, second);
+    await page.waitFor(function () { return document.querySelectorAll('[data-nw-pane]').length === 2; },
+      { message: 'two notes side by side' });
+  };
+  const addPane = (page, pick) => page.evaluate(function (pick) {
+    document.querySelector('[data-nw-add-pane]').click();
+    var o = document.querySelector('[data-nw-pick-overlay]');
+    var tab = o.querySelector('[data-nw-picker-tab="' + pick.split(':')[0] + '"]');
+    if (tab.getAttribute('aria-selected') !== 'true') tab.click();
+    o.querySelector('[data-nw-pick="' + pick + '"]').click();
+    return true;
+  }, pick);
+  const PANES = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-nw-pane]'),
+      function (p) { return p.getAttribute('data-nw-pane'); });
+  };
+  const SELECT_IN = function (sel, a, b) {
+    var ta = document.querySelector(sel);
+    ta.focus();
+    ta.setSelectionRange(a, b);
+    document.dispatchEvent(new Event('selectionchange'));
+    return true;
+  };
+
+  await t.test('NOTES: opening the Date tab and an empty day writes nothing', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const before = await page.evaluate(READ_RAW);
+    await page.evaluate(OPEN_TODAY);
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-day-title]'); }, { message: 'today\'s draft' });
+    await page.evaluate(function () { document.querySelector('[aria-label="Close notes"]').click(); return true; });
+    await sleep(600);
+    assert.equal(await page.evaluate(READ_RAW), before, 'track_db is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES: today\'s draft is written under the LOCAL day, and emptying it deletes the key', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const today = await page.evaluate(TODAY_IN);
+    const slotBefore = await page.evaluate(SLOT0);
+    let raw = await page.evaluate(READ_RAW);
+    await page.evaluate(OPEN_TODAY);
+    await page.evaluate(TYPE_IN, '#nw-content', 'first idea');
+    await landed(page, raw, 'the first draft landing');
+    const slot = await page.evaluate(SLOT0);
+    assert.equal(slot.dateNotes[today].content, 'first idea', 'stored under TrackSchema.localToday()');
+    assert.equal(typeof slot.dateNotes[today].createdAt, 'number');
+    assert.deepEqual(slot.dateNotes['2026-03-09'], slotBefore.dateNotes['2026-03-09'], 'the older draft is untouched');
+    for (const key of Object.keys(slotBefore)) {
+      if (key === 'dateNotes') continue;
+      assert.deepEqual(slot[key], slotBefore[key], key + ' is unchanged — the widget writes one key');
+    }
+
+    raw = await page.evaluate(READ_RAW);
+    await page.evaluate(TYPE_IN, '#nw-content', '   ');
+    await landed(page, raw, 'the emptied draft landing');
+    const after = (await page.evaluate(SLOT0)).dateNotes;
+    assert.equal(Object.prototype.hasOwnProperty.call(after, today), false,
+      'an emptied day is DELETED — never stored as blank text');
+    assert.deepEqual(Object.keys(after), ['2026-03-09']);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES: clearing a day asks first — Cancel keeps it — and an empty day asks nothing', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const today = await page.evaluate(TODAY_IN);
+
+    // the no-op guard: today holds nothing yet, so there is nothing to ask about
+    await page.evaluate(OPEN_TODAY);
+    const dialogs0 = page.dialogs.length;
+    await page.evaluate(function () { document.querySelector('[data-nw-clear-day]').click(); return true; });
+    await sleep(150);
+    assert.equal(page.dialogs.length, dialogs0, 'an empty day raised no prompt');
+
+    let raw = await page.evaluate(READ_RAW);
+    await page.evaluate(TYPE_IN, '#nw-content', 'keep me');
+    await landed(page, raw);
+    raw = await page.evaluate(READ_RAW);
+
+    page.rejectDialogs = true;
+    await page.evaluate(function () { document.querySelector('[data-nw-clear-day]').click(); return true; });
+    await sleep(300);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogs0 + 1, 'the clear asked first');
+    assert.equal(await page.evaluate(READ_RAW), raw, 'Cancel left track_db byte-identical');
+    assert.equal(await page.evaluate(function () { return document.getElementById('nw-content').value; }), 'keep me');
+
+    await page.evaluate(function () { document.querySelector('[data-nw-clear-day]').click(); return true; });
+    await landed(page, raw, 'the accepted clear landing');
+    assert.equal(Object.prototype.hasOwnProperty.call((await page.evaluate(SLOT0)).dateNotes, today), false,
+      'accepting deleted the day');
+    await page.close();
+  });
+
+  await t.test('NOTES: side-open from a Date note offers Sorted first, and both panes save to their own records', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const today = await page.evaluate(TODAY_IN);
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-tab="date"]').click();
+      document.querySelector('.nw-date-today').click();
+      document.querySelector('[data-nw-side-open]').click();
+      return true;
+    });
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-nw-picker-tab="sorted"]').getAttribute('aria-selected');
+    }), 'true', 'a Date note opens the picker on Sorted — the draft → sorted direction');
+    await page.evaluate(function () { document.querySelector('[data-nw-pick="sorted:n-b"]').click(); return true; });
+    await page.waitFor(function () { return document.querySelectorAll('[data-nw-pane]').length === 2; },
+      { message: 'two notes side by side' });
+    assert.deepEqual(await page.evaluate(PANES), ['date:' + today, 'sorted:n-b']);
+
+    let raw = await page.evaluate(READ_RAW);
+    await page.evaluate(TYPE_IN, '[data-nw-pane="date:' + today + '"] textarea', 'drafted on the left');
+    await page.evaluate(TYPE_IN, '[data-nw-pane="sorted:n-b"] textarea', 'B body, sorted on the right');
+    await landed(page, raw);
+    await sleep(400); // both panes have their own debounce
+    const slot = await page.evaluate(SLOT0);
+    assert.equal(slot.dateNotes[today].content, 'drafted on the left');
+    assert.equal(slot.notes.find(n => n.id === 'n-b').content, 'B body, sorted on the right');
+    assert.equal(slot.notes.find(n => n.id === 'n-a').content, 'A body', 'no other note was touched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES: side-open from a Sorted note offers Date first, with Today at the top', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const today = await page.evaluate(TODAY_IN);
+    const picks = await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-row="sorted:n-a"]').click();
+      document.querySelector('[data-nw-side-open]').click();
+      return {
+        tab: document.querySelector('[data-nw-picker-tab="date"]').getAttribute('aria-selected'),
+        rows: Array.prototype.map.call(document.querySelectorAll('[data-nw-pick]'),
+          function (r) { return r.getAttribute('data-nw-pick'); })
+      };
+    });
+    assert.equal(picks.tab, 'true', 'a Sorted note opens the picker on Date');
+    assert.equal(picks.rows[0], 'date:' + today, 'Today first, even though it holds nothing yet');
+    assert.ok(picks.rows.includes('date:2026-03-09'), 'and the older draft is offered');
+    await page.close();
+  });
+
+  await t.test('NOTES: up to four notes side by side, and an open note is never offered twice', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'sorted:n-a');
+    const offered = await page.evaluate(function () {
+      document.querySelector('[data-nw-add-pane]').click();
+      var o = document.querySelector('[data-nw-pick-overlay]');
+      var sorted = Array.prototype.map.call(o.querySelectorAll('[data-nw-pick]'), function (r) { return r.getAttribute('data-nw-pick'); });
+      o.querySelector('[data-nw-picker-tab="date"]').click();
+      var dated = Array.prototype.map.call(o.querySelectorAll('[data-nw-pick]'), function (r) { return r.getAttribute('data-nw-pick'); });
+      o.querySelector('[data-nw-pick-cancel]').click();
+      return { sorted: sorted, dated: dated };
+    });
+    assert.deepEqual(offered.sorted, ['sorted:n-b', 'sorted:n-c'], 'the open Sorted note is not offered');
+    assert.equal(offered.dated.includes('date:' + today), false, 'nor is the open day');
+    assert.deepEqual(offered.dated, ['date:2026-03-09']);
+
+    await addPane(page, 'sorted:n-b');
+    await addPane(page, 'date:2026-03-09');
+    assert.deepEqual(await page.evaluate(PANES), ['date:' + today, 'sorted:n-a', 'sorted:n-b', 'date:2026-03-09']);
+    const bar = await page.evaluate(function () {
+      var add = document.querySelector('[data-nw-add-pane]');
+      return { disabled: add.disabled, count: document.querySelector('[data-nw-pane-count]').textContent };
+    });
+    assert.equal(bar.disabled, true, 'a fifth cannot be opened');
+    assert.equal(bar.count, '4 / 4');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES: closing a pane right after typing saves it, and the last pane returns to the panel', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'sorted:n-a');
+    await page.evaluate(function () {
+      var ta = document.querySelector('[data-nw-pane="sorted:n-a"] textarea');
+      ta.value = 'typed, then the pane closed';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('[data-nw-pane="sorted:n-a"] [data-nw-pane-close]').click();
+      return true;
+    });
+    await sleep(700);
+    assert.equal((await page.evaluate(NOTE_OF, 'n-a')).content, 'typed, then the pane closed',
+      'the close flushed the pane before it went');
+    const view = await page.evaluate(function () {
+      return { split: document.getElementById('nw-split').style.display,
+               panel: document.getElementById('nw-panel').style.display,
+               day: (document.querySelector('[data-nw-day-title]') || {}).getAttribute
+                 ? document.querySelector('[data-nw-day-title]').getAttribute('data-nw-day-title') : null };
+    });
+    assert.deepEqual(view, { split: 'none', panel: 'flex', day: today },
+      'one note left is not side by side — it is the panel\'s detail view');
+    await page.close();
+  });
+
+  await t.test('NOTES: Send appends the highlighted draft to the other note and leaves the draft alone', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'sorted:n-a');
+    const DRAFT = '[data-nw-pane="date:' + today + '"] textarea';
+    let raw = await page.evaluate(READ_RAW);
+    await page.evaluate(TYPE_IN, DRAFT, 'keep this line\nsend this idea\nand this');
+    await landed(page, raw);
+    await sleep(100);
+
+    // nothing highlighted: the button says so and nothing is written
+    raw = await page.evaluate(READ_RAW);
+    await page.evaluate(SELECT_IN, DRAFT, 3, 3);
+    assert.equal(await page.evaluate(function (sel) {
+      return document.querySelector(sel).closest('[data-nw-pane]').querySelector('[data-nw-send]').getAttribute('aria-disabled');
+    }, DRAFT), 'true', 'Send is marked unavailable with no selection');
+    await page.evaluate(function (sel) {
+      document.querySelector(sel).closest('[data-nw-pane]').querySelector('[data-nw-send]').click(); return true;
+    }, DRAFT);
+    await sleep(200);
+    assert.equal(await page.evaluate(READ_RAW), raw, 'pressing it anyway wrote nothing');
+    assert.ok(/Highlight/.test(await page.evaluate(function () {
+      return document.querySelector('[data-nw-toast]').textContent;
+    })), 'and the press explained why');
+
+    const FROM = 'keep this line\n'.length, TO = FROM + 'send this idea\nand this'.length;
+    await page.evaluate(SELECT_IN, DRAFT, FROM, TO);
+    assert.equal(await page.evaluate(function (sel) {
+      return document.querySelector(sel).closest('[data-nw-pane]').querySelector('[data-nw-send]').getAttribute('aria-disabled');
+    }, DRAFT), 'false');
+    await page.evaluate(function (sel) {
+      document.querySelector(sel).closest('[data-nw-pane]').querySelector('[data-nw-send]').click(); return true;
+    }, DRAFT);
+    await landed(page, raw, 'the sent text landing');
+    const slot = await page.evaluate(SLOT0);
+    assert.equal(slot.notes.find(n => n.id === 'n-a').content, 'A body\nsend this idea\nand this',
+      'APPENDED on a line of its own — the existing text is untouched');
+    assert.equal(slot.dateNotes[today].content, 'keep this line\nsend this idea\nand this',
+      'the draft is left as it was');
+    assert.equal(await page.evaluate(function (sel) { return document.querySelector(sel).value; }, DRAFT),
+      'keep this line\nsend this idea\nand this');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES: with two Sorted notes open, Send asks which — and only that one changes', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'sorted:n-a');
+    await addPane(page, 'sorted:n-b');
+    const DRAFT = '[data-nw-pane="date:' + today + '"] textarea';
+    let raw = await page.evaluate(READ_RAW);
+    await page.evaluate(TYPE_IN, DRAFT, 'for beta only');
+    await landed(page, raw);
+    await sleep(100);
+    raw = await page.evaluate(READ_RAW);
+    const beforeA = await page.evaluate(NOTE_OF, 'n-a');
+
+    await page.evaluate(SELECT_IN, DRAFT, 0, 13);
+    const menu = await page.evaluate(function (sel) {
+      document.querySelector(sel).closest('[data-nw-pane]').querySelector('[data-nw-send]').click();
+      return Array.prototype.map.call(document.querySelectorAll('[data-nw-send-menu] [data-nw-send-to]'),
+        function (b) { return b.getAttribute('data-nw-send-to'); });
+    }, DRAFT);
+    assert.deepEqual(menu, ['sorted:n-a', 'sorted:n-b'], 'both Sorted notes offered, in pane order');
+    assert.equal(await page.evaluate(READ_RAW), raw, 'opening the menu wrote nothing');
+
+    await page.evaluate(function () { document.querySelector('[data-nw-send-to="sorted:n-b"]').click(); return true; });
+    await landed(page, raw, 'the send landing');
+    assert.equal((await page.evaluate(NOTE_OF, 'n-b')).content, 'B body\nfor beta only', 'the chosen note got the text');
+    assert.deepEqual(await page.evaluate(NOTE_OF, 'n-a'), beforeA, 'the other one is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES: a note keeps writing to the workspace it was opened in', async () => {
+    // Another tab switching the active workspace must not redirect an open
+    // pane's saves. For a Date note that would CREATE a draft in the wrong slot.
+    const A = F.populatedSlot({ id: 'slot-A', name: 'A',
+      notes: [F.note('n-a', F.localTs(2026, 3, 7), { topic: 'Alpha', content: 'A body' })], dateNotes: {} });
+    const B = F.emptySlot({ id: 'slot-B', name: 'B' });
+    const page = await open('index.html', { db: F.dbWith([A, B], 'slot-A') });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'sorted:n-a');
+
+    await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db'));
+      db.activeSlotId = 'slot-B';
+      localStorage.setItem('track_db', JSON.stringify(db));
+      return true;
+    });
+    const slotB = function () {
+      return JSON.stringify(JSON.parse(localStorage.getItem('track_db')).slots.filter(function (s) { return s.id === 'slot-B'; })[0]);
+    };
+    const bBefore = await page.evaluate(slotB);
+    const raw = await page.evaluate(READ_RAW);
+    await page.evaluate(TYPE_IN, '[data-nw-pane="date:' + today + '"] textarea', 'written in A');
+    await landed(page, raw);
+    assert.equal(await page.evaluate(slotB), bBefore, 'slot B is byte-identical');
+    const a = await page.evaluate(function () {
+      return JSON.parse(localStorage.getItem('track_db')).slots.filter(function (s) { return s.id === 'slot-A'; })[0];
+    });
+    assert.equal(a.dateNotes[today].content, 'written in A', 'the draft went to the slot the pane was opened in');
+    await page.close();
+  });
+
+  await t.test('NOTES: typing into a Sorted note deleted elsewhere says so, and never recreates it', async () => {
+    const page = await open('index.html', { db: NOTES_SEED() });
+    await toSplit(page, 'sorted:n-a');
+    await page.evaluate(WRITE_SLOT_KEY, 'notes', [F.note('n-b', F.localTs(2026, 3, 8), { topic: 'Beta', content: 'B body' })]);
+    await page.evaluate(TYPE_IN, '[data-nw-pane="sorted:n-a"] textarea', 'into the void');
+    await page.waitFor(function () {
+      var s = document.querySelector('[data-nw-pane="sorted:n-a"] [data-nw-status]');
+      return s && s.getAttribute('data-nw-status') !== 'idle';
+    }, { message: 'the pane reporting its save' });
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-nw-pane="sorted:n-a"] [data-nw-status]').getAttribute('data-nw-status');
+    }), 'missing', 'the pane says the note is gone');
+    assert.deepEqual((await page.evaluate(SLOT0)).notes.map(n => n.id), ['n-b'], 'and n-a was not recreated');
+    await page.close();
+  });
+
+  await t.test('NOTES: side by side fills the viewport, left to right, under the storage banners', async () => {
+    const page = await open('index.html', { db: NOTES_SEED(), viewport: [1280, 900] });
+    await toSplit(page, 'sorted:n-a');
+    await addPane(page, 'sorted:n-b');
+    const geo = await page.evaluate(function () {
+      var s = document.getElementById('nw-split');
+      var r = s.getBoundingClientRect();
+      return {
+        split: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+        z: Number(getComputedStyle(s).zIndex),
+        panes: Array.prototype.map.call(document.querySelectorAll('[data-nw-pane]'), function (p) {
+          var q = p.getBoundingClientRect(); return { left: Math.round(q.left), top: Math.round(q.top), w: Math.round(q.width) };
+        })
+      };
+    });
+    assert.deepEqual(geo.split, [0, 0, 1280, 900], 'full screen');
+    assert.ok(geo.z < 9998, 'below the quota and sync banners (z-index ' + geo.z + ')');
+    assert.equal(new Set(geo.panes.map(p => p.top)).size, 1, 'the panes share one top edge');
+    assert.ok(geo.panes[0].left < geo.panes[1].left && geo.panes[1].left < geo.panes[2].left, 'and run left to right');
+    assert.ok(geo.panes.every(p => p.w > 300), 'each a usable width: ' + geo.panes.map(p => p.w));
+
+    // the page behind was locked for the view, and is released when it closes
+    assert.equal(await page.evaluate(function () {
+      return getComputedStyle(document.body).overflowY;
+    }), 'hidden', 'the page behind does not scroll while notes cover it');
+    await page.evaluate(function () { document.querySelector('[data-nw-close-split]').click(); return true; });
+    assert.equal(await page.evaluate(function () {
+      return document.documentElement.classList.contains('nw-split-open');
+    }), false, 'closing releases the page');
+    assert.notEqual(await page.evaluate(function () { return getComputedStyle(document.body).overflowY; }), 'hidden');
+    await page.close();
+  });
+
+  await t.test('NOTES: dragging a divider resizes the panes and writes nothing', async () => {
+    const page = await open('index.html', { db: NOTES_SEED(), viewport: [1280, 900] });
+    await toSplit(page, 'sorted:n-a');
+    const WIDTHS = function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-nw-pane]'),
+        function (p) { return Math.round(p.getBoundingClientRect().width); });
+    };
+    const before = await page.evaluate(WIDTHS);
+    const raw = await page.evaluate(READ_RAW);
+    const at = await page.evaluate(function () {
+      var r = document.querySelector('[data-nw-divider]').getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    });
+    const mouse = (type, x, buttons) => page.session.send('Input.dispatchMouseEvent',
+      { type, x, y: at.y, button: 'left', buttons, clickCount: 1 });
+    await mouse('mousePressed', at.x, 1);
+    for (let dx = 40; dx <= 200; dx += 40) await mouse('mouseMoved', at.x + dx, 1);
+    await mouse('mouseReleased', at.x + 200, 0);
+    const after = await page.evaluate(WIDTHS);
+    assert.ok(after[0] - before[0] >= 180, 'the left pane grew by the drag (' + before + ' → ' + after + ')');
+    assert.ok(Math.abs((after[0] + after[1]) - (before[0] + before[1])) <= 2, 'and its neighbour paid for it');
+    await sleep(400);
+    assert.equal(await page.evaluate(READ_RAW), raw, 'a layout change is not data — nothing written');
+    await page.close();
+  });
+
+  await t.test('NOTES: the side-by-side view is painted from the live tokens in both appearances', async () => {
+    for (const theme of ['grit', 'dark']) {
+      const page = await open('index.html', { db: NOTES_SEED(), extra: { track_theme: theme } });
+      await toSplit(page, 'sorted:n-a');
+      const paint = await page.evaluate(function () {
+        function token(name) {
+          var probe = document.createElement('div');
+          probe.style.background = 'var(' + name + ')';
+          document.body.appendChild(probe);
+          var v = getComputedStyle(probe).backgroundColor;
+          probe.remove();
+          return v;
+        }
+        return {
+          split: getComputedStyle(document.getElementById('nw-split')).backgroundColor,
+          pane: getComputedStyle(document.querySelector('[data-nw-pane]')).backgroundColor,
+          appBg: token('--color-app-bg'),
+          surface: token('--color-surface')
+        };
+      });
+      assert.equal(paint.split, paint.appBg, theme + ': the view is the app background');
+      assert.equal(paint.pane, paint.surface, theme + ': a pane is a surface');
+      assert.notEqual(paint.pane, 'rgba(0, 0, 0, 0)', theme + ': and actually painted');
       await page.close();
     }
   });
@@ -10062,6 +10608,37 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.ok(open_.rowH >= 44,
       'and its rows are 44px targets (' + open_.rowH + 'px) — a finger, not a cursor');
 
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE: notes side by side stack one above another, uncropped, with finger-sized controls', async () => {
+    const page = await open('index.html', { db: NOTES_SEED(), viewport: PHONE });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'sorted:n-a');
+    const geo = await page.evaluate(function () {
+      var vw = document.documentElement.clientWidth;
+      var panes = Array.prototype.map.call(document.querySelectorAll('[data-nw-pane]'), function (p) {
+        var r = p.getBoundingClientRect();
+        return { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), h: Math.round(r.height) };
+      });
+      var controls = Array.prototype.map.call(
+        document.querySelectorAll('#nw-split .nw-split-bar button, [data-nw-pane] .nw-pane-head button'),
+        function (b) { var r = b.getBoundingClientRect(); return Math.round(Math.min(r.width, r.height)); });
+      return { vw: vw, panes: panes, controls: controls };
+    });
+    assert.equal(geo.panes[0].left, geo.panes[1].left, 'the two panes share a left edge');
+    assert.ok(geo.panes[0].top < geo.panes[1].top, 'the draft sits above the note');
+    assert.ok(geo.panes.every(p => p.left >= 0 && p.right <= geo.vw), 'neither pane is cropped: ' + JSON.stringify(geo.panes));
+    assert.ok(geo.panes.every(p => p.h >= 160), 'each pane keeps a readable height');
+    assert.ok(geo.controls.length >= 9 && geo.controls.every(s => s >= 44),
+      'every control is a 44px target: ' + geo.controls.join(','));
+
+    // typing still lands, from the stacked layout
+    const raw = await page.evaluate(READ_RAW);
+    await page.evaluate(TYPE_IN, '[data-nw-pane="date:' + today + '"] textarea', 'drafted on a phone');
+    await landed(page, raw);
+    assert.equal((await page.evaluate(SLOT0)).dateNotes[today].content, 'drafted on a phone');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });

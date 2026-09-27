@@ -45,7 +45,8 @@ function emptySlot(over = {}) {
     docPages: [],
     trueStorages: [],
     trueStoragePos: {},
-    refSchedules: []
+    refSchedules: [],
+    dateNotes: {}
   }, over);
 }
 
@@ -61,6 +62,10 @@ const mgChange = (id, date, mmId, newMG) => ({ id, date, mmId, newMG });
 const linChange = (id, date, over = {}) => Object.assign({ id, date, title: 'LIN ' + id, items: [] }, over);
 
 const note = (id, ts, over = {}) => Object.assign({ id, topic: 'Note ' + id, content: 'body', createdAt: ts }, over);
+
+// A Date note is the VALUE under a local-day key in `dateNotes`, not a list
+// item — the day is the identity. `ts` is epoch ms, like a Sorted note's.
+const dateNote = (content, ts, over = {}) => Object.assign({ content, createdAt: ts, updatedAt: ts }, over);
 
 const dump = (id, createdAt, over = {}) =>
   Object.assign({ id, title: 'Dump ' + id, createdAt, parentId: null, mmLinks: [] }, over);
@@ -156,7 +161,8 @@ function populatedSlot(over = {}) {
       trueStorage('ts-1', 'Storage A', { tags: [storageTag('tg-1', 'd-1', 10)] }),
       trueStorage('ts-2', 'Storage B', { parentIds: ['ts-1'] })
     ],
-    trueStoragePos: { 'ts-1': { x: 120, y: 140 } }
+    trueStoragePos: { 'ts-1': { x: 120, y: 140 } },
+    dateNotes: { '2026-03-09': dateNote('Draft: lift earlier', localTs(2026, 3, 9, 21, 0)) }
   }, over));
 }
 
@@ -177,14 +183,14 @@ function slotWithout(missing, over = {}) {
 const preCalendarSlot = (over = {}) => slotWithout(
   ['linDayTitles', 'notes', 'mmEntries', 'mgSchedule', 'calendarNotes',
     'deadlines', 'pos', 'levelTemplates', 'docPages',
-    'trueStorages', 'trueStoragePos'], over);
+    'trueStorages', 'trueStoragePos', 'dateNotes'], over);
 
 // The oldest shape: what a slot looked like before Progress and KS02 were
 // unified under one track_db, when a slot held only KS02 records.
 const preUnifiedSlot = (over = {}) => slotWithout(
   ['linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
     'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos'], over);
+    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'dateNotes'], over);
 
 // ── malformed input ──────────────────────────────────────────────────────
 // Raw STRINGS, because the failure mode is what is stored, not what a caller
@@ -239,7 +245,7 @@ module.exports = {
   localTs, emptySlot, populatedSlot,
   slotWithout, preCalendarSlot, preUnifiedSlot,
   MALFORMED_DB_STRINGS, malformedSlot, dbWith, legacyLocalKeys,
-  mm, kolb, mgChange, linChange, note, dump, dumpLink, task, milestone,
+  mm, kolb, mgChange, linChange, note, dateNote, dump, dumpLink, task, milestone,
   saAction, saEntry, mmEntry, session, calNote, deadline, legacyDeadline, docPage,
   trueStorage, storageTag
 };

@@ -619,15 +619,48 @@ from the item and nowhere else), and carries:
 
 ### Floating notes
 
-`notes-widget.js` mounts a floating notes widget on every page. It currently supports:
+`notes-widget.js` mounts a floating notes widget on every page, with its rules in
+`notes-core.js` (`window.TrackNotes`). It holds two kinds of note, a small Kolb cycle:
+draft freely under the day, then sort what survives into a note of its own.
 
-- Multiple notes per active slot.
-- Topic and content editing.
-- Automatic local saves.
-- Note deletion.
-- Collapsed, list, and detail views.
-- Resizable panel dimensions.
+- **Sorted** notes, the `notes` list: the user's own notes, added with `+ Add note`,
+  each with a topic and content, deleted with a confirmation.
+- **Date** notes, the `dateNotes` map: exactly **one draft per local calendar day**,
+  fixed by its date. Nothing is created ahead of time. The **Date** tab always shows
+  **Today** first, then a `Go to day` picker for any day, then every other day holding
+  text, newest first. A day is written on its first non-blank text, and its key is
+  **deleted** when the text is emptied, so an empty day and an untouched day are the
+  same state. `🗑` clears a day after a confirmation; on a day holding nothing it
+  asks nothing.
+- **Side by side.** `⧉` on any note opens a picker (tabs `Sorted | Date`, a filter,
+  `+ New sorted note`). A Date note opens it on Sorted and a Sorted note on Date.
+  Picking a note turns the widget into a **full-screen view** of both, left and right
+  above 720px and stacked below it. Every pane is editable; `＋ Open another` adds
+  more, up to **four**; `⇄` swaps a pane's note; `✕` closes one. Closing down to one
+  note returns to the panel's single-note view, and `⤡` does that at any time. A
+  note already open is never offered again. Dividers between panes drag by mouse or
+  finger (double-click evens them out). Their sizes are layout, kept in memory and
+  never stored. While the view is open the page behind it does not scroll.
+- **Send.** Highlight text in a pane and press `Send` to append it, on a line of its
+  own, to another open note. With several other notes open it asks which, listing
+  Sorted notes first. The source is left untouched, so moving rather than copying
+  means deleting it yourself. With nothing highlighted the button explains that
+  rather than doing nothing.
+- Collapsed, list, detail and picker views, and a resizable panel.
 - Migration of older global notes into the active slot.
+
+**Saving.** Each editor saves on a 300ms debounce into the note it was **opened on**,
+and every view change first lands whatever is still pending. The widget used to
+decide which note to save into when the timer fired. That dropped the last
+keystrokes before `×`, wrote a note's text into the next note opened within 300ms,
+and let a note reopened at once show its old text. Each pane also keeps writing to
+the **workspace** it was opened in, even if another tab switches the active one. If
+that workspace is gone, nothing is written. A Sorted note deleted in another tab is
+never recreated: its pane says **"⚠ Not saved — this note was deleted elsewhere"**,
+and a refused write says so the same way. Every save is a fresh read-modify-write of
+`notes` or `dateNotes` alone. A list view refreshes when another tab edits notes; an
+open editor does not, so two tabs typing into the *same* note still end with the
+last write.
 
 Legacy `track_global_notes` adoption resolves the same slot the widget displays: the stored
 `activeSlotId` when it exists, otherwise the first slot. The legacy key is removed only
@@ -1069,7 +1102,7 @@ Each page writes only the keys it owns, merging them into a fresh read of the st
 | `sir-ks02.html` | `sessions`, `mms`, `kolbs`, `mgChanges`, `linChanges`, `linDayTitles`, `pos`, `levelTemplates`, `sourceDumps` |
 | `documentations.html` | `docPages`, plus `calendarNotes` and `deadlines` through a fresh read-modify-write |
 | `true-storage.html` | `trueStorages`, `trueStoragePos` |
-| `notes-widget.js` | `notes` |
+| `notes-widget.js` | `notes`, `dateNotes` |
 | `index.html` | the slot list itself — create, rename, delete, import |
 
 `sir-ks02.html` reads `mgSchedule` but never writes it; that key belongs to `progress.html`. It also reads `trueStorages`, and writes it in exactly one narrow case — adding or removing a source-dump tag — through a fresh single-key read-modify-write (`_mutateSlotKey`), never through its autosave patch. `true-storage.html` reads `sourceDumps` and `mms` and never writes either. Adding a key to a page's write set means adding it to this table.
@@ -1140,7 +1173,8 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
 | `scripts/storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
 | `scripts/firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
-| `scripts/notes-widget.js` | Floating per-slot notes widget |
+| `scripts/notes-widget.js` | Floating per-slot notes widget — the Sorted and Date tabs, the picker, the full-screen side-by-side view and Send |
+| `scripts/notes-core.js` | The one definition of what a note is (`window.TrackNotes`): the total `dateNotes` reader, the delete-on-empty writer, the Sorted patch writer that never recreates a deleted note, `appendSent`, and the local-day labels |
 | `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `scripts/graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
@@ -1176,6 +1210,7 @@ Track-website/
 │   ├── doc-table-core.js
 │   ├── firebase-sync.js
 │   ├── graph-layout.js
+│   ├── notes-core.js
 │   ├── notes-widget.js
 │   ├── schedule-paste-core.js
 │   ├── quest-core.js
@@ -1194,6 +1229,7 @@ Track-website/
     ├── run.js
     ├── calendar-core.test.js
     ├── schema.test.js
+    ├── notes-core.test.js
     ├── true-storage-core.test.js
     ├── graph-layout.test.js
     ├── doc-table-core.test.js
@@ -1279,11 +1315,18 @@ The pages currently read or write fields including:
   docPages,
   trueStorages,
   trueStoragePos,
-  refSchedules
+  refSchedules,
+  dateNotes
 }
 ```
 
-Quests added **no** field to this list. `quest`, `star`, `questLearn`, `starLearn` and `questOrder` are item-level keys on a goal node inside the existing `goals` list, which is why they need no migration, no default, and no importer change: absence is already the correct state for every stored node, and the flags travel with the node through nesting, reordering, deletion and an export/import round trip. An offline case in `tests/schema.test.js` asserts a slot carrying all five still normalizes to exactly these 24 fields.
+`dateNotes` is the one field added since: a map from a local `YYYY-MM-DD` day to
+`{content, createdAt, updatedAt}`, owned by the notes widget. It is appended after
+`refSchedules`, so every earlier field keeps its place in a serialized slot. A slot
+stored before it simply lacks the key, which reads as no drafts, so nothing was
+migrated.
+
+Quests added **no** field to this list. `quest`, `star`, `questLearn`, `starLearn` and `questOrder` are item-level keys on a goal node inside the existing `goals` list, which is why they need no migration, no default, and no importer change: absence is already the correct state for every stored node, and the flags travel with the node through nesting, reordering, deletion and an export/import round trip. An offline case in `tests/schema.test.js` asserts a slot carrying all five still normalizes to exactly these 25 fields.
 
 #### Canonical slot schema
 
@@ -1546,6 +1589,7 @@ It runs three layers:
 | Layer | File | What it covers |
 | --- | --- | --- |
 | Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, the chosen-caution-day resolver and its writer, the legacy `startDate` fallback, deadline validation, `dayShift` across month/year/DST boundaries, an inverted set being impossible rather than merely inert, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
+| Offline notes tests | `tests/notes-core.test.js` | What a note is, in `notes-core.js`: the delete-on-empty `dateNotes` writer and its identity-when-unchanged contract, spreading so an unknown key survives, a JSON-parsed `__proto__` kept as data, the total reader over any value, `datedDays` skipping a bad key without deleting it, the Sorted patch reporting a missing note instead of recreating it, `appendSent`, and the day labels — weekday, Today/Yesterday, month, year and DST boundaries — in every swept zone |
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
@@ -1553,12 +1597,13 @@ It runs three layers:
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Date tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, and the stacked phone layout |
 
-The first two offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
+The first three offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
 That sweep is the point, not a detail: `calendar-core.js` exists to turn instants
-into *local* calendar days and `schema.js` stamps a new slot with one, and the
+into *local* calendar days, `schema.js` stamps a new slot with one and
+`notes-core.js` names a stored day's weekday, and the
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
 machine running in UTC. `true-storage-core.test.js`, `graph-layout.test.js`,
 `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`,
@@ -1690,6 +1735,7 @@ node --check scripts/schema.js
 node --check scripts/storage-guard.js
 node --check scripts/calendar-core.js
 node --check scripts/firebase-sync.js
+node --check scripts/notes-core.js
 node --check scripts/notes-widget.js
 node --check scripts/true-storage-core.js
 node --check scripts/graph-layout.js

@@ -39,14 +39,15 @@ const S = globalThis.TrackSchema;
 
 const TZ = process.env.TZ || '(system default)';
 
-// The 23 fields as AGENTS.md "Current Data Contract" writes them, in its order.
+// The 25 fields as AGENTS.md "Current Data Contract" writes them, in its order.
 // Written out by hand on purpose: if the table in schema.js is edited, this is
 // the assertion that notices.
 const CONTRACT = [
   'id', 'name', 'createdAt', 'sessions', 'mms', 'kolbs', 'mgChanges',
   'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
   'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-  'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules'
+  'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
+  'dateNotes'
 ];
 
 const LISTS = CONTRACT.filter(k => S.SLOT_FIELDS[k] === 'list');
@@ -59,7 +60,7 @@ test('module surface', () => {
     assert.equal(typeof S[name], 'function', name + ' is exported');
   }
   assert.equal(typeof S.SLOT_FIELDS, 'object');
-  assert.equal(S.SLOT_KEYS.length, 24);
+  assert.equal(S.SLOT_KEYS.length, 25);
   assert.ok(Object.isFrozen(S.SLOT_FIELDS), 'the field table is frozen — it is the schema, not a scratch object');
 });
 
@@ -146,8 +147,8 @@ test('GUARD: the five quest keys add NO slot field and raise no validation error
     }]
   });
   assert.deepEqual(Object.keys(quested), CONTRACT,
-    'no SLOT_FIELDS row was added — the slot is still exactly 24 fields');
-  assert.equal(CONTRACT.length, 24);
+    'no SLOT_FIELDS row was added — the slot is still exactly the 25 contract fields');
+  assert.equal(CONTRACT.length, 25);
   assert.deepEqual(S.validateSlot(quested), { ok: true, errors: [] },
     'the quest keys raise no validation error');
 
@@ -831,10 +832,39 @@ test('a non-string detail WARNS and stays editable, and an absent one is fine', 
   assert.equal(absent.ok, true, 'absence is the default and is not damage');
 });
 
-test('GUARD: the detail is an item key, so the slot is still 24 fields', () => {
+test('GUARD: the detail is an item key, so the slot is still 25 fields', () => {
   // If this ever fails, `detail` has become a SLOT_FIELDS row by mistake and
   // the seven hand-written CONTRACT lists all need to follow it.
-  assert.equal(Object.keys(S.createEmptySlot()).length, 24);
+  assert.equal(Object.keys(S.createEmptySlot()).length, 25);
+});
+
+// ── dateNotes: one draft per local day ─────────────────────────────────────
+
+test('a slot from before Date notes gains an empty map, and nothing else moves', () => {
+  const old = F.slotWithout(['dateNotes'], { notes: [F.note('n-1', F.localTs(2026, 3, 7))] });
+  assert.equal('dateNotes' in old, false, 'the fixture really predates the field');
+  assert.deepEqual(S.validateSlot(old), { ok: true, errors: [] },
+    'an absent dateNotes is an older export, not damage');
+  const out = S.normalizeSlot(old);
+  assert.deepEqual(out.dateNotes, {});
+  assert.deepEqual(out.notes, old.notes, 'the Sorted notes ride through untouched');
+});
+
+test('dateNotes rides through normalizeSlot verbatim, unknown value keys included', () => {
+  const map = {
+    '2026-03-09': { content: 'draft', createdAt: 1, updatedAt: 2, laterKey: 'kept' },
+    'not-a-day': { content: 'a hand-edited key the reader skips but nobody deletes' }
+  };
+  assert.deepEqual(S.normalizeSlot({ dateNotes: map }).dateNotes, map);
+});
+
+test('dateNotes must be a map — a list there is structural, like every other map field', () => {
+  const r = S.validateSlot({ dateNotes: [] });
+  assert.equal(r.ok, false);
+  assert.equal(r.errors[0].field, 'dateNotes');
+  assert.equal(S.hasFatalErrors(r), true, 'the same severity linDayTitles and mgSchedule get');
+  assert.deepEqual(S.validateSlot({ dateNotes: null }), { ok: true, errors: [] },
+    'null is missing, not wrong');
 });
 
 test('an absent repeat window is not an error — an open-ended timetable is real', () => {

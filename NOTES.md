@@ -1032,6 +1032,39 @@ identify the unresolved risks and candidate next checks.
 
 ## Additional Small Ideas
 
+### Notes: what Date notes and side by side do not cover yet
+
+The two kinds of note, the full-screen side-by-side view and Send work and are documented
+in README. These are the edges they leave open:
+
+- **Date notes are not on any calendar.** The Home calendar's "Floating note" dots come
+  from the Sorted notes' `createdAt`. Drawing a Date note on its own day is a natural next
+  step. It belongs in `calendar-core.js`, and it needs a decision on whether it shares the
+  Floating-note filter key or gets its own.
+- **The side-by-side view is forgotten on navigation or reload.** The open panes and their
+  sizes live in memory only. Remembering them would be a per-device view preference, in
+  its own browser key like `track_home_cal_hidden`, and never in slot data.
+- **An open editor does not refresh from another tab.** A list view does. An editor keeps
+  its text, because redrawing would throw away the caret, the selection and unsaved
+  typing. Two tabs typing into the *same* note therefore still end with the last write.
+  Different notes never collide, because every save is a fresh single-note
+  read-modify-write.
+- **Send copies; it does not move.** The draft keeps what was sent. A "send and strike
+  from draft" option would be the first control here that edits the source, and it would
+  need its own rule about what counts as destructive.
+- **Delete lives only in the single-note view.** Panes offer close, which deletes nothing,
+  but not delete. That keeps the confirmation surface where it already was.
+
+### A caution-picker case fails on about twelve days a year
+
+`the due day and every day after it are not pickable` (`tests/browser.test.js`) seeds the
+due day at today+3 and probes today+4 as "a day after the deadline". When today+3 is the
+last day of a month, the probe lands in the next month, a cell the popup does not draw,
+so the case fails whatever the code does. It failed on 2026-09-27 against both HEAD and
+the notes work. The fix is in the test, not the page: probe a later day inside the drawn
+month, or navigate the popup forward first. It needs a decision on which one the case is
+meant to prove.
+
 ### Quest: what was deliberately left out
 
 The feature works and is documented in README. These are the edges it does not cover:

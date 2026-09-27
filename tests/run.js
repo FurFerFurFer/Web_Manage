@@ -56,10 +56,11 @@ function run(label, file, env) {
   return ok;
 }
 
-// Both files sweep every zone: calendar-core.js turns instants into local days,
-// and schema.js stamps createdAt with one. Either can regress to a UTC day
-// invisibly on a machine running in UTC.
-const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js'];
+// These sweep every zone: calendar-core.js turns instants into local days,
+// schema.js stamps createdAt with one, and notes-core.js names a stored day's
+// weekday. Any of them can regress to a UTC day invisibly on a machine running
+// in UTC.
+const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.test.js'];
 
 // Swept once, not per zone: true-storage-core.js, graph-layout.js,
 // doc-table-core.js, schedule-paste-core.js, quest-core.js, viewport.js and the
