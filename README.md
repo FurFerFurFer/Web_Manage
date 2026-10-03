@@ -627,15 +627,40 @@ draft freely under the day, then sort what survives into a note of its own.
   each with a topic and content, deleted with a confirmation.
 - **Date** notes, the `dateNotes` map: exactly **one draft per local calendar day**,
   fixed by its date. Nothing is created ahead of time. The **Date** tab always shows
-  **Today** first, then a `Go to day` picker for any day, then every other day holding
-  text, newest first. A day is written on its first non-blank text, and its key is
-  **deleted** when the text is emptied, so an empty day and an untouched day are the
-  same state. `🗑` clears a day after a confirmation; on a day holding nothing it
-  asks nothing.
+  **Today** first, then `Go to day`, which opens the calendar pop-up, then every other
+  day holding text, newest first, each with its tag. A day is written on its first
+  non-blank text, and its key is **deleted** when the text is emptied, so an empty day
+  and an untouched day are the same state. `🗑` clears a day after a confirmation; on a
+  day holding nothing it asks nothing, and on a locked day (below) it is unavailable.
+- **Tags.** Every written day carries exactly one of three, chosen in a row of buttons
+  above its text: red **unclear**, green **cleared**, orchid **Eternal**. **Unclear is
+  the default**: a written day with no tag chosen is unclear, so every note written
+  before tags existed shows red without anything having been rewritten. A day with
+  **nothing written** has no tag and no colour, and its buttons stay disabled until
+  the first character is typed. Emptying an unclear day's text deletes the day;
+  written again, it starts over at unclear. Changing a tag asks nothing. It is a
+  choice between three, undone by pressing the previous one. The same row sits on
+  every Date pane side by side, and the picker's filter also matches tag words.
+- **Cleared and Eternal lock the text.** A green or purple day is **read-only**: its
+  words can still be highlighted and copied, sent from with `Send`, and opened beside
+  another note with `⧉`, but they cannot be typed into or cleared, and a line under
+  the tag buttons says so. Its text box carries a stripe in the tag's colour. Choosing
+  **unclear** unlocks the day; choosing cleared or Eternal again locks it. `🗑` is
+  unavailable on a locked day and asks nothing. Side by side, `Send` never writes into
+  a locked pane, and with every other open note locked it says so instead.
+- **The calendar pop-up.** `Go to day`, in the Date tab and in the picker's Date tab,
+  opens a month calendar over the page, Sunday first like the Home and Documentations
+  calendars. Every written day is **filled with its tag's colour**, with a small `?`,
+  `✓` or `∞` so red and green can be told apart without colour vision; an unwritten
+  day stays plain. Today is ringed. `‹`, `›` and `Today` move between months, as do
+  the arrow keys and PageUp/PageDown; Escape, `✕` or a click outside closes it.
+  Choosing a day opens it. In the picker, a day already open beside another is
+  disabled. The pop-up itself writes nothing.
 - **Side by side.** `⧉` on any note opens a picker (tabs `Sorted | Date`, a filter,
   `+ New sorted note`). A Date note opens it on Sorted and a Sorted note on Date.
   Picking a note turns the widget into a **full-screen view** of both, left and right
-  above 720px and stacked below it. Every pane is editable; `＋ Open another` adds
+  above 720px and stacked below it. Every pane is editable unless its day is locked;
+  `＋ Open another` adds
   more, up to **four**; `⇄` swaps a pane's note; `✕` closes one. Closing down to one
   note returns to the panel's single-note view, and `⤡` does that at any time. A
   note already open is never offered again. Dividers between panes drag by mouse or
@@ -657,10 +682,16 @@ and let a note reopened at once show its old text. Each pane also keeps writing 
 the **workspace** it was opened in, even if another tab switches the active one. If
 that workspace is gone, nothing is written. A Sorted note deleted in another tab is
 never recreated: its pane says **"⚠ Not saved — this note was deleted elsewhere"**,
-and a refused write says so the same way. Every save is a fresh read-modify-write of
+and a refused write says so the same way. A tag is saved the moment it is pressed,
+through the same saver and after any text still pending, so a tag pressed straight
+after a day's first words lands with them. Every save is a fresh read-modify-write of
 `notes` or `dateNotes` alone. A list view refreshes when another tab edits notes; an
-open editor does not, so two tabs typing into the *same* note still end with the
-last write.
+open editor's text does not, so two tabs typing into the *same* note still end with
+the last write. An open editor's **tag** does follow another tab at once, so a day
+locked elsewhere freezes here too. The lock is enforced by the writer as well, so
+words typed before that lock arrived are refused rather than saved over it: the
+editor says **"⚠ Not saved — this day was locked elsewhere"**, freezes, and keeps the
+words on screen to copy.
 
 Legacy `track_global_notes` adoption resolves the same slot the widget displays: the stored
 `activeSlotId` when it exists, otherwise the first slot. The legacy key is removed only
@@ -1174,7 +1205,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
 | `scripts/firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
 | `scripts/notes-widget.js` | Floating per-slot notes widget — the Sorted and Date tabs, the picker, the full-screen side-by-side view and Send |
-| `scripts/notes-core.js` | The one definition of what a note is (`window.TrackNotes`): the total `dateNotes` reader, the delete-on-empty writer, the Sorted patch writer that never recreates a deleted note, `appendSent`, and the local-day labels |
+| `scripts/notes-core.js` | The one definition of what a note is (`window.TrackNotes`): the total `dateNotes` reader, the delete-on-empty writer, the Date-note tags (`TAGS`, the `dateNoteTag` reader, the `dateNoteLocked` test and the `withDateTag` writer), the Sorted patch writer that never recreates a deleted note, `appendSent`, the local-day labels, and the month grid the calendar pop-up draws |
 | `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `scripts/graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
@@ -1324,7 +1355,11 @@ The pages currently read or write fields including:
 `{content, createdAt, updatedAt}`, owned by the notes widget. It is appended after
 `refSchedules`, so every earlier field keeps its place in a serialized slot. A slot
 stored before it simply lacks the key, which reads as no drafts, so nothing was
-migrated.
+migrated. A day's record may also carry `tag`: `cleared` or `eternal`. That is an
+item-level key, not a slot field, and its absence on a written day **is** `unclear`,
+the default, so `unclear` is never stored and no record needed rewriting. Both stored
+values lock the day's `content`: the writer refuses any change to it, emptying
+included, until the tag is removed.
 
 Quests added **no** field to this list. `quest`, `star`, `questLearn`, `starLearn` and `questOrder` are item-level keys on a goal node inside the existing `goals` list, which is why they need no migration, no default, and no importer change: absence is already the correct state for every stored node, and the flags travel with the node through nesting, reordering, deletion and an export/import round trip. An offline case in `tests/schema.test.js` asserts a slot carrying all five still normalizes to exactly these 25 fields.
 
@@ -1589,7 +1624,7 @@ It runs three layers:
 | Layer | File | What it covers |
 | --- | --- | --- |
 | Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, the chosen-caution-day resolver and its writer, the legacy `startDate` fallback, deadline validation, `dayShift` across month/year/DST boundaries, an inverted set being impossible rather than merely inert, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
-| Offline notes tests | `tests/notes-core.test.js` | What a note is, in `notes-core.js`: the delete-on-empty `dateNotes` writer and its identity-when-unchanged contract, spreading so an unknown key survives, a JSON-parsed `__proto__` kept as data, the total reader over any value, `datedDays` skipping a bad key without deleting it, the Sorted patch reporting a missing note instead of recreating it, `appendSent`, and the day labels — weekday, Today/Yesterday, month, year and DST boundaries — in every swept zone |
+| Offline notes tests | `tests/notes-core.test.js` | What a note is, in `notes-core.js`: the delete-on-empty `dateNotes` writer and its identity-when-unchanged contract, spreading so an unknown key survives, a JSON-parsed `__proto__` kept as data, the total reader over any value, `datedDays` skipping a bad key without deleting it, the Sorted patch reporting a missing note instead of recreating it, `appendSent`, and the day labels — weekday, Today/Yesterday, month, year and DST boundaries — in every swept zone. Tags: unclear as the default of a written day, no tag on an unwritten one, an inherited name never a tag, choosing unclear deleting the key, refusal by identity, a bare string upgraded with its text, and an unknown tag carried through an edit and gone with an emptied day. The lock: a cleared or Eternal day refusing every change to its text, emptying included; only a written day showing one of those two counting as locked; and unclear unlocking it. The month grid: 42 consecutive days from a Sunday across leap, year and DST boundaries, which fails west of UTC if seeded from a parsed string |
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
@@ -1597,7 +1632,7 @@ It runs three layers:
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Date tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, and the stacked phone layout |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Date tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Date list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone |
 
 The first three offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.

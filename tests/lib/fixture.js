@@ -162,7 +162,9 @@ function populatedSlot(over = {}) {
       trueStorage('ts-2', 'Storage B', { parentIds: ['ts-1'] })
     ],
     trueStoragePos: { 'ts-1': { x: 120, y: 140 } },
-    dateNotes: { '2026-03-09': dateNote('Draft: lift earlier', localTs(2026, 3, 9, 21, 0)) }
+    // Tagged, so every round-trip and per-key ownership case carries a tag
+    // through: absence is the stored default, and a STORED tag must survive.
+    dateNotes: { '2026-03-09': dateNote('Draft: lift earlier', localTs(2026, 3, 9, 21, 0), { tag: 'eternal' }) }
   }, over));
 }
 

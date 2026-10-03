@@ -5,11 +5,17 @@
      Sorted  the user's own list, `notes`.
      Date    one draft per local day, `dateNotes` — a "mini-Kolb": articulate
              freely under the day, then sort what survives into a Sorted note.
+             A written day carries one tag — unclear (the default), cleared or
+             Eternal — chosen in a radio row above its text. Cleared and
+             Eternal LOCK the text: it can be selected, copied, sent from and
+             opened beside, but not edited or cleared until it is unclear
+             again. Days are chosen in a calendar pop-up that fills every
+             written day with its colour.
 
    Side opening: ⧉ on any note opens another beside it, full screen, up to
    TrackNotes.MAX_PANES at once — left/right above 720px, stacked below it
-   (styles.css owns that switch). Every pane is editable, and → Send appends
-   the highlighted text to another open note.
+   (styles.css owns that switch). Every unlocked pane is editable, and → Send
+   appends the highlighted text to another open note that is not locked.
 
    SAVING. Every editor owns a saver that captured {kind, key, slotId} when it
    was built. That capture is the whole fix for the bug this file used to have:
@@ -85,11 +91,11 @@
 
   // ── data ──────────────────────────────────────────────────────────────────
 
-  var MISSING = {}, REFUSE = {};
+  var MISSING = {}, REFUSE = {}, LOCKED = {};
 
   // The one writer. A fresh read, ONE key, for ONE slot id. `fn` maps the stored
   // value to the next one; returning it unchanged (the same object) writes
-  // nothing. Answers 'saved' | 'unchanged' | 'missing' | 'refused'.
+  // nothing. Answers 'saved' | 'unchanged' | 'missing' | 'locked' | 'refused'.
   function writeSlotKey(slotId, key, fn) {
     var db = _twDB();
     var slot = slotById(db, slotId);
@@ -97,6 +103,7 @@
     var cur = slot[key];
     var next = fn(cur);
     if (next === MISSING) return 'missing';
+    if (next === LOCKED) return 'locked';
     if (next === REFUSE) return 'refused';
     if (next === cur) return 'unchanged';
     db.slots = db.slots.map(function (s) {
@@ -122,11 +129,23 @@
   function persist(ref, patch) {
     var now = Date.now();
     if (ref.kind === DATE) {
-      if (!Object.prototype.hasOwnProperty.call(patch, 'content')) return 'unchanged';
+      var hasContent = Object.prototype.hasOwnProperty.call(patch, 'content');
+      var hasTag = Object.prototype.hasOwnProperty.call(patch, 'tag');
+      if (!hasContent && !hasTag) return 'unchanged';
       return writeSlotKey(ref.slotId, 'dateNotes', function (cur) {
         if (cur != null && !isMap(cur)) return REFUSE;
         var base = isMap(cur) ? cur : {};
-        var next = N.withDateNote(base, ref.key, text(patch.content), now);
+        // A locked day refuses its text, and the refusal is SAID, never folded
+        // into 'unchanged': the box only freezes in this tab, so words typed
+        // before another tab locked the day must be reported as not saved. The
+        // whole patch goes, tag and all — half a press is not what was asked.
+        if (hasContent && N.dateNoteLocked(base, ref.key) &&
+            text(patch.content) !== N.dateNoteText(base, ref.key)) return LOCKED;
+        // Content FIRST. withDateTag refuses a day with nothing written, so a tag
+        // pressed within the debounce of a day's first words must find those
+        // words already in the map, or the press is silently lost.
+        var next = hasContent ? N.withDateNote(base, ref.key, text(patch.content), now) : base;
+        if (hasTag) next = N.withDateTag(next, ref.key, patch.tag, now);
         return next === base ? cur : next;
       });
     }
@@ -183,6 +202,7 @@
       el.classList.toggle('nw-status-warn', !ok);
       el.textContent = ok ? 'Saved'
         : result === 'missing' ? '⚠ Not saved — this note was deleted elsewhere'
+        : result === 'locked' ? '⚠ Not saved — this day was locked elsewhere. Your text is still here to copy.'
         : '⚠ Not saved — storage refused the write';
     };
   }
@@ -202,7 +222,11 @@
     change: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
     close: '<path d="M6 6l12 12M18 6 6 18"/>',
     exit: '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>',
-    trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>'
+    trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
+    calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+    prev: '<path d="M15 6l-6 6 6 6"/>',
+    next: '<path d="M9 6l6 6-6 6"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
   };
 
   function iconBtn(icon, label, hook) {
@@ -238,15 +262,146 @@
 
   function emptyMsg(msg) { return el('div', 'nw-empty-msg', msg); }
 
+  // ── tags ──────────────────────────────────────────────────────────────────
+  // `.nw-tag-<id>` sets --nw-tag, and every tag surface paints from it, so the
+  // red / green / orchid pairing lives once, in styles.css.
+
+  function tagChip(id) {
+    var info = N.tagInfo(id);
+    var c = el('span', 'nw-tag nw-tag-' + id, info ? info.label : id);
+    c.setAttribute('data-nw-tag-chip', id);
+    return c;
+  }
+
+  // The word that unlocks a day, for the hints that say how.
+  var UNLOCK_WORD = N.tagInfo(N.DEFAULT_TAG).label;
+
+  function storedTag(ref) {
+    return N.dateNoteTag(dateMap(slotById(_twDB(), ref.slotId)), ref.key);
+  }
+
+  // A Date note's tag as a radio group. On a written day exactly one tag is
+  // checked; on an unwritten day none is and the group is disabled, because an
+  // unwritten day is uncoloured. What it shows joins two sources: the STORED tag,
+  // re-read after every save (a blank save deleted the day, tag and all), and
+  // the LIVE text, so the group answers the moment the first character is typed
+  // rather than 300ms later. A press flushes at once through the editor's own
+  // saver, so it lands in the note and slot that editor was opened on.
+  //
+  // The bar also owns the LOCK, because the lock is a function of the tag it
+  // shows: on cleared or Eternal the text box goes readOnly — never disabled,
+  // which would also stop it being selected, copied and sent from — and
+  // `bar.note` says why and how to undo it. `onLock(info|null)` lets the host
+  // follow: the 🗑 in the single-note view, Send's targets side by side.
+  function tagBar(ref, saver, textarea, onLock) {
+    var wrap = el('div', 'nw-tags');
+    wrap.setAttribute('role', 'radiogroup');
+    wrap.setAttribute('aria-label', 'Tag this day');
+    wrap.setAttribute('data-nw-tags', ref.key);
+    var stored = '';
+    var buttons = N.TAGS.map(function (t) {
+      var b = el('button', 'nw-tag-btn nw-tag-' + t.id);
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('data-nw-tag-set', t.id);
+      b.appendChild(el('span', 'nw-tag-swatch'));
+      b.appendChild(el('span', 'nw-tag-word', t.label));
+      b.onclick = function () { choose(t.id); };
+      wrap.appendChild(b);
+      return b;
+    });
+
+    var note = el('div', 'nw-lock-note');
+    note.setAttribute('data-nw-lock-note', ref.key);
+    note.setAttribute('role', 'status');
+    note.innerHTML = '<svg class="nw-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' + ICONS.lock + '</svg>';
+    var noteWords = el('span', 'nw-lock-words');
+    note.appendChild(noteWords);
+    note.hidden = true;
+
+    function shown() { return N.isBlank(textarea.value) ? '' : (stored || N.DEFAULT_TAG); }
+    function lockedInfo() { var info = N.tagInfo(shown()); return info && info.locked ? info : null; }
+
+    function draw() {
+      var cur = shown();
+      wrap.setAttribute('aria-disabled', String(!cur));
+      wrap.title = cur ? '' : 'Write something first — a written draft starts as unclear';
+      buttons.forEach(function (b, i) {
+        var id = N.TAGS[i].id;
+        b.setAttribute('aria-checked', String(cur === id));
+        // One tab stop for the group, on the checked radio (or the first).
+        b.tabIndex = (cur ? cur === id : i === 0) ? 0 : -1;
+      });
+      var lock = lockedInfo();
+      textarea.readOnly = !!lock;
+      N.TAGS.forEach(function (t) { textarea.classList.toggle('nw-tag-' + t.id, !!lock && lock.id === t.id); });
+      if (lock) textarea.setAttribute('data-nw-locked', lock.id);
+      else textarea.removeAttribute('data-nw-locked');
+      note.hidden = !lock;
+      noteWords.textContent = lock
+        ? 'Read only while “' + lock.label + '” — choose ' + UNLOCK_WORD + ' to edit.'
+        : '';
+      if (onLock) onLock(lock);
+    }
+
+    function choose(id) {
+      var cur = shown();
+      if (!cur || cur === id) return;
+      saver.queue({ tag: id });
+      saver.flush();
+      draw();
+    }
+
+    wrap.addEventListener('keydown', function (e) {
+      var dir = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+      if (!dir) return;
+      var i = buttons.indexOf(document.activeElement);
+      if (i < 0) return;
+      e.preventDefault();
+      buttons[(i + dir + buttons.length) % buttons.length].focus();
+    });
+    textarea.addEventListener('input', draw);
+
+    var bar = {
+      el: wrap,
+      note: note,
+      draw: draw,
+      locked: function () { return !!lockedInfo(); },
+      sync: function () { stored = storedTag(ref); draw(); }
+    };
+    bar.sync();
+    liveBars.push(bar);
+    return bar;
+  }
+
+  // A saver's result handler for a Date editor: the status line, then the tag
+  // bar re-reads what actually landed — or, on 'locked', the tag another tab
+  // set, which freezes this box too. `getBar` because the bar is built after
+  // the saver it presses through.
+  function dateResult(setStatus, getBar) {
+    return function (result) {
+      setStatus(result);
+      var bar = getBar();
+      if (bar && (result === 'saved' || result === 'locked')) bar.sync();
+    };
+  }
+
   // ── the floating panel ────────────────────────────────────────────────────
 
-  var panel, body, headerTitle, btn, split, livePanes = [];
+  var panel, body, headerTitle, btn, split, livePanes = [], liveBars = [];
 
   function render() {
     // Flush with the refs each saver captured, BEFORE the DOM they belong to goes.
     var old = editors; editors = [];
     old.forEach(function (s) { s.flush(); });
+    liveBars = [];
     closeTransient();
+    // An open calendar outlives a redraw beneath it — the storage listener
+    // redraws the list it was opened from — and repaints from a fresh read.
+    if (cal) {
+      if (state.view === 'collapsed') closeCalendar(false);
+      else cal.refresh();
+    }
 
     // A hidden panel keeps no DOM. Its old picker rows would otherwise stay live
     // under display:none, and anything that finds elements by selector — a test,
@@ -329,13 +484,15 @@
     body.appendChild(addBtn);
   }
 
-  function dateRow(day, value, today, hook) {
+  function dateRow(day, value, tag, today, hook) {
     var row = el('button', 'nw-note-row nw-date-row');
     row.type = 'button';
     row.setAttribute(hook, 'date:' + day);
-    var lbl = el('div', 'nw-date-label', N.dayLabel(day, today));
+    var line = el('div', 'nw-date-line');
+    line.appendChild(el('div', 'nw-date-label', N.dayLabel(day, today)));
+    if (tag) line.appendChild(tagChip(tag));
     var prev = el('div', 'nw-date-preview', N.firstLine(value) || (day === today ? 'Empty — start today’s draft' : ''));
-    row.appendChild(lbl);
+    row.appendChild(line);
     row.appendChild(prev);
     return row;
   }
@@ -345,12 +502,17 @@
     var today = localToday();
     var map = dateMap(slot);
 
-    var todayRow = dateRow(today, N.dateNoteText(map, today), today, 'data-nw-row');
+    var todayRow = dateRow(today, N.dateNoteText(map, today), N.dateNoteTag(map, today), today, 'data-nw-row');
     todayRow.classList.add('nw-date-today');
     todayRow.onclick = function () { openDetail({ kind: DATE, key: today, slotId: slot.id }); };
     body.appendChild(todayRow);
 
-    body.appendChild(gotoDay(function (day) { openDetail({ kind: DATE, key: day, slotId: slot.id }); }, 'data-nw-goto'));
+    body.appendChild(calOpener('list', function (opener) {
+      openCalendar({
+        slotId: slot.id,
+        onDay: function (day) { openDetail({ kind: DATE, key: day, slotId: slot.id }); }
+      }, opener);
+    }));
 
     var days = N.datedDays(map).filter(function (d) { return d.day !== today; });
     if (!days.length) {
@@ -359,22 +521,24 @@
     }
     body.appendChild(el('div', 'nw-section-label', 'Drafts'));
     days.forEach(function (d) {
-      var row = dateRow(d.day, d.text, today, 'data-nw-row');
+      var row = dateRow(d.day, d.text, d.tag, today, 'data-nw-row');
       row.onclick = function () { openDetail({ kind: DATE, key: d.day, slotId: slot.id }); };
       body.appendChild(row);
     });
   }
 
-  // A date input that opens any day. Its value is already a LOCAL 'YYYY-MM-DD'.
-  function gotoDay(onDay, hook) {
-    var wrap = el('label', 'nw-goto');
-    wrap.appendChild(el('span', 'nw-goto-label', 'Go to day'));
-    var input = el('input', 'nw-goto-input');
-    input.type = 'date';
-    input.setAttribute(hook, '');
-    input.onchange = function () { if (TrackSchema.isDay(input.value)) onDay(input.value); };
-    wrap.appendChild(input);
-    return wrap;
+  // The button that opens the calendar pop-up — in the Date list, and in the
+  // picker's Date tab. It replaced a native date input, which could choose a
+  // day but could not say anything about the days it offered.
+  function calOpener(context, onOpen) {
+    var b = el('button', 'nw-cal-opener');
+    b.type = 'button';
+    b.setAttribute('data-nw-cal-open', context);
+    b.title = 'Open the calendar — every written day shows its tag';
+    b.innerHTML = '<svg class="nw-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' + ICONS.calendar + '</svg>';
+    b.appendChild(el('span', 'nw-cal-opener-label', 'Go to day'));
+    b.onclick = function () { onOpen(b); };
+    return b;
   }
 
   function renderDetail() {
@@ -394,7 +558,10 @@
 
     var statusEl = el('div', 'nw-status');
     statusEl.setAttribute('data-nw-status', 'idle');
-    var saver = makeSaver(ref, statusSetter(statusEl));
+    var bar = null, delBtn = null;
+    var saver = makeSaver(ref, ref.kind === DATE
+      ? dateResult(statusSetter(statusEl), function () { return bar; })
+      : statusSetter(statusEl));
 
     var textarea = document.createElement('textarea');
     textarea.id = 'nw-content';
@@ -421,6 +588,14 @@
       dayEl.setAttribute('data-nw-day-title', ref.key);
       headerTitle.appendChild(dayEl);
       textarea.placeholder = 'Draft freely — ideas, half-thoughts, what happened…';
+      // A locked day cannot be cleared either: 🗑 says so instead of asking.
+      bar = tagBar(ref, saver, textarea, function (lock) {
+        if (!delBtn) return;
+        delBtn.setAttribute('aria-disabled', String(!!lock));
+        delBtn.title = lock
+          ? 'Locked while “' + lock.label + '” — choose ' + UNLOCK_WORD + ' first to clear this day'
+          : 'Clear this day';
+      });
     }
 
     var sideBtn = iconBtn('side', 'Open another note side by side', 'data-nw-side-open');
@@ -431,15 +606,22 @@
     };
     headerTitle.appendChild(sideBtn);
 
-    var delBtn = iconBtn('trash', ref.kind === DATE ? 'Clear this day' : 'Delete note', ref.kind === DATE ? 'data-nw-clear-day' : 'data-nw-delete');
+    delBtn = iconBtn('trash', ref.kind === DATE ? 'Clear this day' : 'Delete note', ref.kind === DATE ? 'data-nw-clear-day' : 'data-nw-delete');
     delBtn.onclick = ref.kind === DATE
       ? function () {
-          // The no-op guard first: a day that holds nothing asks nothing.
-          if (N.isBlank(textarea.value) && N.isBlank(N.dateNoteText(dateMap(slotById(_twDB(), ref.slotId)), ref.key))) return;
+          var map = dateMap(slotById(_twDB(), ref.slotId));
+          // The no-op guards first, and both ask nothing. A day that holds
+          // nothing has nothing to clear. A LOCKED day refuses — read fresh, so
+          // a lock another tab set is honoured even before this bar hears of it.
+          if (N.isBlank(textarea.value) && N.isBlank(N.dateNoteText(map, ref.key))) return;
+          if (N.dateNoteLocked(map, ref.key)) { bar.sync(); return; }
+          // Only an unlocked day reaches here, and it shows unclear: there is
+          // no tag to name.
           if (!window.confirm('Clear the draft for ' + N.dayLabel(ref.key, localToday()) + '?')) return;
           textarea.value = '';
           saver.queue({ content: '' });
           saver.flush();
+          bar.draw();
         }
       : function () {
           if (!window.confirm('Delete this note?')) return;
@@ -453,12 +635,14 @@
           render();
         };
     headerTitle.appendChild(delBtn);
+    if (bar) bar.draw(); // the bar was drawn before 🗑 existed
 
     body.innerHTML = '';
     body.style.padding = '0';
     body.style.display = 'flex';
     body.style.flexDirection = 'column';
     body.style.overflow = 'hidden';
+    if (bar) { body.appendChild(bar.el); body.appendChild(bar.note); }
     body.appendChild(textarea);
     body.appendChild(statusEl);
 
@@ -516,7 +700,7 @@
       if (!q) return true;
       return Array.prototype.some.call(arguments, function (s) { return text(s).toLowerCase().indexOf(q) >= 0; });
     }
-    function pickRow(kind, key, name, preview) {
+    function pickRow(kind, key, name, preview, tag) {
       var row = el('button', 'nw-pick-row');
       row.type = 'button';
       row.setAttribute('data-nw-pick', kind + ':' + key);
@@ -525,9 +709,12 @@
       words.appendChild(el('span', 'nw-pick-name', name));
       if (preview) words.appendChild(el('span', 'nw-pick-preview', preview));
       row.appendChild(words);
+      if (tag) row.appendChild(tagChip(tag));
       row.onclick = function () { opts.onPick({ kind: kind, key: key, slotId: opts.slotId }); };
       return row;
     }
+    // The filter finds a day by its tag word too: "eternal" lists the Eternal days.
+    function tagWord(tag) { var info = N.tagInfo(tag); return info ? info.label : ''; }
 
     function draw() {
       tabsHost.innerHTML = '';
@@ -554,16 +741,23 @@
       } else {
         var map = dateMap(slot);
         var todayText = N.dateNoteText(map, today);
-        if (!excluded(DATE, today) && matches(N.dayLabel(today, today), todayText)) {
-          list.appendChild(pickRow(DATE, today, N.dayLabel(today, today), N.firstLine(todayText) || 'Empty — start today’s draft'));
+        var todayTag = N.dateNoteTag(map, today);
+        if (!excluded(DATE, today) && matches(N.dayLabel(today, today), todayText, tagWord(todayTag))) {
+          list.appendChild(pickRow(DATE, today, N.dayLabel(today, today), N.firstLine(todayText) || 'Empty — start today’s draft', todayTag));
           shown++;
         }
-        list.appendChild(gotoDay(function (day) {
-          if (!excluded(DATE, day)) opts.onPick({ kind: DATE, key: day, slotId: opts.slotId });
-        }, 'data-nw-pick-day'));
+        list.appendChild(calOpener('picker', function (opener) {
+          openCalendar({
+            slotId: opts.slotId,
+            isDisabled: function (day) { return excluded(DATE, day); },
+            onDay: function (day) {
+              if (!excluded(DATE, day)) opts.onPick({ kind: DATE, key: day, slotId: opts.slotId });
+            }
+          }, opener);
+        }));
         N.datedDays(map).forEach(function (d) {
-          if (d.day === today || excluded(DATE, d.day) || !matches(N.dayLabel(d.day, today), d.text)) return;
-          list.appendChild(pickRow(DATE, d.day, N.dayLabel(d.day, today), N.firstLine(d.text)));
+          if (d.day === today || excluded(DATE, d.day) || !matches(N.dayLabel(d.day, today), d.text, tagWord(d.tag))) return;
+          list.appendChild(pickRow(DATE, d.day, N.dayLabel(d.day, today), N.firstLine(d.text), d.tag));
           shown++;
         });
       }
@@ -716,7 +910,16 @@
     statusEl.setAttribute('data-nw-status', 'idle');
     sec.appendChild(statusEl);
 
-    var saver = makeSaver(ref, statusSetter(statusEl));
+    var bar = null;
+    var saver = makeSaver(ref, ref.kind === DATE
+      ? dateResult(statusSetter(statusEl), function () { return bar; })
+      : statusSetter(statusEl));
+    if (ref.kind === DATE) {
+      // A pane that locks or unlocks changes where every OTHER pane can send.
+      bar = tagBar(ref, saver, ta, function () { refreshSend(); });
+      sec.insertBefore(bar.el, ta);
+      sec.insertBefore(bar.note, ta);
+    }
     ta.addEventListener('input', function () { saver.queue({ content: ta.value }); refreshSend(); });
     ['select', 'keyup', 'mouseup', 'touchend', 'focus'].forEach(function (ev) { ta.addEventListener(ev, refreshSend); });
     if (topic) {
@@ -727,7 +930,7 @@
     sec.addEventListener('focusin', function () { state.lastPane = i; });
 
     var pane = {
-      ref: ref, el: sec, textarea: ta, saver: saver, sendBtn: send,
+      ref: ref, el: sec, textarea: ta, saver: saver, sendBtn: send, bar: bar,
       name: function () {
         return ref.kind === DATE ? N.dayLabel(ref.key, localToday()) : (topic && topic.value.trim()) || '(untitled)';
       }
@@ -745,13 +948,33 @@
     return (typeof a === 'number' && b > a) ? ta.value.slice(a, b) : '';
   }
 
+  // A locked Date pane can be SENT FROM — sending copies, and copying is what a
+  // locked day is still for — but never sent INTO: that would edit its text.
+  function paneLocked(p) { return !!(p.bar && p.bar.locked()); }
+
+  // Sorted notes first — the draft → sorted direction is the one this is for.
+  function sendTargets(i) {
+    return livePanes
+      .map(function (p, j) { return { p: p, j: j }; })
+      .filter(function (x) { return x.j !== i && !paneLocked(x.p); })
+      .sort(function (a, b) {
+        var ka = a.p.ref.kind === SORTED ? 0 : 1, kb = b.p.ref.kind === SORTED ? 0 : 1;
+        return ka - kb || a.j - b.j;
+      })
+      .map(function (x) { return x.p; });
+  }
+
+  var ALL_LOCKED = 'The other open notes are locked — choose ' + UNLOCK_WORD + ' on one to send into it.';
+
   // aria-disabled rather than disabled: a disabled button takes no click, and
   // the click is where a finger learns WHY it cannot send yet.
   function refreshSend() {
-    livePanes.forEach(function (p) {
-      var ready = !N.isBlank(selectionOf(p.textarea)) && livePanes.length > 1;
-      p.sendBtn.setAttribute('aria-disabled', String(!ready));
-      p.sendBtn.title = ready ? 'Send the highlighted text to another open note' : 'Highlight text in this note to send it';
+    livePanes.forEach(function (p, i) {
+      var chosen = !N.isBlank(selectionOf(p.textarea));
+      var open = sendTargets(i).length > 0;
+      p.sendBtn.setAttribute('aria-disabled', String(!(chosen && open)));
+      p.sendBtn.title = !chosen ? 'Highlight text in this note to send it'
+        : open ? 'Send the highlighted text to another open note' : ALL_LOCKED;
     });
   }
 
@@ -760,31 +983,34 @@
     if (!src) return;
     var chosen = selectionOf(src.textarea);
     if (N.isBlank(chosen)) { toast('Highlight text in this note first, then press Send.'); return; }
-    // Sorted notes first — the draft → sorted direction is the one this is for.
-    var targets = livePanes
-      .map(function (p, j) { return { p: p, j: j }; })
-      .filter(function (x) { return x.j !== i; })
-      .sort(function (a, b) {
-        var ka = a.p.ref.kind === SORTED ? 0 : 1, kb = b.p.ref.kind === SORTED ? 0 : 1;
-        return ka - kb || a.j - b.j;
-      })
-      .map(function (x) { return x.p; });
-    if (!targets.length) { toast('Open another note beside this one first.'); return; }
+    var targets = sendTargets(i);
+    if (!targets.length) { toast(livePanes.length > 1 ? ALL_LOCKED : 'Open another note beside this one first.'); return; }
     if (targets.length === 1) { sendTo(targets[0], chosen); return; }
     openSendMenu(anchor, targets, chosen);
   }
 
   // Appends, never replaces, and saves at once — the source is left untouched.
   function sendTo(target, chosen) {
+    // A menu can outlive the moment it was opened in: another tab may have
+    // locked this target since.
+    if (paneLocked(target)) { toast('⚠ Not sent — ' + target.name() + ' is locked'); refreshSend(); return; }
     var ta = target.textarea;
-    ta.value = N.appendSent(ta.value, chosen);
+    var before = ta.value;
+    ta.value = N.appendSent(before, chosen);
     target.saver.queue({ content: ta.value });
     var r = target.saver.flush();
+    // Locked elsewhere before this tab heard: the sent words go back out. They
+    // are still in the source pane, so taking them back loses nothing.
+    if (r === 'locked') ta.value = before;
+    // A value set from script fires no input event; a blank day just got words.
+    if (target.bar) target.bar.draw();
     ta.scrollTop = ta.scrollHeight;
     target.el.classList.remove('nw-pane-flash');
     void target.el.offsetWidth;
     target.el.classList.add('nw-pane-flash');
-    toast(r === 'saved' || r === 'unchanged' ? 'Sent to ' + target.name() : '⚠ Could not save to ' + target.name());
+    toast(r === 'saved' || r === 'unchanged' ? 'Sent to ' + target.name()
+      : r === 'locked' ? '⚠ Not sent — ' + target.name() + ' was locked elsewhere'
+      : '⚠ Could not save to ' + target.name());
     refreshSend();
   }
 
@@ -865,6 +1091,188 @@
     t.classList.add('nw-toast-on');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { t.classList.remove('nw-toast-on'); }, 2400);
+  }
+
+  // ── the calendar pop-up ───────────────────────────────────────────────────
+  // One month at a time, Sunday first. Every WRITTEN day is filled with the
+  // colour of the tag it shows — red unclear unless another was chosen — and an
+  // unwritten day stays plain. Choosing a day hands it to opts.onDay, exactly as
+  // the date input it replaced did, so the pop-up itself writes nothing.
+  //
+  // It sits on <body>, above the panel and the side-by-side view, and keeps a
+  // lifecycle of its own: closeTransient() must NOT close it, because it opens
+  // from inside the very pick overlay closeTransient() exists to close.
+
+  var cal = null;
+
+  function openCalendar(opts, opener) {
+    closeCalendar(false);
+    var today = localToday();
+    var month = N.monthOf(today);
+    var focusDay = today;
+    var map = {};
+
+    var overlay = el('div', 'nw-cal-overlay');
+    overlay.id = 'nw-cal';
+    var card = el('div', 'nw-cal-card');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.setAttribute('aria-label', 'Go to day');
+    card.setAttribute('data-nw-cal', '');
+
+    var head = el('div', 'nw-pick-head');
+    head.appendChild(el('span', 'nw-pick-title', 'Go to day'));
+    var x = iconBtn('close', 'Close the calendar', 'data-nw-cal-close');
+    x.onclick = function () { closeCalendar(true); };
+    head.appendChild(x);
+    card.appendChild(head);
+
+    var nav = el('div', 'nw-cal-nav');
+    var prev = iconBtn('prev', 'Previous month', 'data-nw-cal-prev');
+    var label = el('span', 'nw-cal-month');
+    label.setAttribute('aria-live', 'polite');
+    var next = iconBtn('next', 'Next month', 'data-nw-cal-next');
+    var todayBtn = el('button', 'nw-cal-today', 'Today');
+    todayBtn.type = 'button';
+    todayBtn.setAttribute('data-nw-cal-today', '');
+    nav.appendChild(prev);
+    nav.appendChild(label);
+    nav.appendChild(next);
+    nav.appendChild(todayBtn);
+    card.appendChild(nav);
+
+    var dows = el('div', 'nw-cal-dows');
+    dows.setAttribute('aria-hidden', 'true');
+    N.WEEKDAYS.forEach(function (w) { dows.appendChild(el('span', 'nw-cal-dow', w)); });
+    card.appendChild(dows);
+
+    var grid = el('div', 'nw-cal-grid');
+    card.appendChild(grid);
+
+    var legend = el('div', 'nw-cal-legend');
+    N.TAGS.forEach(function (t) {
+      var k = el('span', 'nw-cal-key nw-tag-' + t.id);
+      k.appendChild(el('span', 'nw-cal-swatch'));
+      k.appendChild(el('span', null, t.label));
+      legend.appendChild(k);
+    });
+    var blank = el('span', 'nw-cal-key nw-cal-key-blank');
+    blank.appendChild(el('span', 'nw-cal-swatch'));
+    blank.appendChild(el('span', null, 'nothing written'));
+    legend.appendChild(blank);
+    card.appendChild(legend);
+
+    function load() { map = dateMap(slotById(_twDB(), opts.slotId)); }
+    function off(day) { return !!(opts.isDisabled && opts.isDisabled(day)); }
+    function cell(day) { return grid.querySelector('[data-nw-cal-day="' + day + '"]'); }
+
+    function draw() {
+      label.textContent = N.monthLabel(month);
+      label.setAttribute('data-nw-cal-month', month);
+      grid.innerHTML = '';
+      N.monthGrid(month).forEach(function (c) {
+        var tag = N.dateNoteTag(map, c.day);
+        var b = el('button', 'nw-cal-day' + (tag ? ' nw-tag-' + tag : '') + (c.inMonth ? '' : ' nw-cal-out'));
+        b.type = 'button';
+        b.setAttribute('data-nw-cal-day', c.day);
+        if (tag) b.setAttribute('data-nw-cal-tag', tag);
+        if (c.day === today) b.setAttribute('aria-current', 'date');
+        var disabled = off(c.day);
+        if (disabled) b.setAttribute('aria-disabled', 'true');
+        var says = N.dayLabel(c.day, today) + ' — ' + (tag ? N.tagInfo(tag).label : 'nothing written') +
+          (disabled ? ' — already open' : '');
+        b.setAttribute('aria-label', says);
+        b.title = says;
+        // One tab stop in the grid; the arrow keys move it.
+        b.tabIndex = c.day === focusDay ? 0 : -1;
+        b.appendChild(el('span', 'nw-cal-num', String(+c.day.slice(8, 10))));
+        if (tag) {
+          var g = el('span', 'nw-cal-glyph', N.tagInfo(tag).glyph);
+          g.setAttribute('aria-hidden', 'true');
+          b.appendChild(g);
+        }
+        b.onclick = function () { pick(c.day); };
+        grid.appendChild(b);
+      });
+    }
+
+    // The month buttons move the tab stop with them: to today when it is in
+    // view, otherwise to the 1st.
+    function showMonth(ym) {
+      month = ym;
+      focusDay = N.monthOf(today) === ym ? today : ym + '-01';
+      draw();
+    }
+
+    function moveTo(day) {
+      focusDay = day;
+      month = N.monthOf(day);
+      draw();
+      var b = cell(day);
+      if (b) b.focus();
+    }
+
+    function pick(day) {
+      if (off(day)) return;
+      var onDay = opts.onDay;
+      closeCalendar(false);
+      onDay(day);
+    }
+
+    prev.onclick = function () { showMonth(N.shiftMonth(month, -1)); };
+    next.onclick = function () { showMonth(N.shiftMonth(month, 1)); };
+    todayBtn.onclick = function () { moveTo(today); };
+
+    grid.addEventListener('keydown', function (e) {
+      var step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+      var months = { PageUp: -1, PageDown: 1 }[e.key];
+      if (!step && !months) return;
+      e.preventDefault();
+      moveTo(step ? N.addDays(focusDay, step) : N.addMonths(focusDay, e.shiftKey ? months * 12 : months));
+    });
+
+    // A modal keeps Tab inside itself.
+    card.addEventListener('keydown', function (e) {
+      if (e.key !== 'Tab') return;
+      var stops = Array.prototype.filter.call(card.querySelectorAll('button'), function (b) { return b.tabIndex >= 0; });
+      if (!stops.length) return;
+      var first = stops[0], last = stops[stops.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+
+    // On click, not pointerdown: closing on the press would hand the release to
+    // whatever sits under the scrim, and click it.
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeCalendar(true); });
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    // The page behind stops scrolling, as it does under side by side.
+    document.documentElement.classList.add('nw-cal-open');
+    cal = {
+      el: overlay,
+      opener: opener,
+      context: opener ? opener.getAttribute('data-nw-cal-open') : '',
+      refresh: function () { load(); draw(); }
+    };
+    cal.refresh();
+    var start = cell(focusDay);
+    if (start) start.focus();
+  }
+
+  // `restore` hands focus back to the button that opened the calendar. A list
+  // redrawn underneath (another tab's edit) has replaced that button, so the
+  // fallback is the same opener found again.
+  function closeCalendar(restore) {
+    if (!cal) return;
+    var gone = cal;
+    cal = null;
+    if (gone.el.parentNode) gone.el.parentNode.removeChild(gone.el);
+    document.documentElement.classList.remove('nw-cal-open');
+    if (!restore) return;
+    var back = gone.opener && gone.opener.isConnected ? gone.opener
+      : document.querySelector('[data-nw-cal-open="' + gone.context + '"]');
+    if (back) back.focus();
   }
 
   // Pointer events, so a mouse and a finger drive the one path. Sizes are
@@ -957,8 +1365,9 @@
       '#nw-content:focus{border-color:#374151;}',
       '#nw-content::placeholder{color:#374151;}',
       '.nw-icon-svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}',
-      // Everything the Date tab, the picker and the side-by-side view need is
-      // in styles.css, which every page loads — structure and theme together.
+      // Everything the Date tab, its tags and calendar, the picker and the
+      // side-by-side view need is in styles.css, which every page loads —
+      // structure and theme together.
     ].join('\n');
     document.head.appendChild(s);
   }
@@ -1053,8 +1462,12 @@
     window.addEventListener('pagehide', flushAll);
     document.addEventListener('visibilitychange', function () { if (document.hidden) flushAll(); });
 
+    // Escape closes the topmost thing only: the calendar first, which can sit
+    // over a pick overlay that a second Escape then closes.
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && (sendMenu || pickOverlay)) { e.preventDefault(); closeTransient(); }
+      if (e.key !== 'Escape') return;
+      if (cal) { e.preventDefault(); closeCalendar(true); return; }
+      if (sendMenu || pickOverlay) { e.preventDefault(); closeTransient(); }
     });
     document.addEventListener('pointerdown', function (e) {
       if (sendMenu && !sendMenu.contains(e.target)) closeTransient();
@@ -1062,9 +1475,15 @@
     document.addEventListener('selectionchange', function () { if (state.view === 'split') refreshSend(); });
 
     // Another tab's edit shows up in a list at once. Only a list: redrawing an
-    // editor would throw away the caret, the selection and unsaved text.
+    // editor would throw away the caret, the selection and unsaved text. An
+    // editor's TAG does follow, though — re-reading it touches no text — so a
+    // day locked in another tab freezes here too, before anything is typed
+    // into it. An open calendar holds no text, so it always repaints.
     window.addEventListener('storage', function (e) {
-      if (e.key === 'track_db' && state.view === 'list') render();
+      if (e.key !== 'track_db') return;
+      if (state.view === 'list') { render(); return; }
+      liveBars.forEach(function (b) { b.sync(); });
+      if (cal) cal.refresh();
     });
 
     render();

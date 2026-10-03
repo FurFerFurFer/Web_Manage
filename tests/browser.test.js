@@ -10069,6 +10069,697 @@ test('browser suites', skipUnlessChrome, async t => {
     }
   });
 
+  await t.test('NOTES: in a long Date list every two-line row keeps its height — no preview is cut in half', async () => {
+    /* An item with an explicit min-height, inside a scrolling flex column,
+       shrinks down to that min-height before the column scrolls. Every Date
+       row is two lines tall with min-height 2.75rem, so a long list cut the
+       bottom half off every preview. (A picker row is measured fine at 44px:
+       it is a ROW flex, so its words keep their height — nothing to assert.)
+
+       What to MEASURE, learned from a doctored run that passed: the preview
+       is not pushed out of a squeezed row. It shrinks itself — overflow:hidden
+       lets a flex item go below its content height — and clips its own text
+       while its box stays inside the row. So the preview is measured against
+       its own content: 5px of box holding 17px of text, not a box overhang. */
+    const many = {};
+    for (let d = 1; d <= 9; d++) many['2026-03-0' + d] = F.dateNote('draft number ' + d, F.localTs(2026, 3, d));
+    const page = await open('index.html', { db: NOTES_SEED({ dateNotes: many }) });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const CUT = function (rowSel, previewSel) {
+      return Array.prototype.filter.call(document.querySelectorAll(rowSel), function (r) {
+        var p = r.querySelector(previewSel);
+        return p && p.scrollHeight > p.clientHeight + 1;
+      }).map(function (r) {
+        var p = r.querySelector(previewSel);
+        return (r.getAttribute('data-nw-row') || r.getAttribute('data-nw-pick')) + ' ' + p.clientHeight + '/' + p.scrollHeight;
+      });
+    };
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-tab="date"]').click();
+      return true;
+    });
+    assert.deepEqual(await page.evaluate(CUT, '#nw-panel .nw-date-row', '.nw-date-preview'), [],
+      'no Date row is squeezed below its own preview');
+    assert.ok(await page.evaluate(function () {
+      var b = document.getElementById('nw-body');
+      return b.scrollHeight > b.clientHeight;
+    }), 'and the list really does overflow the panel, so the case is live');
+    await page.close();
+  });
+
+  /* ── NOTES: Date-note tags and the calendar pop-up ─────────────────────────
+     A WRITTEN day shows one tag. Red "unclear" is the default, by the ABSENCE
+     of `tag`, so every note written before tags existed is red with no byte
+     written. An unwritten day shows none. Choosing unclear deletes the key, a
+     tag needs a written day, and persist applies content before tag. The
+     calendar pop-up fills every written day with its tag's colour and writes
+     nothing. */
+
+  const TAG_SEED = over => seedDb(Object.assign({
+    notes: [F.note('n-a', F.localTs(2026, 3, 7), { topic: 'Alpha', content: 'A body' })],
+    dateNotes: {
+      '2026-03-09': F.dateNote('written before tags existed', F.localTs(2026, 3, 9)),
+      '2026-03-10': F.dateNote('sorted out', F.localTs(2026, 3, 10), { tag: 'cleared' }),
+      '2026-03-11': F.dateNote('keep this one', F.localTs(2026, 3, 11), { tag: 'eternal' })
+    }
+  }, over || {}));
+  // The radio group a selector names: is it disabled, and which tag is checked.
+  const TAGS_IN = function (sel) {
+    var g = document.querySelector(sel);
+    if (!g) return null;
+    return {
+      off: g.getAttribute('aria-disabled'),
+      checked: Array.prototype.filter.call(g.querySelectorAll('[data-nw-tag-set]'), function (b) {
+        return b.getAttribute('aria-checked') === 'true';
+      }).map(function (b) { return b.getAttribute('data-nw-tag-set'); })
+    };
+  };
+  const PRESS = function (sel) { document.querySelector(sel).click(); return true; };
+  const OPEN_CAL = function () {
+    document.getElementById('nw-btn').click();
+    document.querySelector('[data-nw-tab="date"]').click();
+    document.querySelector('[data-nw-cal-open="list"]').click();
+    return true;
+  };
+  // Steps the open calendar to `ym` with its own ‹ › buttons.
+  const CAL_TO = function (ym) {
+    for (var i = 0; i < 1200; i++) {
+      var at = document.querySelector('[data-nw-cal-month]').getAttribute('data-nw-cal-month');
+      if (at === ym) return true;
+      document.querySelector(at > ym ? '[data-nw-cal-prev]' : '[data-nw-cal-next]').click();
+    }
+    return false;
+  };
+  const CAL_STATE = function () {
+    return { cal: !!document.getElementById('nw-cal'), overlay: !!document.querySelector('[data-nw-pick-overlay]') };
+  };
+
+  await t.test('NOTES TAGS: every written day is red unclear by default, an unwritten Today is uncoloured, and nothing is migrated', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const today = await page.evaluate(TODAY_IN);
+    const raw = await page.evaluate(READ_RAW);
+    const rows = await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-tab="date"]').click();
+      var out = {};
+      Array.prototype.forEach.call(document.querySelectorAll('[data-nw-row^="date:"]'), function (r) {
+        var c = r.querySelector('[data-nw-tag-chip]');
+        out[r.getAttribute('data-nw-row').slice(5)] = c ? c.getAttribute('data-nw-tag-chip') + ' ' + c.textContent : null;
+      });
+      return out;
+    });
+    assert.deepEqual(rows, {
+      [today]: null,
+      '2026-03-09': 'unclear unclear',
+      '2026-03-10': 'cleared cleared',
+      '2026-03-11': 'eternal Eternal'
+    }, 'the default for an untagged written day, each stored tag in the user\'s words, and none for an unwritten day');
+    const paint = await page.evaluate(function () {
+      var probe = document.createElement('span');
+      document.body.appendChild(probe);
+      probe.style.color = 'var(--color-tag-unclear)';
+      var red = getComputedStyle(probe).color;
+      probe.remove();
+      return { red: red, chip: getComputedStyle(document.querySelector('[data-nw-row="date:2026-03-09"] [data-nw-tag-chip]')).color };
+    });
+    assert.equal(paint.chip, paint.red, 'the default is painted red');
+    await sleep(400);
+    assert.equal(await page.evaluate(READ_RAW), raw, 'the default is read, never written — no stored note was touched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES TAGS: the radio is disabled until something is written, cleared lands, unclear DELETES the key, and no press asks', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const today = await page.evaluate(TODAY_IN);
+    const G = '[data-nw-tags="' + today + '"]';
+    await page.evaluate(OPEN_TODAY);
+    assert.deepEqual(await page.evaluate(TAGS_IN, G), { off: 'true', checked: [] },
+      'nothing written: no tag, and the group is disabled');
+
+    let raw = await page.evaluate(READ_RAW);
+    const dialogs0 = page.dialogs.length;
+    await page.evaluate(PRESS, '[data-nw-tag-set="eternal"]');
+    await sleep(400);
+    assert.equal(await page.evaluate(READ_RAW), raw, 'an unwritten day cannot be tagged — the press wrote nothing');
+
+    await page.evaluate(TYPE_IN, '#nw-content', 'first idea');
+    assert.deepEqual(await page.evaluate(TAGS_IN, G), { off: 'false', checked: ['unclear'] },
+      'the first words make it unclear at once, before the save lands');
+    await landed(page, raw, 'the first words landing');
+    assert.equal(Object.prototype.hasOwnProperty.call((await page.evaluate(SLOT0)).dateNotes[today], 'tag'), false,
+      'a newly written day stores no tag — unclear is the absence');
+
+    raw = await page.evaluate(READ_RAW);
+    const before = await page.evaluate(SLOT0);
+    await page.evaluate(PRESS, '[data-nw-tag-set="cleared"]');
+    await landed(page, raw, 'the cleared tag landing');
+    let slot = await page.evaluate(SLOT0);
+    assert.equal(slot.dateNotes[today].tag, 'cleared', 'cleared is stored');
+    assert.deepEqual(slot.dateNotes[today],
+      Object.assign({}, before.dateNotes[today], { tag: 'cleared', updatedAt: slot.dateNotes[today].updatedAt }),
+      'spread into the record: its text and createdAt kept');
+    for (const key of Object.keys(before)) {
+      if (key === 'dateNotes') continue;
+      assert.deepEqual(slot[key], before[key], key + ' is unchanged — a tag writes dateNotes alone');
+    }
+    for (const day of ['2026-03-09', '2026-03-10', '2026-03-11']) {
+      assert.deepEqual(slot.dateNotes[day], before.dateNotes[day], day + ' is untouched');
+    }
+    assert.deepEqual(await page.evaluate(TAGS_IN, G), { off: 'false', checked: ['cleared'] });
+
+    raw = await page.evaluate(READ_RAW);
+    await page.evaluate(PRESS, '[data-nw-tag-set="cleared"]');
+    await sleep(400);
+    assert.equal(await page.evaluate(READ_RAW), raw, 'pressing the checked tag again writes nothing');
+
+    await page.evaluate(PRESS, '[data-nw-tag-set="unclear"]');
+    await landed(page, raw, 'the default landing');
+    slot = await page.evaluate(SLOT0);
+    assert.equal(Object.prototype.hasOwnProperty.call(slot.dateNotes[today], 'tag'), false,
+      'choosing unclear DELETES the key — the default is never stored');
+    assert.equal(slot.dateNotes[today].content, 'first idea');
+    assert.deepEqual(await page.evaluate(TAGS_IN, G), { off: 'false', checked: ['unclear'] });
+    assert.equal(page.dialogs.length, dialogs0, 'no tag press asked anything — a radio choice deletes no text');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES TAGS: a tag pressed within the debounce of a day\'s first words lands with them', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const today = await page.evaluate(TODAY_IN);
+    await page.evaluate(OPEN_TODAY);
+    const raw = await page.evaluate(READ_RAW);
+    // One synchronous block: the words are still inside the 300ms debounce when
+    // the tag is pressed, so persist receives both in a single patch.
+    await page.evaluate(function () {
+      var ta = document.getElementById('nw-content');
+      ta.value = 'written and tagged at once';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('[data-nw-tag-set="eternal"]').click();
+      return true;
+    });
+    await landed(page, raw);
+    const rec = (await page.evaluate(SLOT0)).dateNotes[today];
+    assert.equal(rec.tag, 'eternal', 'the tag landed — content is applied first, so the tag found its words');
+    assert.equal(rec.content, 'written and tagged at once');
+    assert.deepEqual(await page.evaluate(TAGS_IN, '[data-nw-tags="' + today + '"]'), { off: 'false', checked: ['eternal'] });
+    await page.close();
+  });
+
+  /* ── NOTES LOCK: cleared and Eternal freeze a day's text ──────────────────
+     The user's rule: a green or purple day cannot be edited, but can still be
+     selected and copied, and opened beside another note. The box is readOnly,
+     never disabled — disabled would stop the selection too. 🗑 refuses without
+     asking, Send never writes INTO a locked pane, and the writer itself refuses
+     a locked day, so a save from a stale tab is reported rather than written. */
+
+  // What the lock looks like on one editor: readOnly, its hook, and the note
+  // saying why — read off the editor's own host, the panel or its pane.
+  const LOCK_IN = function (sel) {
+    var ta = document.querySelector(sel);
+    if (!ta) return null;
+    var host = ta.closest('[data-nw-pane]') || document.getElementById('nw-body');
+    var note = host.querySelector('[data-nw-lock-note]');
+    return {
+      readOnly: ta.readOnly, disabled: ta.disabled,
+      locked: ta.getAttribute('data-nw-locked'),
+      note: note && !note.hidden && note.getBoundingClientRect().height > 0 ? note.textContent : null
+    };
+  };
+  const OPEN_DAY = function (day) {
+    document.getElementById('nw-btn').click();
+    document.querySelector('[data-nw-tab="date"]').click();
+    document.querySelector('[data-nw-row="date:' + day + '"]').click();
+    return true;
+  };
+  const CARET_END = function (sel) {
+    var ta = document.querySelector(sel);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    return true;
+  };
+  // A real keystroke, through the browser's input pipeline rather than a value
+  // set from script: a readOnly box refuses this, and only this.
+  const KEYS = async (page, words) => {
+    await page.session.send('Input.insertText', { text: words });
+    for (const type of ['keyDown', 'keyUp']) {
+      await page.session.send('Input.dispatchKeyEvent', { type, key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 });
+    }
+  };
+  const TEXT_OF = function (sel) { return document.querySelector(sel).value; };
+  const LOCKED_NOTE = word => 'Read only while “' + word + '” — choose unclear to edit.';
+
+  await t.test('NOTES LOCK: an Eternal day is read-only — it highlights, a real keystroke changes nothing, 🗑 asks nothing, and ⧉ still opens beside', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(OPEN_DAY, '2026-03-11');
+    const raw = await page.evaluate(READ_RAW);
+
+    await page.evaluate(CARET_END, '#nw-content');
+    await KEYS(page, ' typed into it');
+    await sleep(500);
+    assert.equal(await page.evaluate(TEXT_OF, '#nw-content'), 'keep this one',
+      'typing and Backspace changed nothing in an Eternal day');
+    assert.equal(await page.evaluate(READ_RAW), raw, 'and nothing was written');
+    assert.deepEqual(await page.evaluate(LOCK_IN, '#nw-content'),
+      { readOnly: true, disabled: false, locked: 'eternal', note: LOCKED_NOTE('Eternal') },
+      'read-only, never disabled, and it says how to undo it');
+
+    const picked = await page.evaluate(function () {
+      var ta = document.getElementById('nw-content');
+      ta.focus();
+      ta.setSelectionRange(0, 4);
+      return { focused: document.activeElement === ta, text: ta.value.slice(ta.selectionStart, ta.selectionEnd) };
+    });
+    assert.deepEqual(picked, { focused: true, text: 'keep' }, 'its words can still be highlighted, to copy');
+
+    const dialogs0 = page.dialogs.length;
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-nw-clear-day]').getAttribute('aria-disabled');
+    }), 'true', '🗑 is marked unavailable');
+    await page.evaluate(PRESS, '[data-nw-clear-day]');
+    await sleep(300);
+    assert.equal(page.dialogs.length, dialogs0, 'pressing it anyway asked nothing');
+    assert.equal(await page.evaluate(READ_RAW), raw, 'and cleared nothing');
+    assert.equal(await page.evaluate(TEXT_OF, '#nw-content'), 'keep this one');
+
+    await page.evaluate(function () {
+      document.querySelector('[data-nw-side-open]').click();
+      document.querySelector('[data-nw-pick="sorted:n-a"]').click();
+      return true;
+    });
+    await page.waitFor(function () { return document.querySelectorAll('[data-nw-pane]').length === 2; },
+      { message: 'the locked day opened beside a Sorted note' });
+    assert.deepEqual(await page.evaluate(PANES), ['date:2026-03-11', 'sorted:n-a']);
+    assert.deepEqual(await page.evaluate(LOCK_IN, '[data-nw-pane="date:2026-03-11"] textarea'),
+      { readOnly: true, disabled: false, locked: 'eternal', note: LOCKED_NOTE('Eternal') }, 'locked in its pane too');
+    assert.equal((await page.evaluate(LOCK_IN, '[data-nw-pane="sorted:n-a"] textarea')).readOnly, false,
+      'and the note beside it is not');
+    assert.equal(await page.evaluate(READ_RAW), raw, 'opening beside wrote nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES LOCK: choosing unclear unlocks a cleared day — it types again, 🗑 asks plainly, and a tag locks it again', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(OPEN_DAY, '2026-03-10');
+    assert.deepEqual(await page.evaluate(LOCK_IN, '#nw-content'),
+      { readOnly: true, disabled: false, locked: 'cleared', note: LOCKED_NOTE('cleared') }, 'cleared locks as Eternal does');
+
+    let raw = await page.evaluate(READ_RAW);
+    await page.evaluate(PRESS, '[data-nw-tag-set="unclear"]');
+    await landed(page, raw, 'the unlock landing');
+    assert.deepEqual(await page.evaluate(LOCK_IN, '#nw-content'),
+      { readOnly: false, disabled: false, locked: null, note: null }, 'unclear: editable, and the note is gone');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-nw-clear-day]').getAttribute('aria-disabled');
+    }), 'false', '🗑 is available again');
+
+    raw = await page.evaluate(READ_RAW);
+    await page.evaluate(CARET_END, '#nw-content');
+    await page.session.send('Input.insertText', { text: ' again' });
+    await landed(page, raw, 'the typing landing');
+    assert.deepEqual((await page.evaluate(SLOT0)).dateNotes['2026-03-10'].content, 'sorted out again',
+      'the same keystroke that did nothing on a locked day now writes');
+
+    raw = await page.evaluate(READ_RAW);
+    const dialogs0 = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(PRESS, '[data-nw-clear-day]');
+    await sleep(300);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogs0 + 1, 'an unlocked day asks before it clears');
+    const asked = page.dialogs[page.dialogs.length - 1] || '';
+    assert.ok(/^Clear the draft for .*10 Mar.*\?$/.test(asked) && !/tag/.test(asked),
+      'plainly — an unlocked day shows unclear, so there is no tag to name: ' + asked);
+    assert.equal(await page.evaluate(READ_RAW), raw, 'Cancel left track_db byte-identical');
+
+    await page.evaluate(PRESS, '[data-nw-tag-set="eternal"]');
+    await landed(page, raw, 'the lock landing');
+    assert.equal((await page.evaluate(LOCK_IN, '#nw-content')).locked, 'eternal', 'a tag locks it again');
+    assert.equal(page.dialogs.length, dialogs0 + 1, 'and no tag press asked anything');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES LOCK: side by side a locked pane is sent FROM but never INTO — and with every other pane locked, Send says so', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'sorted:n-a');
+    await addPane(page, 'date:2026-03-11');
+    await page.waitFor(function () { return document.querySelectorAll('[data-nw-pane]').length === 3; },
+      { message: 'three notes side by side' });
+    assert.deepEqual(await page.evaluate(PANES), ['date:' + today, 'sorted:n-a', 'date:2026-03-11']);
+    const ETERNAL = '[data-nw-pane="date:2026-03-11"] textarea';
+    const ALPHA = '[data-nw-pane="sorted:n-a"] textarea';
+    const SEND_OF = function (sel) {
+      var b = document.querySelector(sel).closest('[data-nw-pane]').querySelector('[data-nw-send]');
+      return { off: b.getAttribute('aria-disabled'), title: b.title };
+    };
+    const CLICK_SEND = function (sel) {
+      document.querySelector(sel).closest('[data-nw-pane]').querySelector('[data-nw-send]').click();
+      return Array.prototype.map.call(document.querySelectorAll('[data-nw-send-menu] [data-nw-send-to]'),
+        function (b) { return b.getAttribute('data-nw-send-to'); });
+    };
+    const before = await page.evaluate(SLOT0);
+
+    // FROM: a locked day's highlighted words go out like any other note's
+    let raw = await page.evaluate(READ_RAW);
+    await page.evaluate(SELECT_IN, ETERNAL, 0, 4);
+    assert.equal((await page.evaluate(SEND_OF, ETERNAL)).off, 'false', 'a locked pane can send');
+    assert.deepEqual(await page.evaluate(CLICK_SEND, ETERNAL), ['sorted:n-a', 'date:' + today],
+      'to either other pane, Sorted first');
+    await page.evaluate(PRESS, '[data-nw-send-to="sorted:n-a"]');
+    await landed(page, raw, 'the send from the locked day landing');
+    let slot = await page.evaluate(SLOT0);
+    assert.equal(slot.notes.find(n => n.id === 'n-a').content, 'A body\nkeep');
+    assert.deepEqual(slot.dateNotes['2026-03-11'], before.dateNotes['2026-03-11'], 'and the locked source is untouched');
+
+    // INTO: from Alpha the locked day is not offered, so today is the one target and no menu opens
+    raw = await page.evaluate(READ_RAW);
+    await page.evaluate(SELECT_IN, ALPHA, 0, 6);
+    assert.deepEqual(await page.evaluate(CLICK_SEND, ALPHA), [], 'one target left, so it sends without asking');
+    await landed(page, raw, 'the send into today landing');
+    slot = await page.evaluate(SLOT0);
+    assert.equal(slot.dateNotes[today].content, 'A body', 'today, unlocked, took the words');
+    assert.deepEqual(slot.dateNotes['2026-03-11'], before.dateNotes['2026-03-11'], 'the Eternal day did not');
+    assert.equal(await page.evaluate(TEXT_OF, ETERNAL), 'keep this one');
+
+    // every other pane locked: today's pane becomes the cleared day
+    await page.evaluate(function (today) {
+      document.querySelector('[data-nw-pane="date:' + today + '"] [data-nw-pane-change]').click();
+      document.querySelector('[data-nw-pick-overlay] [data-nw-pick="date:2026-03-10"]').click();
+      return true;
+    }, today);
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-pane="date:2026-03-10"]'); },
+      { message: 'the cleared day in the first pane' });
+    raw = await page.evaluate(READ_RAW);
+    await page.evaluate(SELECT_IN, ALPHA, 0, 6);
+    const send = await page.evaluate(SEND_OF, ALPHA);
+    assert.equal(send.off, 'true', 'with nothing unlocked to send into, Send is unavailable');
+    assert.ok(/locked/.test(send.title), 'and says why: ' + send.title);
+    assert.deepEqual(await page.evaluate(CLICK_SEND, ALPHA), [], 'pressing it anyway opens no menu');
+    await sleep(300);
+    assert.equal(await page.evaluate(READ_RAW), raw, 'and writes nothing');
+    assert.ok(/locked/.test(await page.evaluate(function () {
+      return document.querySelector('[data-nw-toast]').textContent;
+    })), 'the press explained why');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES LOCK: a lock set in another tab reaches an open editor at once, and words typed before it did are reported, never written', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const today = await page.evaluate(TODAY_IN);
+    await page.evaluate(OPEN_TODAY);
+    let raw = await page.evaluate(READ_RAW);
+    await page.evaluate(TYPE_IN, '#nw-content', 'draft');
+    await landed(page, raw, 'the draft landing');
+
+    // Another tab tags the day: the write, then the event every other tab hears.
+    raw = await page.evaluate(READ_RAW);
+    await page.evaluate(function (day) {
+      var db = JSON.parse(localStorage.getItem('track_db'));
+      db.slots[0].dateNotes[day].tag = 'cleared';
+      window.TrackStorage.saveDB(db);
+      window.dispatchEvent(new StorageEvent('storage', { key: 'track_db' }));
+      return true;
+    }, today);
+    assert.deepEqual(await page.evaluate(LOCK_IN, '#nw-content'),
+      { readOnly: true, disabled: false, locked: 'cleared', note: LOCKED_NOTE('cleared') },
+      'the open editor froze at once, without being redrawn');
+    assert.deepEqual(await page.evaluate(TAGS_IN, '[data-nw-tags="' + today + '"]'), { off: 'false', checked: ['cleared'] });
+    assert.equal(await page.evaluate(TEXT_OF, '#nw-content'), 'draft', 'and its text was left as it was');
+
+    // The race: words typed, then a lock that lands BEFORE their debounce does,
+    // with no event yet — the stale-tab case the writer's own refusal is for.
+    raw = await page.evaluate(READ_RAW);
+    await page.evaluate(PRESS, '[data-nw-tag-set="unclear"]');
+    await landed(page, raw, 'the unlock landing');
+    await page.evaluate(function (day) {
+      var ta = document.getElementById('nw-content');
+      ta.value = 'draft, and more';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      var db = JSON.parse(localStorage.getItem('track_db'));
+      db.slots[0].dateNotes[day].tag = 'eternal';
+      window.TrackStorage.saveDB(db);
+      return true;
+    }, today);
+    // Past the 300ms debounce, then assert: a refusal swallowed as 'unchanged'
+    // leaves the status on the unlock's 'saved', and reports itself as that.
+    await sleep(700);
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('#nw-body [data-nw-status]').getAttribute('data-nw-status');
+    }), 'locked', 'the editor reported the refused save');
+    const rec = (await page.evaluate(SLOT0)).dateNotes[today];
+    assert.deepEqual([rec.content, rec.tag], ['draft', 'eternal'], 'the locked day kept its text — the late words were refused');
+    assert.equal(await page.evaluate(TEXT_OF, '#nw-content'), 'draft, and more', 'and they are still on screen, to copy');
+    assert.equal((await page.evaluate(LOCK_IN, '#nw-content')).locked, 'eternal', 'the refusal froze the box');
+    assert.ok(/locked elsewhere/.test(await page.evaluate(function () {
+      return document.querySelector('#nw-body [data-nw-status]').textContent;
+    })), 'and said why');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES TAGS: a tag pressed in a side-by-side pane lands on that pane\'s day and nowhere else', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'date:2026-03-09');
+    assert.deepEqual(await page.evaluate(PANES), ['date:' + today, 'date:2026-03-09']);
+    assert.deepEqual(await page.evaluate(TAGS_IN, '[data-nw-pane="date:' + today + '"] [data-nw-tags]'),
+      { off: 'true', checked: [] }, 'today\'s pane holds nothing: uncoloured');
+    assert.deepEqual(await page.evaluate(TAGS_IN, '[data-nw-pane="date:2026-03-09"] [data-nw-tags]'),
+      { off: 'false', checked: ['unclear'] });
+    const raw = await page.evaluate(READ_RAW);
+    const before = await page.evaluate(SLOT0);
+    await page.evaluate(PRESS, '[data-nw-pane="date:2026-03-09"] [data-nw-tag-set="eternal"]');
+    await landed(page, raw);
+    const slot = await page.evaluate(SLOT0);
+    assert.equal(slot.dateNotes['2026-03-09'].tag, 'eternal', 'the pane\'s own day was tagged');
+    assert.equal(Object.prototype.hasOwnProperty.call(slot.dateNotes, today), false, 'the other pane\'s day was not created');
+    for (const day of ['2026-03-10', '2026-03-11']) {
+      assert.deepEqual(slot.dateNotes[day], before.dateNotes[day], day + ' is untouched');
+    }
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES CALENDAR: the pop-up opens on this month and fills every written day with its tag colour, in both appearances', async () => {
+    for (const theme of ['grit', 'dark']) {
+      const page = await open('index.html', { db: TAG_SEED(), extra: { track_theme: theme } });
+      await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+      const raw = await page.evaluate(READ_RAW);
+      await page.evaluate(OPEN_CAL);
+      const first = await page.evaluate(function () {
+        var root = document.documentElement.getBoundingClientRect();
+        var current = document.querySelector('[aria-current="date"]');
+        return {
+          month: document.querySelector('[data-nw-cal-month]').getAttribute('data-nw-cal-month'),
+          expected: window.TrackNotes.monthOf(window.TrackSchema.localToday()),
+          cells: document.querySelectorAll('[data-nw-cal-day]').length,
+          focused: document.activeElement && document.activeElement.getAttribute('data-nw-cal-day'),
+          today: window.TrackSchema.localToday(),
+          current: current && current.getAttribute('data-nw-cal-day'),
+          root: [Math.round(root.left), Math.round(root.top)]
+        };
+      });
+      assert.equal(first.month, first.expected, theme + ': it opens on this month');
+      assert.equal(first.cells, 42, theme + ': six whole weeks');
+      assert.equal(first.focused, first.today, theme + ': with today focused');
+      assert.equal(first.current, first.today, theme + ': and marked as today');
+      assert.deepEqual(first.root, [0, 0], theme + ': the page behind is not moved by the pop-up');
+
+      assert.ok(await page.evaluate(CAL_TO, '2026-03'), theme + ': ‹ reaches March 2026');
+      const cells = await page.evaluate(function () {
+        function token(name) {
+          var p = document.createElement('span');
+          document.body.appendChild(p);
+          p.style.backgroundColor = 'var(' + name + ')';
+          var v = getComputedStyle(p).backgroundColor;
+          p.remove();
+          return v;
+        }
+        var out = { tokens: { unclear: token('--color-tag-unclear'), cleared: token('--color-tag-cleared'),
+          eternal: token('--color-tag-eternal') } };
+        ['2026-03-08', '2026-03-09', '2026-03-10', '2026-03-11', '2026-03-12'].forEach(function (d) {
+          var c = document.querySelector('[data-nw-cal-day="' + d + '"]');
+          out[d] = { tag: c.getAttribute('data-nw-cal-tag'), bg: getComputedStyle(c).backgroundColor };
+        });
+        return out;
+      });
+      assert.deepEqual(cells['2026-03-09'], { tag: 'unclear', bg: cells.tokens.unclear }, theme + ': an untagged written day is filled red');
+      assert.deepEqual(cells['2026-03-10'], { tag: 'cleared', bg: cells.tokens.cleared }, theme + ': cleared is filled green');
+      assert.deepEqual(cells['2026-03-11'], { tag: 'eternal', bg: cells.tokens.eternal }, theme + ': Eternal is filled orchid');
+      for (const d of ['2026-03-08', '2026-03-12']) {
+        assert.deepEqual(cells[d], { tag: null, bg: 'rgba(0, 0, 0, 0)' }, theme + ': ' + d + ', with nothing written, keeps the plain default');
+      }
+      assert.equal(new Set(Object.values(cells.tokens)).size, 3, theme + ': three distinct colours');
+      assert.equal(await page.evaluate(READ_RAW), raw, theme + ': opening and moving the calendar wrote nothing');
+
+      await page.evaluate(PRESS, '[data-nw-cal-day="2026-03-11"]');
+      const after = await page.evaluate(function () {
+        var title = document.querySelector('[data-nw-day-title]');
+        return {
+          cal: !!document.getElementById('nw-cal'),
+          locked: document.documentElement.classList.contains('nw-cal-open'),
+          day: title && title.getAttribute('data-nw-day-title')
+        };
+      });
+      assert.deepEqual(after, { cal: false, locked: false, day: '2026-03-11' }, theme + ': choosing a day closes the pop-up and opens that day');
+      assert.equal(await page.evaluate(READ_RAW), raw, theme + ': and choosing it wrote nothing');
+      assert.deepEqual(realErrors(page), []);
+      await page.close();
+    }
+  });
+
+  await t.test('NOTES CALENDAR: from the side-by-side picker an open day is refused, Escape closes only the calendar, and a day opens as a pane', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    const today = await page.evaluate(TODAY_IN);
+    await toSplit(page, 'sorted:n-a');
+    await page.evaluate(function () {
+      document.querySelector('[data-nw-add-pane]').click();
+      var o = document.querySelector('[data-nw-pick-overlay]');
+      o.querySelector('[data-nw-picker-tab="date"]').click();
+      o.querySelector('[data-nw-cal-open="picker"]').click();
+      return true;
+    });
+    const raw = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(function (d) {
+      return document.querySelector('[data-nw-cal-day="' + d + '"]').getAttribute('aria-disabled');
+    }, today), 'true', 'today is already open in a pane, so its day is disabled');
+    await page.evaluate(PRESS, '[data-nw-cal-day="' + today + '"]');
+    assert.deepEqual(await page.evaluate(CAL_STATE), { cal: true, overlay: true }, 'pressing it does nothing — the calendar stays');
+    assert.deepEqual(await page.evaluate(PANES), ['date:' + today, 'sorted:n-a']);
+
+    await page.evaluate(function () {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return true;
+    });
+    assert.deepEqual(await page.evaluate(CAL_STATE), { cal: false, overlay: true },
+      'Escape closed the calendar and left the pick overlay beneath it');
+
+    await page.evaluate(PRESS, '[data-nw-pick-overlay] [data-nw-cal-open="picker"]');
+    assert.ok(await page.evaluate(CAL_TO, '2026-03'));
+    await page.evaluate(PRESS, '[data-nw-cal-day="2026-03-10"]');
+    await page.waitFor(function () { return document.querySelectorAll('[data-nw-pane]').length === 3; },
+      { message: 'a third pane' });
+    assert.deepEqual(await page.evaluate(PANES), ['date:' + today, 'sorted:n-a', 'date:2026-03-10']);
+    assert.deepEqual(await page.evaluate(CAL_STATE), { cal: false, overlay: false });
+    assert.equal(await page.evaluate(READ_RAW), raw, 'choosing through the calendar wrote nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES CALENDAR: the keys move the focused day across months, and Escape, ✕ and a click outside all close it', async () => {
+    const page = await open('index.html', { db: TAG_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    const raw = await page.evaluate(READ_RAW);
+    await page.evaluate(OPEN_CAL);
+    assert.ok(await page.evaluate(CAL_TO, '2026-03'));
+    // Dispatched on the focused day, so it bubbles through the grid exactly as a keypress would.
+    const KEY = function (key, shift) {
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: key, shiftKey: !!shift, bubbles: true, cancelable: true }));
+      var f = document.activeElement;
+      return [f && f.getAttribute('data-nw-cal-day'), document.querySelector('[data-nw-cal-month]').getAttribute('data-nw-cal-month')];
+    };
+    const OPEN_NOW = function () { return !!document.getElementById('nw-cal'); };
+    await page.evaluate(function () { document.querySelector('[data-nw-cal-day="2026-03-01"]').focus(); return true; });
+    assert.deepEqual(await page.evaluate(KEY, 'ArrowLeft'), ['2026-02-28', '2026-02'], '← crosses back into February, and the month follows');
+    assert.deepEqual(await page.evaluate(KEY, 'ArrowDown'), ['2026-03-07', '2026-03'], '↓ is a week later');
+    assert.deepEqual(await page.evaluate(KEY, 'PageUp'), ['2026-02-07', '2026-02'], 'PageUp is the same day a month earlier');
+    assert.deepEqual(await page.evaluate(KEY, 'PageDown', true), ['2027-02-07', '2027-02'], 'Shift+PageDown is a year later');
+    assert.deepEqual(await page.evaluate(KEY, 'ArrowRight'), ['2027-02-08', '2027-02']);
+
+    const esc = await page.evaluate(function () {
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      return { cal: !!document.getElementById('nw-cal'), focus: document.activeElement && document.activeElement.getAttribute('data-nw-cal-open') };
+    });
+    assert.deepEqual(esc, { cal: false, focus: 'list' }, 'Escape closed it and handed focus back to Go to day');
+
+    await page.evaluate(PRESS, '[data-nw-cal-open="list"]');
+    await page.evaluate(PRESS, '[data-nw-cal-close]');
+    assert.equal(await page.evaluate(OPEN_NOW), false, '✕ closed it');
+
+    await page.evaluate(PRESS, '[data-nw-cal-open="list"]');
+    await page.evaluate(PRESS, '[data-nw-cal] .nw-cal-legend');
+    assert.equal(await page.evaluate(OPEN_NOW), true, 'a click inside the card keeps it open');
+    await page.evaluate(PRESS, '#nw-cal');
+    assert.equal(await page.evaluate(OPEN_NOW), false, 'a click on the scrim outside it closes it');
+    assert.equal(await page.evaluate(function () { return document.documentElement.classList.contains('nw-cal-open'); }), false,
+      'and the page behind is released');
+    assert.equal(await page.evaluate(READ_RAW), raw, 'none of it wrote anything');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('NOTES TAGS: every tag colour clears 4.5:1 in both appearances — as text, as a fill, and on its own chip', async () => {
+    /* Computed from the live tokens and the live chips, like the ACCENT case,
+       so a palette tweak is checked rather than re-recorded. An undefined token
+       reports itself instead of resolving to the inherited text colour. */
+    const MEASURE = function () {
+      var cs = getComputedStyle(document.documentElement);
+      var tok = function (n) { return cs.getPropertyValue(n).trim(); };
+      var probe = document.createElement('span');
+      document.body.appendChild(probe);
+      // color-mix() computes to color(srgb r g b) in 0..1, not rgb() in 0..255.
+      var parse = function (s) {
+        var m = (s.match(/[\d.]+/g) || []).map(Number);
+        return /^color\(/.test(s) ? m.slice(0, 3).map(function (v) { return v * 255; }) : m.slice(0, 3);
+      };
+      var rgb = function (v) { probe.style.color = ''; probe.style.color = v; return parse(getComputedStyle(probe).color); };
+      var lum = function (c) {
+        var f = c.map(function (v) {
+          v = v / 255;
+          return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+      };
+      var ratio = function (a, b) {
+        var x = lum(a), y = lum(b);
+        return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+      };
+      var worst = { ratio: 99, pair: null };
+      var note = function (r, pair) { if (r < worst.ratio) worst = { ratio: r, pair: pair }; };
+      ['--color-tag-unclear', '--color-tag-cleared', '--color-tag-eternal'].forEach(function (t) {
+        var raw = tok(t);
+        if (!raw) { note(0, t + ' is undefined'); return; }
+        ['--color-app-bg', '--color-surface', '--color-surface-muted'].forEach(function (s) {
+          note(ratio(rgb(raw), rgb(tok(s))), t + ' text on ' + s);
+        });
+        note(ratio(rgb(tok('--color-surface')), rgb(raw)), '--color-surface text on a ' + t + ' fill');
+      });
+      var chips = document.querySelectorAll('[data-nw-tag-chip]');
+      Array.prototype.forEach.call(chips, function (c) {
+        var st = getComputedStyle(c);
+        note(ratio(parse(st.color), parse(st.backgroundColor)), 'the ' + c.getAttribute('data-nw-tag-chip') + ' chip');
+      });
+      probe.remove();
+      worst.chips = Array.prototype.map.call(chips, function (c) { return c.getAttribute('data-nw-tag-chip'); }).sort();
+      return worst;
+    };
+    for (const theme of ['grit', 'dark']) {
+      const page = await open('index.html', { db: TAG_SEED(), extra: { track_theme: theme } });
+      await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+      await page.evaluate(function () {
+        document.getElementById('nw-btn').click();
+        document.querySelector('[data-nw-tab="date"]').click();
+        return true;
+      });
+      const w = await page.evaluate(MEASURE);
+      assert.deepEqual(w.chips, ['cleared', 'eternal', 'unclear'], theme + ': one chip of each tag was measured');
+      assert.ok(w.ratio >= 4.5, theme + ': the worst pair is ' + w.pair + ' at ' + w.ratio.toFixed(2) + ':1');
+      await page.close();
+    }
+  });
+
   // ── 17. The phone interface ───────────────────────────────────────────────
   /* Every case here runs at 390x844 with touch, set BEFORE goto (see open()).
 
@@ -10648,6 +11339,54 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.evaluate(TYPE_IN, '[data-nw-pane="date:' + today + '"] textarea', 'drafted on a phone');
     await landed(page, raw);
     assert.equal((await page.evaluate(SLOT0)).dateNotes[today].content, 'drafted on a phone');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE: the calendar pop-up, the tag radio and a locked day\'s note fit a phone, uncropped, with finger-sized targets', async () => {
+    const page = await open('index.html', { db: TAG_SEED(), viewport: PHONE });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(OPEN_CAL);
+    const geo = await page.evaluate(function () {
+      var card = document.querySelector('[data-nw-cal]').getBoundingClientRect();
+      return {
+        vw: document.documentElement.clientWidth,
+        vh: window.innerHeight,
+        sw: document.documentElement.scrollWidth,
+        card: [Math.round(card.left), Math.round(card.top), Math.round(card.right), Math.round(card.bottom)],
+        days: Array.prototype.map.call(document.querySelectorAll('[data-nw-cal-day]'), function (b) {
+          var r = b.getBoundingClientRect();
+          return Math.round(Math.min(r.width, r.height));
+        })
+      };
+    });
+    assert.ok(geo.card[0] >= 0 && geo.card[2] <= geo.vw, 'the pop-up is not cropped sideways: ' + geo.card + ' in ' + geo.vw);
+    assert.ok(geo.card[1] >= 0 && geo.card[3] <= geo.vh, 'nor at the top or bottom: ' + geo.card + ' in ' + geo.vh);
+    assert.ok(geo.sw <= geo.vw, 'and nothing scrolls sideways (' + geo.sw + ' > ' + geo.vw + ')');
+    assert.equal(geo.days.length, 42);
+    assert.ok(geo.days.every(s => s >= 40), 'every day is a finger target: the smallest is ' + Math.min(...geo.days) + 'px');
+
+    assert.ok(await page.evaluate(CAL_TO, '2026-03'));
+    await page.evaluate(PRESS, '[data-nw-cal-day="2026-03-11"]');
+    const radios = await page.evaluate(function () {
+      var vw = document.documentElement.clientWidth;
+      return Array.prototype.map.call(document.querySelectorAll('[data-nw-tag-set]'), function (b) {
+        var r = b.getBoundingClientRect();
+        return { size: Math.round(Math.min(r.width, r.height)), inside: r.left >= 0 && r.right <= vw };
+      });
+    });
+    assert.equal(radios.length, 3);
+    assert.ok(radios.every(r => r.size >= 44 && r.inside), 'the three tags are 44px targets on screen: ' + JSON.stringify(radios));
+    const lock = await page.evaluate(function () {
+      var vw = document.documentElement.clientWidth;
+      var n = document.querySelector('[data-nw-lock-note]'), ta = document.getElementById('nw-content');
+      var r = n.getBoundingClientRect();
+      return { shown: !n.hidden && r.height > 0, inside: r.left >= 0 && r.right <= vw,
+        uncut: n.scrollWidth <= n.clientWidth, readOnly: ta.readOnly, text: Math.round(ta.getBoundingClientRect().height) };
+    });
+    assert.deepEqual([lock.shown, lock.inside, lock.uncut, lock.readOnly], [true, true, true, true],
+      'the Eternal day is read-only and its note is on screen, uncut: ' + JSON.stringify(lock));
+    assert.ok(lock.text >= 120, 'and the locked text keeps room to be read: ' + lock.text + 'px');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });

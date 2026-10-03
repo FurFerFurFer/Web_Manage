@@ -47,6 +47,14 @@ html[data-theme="dark"] {
   --color-accent-pending: #f59e0b;
   --color-accent-study: #a78bfa;
   --color-accent-live: #22d3ee;
+  /* Date-note tags: red unclear, green cleared, orchid Eternal. The hue is the
+     tag's identity in both appearances; the shade is per appearance so each
+     clears 4.5:1 as text on all three surfaces AND under --color-surface text
+     as a fill (the checked radio, a calendar day). A browser case measures
+     both from these live values. */
+  --color-tag-unclear: #f87171;
+  --color-tag-cleared: #4ade80;
+  --color-tag-eternal: #da70d6;
   --color-focus: #a3d3af;
   --color-scrim: rgba(6, 10, 8, 0.72);
   --shadow-card: 0 18px 48px rgba(0, 0, 0, 0.34);
@@ -108,6 +116,9 @@ html[data-theme="light"] {
   --color-accent-pending: #755a12;
   --color-accent-study: #4a3f6b;
   --color-accent-live: #1f5560;
+  --color-tag-unclear: #b91c1c;
+  --color-tag-cleared: #166534;
+  --color-tag-eternal: #86288f;
   --color-focus: #24503a;
   --color-scrim: rgba(23, 28, 24, 0.56);
   --shadow-card: 0 20px 55px rgba(36, 48, 38, 0.10);
@@ -1399,8 +1410,13 @@ html[data-theme] #nw-content::placeholder {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 
+/* flex-shrink: 0 because in a scrolling flex column an item with an explicit
+   min-height shrinks down to it before the column scrolls, and its preview —
+   overflow:hidden, so free to shrink too — clipped its own text in half. (A
+   picker row is a ROW flex, whose words never shrink, so it fits in 44px.) */
 #nw-panel .nw-date-row {
   flex-direction: column;
+  flex-shrink: 0;
   align-items: stretch;
   gap: 2px;
 }
@@ -1409,9 +1425,21 @@ html[data-theme] #nw-content::placeholder {
   box-shadow: inset 3px 0 0 var(--color-accent-pending);
 }
 
+.nw-date-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .nw-date-label {
+  min-width: 0;
+  overflow: hidden;
   color: var(--color-text);
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nw-date-preview,
@@ -1423,17 +1451,30 @@ html[data-theme] #nw-content::placeholder {
   white-space: nowrap;
 }
 
-.nw-goto {
+/* the button that opens the calendar pop-up — in the Date list and the picker */
+.nw-cal-opener {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   margin: 8px 12px;
-  color: var(--color-text-muted);
-  font: 12px var(--font-ui);
+  min-height: 2.75rem;
+  padding: 0 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: 600 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
 }
 
-.nw-goto-input,
+.nw-cal-opener:hover {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+}
+
 .nw-picker-filter {
   min-height: 2.25rem;
   padding: 0 10px;
@@ -1509,6 +1550,139 @@ html[data-theme] #nw-content::placeholder {
   border-color: var(--color-primary-border);
   background: var(--color-primary-soft);
   color: var(--color-primary-text);
+}
+
+/* Date-note tags. `.nw-tag-<id>` is the ONE place a tag meets its colour:
+   the chip, the radio, a calendar day and a legend swatch all paint from
+   --nw-tag, so red / green / orchid is spelled once. */
+.nw-tag-unclear {
+  --nw-tag: var(--color-tag-unclear);
+}
+
+.nw-tag-cleared {
+  --nw-tag: var(--color-tag-cleared);
+}
+
+.nw-tag-eternal {
+  --nw-tag: var(--color-tag-eternal);
+}
+
+/* The tint is mixed into the SURFACE, not into transparent: an opaque chip has
+   one contrast, on a hovered row as on a still one, and the suite can read it
+   straight off the computed style. */
+.nw-tag {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--nw-tag) 45%, var(--color-surface));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--nw-tag) 12%, var(--color-surface));
+  color: var(--nw-tag);
+  font: 700 11px/1.5 var(--font-ui);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.nw-pick-row .nw-tag {
+  margin-left: auto;
+}
+
+/* the radio row: above the text in the single-note view and in a Date pane */
+.nw-tags {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+#nw-split .nw-tags {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.nw-tag-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 2.75rem;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--nw-tag) 45%, var(--color-surface));
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--nw-tag);
+  font: 600 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.nw-tag-swatch {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--nw-tag);
+}
+
+.nw-tag-btn:hover {
+  background: color-mix(in srgb, var(--nw-tag) 12%, var(--color-surface));
+}
+
+.nw-tag-btn[aria-checked="true"] {
+  border-color: var(--nw-tag);
+  background: var(--nw-tag);
+  color: var(--color-surface);
+}
+
+.nw-tag-btn[aria-checked="true"] .nw-tag-swatch {
+  background: var(--color-surface);
+}
+
+/* Nothing written: no tag, so no colour — the default grey. The fade comes
+   from the shared [aria-disabled="true"] rule, set on the GROUP only, so it is
+   applied once rather than compounded on every radio. */
+.nw-tags[aria-disabled="true"] .nw-tag-btn {
+  border-color: var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.nw-tags[aria-disabled="true"] .nw-tag-swatch {
+  background: var(--color-border-strong);
+}
+
+/* A LOCKED day: cleared or Eternal. Its text box is readOnly, never disabled,
+   so it still selects, copies and sends from. The note under the radio row
+   says why typing does nothing and how to undo it, and the box carries
+   `.nw-tag-<id>` while locked, so its stripe paints from --nw-tag like every
+   other tag surface. */
+.nw-lock-note {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 8px;
+  color: var(--color-text-muted);
+  font: 12px/1.4 var(--font-ui);
+}
+
+/* `display: flex` above would otherwise beat the UA's [hidden] rule. */
+.nw-lock-note[hidden] {
+  display: none;
+}
+
+#nw-split .nw-lock-note {
+  padding: 8px 14px 0;
+}
+
+.nw-lock-note .nw-icon-svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+#nw-content[data-nw-locked],
+#nw-split .nw-pane-text[data-nw-locked] {
+  box-shadow: inset 3px 0 0 var(--nw-tag);
 }
 
 /* the picker — in the panel, and in a card over the side-by-side view */
@@ -1603,7 +1777,8 @@ html[data-theme] #nw-content::placeholder {
    body's overflow propagates to the viewport only while html's stays visible, and
    (0,1,2) beats `body.app-page { overflow-x: hidden }` without a new scroll
    container appearing anywhere. */
-html.nw-split-open body {
+html.nw-split-open body,
+html.nw-cal-open body {
   overflow: hidden;
 }
 
@@ -1910,6 +2085,169 @@ html.nw-split-open body {
 .nw-toast.nw-toast-on {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+/* the calendar pop-up — on <body>, above the panel and side by side (9000),
+   under the storage and sync banners (9998) */
+#nw-cal {
+  position: fixed;
+  inset: 0;
+  z-index: 9001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: var(--color-scrim);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+}
+
+.nw-cal-card {
+  display: flex;
+  flex-direction: column;
+  width: min(23rem, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+}
+
+.nw-cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+.nw-cal-month {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text);
+  font: 600 16px var(--font-display);
+  text-align: center;
+}
+
+.nw-cal-today {
+  min-height: 2.75rem;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.nw-cal-today:hover {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary-text);
+}
+
+.nw-cal-dows,
+.nw-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  padding: 0 12px;
+}
+
+.nw-cal-dow {
+  padding: 2px 0 4px;
+  color: var(--color-text-muted);
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.nw-cal-grid {
+  padding-bottom: 12px;
+}
+
+.nw-cal-day {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: 500 13px var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.nw-cal-day:hover {
+  border-color: var(--color-border-strong);
+}
+
+/* Every WRITTEN day is filled with its tag — red unless another was chosen.
+   An unwritten day keeps the plain default above. */
+.nw-cal-day[data-nw-cal-tag] {
+  border-color: var(--nw-tag);
+  background: var(--nw-tag);
+  color: var(--color-surface);
+  font-weight: 700;
+}
+
+.nw-cal-day[data-nw-cal-tag]:hover {
+  border-color: var(--color-text);
+}
+
+/* Two rings, surface then text, so today reads on a fill and on a plain day. */
+.nw-cal-day[aria-current="date"] {
+  box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-text);
+}
+
+.nw-cal-day.nw-cal-out {
+  opacity: 0.45;
+}
+
+/* Already open in a pane. The shared [aria-disabled="true"] rule fades it. */
+.nw-cal-day[aria-disabled="true"] .nw-cal-num {
+  text-decoration: line-through;
+}
+
+.nw-cal-glyph {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font: 700 10px/1 var(--font-ui);
+}
+
+.nw-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--color-border-subtle);
+  color: var(--color-text-muted);
+  font: 12px var(--font-ui);
+}
+
+.nw-cal-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nw-cal-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--nw-tag);
+}
+
+.nw-cal-key-blank .nw-cal-swatch {
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4060,6 +4398,7 @@ body.app-page #nw-panel {
   body.docs-page #nw-btn,
   body.docs-page #nw-panel,
   body.docs-page #nw-split,
+  body.docs-page #nw-cal,
   body.docs-page #fb-overlay,
   body.docs-page #fb-sync-banner,
   body.docs-page #fb-sync-error,

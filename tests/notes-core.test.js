@@ -30,10 +30,17 @@ const TZ = process.env.TZ || '(system default)';
 test('module surface', () => {
   assert.ok(N, 'notes-core.js published window.TrackNotes under TZ=' + TZ);
   for (const name of ['dateNoteText', 'withDateNote', 'datedDays', 'withSortedPatch', 'appendSent',
-    'dayLabel', 'firstLine', 'isBlank']) {
+    'dayLabel', 'firstLine', 'isBlank', 'isTag', 'tagInfo', 'dateNoteTag', 'dateNoteLocked', 'withDateTag',
+    'monthOf', 'shiftMonth', 'addDays', 'addMonths', 'monthLabel', 'monthGrid']) {
     assert.equal(typeof N[name], 'function', name + ' is exported');
   }
   assert.equal(N.MAX_PANES, 4);
+  assert.deepEqual(N.TAGS.map(t => [t.id, t.label]), [['unclear', 'unclear'], ['cleared', 'cleared'], ['eternal', 'Eternal']],
+    'three tags, in the order and the words the user chose');
+  assert.deepEqual(N.TAGS.map(t => [t.id, t.locked]), [['unclear', false], ['cleared', true], ['eternal', true]],
+    'cleared and Eternal lock the text; unclear is the one that edits');
+  assert.equal(N.DEFAULT_TAG, 'unclear');
+  assert.deepEqual(N.WEEKDAYS, ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], 'Sunday first, like TrackCalendar.DOWS');
 });
 
 // ── withDateNote: the one writer ───────────────────────────────────────────
@@ -123,6 +130,167 @@ test('datedDays: real days with text, newest first; a bad key is skipped and LEF
   assert.deepEqual(N.datedDays([]), []);
 });
 
+// ── tags ───────────────────────────────────────────────────────────────────
+// Red "unclear" is the DEFAULT for a written day, by absence — that is what
+// makes every note written before tags existed red without a migration. An
+// unwritten day shows no tag at all.
+
+test('dateNoteTag: a written day with no tag is unclear; an unwritten day is uncoloured', () => {
+  const map = JSON.parse(JSON.stringify({
+    '2026-09-20': { content: 'written before tags existed', createdAt: 1, updatedAt: 1 },
+    '2026-09-21': { content: 'sorted out', tag: 'cleared' },
+    '2026-09-22': { content: 'keep forever', tag: 'eternal' },
+    '2026-09-23': 'a bare string is written too',
+    '2026-09-24': { content: 'a later version\'s tag', tag: 'pinned' },
+    '2026-09-25': { content: 'a stray stored default', tag: 'unclear' },
+    '2026-09-26': { tag: 'cleared' },
+    '2026-09-27': { content: '   \n', tag: 'eternal' }
+  }));
+  assert.equal(N.dateNoteTag(map, '2026-09-20'), 'unclear', 'no tag stored: the default');
+  assert.equal(N.dateNoteTag(map, '2026-09-21'), 'cleared');
+  assert.equal(N.dateNoteTag(map, '2026-09-22'), 'eternal');
+  assert.equal(N.dateNoteTag(map, '2026-09-23'), 'unclear', 'a bare string is a written, untagged day');
+  assert.equal(N.dateNoteTag(map, '2026-09-24'), 'unclear', 'an unknown tag shows the default');
+  assert.equal(N.dateNoteTag(map, '2026-09-25'), 'unclear');
+  assert.equal(N.dateNoteTag(map, '2026-09-26'), '', 'nothing written: no colour, whatever the record claims');
+  assert.equal(N.dateNoteTag(map, '2026-09-27'), '', 'blank text is nothing written');
+  assert.equal(N.dateNoteTag(map, '2026-09-30'), '', 'a day the map does not hold');
+  assert.equal(map['2026-09-24'].tag, 'pinned', 'reading deletes nothing');
+});
+
+test('dateNoteTag is total, and an inherited name is never a tag', () => {
+  const map = JSON.parse('{"__proto__": {"content": "x", "tag": "cleared"}, "2026-09-27": {"content": "x", "tag": "constructor"}}');
+  assert.equal(N.dateNoteTag(map, '2026-09-27'), 'unclear', '"constructor" is not a tag');
+  for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__', '', null, undefined, 5, {}]) {
+    assert.equal(N.isTag(name), false, String(name) + ' is not a tag');
+  }
+  for (const notAMap of [undefined, null, 42, 'x', []]) {
+    assert.equal(N.dateNoteTag(notAMap, '2026-09-27'), '');
+  }
+  assert.equal(N.tagInfo('eternal').label, 'Eternal');
+  assert.equal(N.tagInfo('toString'), null);
+});
+
+test('withDateTag sets a tag by spreading: createdAt and an unknown key survive', () => {
+  const map = { '2026-09-27': { content: 'draft', createdAt: 5, updatedAt: 5, laterKey: 'kept' } };
+  const out = N.withDateTag(map, '2026-09-27', 'cleared', 9);
+  assert.deepEqual(out['2026-09-27'], { content: 'draft', createdAt: 5, updatedAt: 9, laterKey: 'kept', tag: 'cleared' });
+  assert.deepEqual(N.withDateTag(out, '2026-09-27', 'eternal', 10)['2026-09-27'].tag, 'eternal', 'one tag per day: it is replaced');
+});
+
+test('choosing unclear DELETES the key — the default is never stored', () => {
+  const map = { '2026-09-27': { content: 'draft', createdAt: 5, updatedAt: 5, tag: 'eternal' } };
+  const out = N.withDateTag(map, '2026-09-27', 'unclear', 9);
+  assert.equal(Object.prototype.hasOwnProperty.call(out['2026-09-27'], 'tag'), false, 'no tag key at all');
+  assert.deepEqual(out['2026-09-27'], { content: 'draft', createdAt: 5, updatedAt: 9 });
+  assert.equal(N.dateNoteTag(out, '2026-09-27'), 'unclear', 'and the day still shows unclear');
+});
+
+test('withDateTag refuses, handing back the SAME map, wherever there is nothing to do', () => {
+  const map = {
+    '2026-09-26': { content: 'untagged' },
+    '2026-09-27': { content: 'draft', tag: 'cleared' },
+    '2026-09-28': { content: '  ' }
+  };
+  assert.equal(N.withDateTag(map, '2026-09-27', 'cleared', 9), map, 'the same tag again');
+  assert.equal(N.withDateTag(map, '2026-09-26', 'unclear', 9), map, 'the default on an untagged day');
+  assert.equal(N.withDateTag(map, '2026-09-28', 'eternal', 9), map, 'a day with nothing written cannot be tagged');
+  assert.equal(N.withDateTag(map, '2026-09-29', 'eternal', 9), map, 'nor can a day the map does not hold');
+  assert.equal(N.withDateTag(map, '2026-02-30', 'eternal', 9), map, 'a day that does not exist');
+  assert.equal(N.withDateTag(map, '2026-09-26', 'pinned', 9), map, 'a tag that is not one of the three');
+  assert.equal(N.withDateTag(map, '2026-09-26', 'constructor', 9), map, 'an inherited name');
+  assert.equal(N.withDateTag(map, '2026-09-26', '', 9), map, 'blank is not a way to untag');
+});
+
+test('withDateTag never mutates its input, and keeps a JSON-parsed __proto__ as data', () => {
+  const map = JSON.parse('{"__proto__": {"content": "odd"}, "2026-09-27": {"content": "a", "tag": "cleared"}}');
+  const before = JSON.stringify(map);
+  const out = N.withDateTag(map, '2026-09-27', 'eternal', 1);
+  N.withDateTag(map, '2026-09-27', 'unclear', 1);
+  assert.equal(JSON.stringify(map), before);
+  assert.equal(Object.getPrototypeOf(out), Object.prototype);
+  assert.equal(Object.prototype.hasOwnProperty.call(out, '__proto__'), true, 'the key was kept');
+});
+
+test('tagging a bare-string day upgrades it to a record and keeps its text', () => {
+  const out = N.withDateTag({ '2026-09-27': 'hand-written' }, '2026-09-27', 'eternal', 3);
+  assert.deepEqual(out['2026-09-27'], { content: 'hand-written', tag: 'eternal', createdAt: 3, updatedAt: 3 });
+});
+
+// ── the lock ───────────────────────────────────────────────────────────────
+// Cleared and Eternal FREEZE a day's text: read, copied and opened beside, never
+// edited or emptied, until the day is made unclear again. The rule is in the
+// writer, so a save from a stale tab meets it too.
+
+test('a cleared or Eternal day refuses ANY change to its text — the SAME map comes back, emptying included', () => {
+  const map = {
+    '2026-09-26': { content: 'sorted out', createdAt: 1, updatedAt: 1, tag: 'cleared' },
+    '2026-09-27': { content: 'keep forever', createdAt: 1, updatedAt: 1, tag: 'eternal' }
+  };
+  const before = JSON.stringify(map);
+  for (const day of ['2026-09-26', '2026-09-27']) {
+    assert.equal(N.withDateNote(map, day, 'rewritten', 2), map, day + ': an edit is refused');
+    assert.equal(N.withDateNote(map, day, map[day].content + ' and more', 2), map, day + ': so is an append');
+    for (const blank of ['', '   ', '\n']) {
+      assert.equal(N.withDateNote(map, day, blank, 2), map, day + ': and emptying ' + JSON.stringify(blank));
+    }
+  }
+  assert.equal(JSON.stringify(map), before, 'nothing was mutated');
+  assert.equal(N.withDateNote(map, '2026-09-28', 'a new day', 2)['2026-09-28'].content, 'a new day',
+    'a lock is per day: the next day writes as ever');
+});
+
+test('dateNoteLocked: only a WRITTEN day showing cleared or Eternal is locked, and it is total', () => {
+  const map = JSON.parse(JSON.stringify({
+    '2026-09-20': { content: 'untagged' },
+    '2026-09-21': { content: 'x', tag: 'cleared' },
+    '2026-09-22': { content: 'x', tag: 'eternal' },
+    '2026-09-23': 'a bare string',
+    '2026-09-24': { content: 'x', tag: 'pinned' },
+    '2026-09-25': { content: 'x', tag: 'constructor' },
+    '2026-09-26': { tag: 'cleared' },
+    '2026-09-27': { content: '  ', tag: 'eternal' }
+  }));
+  const locked = Object.keys(map).concat(['2026-09-30']).filter(day => N.dateNoteLocked(map, day));
+  assert.deepEqual(locked, ['2026-09-21', '2026-09-22'],
+    'unclear, a bare string, an unknown or inherited tag, nothing written and an absent day are all editable');
+  for (const notAMap of [undefined, null, 42, 'x', []]) {
+    assert.equal(N.dateNoteLocked(notAMap, '2026-09-27'), false);
+  }
+});
+
+test('unclear UNLOCKS: after it the text edits and empties exactly as an untagged day\'s does', () => {
+  const map = { '2026-09-27': { content: 'draft', createdAt: 1, updatedAt: 1, tag: 'eternal' } };
+  const open = N.withDateTag(map, '2026-09-27', 'unclear', 2);
+  assert.equal(N.dateNoteLocked(open, '2026-09-27'), false);
+  assert.deepEqual(N.withDateNote(open, '2026-09-27', 'draft, edited', 3)['2026-09-27'],
+    { content: 'draft, edited', createdAt: 1, updatedAt: 3 });
+  assert.equal(Object.prototype.hasOwnProperty.call(N.withDateNote(open, '2026-09-27', ' ', 3), '2026-09-27'), false,
+    'and emptying deletes the day — an empty day and an untouched day are the same state');
+  assert.equal(N.dateNoteLocked(N.withDateTag(open, '2026-09-27', 'cleared', 4), '2026-09-27'), true,
+    'and a tag locks it again');
+});
+
+test('an edit carries a tag this version does not know, and emptying deletes the day, tag and all', () => {
+  // A later version's tag reads as unclear here, so it locks nothing — and the
+  // spread still carries it through, so that version gets it back.
+  const map = { '2026-09-27': { content: 'draft', createdAt: 1, updatedAt: 1, tag: 'pinned' } };
+  assert.equal(N.withDateNote(map, '2026-09-27', 'draft, longer', 2)['2026-09-27'].tag, 'pinned');
+  const emptied = N.withDateNote(map, '2026-09-27', '  ', 2);
+  assert.equal(Object.prototype.hasOwnProperty.call(emptied, '2026-09-27'), false,
+    'an emptied day is gone — an empty day and an untouched day are the same state');
+  assert.equal(N.dateNoteTag(N.withDateNote(emptied, '2026-09-27', 'written again', 3), '2026-09-27'), 'unclear',
+    'written again, it starts over at the default');
+});
+
+test('datedDays entries carry the tag each day shows', () => {
+  const map = { '2026-09-25': { content: 'a' }, '2026-09-26': { content: 'b', tag: 'eternal' }, '2026-09-27': { tag: 'cleared' } };
+  assert.deepEqual(N.datedDays(map), [
+    { day: '2026-09-26', text: 'b', tag: 'eternal' },
+    { day: '2026-09-25', text: 'a', tag: 'unclear' }
+  ], 'an unwritten record is still not listed');
+});
+
 // ── Sorted notes ───────────────────────────────────────────────────────────
 
 test('withSortedPatch spreads into the ONE matching note', () => {
@@ -191,6 +359,59 @@ test('firstLine is the first non-blank line, capped', () => {
   assert.equal(N.firstLine(''), '');
   assert.equal(N.firstLine(null), '');
   assert.equal(N.firstLine('x'.repeat(100), 10), 'xxxxxxxxx…');
+});
+
+// ── the month grid, swept ──────────────────────────────────────────────────
+// What the calendar pop-up draws. The sweep is the point: a grid seeded from
+// `new Date('2026-03-01')` starts on the wrong Sunday everywhere west of UTC.
+
+function nextDay(day) {
+  const d = new Date(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10) + 1, 12);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function weekday(day) { return new Date(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10), 12).getDay(); }
+
+test('monthGrid: 42 consecutive real days from a Sunday, with the 1st in its own weekday column', () => {
+  // Feb 2026 starts on a Sunday (no lead), leap Feb 2024, a Dec→Jan year turn,
+  // and the two US DST months the Los Angeles sweep crosses.
+  for (const [ym, first] of [['2026-02', '2026-02-01'], ['2024-02', '2024-01-28'], ['2026-12', '2026-11-29'],
+    ['2027-01', '2026-12-27'], ['2026-03', '2026-03-01'], ['2026-11', '2026-11-01'], ['2026-10', '2026-09-27']]) {
+    const grid = N.monthGrid(ym);
+    assert.equal(grid.length, 42, ym + ': six whole weeks');
+    assert.equal(grid[0].day, first, ym + ': starts on the Sunday on or before the 1st (TZ=' + TZ + ')');
+    assert.equal(weekday(grid[0].day), 0, ym + ': and that is a Sunday');
+    for (let i = 1; i < 42; i++) {
+      assert.equal(grid[i].day, nextDay(grid[i - 1].day), ym + ': cell ' + i + ' follows the one before it');
+      assert.ok(S.isDay(grid[i].day), grid[i].day + ' is a real day');
+    }
+    const inMonth = grid.filter(c => c.inMonth).map(c => c.day);
+    assert.equal(inMonth[0], ym + '-01', ym + ': the 1st is the first day marked in the month');
+    assert.ok(inMonth.every(d => d.slice(0, 7) === ym), ym + ': inMonth marks only that month');
+    assert.equal(inMonth.length, new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate(), ym + ': every day of it');
+  }
+  assert.equal(N.monthGrid('2024-02').filter(c => c.inMonth).length, 29, 'a leap February has its 29th');
+  assert.deepEqual(N.monthGrid('2026-13'), []);
+  assert.deepEqual(N.monthGrid('2026-10-02'), []);
+});
+
+test('month and day steps cross year boundaries, and a month end clamps', () => {
+  assert.equal(N.shiftMonth('2026-01', -1), '2025-12');
+  assert.equal(N.shiftMonth('2026-12', 1), '2027-01');
+  assert.equal(N.shiftMonth('2026-10', -12), '2025-10');
+  assert.equal(N.shiftMonth('2026-10', 15), '2028-01');
+  assert.equal(N.shiftMonth('bad', 1), 'bad', 'a malformed month comes back unchanged');
+  assert.equal(N.addDays('2026-03-01', -1), '2026-02-28');
+  assert.equal(N.addDays('2024-02-28', 1), '2024-02-29');
+  assert.equal(N.addDays('2026-12-31', 1), '2027-01-01');
+  assert.equal(N.addDays('2026-03-07', 7), '2026-03-14', 'across the March DST change');
+  assert.equal(N.addDays('2026-11-01', -7), '2026-10-25', 'and back across the November one');
+  assert.equal(N.addMonths('2026-01-31', 1), '2026-02-28', 'clamped to the shorter month');
+  assert.equal(N.addMonths('2024-03-31', -1), '2024-02-29');
+  assert.equal(N.addMonths('2026-12-15', 1), '2027-01-15');
+  assert.equal(N.monthOf('2026-10-02'), '2026-10');
+  assert.equal(N.monthOf('2026-02-30'), '');
+  assert.equal(N.monthLabel('2026-10'), 'October 2026');
+  assert.equal(N.monthLabel('2027-01'), 'January 2027');
 });
 
 // ── structural ─────────────────────────────────────────────────────────────

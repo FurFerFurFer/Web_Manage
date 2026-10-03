@@ -2481,3 +2481,175 @@ symlink, repository md5 identical before and after) show each assertion is load-
 
 `node tests/run.js` afterwards: **all 23 suites passed, browser 287/287** (plan count `1..287`,
 exit 0 read from node), at load ~2 — the first fully green run since the notes work landed.
+
+### Date-note tags and the calendar pop-up (2026-10-03)
+
+A written Date note now carries one tag: red **unclear**, green **cleared** or orchid
+**Eternal**. The user asked for red to be the default for every note, past and future, and for
+unwritten days to stay the default grey. That is delivered by **absence**: a written day with
+no `tag` reads as unclear, so no stored record was rewritten. The native `Go to day` date input
+is replaced, in both places, by a calendar pop-up that fills every written day with its tag's
+colour. The rules are in `notes-core.js` (`dateNoteTag`, `withDateTag`, the month grid).
+
+**Doctored baselines**, one rule reversed per scratch root:
+- The repository is symlinked, the doctored file is a real copy, and `tests/` is a real copy.
+- A builder refused any swap that matched other than exactly once.
+- The offline suite ran in all five zones.
+- Browser runs went through a task-owned `--require` preload that Proxy-binds the parent
+  `TestContext` and filters `t.test` by name.
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| unclear-stored | `withDateTag` stores `unclear` instead of deleting the key | offline `choosing unclear DELETES the key` in every zone; the browser radio case on `choosing unclear DELETES the key — the default is never stored`, **alone** |
+| istag-truthy | `isTag` tests `TAG_BY_ID[v]` by truthiness | offline `"constructor" is not a tag` (read back as `'constructor'`), and the refusal case, which stored a `constructor` tag |
+| grid-utc | `monthGrid` seeded from `new Date(ym + '-01')` | offline monthGrid case under **UTC-11 and Los Angeles only**: February 2026's grid started `2026-01-25`. Passes in UTC, UTC+14 and Kathmandu |
+| tag-before-content | `persist` applies the tag before the content | the debounce case, **alone**, on `the tag landed — content is applied first` |
+| daterow-shrink | `#nw-panel .nw-date-row` without `flex-shrink: 0` | the long-list case, **alone** |
+| class-collision | the opener button styled as `.nw-cal-open` again | the calendar case on `the page behind is not moved by the pop-up`, and the phone case (day cells shrank to 36px) |
+| cal-unfilled | the calendar day's tag fill removed | the calendar case on `an untagged written day is filled red` |
+
+`grid-utc` is the direct proof the month grid belongs in the swept suite: UTC alone is blind to
+it. The structural "no UTC day" grep is blind to it too, because `new Date(ym + '-01')` names a
+variable rather than a literal. `class-collision` and `cal-unfilled` share a case but fire on
+different assertions, which is the evidence each assertion is load-bearing.
+
+**Two defects found by screenshot, not by the suite.**
+- **The pop-up reflowed every page behind it.** The scroll-lock class on `<html>` and the
+  opener button were both named `nw-cal-open`, so the button's dashed border, margins and flex
+  landed on `<html>`. A probe isolated it: the existing `nw-split-open` class moved a Home card
+  only by the scrollbar's width, while `nw-cal-open` shrank it from 362px to 294px. The button
+  is now `nw-cal-opener`. The calendar case asserts the root stays at `[0, 0]`, and the
+  `class-collision` baseline fails it.
+- **Two-line Date rows lost the bottom half of their preview in any list longer than the
+  panel.** This was pre-existing: HEAD's three files, served from a scratch root, show the
+  same clipping. Each row has `min-height: 2.75rem` inside a scrolling flex column, so it
+  shrank to 44px before the column scrolled. The fix is `flex-shrink: 0` on the Date row.
+  Picker rows were measured too and left alone: they are a ROW flex, and their 37px of words
+  fit inside a squeezed 44px row, so nothing there was ever cut.
+
+**A case that passed for the wrong reason.** The first long-list assertion compared the
+preview's bottom edge with the row's, and it passed against the doctored tree. A probe showed
+why: a squeezed row does not push its preview out. The preview shrinks itself, because
+`overflow: hidden` lets a flex item go below its content height, leaving a 5px box holding
+17px of text inside the row. The case now measures the preview against its own content, and
+the doctored tree fails it.
+
+Measured contrast for each tag colour, against the three surfaces and as a fill under surface
+text:
+- **Night** (`#f87171`, `#4ade80`, `#da70d6`): from 5.30:1 to 9.83:1.
+- **Grit** (`#b91c1c`, `#166534`, `#86288f`): from 4.74:1 (red on its own chip) to 6.93:1.
+- `#15803d`, the usual green-700, was rejected for Grit at 3.75:1.
+
+**First full run: `node tests/run.js`, 22 of 23 suites passed, browser 290/297.**
+- The plan count was `1..297`. The exit code was 1, read from the log: the background
+  wrapper's own exit 0 was the `echo` that followed the suite.
+- The offline sweep was green: `notes-core` (30 cases), `calendar-core` and `schema` in all
+  five zones, and the seven unswept suites.
+- `md5sum` of `scripts/`, `styles/`, the five pages and `tests/` was identical at both ends,
+  except `tests/browser.test.js`, which gained the keyboard case after the run had loaded it.
+  HEAD was unchanged (`51968a0`).
+- The run crossed local midnight.
+
+All seven failures were page-mount timeouts, the contention signature AGENTS.md names, and
+none reached the notes widget:
+- `switching the active slot refreshes Progress…` and malformed `json number`, `json string`
+  and `json array`: navigation died on `CDP connection closed`.
+- `a Documentations calendar block authors a day note…`: `documentations editor` never
+  mounted within 15s.
+- `a legacy caution span is migrated once…` and malformed `json true`: `progress.html` never
+  mounted within 15s.
+
+The control changed one variable: the same seven against the same working tree, run alongside
+every notes case. All passed (37/37, load 2.3–2.9).
+
+**Second full run, with the keyboard case included: all 23 suites passed, browser 298/298.**
+The plan count was `1..298`, exit 0 was read from the log, and it took 21 minutes.
+`md5sum` of the code tree was identical at both ends, and HEAD was unchanged (`51968a0`).
+
+**Not covered:**
+- real touch hardware, beyond emulated touch at 390x844;
+- print;
+- the live Firebase project, and two devices tagging the same day at once;
+- the calendar's Tab trap. The arrow keys, PageUp/PageDown, Escape, `✕` and a click outside
+  are covered by a case.
+
+### Cleared and Eternal lock a Date note's text (2026-10-03)
+
+The user asked that a green (cleared) or purple (Eternal) Date note can no longer be edited,
+while it can still be selected and copied and opened beside another note. What is locked and
+what still works:
+- **The text box is `readOnly`, never `disabled`.** Disabled would also stop selection, which
+  is the copying the user asked to keep.
+- **Still available on a locked day:** `⧉`, and `Send` from it, since sending copies.
+- **Refused on a locked day:** `🗑` and being a Send target.
+- **The tag buttons stay live.** Choosing unclear is the unlock.
+- **The rule is in the writer too.**
+  - `withDateNote` refuses any change to a locked day's text, emptying included.
+  - `persist` checks the lock against its fresh read and answers `'locked'`.
+  - The open editor follows another tab's tag on the `storage` event.
+
+Nothing was migrated: `TAGS[i].locked` is new, and no stored record changed shape.
+
+The earlier "emptying a tagged day deletes it, tag and all — and 🗑 names the tag" case is
+gone. Both of its behaviours are now impossible:
+- a tagged day cannot be emptied;
+- the `🗑` prompt can no longer meet a non-default tag, because an unlocked day always shows
+  unclear.
+
+The spread rule it also covered moved to an offline case. That case uses a tag this version
+does not know, which reads as unclear, so it stays editable.
+
+**Doctored baselines**, one rule reversed per scratch root:
+- The builder and the preload are the ones from the entry above.
+- Offline runs covered all five zones.
+- Browser runs used `^NOTES LOCK|^NOTES TAGS|^PHONE: the calendar`: ten cases.
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| lock-core-off | `withDateNote` without the lock check | offline `a cleared or Eternal day refuses ANY change…` on its first assertion (`an edit is refused`), in every zone, **alone** |
+| lock-core-off (browser) | the same file | **nothing**: 10/10 green, because `persist` checks first |
+| lock-persist-off | `persist` without its `'locked'` check | the cross-tab case, **alone**, on `the editor reported the refused save` (`'saved' !== 'locked'`) |
+| readonly-off | the bar never sets `readOnly` | the Eternal case (`typing and Backspace changed nothing`), the unlock case (`cleared locks as Eternal does`), the cross-tab case (`froze at once`) and the phone case (`readOnly: false`) |
+| send-into-locked | `paneLocked` always false | the side-by-side case, **alone**, on `one target left, so it sends without asking` |
+| trash-asks | `🗑` without its fresh lock guard | the Eternal case, **alone**, on `pressing it anyway asked nothing` |
+| storage-nosync | the `storage` listener no longer syncs live bars | the cross-tab case, **alone**, on `the open editor froze at once` |
+
+The two `lock-core-off` rows are the evidence for the two separate doors that AGENTS.md
+describes:
+- The core refusal is visible only offline, because the widget's own check stands in front of
+  it.
+- `persist`'s check is visible only in the browser.
+
+`lock-persist-off` first failed on its own `waitFor` timeout, waiting for a `'locked'` status
+that never came. That was the right claim, but it failed by timing out rather than by a wrong
+value. The case now sleeps past the 300ms debounce and asserts the status, so it reports
+itself as `'saved' !== 'locked'`.
+
+**Real keystrokes, not values set from script.** The read-only case types through
+`Input.insertText` and a CDP Backspace. A `ta.value =` assignment ignores `readOnly` on both
+sides, so a case built on one cannot tell a locked box from an unlocked one.
+
+**Screenshots** were taken in Grit and Night at 1100×760 and in Grit at 390×844, with no page
+errors:
+- the lock line sits under the tag buttons;
+- the stripe is in the tag's colour;
+- 🗑 is faded and ⧉ stays live;
+- in the side-by-side view, a selection inside the locked pane and its Send are active.
+
+**Narrowed run on the repository, `^NOTES|^PHONE`: 43/43.**
+
+**Full run: `node tests/run.js`, all 23 suites passed, browser 301/301.** That is the earlier
+298, minus the retired emptying case, plus the four lock cases.
+- The plan count was `1..301`, and exit 0 was read from the log.
+- `notes-core` had 33 cases in every zone.
+- The run took about 22 minutes at load 2.3–5.9; other sessions' browsers were running too.
+- `md5sum` of `scripts/`, `styles/`, `tests/` and the five pages was identical at both ends,
+  and HEAD was unchanged (`51968a0`).
+
+**Not covered:**
+- real touch hardware: in particular, a long-press selection in a read-only box on a real
+  phone;
+- the system clipboard itself. Selection is asserted, but Ctrl+C into the OS clipboard is the
+  browser's own and is not driven;
+- two real tabs. The cross-tab case writes storage and dispatches the `storage` event in one
+  page, the pattern this suite already uses for the theme.
