@@ -1,11 +1,14 @@
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
-  const Core=window.WorldDemoCore, Cal=window.TrackCalendar, Quest=window.TrackQuest;
+  const Core=window.WorldDemoCore, Cal=window.TrackCalendar, Quest=window.TrackQuest, Reader=window.WorldTrackReader;
   const canvas=$('world'),panel=$('panel'),content=$('panel-content');
   const baseDay=Cal.toDateStr(new Date());
   const slot=Core.fixture(window.TrackSchema,Cal,baseDay);
   const initialBytes=JSON.stringify(slot);
+  let fileSource=null,fileRequest=0,fileBusy=false,fileMessage='';
+  const readingSlot=()=>fileSource?.slot||slot;
+  const sourceLabel=()=>fileSource?'Real data · export file · read-only':'Demo data';
   // The KS03 streak buys sprint duration (draft section 4). It is READ once, here,
   // from synthetic records, with the local day and the day-shift helper passed in --
   // movement itself never reads or writes a Track record, and never a streak.
@@ -22,8 +25,15 @@
   let latestMetrics=null;
   const skyView=window.createWorldSkyView(index=>{selectedMM=index;openPanel('memory');},
     (graph,view,viewport)=>world?.setSkyView(graph,view,viewport));
-  const skyGraph=()=>window.WorldSkyCore.project(slot,window.TrackGraphLayout,Cal,stateDay());
-  function refreshSky(){const graph=skyGraph();skyView.render(graph);world?.setReviewCues(graph.nodes);}
+  const skyGraph=()=>window.WorldSkyCore.project(readingSlot(),window.TrackGraphLayout,Cal,stateDay());
+  function refreshSky(reset=false){
+    const graph=skyGraph();skyView.render(graph,reset);
+    // Ground stations and map geography remain the synthetic scene. Never assign
+    // an imported MM to a demo plinth just because their list indices coincide.
+    world?.setReviewCues(fileSource?window.WorldSkyCore.project(slot,window.TrackGraphLayout,Cal,stateDay()).nodes:graph.nodes);
+    $('sky-source').textContent='Memory Grove · '+sourceLabel();
+    $('data-source').textContent='Today & sky: '+(fileSource?'Export file · read-only':'Demo data')+' · Other features: Demo';
+  }
   function enterSky() {
     if(!entered||activePanel)return;
     const result=world?.lookAtSky(true);
@@ -70,22 +80,74 @@
     resolveSurface:point=>world?.surfacePoint(point)||null,onDestination:point=>world?.setDestination(point),
     openMap:()=>{if(activePanel!=='map')openPanel('map');else renderPanel();}});
   let selectedQuest=null;
-  const clock=()=>Core.clockState(baseDay,settings.clock,new Date(),Cal);
+  const clock=()=>Core.clockState(baseDay,fileSource?'local':settings.clock,new Date(),Cal);
   function stateDay(){return clock().day;}
   function stateTime(){return clock().time;}
   function dateLabel(day){return new Date(day+'T12:00:00').toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'});}
-  function updateClock(){const value=clock();$('clock-label').textContent=(settings.clock==='local'?'Local time':'Demo clock')+' · '+value.time;lastClock=value.day+' '+value.time;}
+  function updateClock(){const value=clock();$('clock-label').textContent=(fileSource||settings.clock==='local'?'Local time':'Demo clock')+' · '+value.time;lastClock=value.day+' '+value.time;}
   function button(text,handler,primary=false){return el('button',{class:primary?'primary':'secondary',onclick:handler},text);}
   function banner(text){return el('p',{class:'note-banner'},text);}
-  function section(title,items,empty='Nothing here for this demo day.'){
+  function section(title,items,empty='Nothing recorded here.'){
     return el('section',{},el('h2',{class:'section-label'},title),items.length?items:el('p',{class:'subtle'},empty));
   }
   function row(time,title,detail,className='') {
     return el('div',{class:'schedule-row '+className},el('span',{class:'when'},time),el('div',{},el('strong',{},title),el('small',{},detail)));
   }
+  function sourceControls() {
+    const box=el('section',{class:'source-controls','aria-label':'Track data source'});
+    box.append(el('strong',{'data-source-label':''},sourceLabel()));
+    if(fileSource){
+      box.append(el('p',{},fileSource.slot.name||'Unnamed workspace'));
+      if(fileSource.warnings)box.append(banner('Track reports '+fileSource.warnings+' data warning(s) in this file. Some entries may be incomplete. The file is unchanged.'));
+    }
+    const controls=el('details',{},el('summary',{},fileSource?'Change file or return to demo':'Open your Track export'));
+    if(!fileSource&&activePanel==='today')controls.open=true;
+    if(fileSource)controls.append(el('p',{class:'subtle'},'File: '+fileSource.name+' · opened '+fileSource.opened));
+    controls.append(el('p',{},fileSource?'A snapshot, not live. To refresh, export this workspace again in Track and open the new file here. Reloading World clears this copy.':'In Track Home, export one workspace as JSON. Keep the file outside this project, then open it here.'),
+      el('label',{for:'track-export'},fileSource?'Open a newer export or another workspace':'Open your Track workspace export'),
+      el('input',{type:'file',id:'track-export',accept:'.json,application/json','aria-describedby':'file-status',onchange:event=>{
+        const file=event.target.files?.[0];event.target.value='';if(file)openExport(file);
+      }}));
+    const status=el('p',{id:'file-status',class:'status-line',role:'status'},fileBusy?'Reading file…':fileMessage);
+    status.hidden=!fileBusy&&!fileMessage;
+    controls.append(el('p',{class:'subtle'},'Today and mind maps only. Nothing is saved to Track. Notebook, Quest, map, ground markers and stamina stay demo.'));
+    if(fileSource||fileBusy)controls.append(el('button',{id:'use-demo',class:'secondary',onclick:()=>{
+      fileRequest++;fileBusy=false;fileSource=null;fileMessage='Demo data shown. The file copy was removed from this session.';
+      selectedMM=0;selectedDay=null;$('sky-find').value='';updateClock();refreshSky(true);renderPanel();
+    }},'Use demo data'));
+    box.append(controls,status);
+    content.append(box);
+  }
+  async function openExport(file) {
+    const request=++fileRequest;fileBusy=true;fileMessage='';renderPanel();
+    let next;
+    try {
+      if(file.size>Reader.MAX_BYTES)next={ok:false,message:'This file is too large to open here (32 MB maximum).'};
+      else next=Reader.parse(await file.text(),window.TrackSchema);
+      if(next.ok){
+        // Prepare both views before replacing the current source. An unreadable
+        // export never clears a working snapshot or silently switches to demo.
+        Reader.day(next.slot,Cal,Cal.toDateStr(new Date()));
+        window.WorldSkyCore.project(next.slot,window.TrackGraphLayout,Cal,Cal.toDateStr(new Date()));
+      }
+    }catch{next={ok:false,message:'This workspace could not be displayed. Export it again from Track.'};}
+    if(request!==fileRequest)return;
+    fileBusy=false;
+    if(next.ok){
+      fileSource={slot:next.slot,name:file.name,opened:new Date().toLocaleString(),warnings:next.warnings};
+      selectedMM=-1;selectedDay=null;settings.clock='local';$('sky-find').value='';
+      fileMessage='File opened in memory · not live · clears on reload.';
+      updateClock();refreshSky(true);
+    }else fileMessage=next.message+' The current view has been kept.';
+    if(activePanel==='today'||activePanel==='memory'){renderPanel();content.querySelector('.source-controls summary')?.focus();}
+    announce(fileMessage);
+  }
   function renderToday() {
-    const ds=selectedDay||stateDay(),day=Cal.buildDaySchedule(slot,ds);
-    content.append(el('p',{class:'subtle'},dateLabel(ds)+' · '+stateTime()+' · synthetic day'));
+    sourceControls();
+    const slot=readingSlot(),ds=selectedDay||stateDay();let view;
+    try{view=Reader.day(slot,Cal,ds);}catch{content.append(banner('This day could not be displayed from this file. The source is unchanged.'));return;}
+    const day=view.schedule;
+    content.append(el('p',{class:'subtle','data-today-date':ds},dateLabel(ds)+' · '+stateTime()+' · '+sourceLabel()));
     const showDay=date=>{selectedDay=date;renderPanel();};
     content.append(el('div',{class:'button-row'},
       el('button',{id:'day-previous',class:'secondary','aria-label':'Previous day',onclick:()=>showDay(Cal.dayShift(ds,-1))},'←'),
@@ -94,15 +156,16 @@
     if(ds<stateDay())content.append(banner('Dated history · records stay on this day. Open work keeps its original date and status.'));
     else if(ds>stateDay())content.append(banner('Upcoming · these records belong to '+dateLabel(ds)+'.'));
     content.append(section('Day notes',day.calNotes.map(note=>row(Cal.noteTimed(note)?note.time:'No time',note.title,
-      Cal.noteTimed(note)?'Authored note time':'Untimed note · no reminder hour'))));
-    content.append(section('Deadlines',day.deadlines.map(d=>row(d.time||'Due',d.title,Cal.dlDone(d)?'Handled · kept on its due day':'Due today',Cal.dlDone(d)?'complete':''))));
+      (Cal.noteTimed(note)?'Authored note time':'Untimed note · no reminder hour')+(note.detail?' · '+note.detail:'')))));
+    content.append(section('Deadlines',day.deadlines.map(d=>row(d.time||'Due',d.title,(Cal.dlDone(d)?'Handled · kept on its due day':'Due today')+(d.detail?' · '+d.detail:''),Cal.dlDone(d)?'complete':''))));
     content.append(section('Chosen caution days',day.deadlinesCaution.map(d=>row('!',d.title,'Due '+dateLabel(d.date)+' · today was individually chosen','caution')),'No deadline warnings for this day.'));
     content.append(section('On the schedule',[...day.blocks].sort((a,b)=>a.time.localeCompare(b.time)).map(block=>{
       let detail=block.kind+' · '+Cal.durLabel(block.duration);
       if(block.kind==='Day note'&&!Cal.noteTimed(block.item)&&!block.item.blockTime)detail+=' · automatic block time';
       if(block.kind.startsWith('Deadline'))detail+=' · preparation, not the due moment';
       if(block.done)detail+=' · handled';
-      return row(block.time,block.title,detail,block.done?'complete':'');
+      const line=row(block.time,block.title,detail,block.done?'complete':'');
+      line.dataset.blockId=block.id;line.dataset.blockKind=block.kind;line.dataset.blockDay=ds;return line;
     })));
     content.append(section('Spaced reviews',day.sir.map(review=>row(review.done?'✓':'SIR',review.label,review.done?'Reviewed':'Review due',review.done?'complete':''))));
     content.append(section('Marginal Gains focus',Cal.mgsForDay(ds,slot.mgSchedule).map(id=>{
@@ -111,9 +174,8 @@
       if(mm)item.lastChild.append(button('Open mind map',()=>{selectedMM=slot.mms.indexOf(mm);openPanel('memory');}));
       return item;
     })));
-    content.append(section('Reference timetable',day.refBlocks.map(ref=>row(ref.time,ref.title,ref.detail+' · reference only','reference'))));
-    const date=new Date(ds+'T12:00:00'),buckets=Cal.buildBuckets(slot,date.getFullYear(),date.getMonth())[ds]||{};
-    const lanes=Cal.buildMilestoneLanes(slot,date.getFullYear(),date.getMonth()).lanesByDate[ds]||[];
+    content.append(section('Reference timetable',day.refBlocks.map(ref=>row(ref.time,ref.title,Cal.durLabel(ref.duration)+(ref.detail?' · '+ref.detail:'')+' · reference only','reference'))));
+    const buckets=view.buckets,lanes=view.milestones;
     content.append(section('Milestone periods',lanes.map(m=>row('◇',m.title,m.owner+' · '+m.startDate+' – '+m.endDate))));
     for(const [kind,title] of [['kolbmg','Kolb & MG records'],['lin','+Lin records'],['note','Notebook captures'],['dump','Source captures']]){
       content.append(section(title,(buckets[kind]||[]).map(item=>row('•',item.label,item.meta||'Recorded on this day'))));
@@ -130,7 +192,7 @@
         ...next.refBlocks.map(r=>row(r.time,r.title,dated+' · Reference only','reference'))
       ]));
     }
-    if(ds===stateDay()&&ds!==baseDay){
+    if(!fileSource&&ds===stateDay()&&ds!==baseDay){
       content.append(button('View original demo day',()=>showDay(baseDay)));
     }
   }
@@ -175,6 +237,8 @@
       el('button',{id:'note-list',class:'secondary','aria-label':'Back to notes list',title:'Back to list',onclick:showList},'←'),topic,remove),textarea,dialog);
   }
   function renderMemory() {
+    sourceControls();
+    const slot=readingSlot();
     content.append(el('div',{class:'memory-sky-entry'},el('span',{'aria-hidden':'true',class:'memory-sky-symbol'},'✧'),
       el('div',{},el('h2',{},'Mind maps among the stars'),
         el('p',{},skyActive?'Return to the constellation behind this record.':'Visit the Grove and open its sky of connected mind maps.'),
@@ -186,7 +250,10 @@
         el('span',{},el('strong',{},mm.name),el('small',{},(mm.type==='anchor'?'Anchor':'T'+mm.type)+' · '+stageLabel(mm.ksStage)))));
     });
     const mm=slot.mms[selectedMM];
-    renderMMInformation(mm);
+    if(!mm){content.append(banner(slot.mms.length?'Choose a mind map from the list or the sky.':'No mind maps in this workspace.'));return;}
+    content.append(el('h2',{'data-mm-detail':String(mm.id)},mm.name||'Unnamed mind map'));
+    renderMMInformation(mm,slot);
+    if(fileSource){content.append(banner('Read-only file snapshot. Make changes and review your mind maps in Track, then export again.'));return;}
     if(!mmDrafts.has(mm.id))mmDrafts.set(mm.id,{name:mm.name,observation:''});
     const draft=mmDrafts.get(mm.id);
     content.append(el('h2',{},'Selected mind map draft'));
@@ -216,14 +283,14 @@
     // Synthetic references are visible in full, with no content loaded remotely.
     return fields([['Link',link.label||link.url],['URL',link.url]]);
   }
-  function renderMMInformation(mm) {
+  function renderMMInformation(mm,slot) {
     const navigate=other=>button(other.name,()=>{selectedMM=slot.mms.indexOf(other);renderPanel();});
     content.append(section('Mind map information',[fields([
       ['Type',mm.type==='anchor'?'Anchor':'T'+mm.type],['Learning stage',mm.type==='anchor'?null:stageLabel(mm.ksStage)],
       ['Clarity',mm.unclear?'Marked unclear':'Not marked unclear'],['Explanation',mm.explanation]
     ])]));
-    const parents=(mm.parentIds||[]).map(id=>slot.mms.find(m=>m.id===id));
-    const children=slot.mms.filter(m=>(m.parentIds||[]).includes(mm.id));
+    const parents=window.TrackGraphLayout.parentIdsOf(mm).map(id=>slot.mms.find(m=>m.id===id));
+    const children=slot.mms.filter(m=>window.TrackGraphLayout.parentIdsOf(m).includes(mm.id));
     content.append(section('Connections',[
       record('Parents',parents.length?el('div',{class:'button-row'},parents.map(parent=>parent?navigate(parent):el('p',{},'Parent mind map removed'))):el('p',{class:'subtle'},'No parent mind maps.')),
       record('Children',children.length?el('div',{class:'button-row'},children.map(navigate)):el('p',{class:'subtle'},'No child mind maps.'))
@@ -231,25 +298,26 @@
     if(mm.type!=='anchor') {
       content.append(section('Marginal Gains',mm.type==='2'?[
         fields([['Current MG',mm.currentMG||'No MG yet.'],['Rating',mm.rating==null?'Not set':mm.rating+' / 10']]),
-        ...slot.mgChanges.filter(change=>change.mmId===mm.id).sort((a,b)=>b.date.localeCompare(a.date)).map(change=>
+        ...slot.mgChanges.filter(change=>change.mmId===mm.id).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).map(change=>
           record(change.date,fields([['Previous MG',change.oldMG],['New MG',change.newMG],['Experiment',change.experiment]])))
       ]:[el('p',{class:'subtle'},'T1 has no Marginal Gains tracking.')]));
       const kolbFields=[['experience','Experience'],['level','Level'],['mgLookLike','What the MG looks like'],
         ['sequence','Sequence'],['feelings','Feelings'],['difficultWell','Difficult / went well'],['challenges','Challenges'],
         ['triggers','Triggers'],['whyActed','Why I acted'],['habits','Habits'],['otherParts','Other parts'],['experiments','Experiments'],['mgAdd','MG addition']];
-      content.append(section('Kolb history',slot.kolbs.filter(k=>k.mmId===mm.id).sort((a,b)=>b.date.localeCompare(a.date)).map(k=>
+      content.append(section('Kolb history',slot.kolbs.filter(k=>k.mmId===mm.id).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).map(k=>
         record(k.date,fields([['Reflecting on a previous experiment',k.isReflectingOnPrev?'Yes':'No'],...kolbFields.map(([key,label])=>[label,k[key]])]))),'No Kolb records for this mind map.'));
       content.append(section('Spaced reviews',slot.sessions.filter(s=>s.mmId===mm.id).sort((a,b)=>a.repIndex-b.repIndex).map(s=>
         record('Review '+(s.repIndex+1),fields([['Scheduled day',s.date],['Status',s.done?'Reviewed':s.skipped?'Skipped':'Pending'],['Finished day',s.finishDate]]))),'No review records for this mind map.'));
-      content.append(section('+Lin history',slot.linChanges.flatMap(entry=>(entry.items||[]).filter(item=>item.mmId===mm.id).map(item=>
+      content.append(section('+Lin history',slot.linChanges.flatMap(entry=>Reader.records(entry.items).filter(item=>item.mmId===mm.id&&item.change&&typeof item.change==='object').map(item=>
         record(entry.title||entry.date,fields([['Day',entry.date],['Change',linDescription(item.change)],['Previous value',item.change.oldValue],['New value',item.change.newValue],
           ['Review',item.change.repIndex==null?null:item.change.repIndex+1]])))),'No +Lin records for this mind map.'));
     }
-    content.append(section('Comments',(mm.comments||[]).map(comment=>record(comment.date,fields([['Comment',comment.text],['Status',comment.done?'Handled':'Open']]))),'No comments.'));
-    content.append(section('Links',(mm.links||[]).map(linkRecord),'No links.'));
-    content.append(section('Direct source connections',slot.sourceDumps.flatMap(dump=>(dump.mmLinks||[]).filter(link=>link.mmId===mm.id).map(link=>
-      record(dump.title,...(link.textBlocks?.length?link.textBlocks.map(block=>fields([['Title',block.title],['Text',block.explanation]])):[fields([['Text',link.text]])]),
-        ...(link.links||[]).map(linkRecord)))),'No direct source connections.'));
+    content.append(section('Comments',Reader.records(mm.comments).map(comment=>record(comment.date,fields([['Comment',comment.text],['Status',comment.done?'Handled':'Open']]))),'No comments.'));
+    content.append(section('Links',Reader.records(mm.links).map(linkRecord),'No links.'));
+    content.append(section('Direct source connections',slot.sourceDumps.flatMap(dump=>Reader.records(dump.mmLinks).filter(link=>link.mmId===mm.id).map(link=>
+      record(dump.title,...(Reader.records(link.textBlocks).length?Reader.records(link.textBlocks).map(block=>fields([['Title',block.title],['Text',block.explanation]])):[fields([['Text',link.text]])]),
+        ...Reader.records(link.links).map(linkRecord)))),'No direct source connections.'));
+    if(fileSource)content.append(el('p',{class:'subtle'},'Source connections shown here are direct attachments only. Inherited and aggregated source views are still available in Track.'));
   }
   function select(label,id,choices,value,change) {
     const input=el('select',{id,onchange:event=>change(event.target.value)},choices.map(([val,text])=>el('option',{value:val},text)));
@@ -270,7 +338,8 @@
       for(const note of node.notes||[])detail.append(record(note.title||'Note',fields([['Detail',note.detail]])));
       if(item.kind==='learn'){
         detail.append(el('p',{},item.mm?'Read this mind map’s full learning record in Memory Grove.':'This linked mind map is no longer available.'));
-        if(item.mm)detail.append(button('Open mind map',()=>{selectedMM=slot.mms.indexOf(item.mm);openPanel('memory');}));
+        if(item.mm&&!fileSource)detail.append(button('Open mind map',()=>{selectedMM=slot.mms.indexOf(item.mm);openPanel('memory');}));
+        else if(item.mm)detail.append(el('p',{},'This is a demo link. Your real mind maps are in Memory Grove.'));
       }else if(item.quest){
         detail.append(el('p',{},routine?'A routine quest. Its daily ticks remain in Track.':node.children?.length?'This quest includes the branch beneath it.':node.completed?'Completed in Track.':'An open quest from Track.'));
       }else detail.append(el('p',{},'This goal provides context for the quests beneath it.'));
@@ -327,8 +396,9 @@
     content.append(el('p',{},'Choose the garden’s fantasy weather. Light, wind, precipitation, water and surfaces turn together. Snow settles and melts; stone dries gradually. Weather never changes movement or your records.'));
     content.append(select('Weather','weather-choice',Object.entries(Core.WEATHER),settings.weather,value=>{settings.weather=value;world?.setWeather({weather:value});}));
     content.append(select('Light study','light-choice',[['day','Daylight'],['night','Night']],settings.night?'night':'day',value=>{settings.night=value==='night';world?.setWeather({night:settings.night});}));
-    content.append(select('Clock','demo-clock',[['local','Local clock · follows this computer'],['evening','17:40 · fixture day'],['preview','20:10 · fixture day + tomorrow preview'],['midnight','00:10 · next day']],settings.clock,value=>{settings.clock=value;selectedDay=null;updateClock();refreshSky();}));
-    content.append(el('p',{class:'subtle'},'Local time follows your computer, including after sleep. The other clock choices preview the same dated fixture; midnight never moves a record. Daylight/night remains an independent visual control.'));
+    const clockChoices=fileSource?[['local','Local clock · your file uses today’s real date']]:[['local','Local clock · follows this computer'],['evening','17:40 · fixture day'],['preview','20:10 · fixture day + tomorrow preview'],['midnight','00:10 · next day']];
+    content.append(select('Clock','demo-clock',clockChoices,settings.clock,value=>{settings.clock=value;selectedDay=null;updateClock();refreshSky();}));
+    content.append(el('p',{class:'subtle'},fileSource?'Your file always uses the computer’s local date and time, including after sleep. Previous and Next in Today change only the day you are reading.':'Local time follows your computer, including after sleep. The other clock choices preview the same dated fixture; midnight never moves a record. Daylight/night remains an independent visual control.'));
     const reduced=el('input',{type:'checkbox',id:'reduce-motion',checked:settings.reduced,onchange:event=>{settings.reduced=event.target.checked;world?.setReduced(settings.reduced);}});
     content.append(el('div',{class:'form-row'},el('label',{for:'reduce-motion'},reduced,' Reduce motion'),el('small',{class:'subtle'},'Keeps weather and light changes; skips the sky camera animation and stops moving foliage, ground stars, rain and snow.')));
     content.append(select('World detail','quality',[['balanced','Balanced · up to 720p'],['sharp','Sharper · window resolution']],settings.quality,value=>{settings.quality=value;world?.setQuality(value);}));
@@ -359,7 +429,7 @@
       'Mind maps → View stars in the Grove takes you straight to the constellation. G also opens it while you stand in the Grove. Select a star, pan, zoom or search; Escape returns to the garden.',
       'Switch companions directly from the bottom toolbar. Tab moves through the panel and companion buttons; Escape closes the panel.',
       'The garden and character physics continue while you read. Typing controls the panel. Click the garden after closing to resume keyboard movement.',
-      'The demo uses synthetic data and keeps notes and drafts only in memory. Reloading resets them.'
+      'Open a Track workspace export in Today or Mind maps to read it in those two views. It is a file snapshot, not a live connection. Other features use demo data. Files, notes and drafts stay in memory; reloading resets them.'
     ].map(text=>el('li',{},text))));
     content.append(button('Return to the start',()=>{if(skyActive)leaveSky();world?.reset();closePanel();canvas.focus();}));
     content.append(button('Reset camera',()=>{if(skyActive)leaveSky();world?.resetCamera();closePanel();canvas.focus();}));
@@ -368,7 +438,7 @@
       row('≡','Hold Shift to run','Keep Shift down for about '+window.WorldStamina.tuning.dashSeconds+' s and the run locks in. Letting go does not stop it — only a quick dash unsprints.'),
       row('◔','A streak buys the duration','The synthetic KS03 streak of '+sprintStreak+' active '+(sprintStreak===1?'day':'days')+' buys about '+sprintBudget.toFixed(1)+' seconds of running. Only the locked run drains; climbing and gliding cost nothing.'),
       row('!','Tuning for playtest','The dash time, formula, drain and recovery are demo tuning. Their feel and the character animation still need your playtest.')]));
-    content.append(el('h2',{},'About this demo'),el('p',{class:'subtle'},'Garden walking, jumping, basic wall climbing, charged launches and island gliding use procedural placeholder art. Sprint stamina reads a synthetic streak only. Swimming, full MM actions, production artwork, audio, real Track integration and persistent drafts remain part of the larger project.'));
+    content.append(el('h2',{},'About this demo'),el('p',{class:'subtle'},'Garden walking, jumping, basic wall climbing, charged launches and island gliding use procedural placeholder art. Sprint stamina reads a synthetic streak only. Swimming, full MM actions, production artwork, audio, live Track integration and persistent drafts remain part of the larger project.'));
   }
   const titles={today:'Today',notebook:'Notes',memory:'Memory Grove',quest:'Quest',map:'World map',weather:'Weather & settings',help:'A walk through the garden'};
   function renderPanel() {
@@ -379,8 +449,13 @@
     delete panel.dataset.notebook;
     document.querySelector('.panel-footer').textContent='The garden keeps moving while you read';
     document.body.dataset.menu=activePanel;
-    $('panel-kicker').textContent=activePanel==='map'?'Clockgarden · Surface':activePanel==='quest'||activePanel==='today'?'A small season of learning':'Your garden companion';
-    ({today:renderToday,notebook:renderNotebook,memory:renderMemory,quest:renderQuest,map:()=>mapView.render(content),weather:renderWeather,help:renderHelp})[activePanel]();
+    $('panel-kicker').textContent=activePanel==='today'||activePanel==='memory'?sourceLabel():activePanel==='map'?'Demo map · Clockgarden surface':activePanel==='quest'?'Demo quests':activePanel==='weather'?'Demo weather · demo stamina':'Demo features';
+    try{({today:renderToday,notebook:renderNotebook,memory:renderMemory,quest:renderQuest,map:()=>mapView.render(content),weather:renderWeather,help:renderHelp})[activePanel]();}
+    catch(error){
+      if(!fileSource||!['today','memory'].includes(activePanel))throw error;
+      content.replaceChildren();sourceControls();
+      content.append(banner('Some records in this file could not be displayed. Read them in Track or open a newer export. Nothing has been changed.'));
+    }
   }
   function openPanel(name) {
     if(activePanel===name){closePanel();return;}
@@ -455,11 +530,15 @@
       staminaBudget:sprintBudget,
       mindMaps:skyGraph().nodes,
       skyFrame:state=>skyView.frame(state),
-      selectMM(index){selectedMM=index;openPanel('memory');},error,
+      selectMM(index){
+        selectedMM=fileSource?-1:index;openPanel('memory');
+        if(fileSource)announce('Ground markers are demo scenery. Choose your mind map from the list or sky.');
+      },error,
       tick({environment,position,inGrove,grounded,flight,metrics,stamina,sprinting,sprint,player}) {
         const now=clock();
         if(lastClock!==now.day+' '+now.time){
-          updateClock();refreshSky();
+          const dayChanged=!lastClock.startsWith(now.day+' ');
+          updateClock();if(dayChanged)refreshSky();
           if(activePanel==='today'){
             const focused=document.activeElement.id,scroll=content.scrollTop;
             renderPanel();if(focused)$(focused)?.focus({preventScroll:true});content.scrollTop=scroll;
@@ -471,7 +550,7 @@
         $('place-name').textContent=flight.island==='cloudrest'?'Cloudrest':flight.island==='windward'?'Windward Isle':y>5?'Above the Clockgarden':flight.pad?'Windseed launcher':x< -9&&z>11?'Memory Grove':x>7&&z>8?'North terrace':Math.hypot(x,z-7)<9.5?'Clock Plaza':'Clockgarden approach';
         $('weather-label').textContent=Core.WEATHER[settings.weather]+(environment.night>.5?' · night':'')+(settings.weather==='clear'&&environment.wetness>.2?' · wet stone':'');
         $('interaction').hidden=!entered||!!activePanel||skyActive||!inGrove;
-        $('interaction').textContent=grounded?'Click a star, press K to read, or look at the MM sky.':'Land to look at the MM sky. K still opens mind map information.';
+        $('interaction').textContent=fileSource?'Ground markers: demo. Press K or look at the sky for your real mind maps.':grounded?'Demo stars · click one, press K to read, or look at the MM sky.':'Land to look at the MM sky. K still opens mind map information.';
         $('enter-sky').hidden=$('interaction').hidden;$('enter-sky').disabled=!grounded;
         updateGameplayVisibility();
         const flying=!grounded&&(flight.gliding||flight.armed||y>4);
@@ -496,7 +575,7 @@
         const share=stamina.max>0?Math.max(0,Math.min(1,stamina.value/stamina.max)):0;
         $('sprint-stamina-bar').style.height=(share*100).toFixed(1)+'%';
         bar.setAttribute('aria-valuenow',String(Math.round(share*100)));
-        $('sprint-stamina-label').textContent=stamina.exhausted?'Out of sprint':sprint?.locked?'Running':sprinting?'Dash':staminaFull?'Sprint ready':'Sprint returning';
+        $('sprint-stamina-label').textContent='Demo stamina · '+(stamina.exhausted?'Out of sprint':sprint?.locked?'Running':sprinting?'Dash':staminaFull?'Sprint ready':'Sprint returning');
         if(activePanel==='weather')metricsView(metrics);
       }
     });
@@ -507,7 +586,7 @@
   // Read-only diagnostic surface, used by the isolated browser tests. Never
   // exposes a Track writer or an engine object that could mutate real data.
   window.WorldDemo=Object.freeze({ready:!!world,
-    snapshot:()=>({entered,panel:activePanel,day:stateDay(),time:stateTime(),selectedMM,skyActive,sky:skyView.snapshot(),
+    snapshot:()=>({entered,panel:activePanel,day:stateDay(),time:stateTime(),selectedMM,skyActive,sky:skyView.snapshot(),source:fileSource?'file':'demo',fileBusy,
       notebook:{selected:selectedNote,view:currentNote()?'detail':'list',notes:notebookNotes.map(note=>({...note}))},
       map:mapView.snapshot(),fixtureUnchanged:JSON.stringify(slot)===initialBytes,world:world?.snapshot()||null})});
   window.addEventListener('pagehide',()=>{mapView.hide();world?.dispose();},{once:true});

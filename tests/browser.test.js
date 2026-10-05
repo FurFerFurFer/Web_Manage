@@ -3570,6 +3570,677 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* ── 2h. True Storage → SOURCE DUMP ───────────────────────────────────────
+     True Storage's second tab is a COPY of KS02's KS03 → SOURCE DUMP page, and
+     it edits the same `sourceDumps`. Two things make that safe, and both are
+     asserted here rather than assumed:
+
+     - every edit there is a FRESH read-modify-write of `sourceDumps` alone —
+       never True Storage's React copy, never its autosave. KS02 owns the key
+       and saves it from its own snapshot;
+     - every edit goes through source-dump-core.js, so the same click stores
+       the same thing on either page.
+
+     The PARITY case is the copy's tripwire. It is a guard by design: it passes
+     on both sides of this change and fails only when the two copies drift. */
+
+  // The SOURCE DUMP view's controls, in document order, by visible text or
+  // placeholder. The MM name is a <span> on KS02 and a link on True Storage,
+  // so it is collected by its hook rather than by its tag.
+  const DUMP_CONTROLS = function () {
+    var view = document.querySelector('[data-source-dump-view]');
+    if (!view) return null;
+    return Array.prototype.map.call(
+      view.querySelectorAll('button, a, input, textarea, [data-dump-mm-name], [data-dump-navigate]'),
+      function (el) { return (el.getAttribute('placeholder') || el.textContent || '').trim(); });
+  };
+  const NAVIGATE_TO = function (id) {
+    var el = document.querySelector('[data-dump-navigate="' + id + '"]');
+    if (!el) return false;
+    el.click();
+    return true;
+  };
+  // A labelled button inside ONE MM card: matching by text alone would hit the
+  // same label in the neighbouring card.
+  const CLICK_IN_CARD = function (mmId, label) {
+    var card = document.querySelector('[data-dump-mm="' + mmId + '"]');
+    if (!card) return false;
+    var b = Array.prototype.find.call(card.querySelectorAll('button'),
+      function (x) { return x.textContent.trim() === label; });
+    if (!b) return false;
+    b.click();
+    return true;
+  };
+  const FILL_IN_CARD = function (setterSrc, mmId, placeholder, value) {
+    var set = new Function('return ' + setterSrc)();
+    var card = document.querySelector('[data-dump-mm="' + mmId + '"]');
+    var el = card && card.querySelector('[placeholder="' + placeholder + '"]');
+    if (!el) return false;
+    set(el, value);
+    return true;
+  };
+  const STORED_DUMPS = function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return (((db.slots || [])[0] || {}).sourceDumps) || [];
+  };
+  // A click that NAVIGATES, fired from a timer: clicked inside the same
+  // Runtime.evaluate, the navigation can tear down the very context the
+  // evaluate is still answering from.
+  const CLICK_LATER = function (sel) {
+    var el = document.querySelector(sel);
+    if (!el) return false;
+    setTimeout(function () { el.click(); }, 0);
+    return true;
+  };
+  const addTextIn = async (page, mmId, title, explanation) => {
+    await page.waitFor(CLICK_IN_CARD, { args: [mmId, '+ add text'], message: '+ add text in card ' + mmId });
+    await page.waitFor(function (id) {
+      var card = document.querySelector('[data-dump-mm="' + id + '"]');
+      return !!(card && card.querySelector('textarea[placeholder="explanation..."]'));
+    }, { args: [mmId], message: 'the text-block form in card ' + mmId });
+    await page.evaluate(FILL_IN_CARD, SET_REACT_INPUT, mmId, 'title (optional)', title);
+    await page.evaluate(FILL_IN_CARD, SET_REACT_INPUT, mmId, 'explanation...', explanation);
+    assert.equal(await page.evaluate(CLICK_IN_CARD, mmId, 'add'), true, 'the text-block add button');
+  };
+  const addCitationIn = async (page, mmId, label, url) => {
+    await page.waitFor(CLICK_IN_CARD, { args: [mmId, '+ citation link'], message: '+ citation link in card ' + mmId });
+    await page.waitFor(function (id) {
+      var card = document.querySelector('[data-dump-mm="' + id + '"]');
+      return !!(card && card.querySelector('input[placeholder="url"]'));
+    }, { args: [mmId], message: 'the citation form in card ' + mmId });
+    await page.evaluate(FILL_IN_CARD, SET_REACT_INPUT, mmId, 'label', label);
+    await page.evaluate(FILL_IN_CARD, SET_REACT_INPUT, mmId, 'url', url);
+    assert.equal(await page.evaluate(CLICK_IN_CARD, mmId, 'add'), true, 'the citation add button');
+  };
+  const openKs02SourceDump = async (page) => {
+    await page.waitFor(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === 'SOURCE DUMP'; });
+      if (!b) return false;
+      b.click();
+      return true;
+    }, { message: "KS03's SOURCE DUMP sub-tab" });
+    await page.waitFor(function () { return !!document.querySelector('[data-source-dump-view]'); },
+      { message: "KS02's SOURCE DUMP view" });
+  };
+
+  await t.test('SOURCE DUMP is True Storage\'s second tab, and #sourcedump and #tree each open theirs', async () => {
+    const page = await open('true-storage.html', { db: tagSeed() });
+    await page.waitFor(function () { return !!document.querySelector('[data-sid]'); },
+      { message: 'the canvas, the first tab' });
+    const tabs = await page.evaluate(function () {
+      var header = document.querySelector('#root > div > div:first-child');
+      var names = ['MULTIVERSE', 'SOURCE DUMP', 'SRCH'];
+      return {
+        header: Array.prototype.map.call(header.querySelectorAll('button'),
+          function (b) { return b.textContent.trim(); }).filter(function (t) { return names.indexOf(t) >= 0; }),
+        bar: Array.prototype.map.call(document.querySelectorAll('.track-tabbar [data-tabbar-tab]'),
+          function (b) { return b.getAttribute('data-tabbar-tab'); })
+      };
+    });
+    assert.deepEqual(tabs.header, ['MULTIVERSE', 'SOURCE DUMP', 'SRCH'], 'the header, in that order');
+    assert.deepEqual(tabs.bar, ['multiverse', 'sourcedump', 'tree', 'home'], 'and the phone bar, from the same table');
+
+    await page.evaluate(function () {
+      var header = document.querySelector('#root > div > div:first-child');
+      Array.prototype.find.call(header.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'SOURCE DUMP'; }).click();
+      return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-row="d-1"]'); },
+      { message: 'the header tab opening the SOURCE DUMP view at Home' });
+
+    await page.evaluate(function () { location.hash = '#tree'; return true; });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-row="ts-1"]'); },
+      { message: '#tree still opening SRCH' });
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-source-dump-view]'); }),
+      false, 'and SRCH replaced the SOURCE DUMP view');
+
+    await page.evaluate(function () { location.hash = '#sourcedump'; return true; });
+    await page.waitFor(function () { return !!document.querySelector('[data-source-dump-view]'); },
+      { message: '#sourcedump opening the SOURCE DUMP view' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PARITY: the SOURCE DUMP copy draws exactly the controls KS02 draws', async () => {
+    // Every kind of row on screen at once: two leaves at Home; on the leaf, two
+    // MM cards, one carrying a text block, a citation and a storage chip.
+    const db = () => tagSeed({
+      sourceDumps: [
+        F.dump('d-1', '2026-03-08', { mmLinks: [
+          F.dumpLink(90, 10, {
+            textBlocks: [{ id: 500, title: 'Why', explanation: 'Because.' }],
+            links: [{ id: 600, label: 'Paper', url: 'https://example.com/p' }]
+          }),
+          F.dumpLink(91, 11)
+        ] }),
+        F.dump('d-2', '2026-03-09', { mmLinks: [F.dumpLink(92, 10)] })
+      ]
+    });
+
+    const ts = await open('true-storage.html', { db: db(), hash: '#sourcedump' });
+    await ts.waitFor(function () { return !!document.querySelector('[data-dump-row="d-2"]'); },
+      { message: "True Storage's SOURCE DUMP view at Home" });
+    const tsHome = await ts.evaluate(DUMP_CONTROLS);
+    await ts.evaluate(NAVIGATE_TO, 'd-1');
+    await ts.waitFor(function () { return !!document.querySelector('[data-dump-mm="11"]'); },
+      { message: 'True Storage on the leaf' });
+    const tsLeaf = await ts.evaluate(DUMP_CONTROLS);
+    assert.deepEqual(realErrors(ts), []);
+    await ts.close();
+
+    const ks02 = await open('sir-ks02.html', { db: db(), hash: '#ks03' });
+    await openKs02SourceDump(ks02);
+    await ks02.waitFor(function () { return !!document.querySelector('[data-dump-row="d-2"]'); },
+      { message: "KS02's SOURCE DUMP view at Home" });
+    const ksHome = await ks02.evaluate(DUMP_CONTROLS);
+    await ks02.evaluate(NAVIGATE_TO, 'd-1');
+    await ks02.waitFor(function () { return !!document.querySelector('[data-dump-mm="11"]'); },
+      { message: 'KS02 on the leaf' });
+    const ksLeaf = await ks02.evaluate(DUMP_CONTROLS);
+    assert.deepEqual(realErrors(ks02), []);
+    await ks02.close();
+
+    assert.ok(ksLeaf.length > 15, 'the leaf drew its controls at all (' + ksLeaf.length + ')');
+    assert.deepEqual(tsHome, ksHome, 'Home: the two copies of the SOURCE DUMP page differ');
+    assert.deepEqual(tsLeaf, ksLeaf, 'the leaf: the two copies of the SOURCE DUMP page differ');
+  });
+
+  await t.test('an edit on the SOURCE DUMP tab is a fresh read-modify-write, not a snapshot', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm="11"]'); },
+      { message: '?dump= opening the leaf on the SOURCE DUMP tab' });
+
+    // Another writer — KS02, say — lands a title this page has never seen.
+    // Written in this same tab, so no `storage` event fires and the page's
+    // React copy stays stale, which is the whole point. Beside it, a record
+    // this page never DRAWS (a dump naming itself as its parent, hidden by the
+    // same filter KS02 applies): writing from the rendered list would drop it.
+    const seeded = (await page.evaluate(STORED_DUMPS)).concat([
+      { id: 'd-x', title: 'Written elsewhere', createdAt: '2026-03-11', parentId: null, mmLinks: [] },
+      { id: 'd-self', title: 'Names itself', createdAt: '2026-03-11', parentId: 'd-self', mmLinks: [] }]);
+    assert.notEqual(await page.evaluate(WRITE_SLOT_KEY, 'sourceDumps', seeded), false, 'seeding the concurrent write');
+
+    await addCitationIn(page, 11, 'Paper', 'https://example.com/a');
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var list = (((db.slots || [])[0] || {}).sourceDumps) || [];
+      var d = list.filter(function (x) { return x.id === 'd-1'; })[0];
+      var s = d && d.mmLinks.filter(function (l) { return l.mmId === 11; })[0];
+      return (s && s.links.length) ? list : false;
+    }, { message: 'the citation being saved' });
+
+    assert.ok(after.some(d => d.id === 'd-x'),
+      'the title written elsewhere survived — the edit read the stored list, not the stale React copy');
+    assert.ok(after.some(d => d.id === 'd-self'),
+      'the record this page does not draw survived — the writer was handed the raw list, not the rendered one');
+    assert.deepEqual(after.map(d => d.id), ['d-1', 'd-2', 'd-x', 'd-self'], 'and nothing moved');
+    const cite = after[0].mmLinks.find(l => l.mmId === 11).links[0];
+    assert.deepEqual({ label: cite.label, url: cite.url }, { label: 'Paper', url: 'https://example.com/a' });
+    assert.equal(typeof cite.id, 'string', "minted by TrackStorage.newId — it can never collide with KS02's nid()");
+    assert.deepEqual(after[0].mmLinks.find(l => l.mmId === 10), F.dumpLink(90, 10), 'the other card is untouched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the SOURCE DUMP tab writes sourceDumps and nothing else; other edits never write it', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); },
+      { message: 'the leaf' });
+    const EXCEPT = function (key) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = Object.assign({}, (db.slots || [])[0] || {});
+      delete s[key];
+      return JSON.stringify({ slot: s, activeSlotId: db.activeSlotId, slots: (db.slots || []).length });
+    };
+
+    const beforeOthers = await page.evaluate(EXCEPT, 'sourceDumps');
+    await addTextIn(page, 10, 'Why', 'Because it matters.');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = ((((db.slots || [])[0] || {}).sourceDumps) || [])[0];
+      return !!(d && d.mmLinks[0].textBlocks.length);
+    }, { message: 'the text block being saved' });
+    await sleep(400);   // any autosave the edit set off has run by now
+    assert.equal(await page.evaluate(EXCEPT, 'sourceDumps'), beforeOthers,
+      'every other key — trueStorages included — is byte-identical');
+
+    // The other half: an ordinary True Storage edit leaves sourceDumps alone,
+    // because that key is never part of this page's autosave.
+    const beforeDumps = JSON.stringify(await page.evaluate(STORED_DUMPS));
+    await page.evaluate(CLICK_SEL, '[data-storage-chip="ts-1"]');
+    await page.waitFor(function () { return !!document.querySelector('textarea[placeholder="What is this storage, and why does it matter?"]'); },
+      { message: "the chip opening Storage A's detail" });
+    await page.evaluate(function (setterSrc) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('textarea[placeholder="What is this storage, and why does it matter?"]'), 'Edited.');
+      return true;
+    }, SET_REACT_INPUT);
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'SAVE'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = ((((db.slots || [])[0] || {}).trueStorages) || [])[0];
+      return !!(s && s.explanation === 'Edited.');
+    }, { message: 'the storage edit landing' });
+    assert.equal(JSON.stringify(await page.evaluate(STORED_DUMPS)), beforeDumps, 'sourceDumps is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('the SOURCE DUMP copy draws each storage chip against its own pair, and opens it in place', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-1:11"]'); },
+      { message: 'the leaf card' });
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-1:10'), ['ts-1'], 'the tagged pair carries its storage');
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-1:11'), [], 'the other MM in the same dump carries nothing');
+
+    // Tagging from here writes this page's own key.
+    await page.evaluate(CLICK_SEL, '[data-storage-add="d-1:11"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-option="ts-2"]'); },
+      { message: 'the storage picker' });
+    await page.evaluate(CLICK_SEL, '[data-storage-option="ts-2"]');
+    const tags = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = ((((db.slots || [])[0] || {}).trueStorages) || []).filter(function (x) { return x.id === 'ts-2'; })[0];
+      return (s && s.tags.length) ? s.tags : false;
+    }, { message: 'the tag being saved' });
+    assert.deepEqual(tags.map(t => ({ dumpId: t.dumpId, mmId: t.mmId })), [{ dumpId: 'd-1', mmId: 11 }]);
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-1:11'), ['ts-2']);
+
+    // The chip opens the storage HERE — no reload — and back returns to the leaf.
+    await page.evaluate(function () { window.__sameDocument = true; return true; });
+    await page.evaluate(CLICK_SEL, '[data-storage-chip="ts-1"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-add-tag]'); },
+      { message: "Storage A's detail" });
+    assert.equal(await page.evaluate(function () { return window.__sameDocument === true; }), true,
+      'opened in place, not by reloading the page');
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === '← back'; }).click();
+      return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); },
+      { message: '← back returning to the same leaf' });
+
+    // The SAME MM in another dump is a different pair.
+    await page.evaluate(CLICK_SEL, '[data-dump-crumb="home"]');
+    await page.waitFor(NAVIGATE_TO, { args: ['d-2'], message: 'the second leaf' });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-2:10"]'); },
+      { message: 'the second leaf card' });
+    assert.deepEqual(await page.evaluate(CHIPS_AT, 'd-2:10'), [], 'the same MM in another dump carries nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('LIVE: a text block added on True Storage appears in an open KS02, and stays stored', async () => {
+    const ts = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    await ts.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); }, { message: 'True Storage on the leaf' });
+    const ks02 = await open('sir-ks02.html', { hash: withQuery('?dump=d-1', '#ks03'), fresh: false });
+    await ks02.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); }, { message: 'KS02 on the leaf' });
+
+    await addTextIn(ts, 10, 'From TS', 'Typed on True Storage.');
+    await ks02.waitFor(function () {
+      var v = document.querySelector('[data-source-dump-view]');
+      return !!v && v.textContent.indexOf('Typed on True Storage.') >= 0;
+    }, { message: 'the open KS02 tab drawing the new block' });
+
+    // KS02 refreshed on the `storage` event, and its autosave then wrote its own
+    // snapshot back. The block must have survived that round trip.
+    await sleep(800);
+    const d1 = (await ks02.evaluate(STORED_DUMPS)).find(d => d.id === 'd-1');
+    assert.deepEqual(d1.mmLinks.find(l => l.mmId === 10).textBlocks.map(b => b.explanation),
+      ['Typed on True Storage.'], "still stored after KS02's autosave");
+    assert.deepEqual(realErrors(ts), []);
+    assert.deepEqual(realErrors(ks02), []);
+    await ts.close(); await ks02.close();
+  });
+
+  await t.test('LIVE: a citation added in KS02 appears on an open True Storage SOURCE DUMP tab', async () => {
+    const ts = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    await ts.waitFor(function () { return !!document.querySelector('[data-dump-mm="11"]'); }, { message: 'True Storage on the leaf' });
+    const ks02 = await open('sir-ks02.html', { hash: withQuery('?dump=d-1', '#ks03'), fresh: false });
+    await ks02.waitFor(function () { return !!document.querySelector('[data-dump-mm="11"]'); }, { message: 'KS02 on the leaf' });
+
+    await addCitationIn(ks02, 11, 'From KS02', 'https://example.com/k');
+    await ts.waitFor(function () {
+      var card = document.querySelector('[data-dump-mm="11"]');
+      return !!card && card.textContent.indexOf('From KS02') >= 0;
+    }, { message: 'the open True Storage tab drawing the new citation' });
+    assert.deepEqual(realErrors(ts), []);
+    assert.deepEqual(realErrors(ks02), []);
+    await ts.close(); await ks02.close();
+  });
+
+  await t.test('a title made on True Storage (string id) is extended from KS02 (numeric ids), and both agree', async () => {
+    const ts = await open('true-storage.html', { db: tagSeed(), hash: '#sourcedump' });
+    await ts.waitFor(function () { return !!document.querySelector('[data-dump-row="d-2"]'); }, { message: 'Home' });
+    await addSubTitle(ts, 'Made on True Storage');
+    const made = await ts.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return ((((db.slots || [])[0] || {}).sourceDumps) || [])
+        .filter(function (d) { return d.title === 'Made on True Storage'; })[0] || false;
+    }, { message: 'the root title being saved' });
+    assert.equal(typeof made.id, 'string', 'True Storage mints string ids');
+    assert.equal(made.parentId, null);
+    const localDay = await ts.evaluate(function () {
+      var d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    });
+    assert.equal(made.createdAt, localDay, 'createdAt is the LOCAL day');
+
+    const ks02 = await open('sir-ks02.html', { hash: withQuery('?dump=' + encodeURIComponent(made.id), '#ks03'), fresh: false });
+    await ks02.waitFor(function () {
+      return !!Array.prototype.find.call(document.querySelectorAll('[data-source-dump-view] button'),
+        function (b) { return b.textContent.trim() === '+ add MM'; });
+    }, { message: "KS02's ?dump= opening the string-id title" });
+    await ks02.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('[data-source-dump-view] button'),
+        function (b) { return b.textContent.trim() === '+ add MM'; }).click();
+      return true;
+    });
+    await ks02.waitFor(function () {
+      var s = Array.prototype.find.call(document.querySelectorAll('[data-source-dump-view] span'),
+        function (x) { return x.textContent.trim() === 'Mind Map A'; });
+      if (!s) return false;
+      s.parentElement.click();
+      return true;
+    }, { message: 'picking Mind Map A' });
+    await ks02.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); }, { message: "KS02's new card" });
+    await addTextIn(ks02, 10, 'From KS02', 'Typed in KS02.');
+
+    const stored = await ks02.waitFor(function (id) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = ((((db.slots || [])[0] || {}).sourceDumps) || []).filter(function (x) { return x.id === id; })[0];
+      return (d && d.mmLinks.length && d.mmLinks[0].textBlocks.length) ? d : false;
+    }, { args: [made.id], message: "KS02's edits to the True Storage title being saved" });
+    assert.equal(stored.id, made.id, 'the same record');
+    assert.equal(typeof stored.mmLinks[0].id, 'number', "KS02's section id is its numeric nid()");
+
+    await ts.evaluate(NAVIGATE_TO, made.id);
+    await ts.waitFor(function () {
+      var card = document.querySelector('[data-dump-mm="10"]');
+      return !!card && card.textContent.indexOf('Typed in KS02.') >= 0;
+    }, { message: 'True Storage drawing what KS02 added to its title' });
+    assert.deepEqual(realErrors(ts), []);
+    assert.deepEqual(realErrors(ks02), []);
+    await ts.close(); await ks02.close();
+  });
+
+  await t.test('nesting a title under a tagged dump from True Storage re-points the tag; untagged writes none', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-1:10"]'); },
+      { message: 'the leaf card' });
+    await addSubTitle(page, 'Sub here');
+    // Wait for the write that is certain to land — the sub-title — then give
+    // the tag a bounded moment: it follows through this page's own autosave, a
+    // render later. Its position is asserted as a VALUE afterwards, so a tag
+    // left behind reports where it stayed instead of timing out.
+    const child = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return ((((db.slots || [])[0] || {}).sourceDumps) || [])
+        .filter(function (d) { return d.parentId === 'd-1'; })[0] || false;
+    }, { message: 'the sub-title landing' });
+    await page.waitFor(function (cid) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = ((((db.slots || [])[0] || {}).trueStorages) || []).filter(function (x) { return x.id === 'ts-1'; })[0];
+      return !!(s && s.tags[0] && s.tags[0].dumpId === cid);
+    }, { args: [child.id], timeout: 3000, message: 'the tag following' }).catch(() => {});
+    const slot = await page.evaluate(READ_SLOT);
+    const tag = slot.trueStorages.find(s => s.id === 'ts-1').tags[0];
+    assert.equal(tag.dumpId, child.id, 'the tag followed its sections to the new child');
+    assert.equal(typeof child.id, 'string');
+    assert.equal(tag.id, 'tg-1', 'the same tag record, not a re-created one');
+    assert.equal(tag.mmId, 10, 'its MM half untouched');
+    assert.deepEqual(child.mmLinks.map(l => l.mmId), [10, 11], 'every section moved to the child');
+    assert.equal(slot.sourceDumps.find(d => d.id === 'd-1').mmLinks.length, 0, 'and the parent kept none');
+
+    const before = JSON.stringify((await page.evaluate(READ_SLOT)).trueStorages);
+    await page.evaluate(CLICK_SEL, '[data-dump-crumb="home"]');
+    await page.waitFor(NAVIGATE_TO, { args: ['d-2'], message: 'the untagged leaf' });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); }, { message: 'its card' });
+    await addSubTitle(page, 'Another sub');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return ((((db.slots || [])[0] || {}).sourceDumps) || []).some(function (d) { return d.parentId === 'd-2'; });
+    }, { message: 'the sub-title under the untagged leaf' });
+    await sleep(400);
+    assert.equal(JSON.stringify((await page.evaluate(READ_SLOT)).trueStorages), before, 'trueStorages is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('an MM name on the SOURCE DUMP tab opens that MM in KS02, and Back returns to the dump', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: '#sourcedump' });
+    await page.waitFor(NAVIGATE_TO, { args: ['d-1'], message: 'Home, then the leaf' });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm-name="10"]'); }, { message: 'the leaf card' });
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-dump-mm-name="10"]').getAttribute('href');
+    }), 'sir-ks02.html?mm=10#ks03', "the MM's own link into KS02");
+
+    assert.equal(await page.evaluate(CLICK_LATER, '[data-dump-mm-name="10"]'), true, 'the MM link exists');
+    await page.waitFor(function () { return location.pathname.indexOf('sir-ks02.html') >= 0 && document.readyState !== 'loading'; },
+      { timeout: 30000, message: 'following the link into KS02' });
+    await page.skipFirebase();
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-1:10"]'); },
+      { message: "KS02 drawing MM 10's S&C content" });
+    assert.equal(await page.evaluate(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === 'S&C'; });
+      return !!b && b.className.indexOf('bg-white') >= 0;
+    }), true, "it opened on the MM's S&C tab");
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-source-dump-view]'); }),
+      false, 'the MM detail, not the SOURCE DUMP page');
+
+    await page.evaluate(function () { setTimeout(function () { history.back(); }, 0); return true; });
+    await page.waitFor(function () { return location.pathname.indexOf('true-storage.html') >= 0 && document.readyState !== 'loading'; },
+      { timeout: 30000, message: 'Back into True Storage' });
+    await page.skipFirebase();
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); },
+      { message: 'Back landing on the SOURCE DUMP tab, on the same leaf' });
+    assert.equal(await page.evaluate(function () { return location.search + location.hash; }),
+      '?dump=d-1&mm=10#sourcedump', 'the history entry says where the user stood');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KS02 ?mm= opens that MM on S&C; a stale id opens nothing; with ?dump= it stays the ring', async () => {
+    const page = await open('sir-ks02.html', { db: tagSeed(), hash: withQuery('?mm=10', '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-tags="d-1:10"]'); },
+      { message: "?mm= opening MM 10's S&C tab" });
+    assert.equal(await page.evaluate(function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('button'),
+        function (x) { return x.textContent.trim() === 'S&C'; });
+      return !!b && b.className.indexOf('bg-white') >= 0;
+    }), true, 'the S&C tab is the one open');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+
+    const stale = await open('sir-ks02.html', { hash: withQuery('?mm=999', '#ks03'), fresh: false });
+    await waitMounted(stale, 'sir-ks02.html');
+    await stale.waitFor(function () { return !!document.querySelector('#root svg'); }, { message: 'the KS03 canvas' });
+    await sleep(400);
+    assert.equal(await stale.evaluate(function () {
+      return Array.prototype.some.call(document.querySelectorAll('button'), function (b) { return b.textContent.trim() === 'S&C'; });
+    }), false, 'an id naming nothing opened no MM');
+    assert.deepEqual(realErrors(stale), []);
+    await stale.close();
+
+    // Precedence: with ?dump= present, mm is the dump card's ring, as it was.
+    const both = await open('sir-ks02.html', { hash: withQuery('?dump=d-1&mm=10', '#ks03'), fresh: false });
+    // Wait for EITHER outcome and assert which one it was, so a regression
+    // reports what opened instead of timing out on a dump that never appears.
+    const landed = await both.waitFor(function () {
+      if (document.querySelector('[data-source-dump-view] [data-dump-mm="10"]')) return 'the dump';
+      var sc = Array.prototype.some.call(document.querySelectorAll('button'),
+        function (b) { return b.textContent.trim() === 'S&C'; });
+      return sc ? "MM 10's detail" : false;
+    }, { message: '?dump=&mm= opening something' });
+    assert.equal(landed, 'the dump', '?dump= wins: the dump opened, not the MM detail');
+    assert.equal(await both.evaluate(function () {
+      return document.querySelector('[data-dump-mm="10"]').className.indexOf('border-amber-600') >= 0;
+    }), true, 'with the ring on that card');
+    assert.deepEqual(realErrors(both), []);
+    await both.close();
+  });
+
+  /* +MM takes its parent from where the user is. The opener holds two rules —
+     inside an MM that MM is the one parent, anywhere else the form starts at
+     root — and each case below guards exactly one of them, so a change that
+     drops either half fails a case of its own. */
+  const PRESSED_PARENTS = function () {
+    return Array.prototype.filter.call(document.querySelectorAll('[data-new-mm-modal] [data-new-mm-parent]'),
+      function (b) { return b.getAttribute('aria-pressed') === 'true'; })
+      .map(function (b) { return b.getAttribute('data-new-mm-parent'); });
+  };
+  const PARENTS_READOUT = function () {
+    return document.querySelector('[data-new-mm-parents]').textContent.trim();
+  };
+  const NEW_MM_PRESS = function (label) {
+    var b = Array.prototype.find.call(document.querySelectorAll('[data-new-mm-modal] button'),
+      function (x) { return x.textContent.trim() === label; });
+    if (!b) return false;
+    b.click();
+    return true;
+  };
+  const openNewMMForm = async (page, message) => {
+    await page.evaluate(CLICK_SEL, '[data-add-mm]');
+    await page.waitFor(function () { return !!document.querySelector('[data-new-mm-modal]'); }, { message });
+  };
+
+  await t.test('KS02 +MM inside an MM pre-chooses that MM as its one parent, and ADD stores it', async () => {
+    const page = await open('sir-ks02.html', { db: seedDb(), hash: withQuery('?mm=10', '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-mm-detail="10"]'); },
+      { message: "?mm= opening MM 10's detail" });
+    await openNewMMForm(page, 'the NEW MIND MAP form');
+    assert.deepEqual(await page.evaluate(PRESSED_PARENTS), ['10'],
+      'the MM the user is in is chosen, and nothing else');
+    assert.equal(await page.evaluate(PARENTS_READOUT), 'Mind Map A',
+      'the readout names it, wherever the list is scrolled');
+
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-new-mm-modal] input[placeholder="MM name"]'), value);
+      return true;
+    }, SET_REACT_INPUT, 'Child of A');
+    assert.equal(await page.evaluate(NEW_MM_PRESS, 'ADD'), true, 'ADD pressed');
+    const made = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var slot = (db.slots || [])[0] || {};
+      return (slot.mms || []).filter(function (m) { return m.name === 'Child of A'; })[0] || false;
+    }, { message: 'the new MM being saved' });
+    assert.deepEqual(made.parentIds, [10], 'stored under MM 10 alone');
+    assert.equal(typeof made.parentIds[0], 'number', "the stored nid() number, never the query string's text");
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KS02 +MM outside an MM starts at root, even when the cancelled draft held a parent', async () => {
+    /* CANCEL keeps the draft, so this is the half of the rule that stops a
+       parent chosen inside an MM from following the user out. The parent is
+       chosen BY HAND, so the case stands whether or not the inside rule
+       pre-chose it: pressing root first makes the next press a select, never
+       a toggle-off. */
+    const page = await open('sir-ks02.html', { db: seedDb(), hash: withQuery('?mm=10', '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-mm-detail="10"]'); },
+      { message: "?mm= opening MM 10's detail" });
+    await openNewMMForm(page, 'the NEW MIND MAP form');
+    await page.evaluate(CLICK_SEL, '[data-new-mm-modal] [data-new-mm-parent="root"]');
+    await page.evaluate(CLICK_SEL, '[data-new-mm-modal] [data-new-mm-parent="10"]');
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-new-mm-modal] input[placeholder="MM name"]'), value);
+      return true;
+    }, SET_REACT_INPUT, 'Half-typed');
+    assert.deepEqual(await page.evaluate(PRESSED_PARENTS), ['10'], 'precondition: the draft holds MM 10');
+
+    assert.equal(await page.evaluate(NEW_MM_PRESS, 'CANCEL'), true, 'CANCEL pressed');
+    await page.waitFor(function () { return !document.querySelector('[data-new-mm-modal]'); },
+      { message: 'the form closing' });
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('[data-mm-detail] button'),
+        function (b) { return b.textContent.trim() === '← back'; }).click();
+      return true;
+    });
+    await page.waitFor(function () {
+      return !document.querySelector('[data-mm-detail]') && !!document.querySelector('#root svg');
+    }, { message: 'back out of MM 10, on the KS03 canvas' });
+
+    await openNewMMForm(page, 'the NEW MIND MAP form, reopened from the canvas');
+    assert.deepEqual(await page.evaluate(PRESSED_PARENTS), ['root'],
+      'opened outside an MM, the form starts at root: the cancelled parent did not follow');
+    assert.equal(await page.evaluate(PARENTS_READOUT), 'none (root)');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-new-mm-modal] input[placeholder="MM name"]').value;
+    }), 'Half-typed', 'only the parent is reset: the rest of the draft still survives CANCEL');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('a workspace switched in another tab starts the SOURCE DUMP tab at Home', async () => {
+    /* The breadcrumb names dumps of the slot it was built in. Kept across a
+       switch, it would point into a slot that has no such dump: the page would
+       say "No titles yet" over a workspace full of them, and `+ title` would be
+       refused for a parent that is not there. */
+    const db = F.dbWith([
+      F.emptySlot({ id: 'slot-a', name: 'Alpha', mms: [F.mm(10, 'A-mm')],
+        sourceDumps: [F.dump('a-1', '2026-03-08', { mmLinks: [F.dumpLink(90, 10)] })] }),
+      F.emptySlot({ id: 'slot-b', name: 'Beta',
+        sourceDumps: [F.dump('b-1', '2026-03-09'), F.dump('b-2', '2026-03-10')] })
+    ], 'slot-a');
+    const ts = await open('true-storage.html', { db, hash: withQuery('?dump=a-1', '#sourcedump') });
+    await ts.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); },
+      { message: "slot A's leaf, opened by ?dump=" });
+    const home = await open('index.html', { fresh: false });
+    await home.evaluate(function () { window.activateSlot('slot-b'); return true; });
+    // Wait for slot B to be adopted in EITHER shape — its titles, or the empty
+    // view a stale breadcrumb produces — then one render more for the reset,
+    // and assert what is on screen, so a regression reports it as a value.
+    await ts.waitFor(function () {
+      var v = document.querySelector('[data-source-dump-view]');
+      return !!v && (!!document.querySelector('[data-dump-row="b-1"]') || v.textContent.indexOf('No titles yet') >= 0);
+    }, { message: 'True Storage adopting slot B' });
+    await sleep(400);
+    assert.deepEqual(await ts.evaluate(function () {
+      return {
+        rows: Array.prototype.map.call(document.querySelectorAll('[data-dump-row]'),
+          function (r) { return r.getAttribute('data-dump-row'); }),
+        crumbs: Array.prototype.map.call(document.querySelectorAll('[data-dump-crumb]'),
+          function (b) { return b.textContent.trim(); })
+      };
+    }), { rows: ['b-1', 'b-2'], crumbs: ['Home'] }, "slot B's titles, at Home");
+    assert.deepEqual(realErrors(ts), []);
+    await ts.close(); await home.close();
+  });
+
+  await t.test('True Storage ?dump=&mm= reopens that leaf with the card ringed; naming nothing opens Home', async () => {
+    /* The address Back returns to. Chrome may restore the page from its
+       back/forward cache instead — there is no `unload` listener to stop it —
+       and then nothing here runs. This is the other road: a real load of that
+       address, which has to rebuild the place from the query alone. */
+    const page = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1&mm=10', '#sourcedump') });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); },
+      { message: '?dump= reopening the leaf' });
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-dump-mm="10"]').className.indexOf('border-amber-600') >= 0;
+    }), true, '&mm= rings the card the user left from');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-dump-mm="11"]').className.indexOf('border-amber-600') >= 0;
+    }), false, 'and only that card');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+
+    const none = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=no-such-dump', '#sourcedump') });
+    await none.waitFor(function () { return !!document.querySelector('[data-dump-row="d-1"]'); },
+      { message: 'the SOURCE DUMP view at Home' });
+    assert.deepEqual(realErrors(none), []);
+    await none.close();
+  });
+
   // ── 3. export → import ──────────────────────────────────────────────────
 
   await t.test('export → import preserves docPageId and every canonical field', async () => {
@@ -5175,6 +5846,103 @@ test('browser suites', skipUnlessChrome, async t => {
       return (s && s.tags.length === 0) ? s.tags : false;
     }, { message: 'confirming still untags' }), []);
 
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* The SOURCE DUMP copy on True Storage keeps KS02's prompts exactly: the
+     styled ConfirmDialog for its four deletes (it is a copy of that page, and
+     page.rejectDialogs cannot answer a DOM modal, so CANCEL and CONFIRM are
+     clicked), and the native confirm for untagging a storage chip. */
+  const DIALOG_BUTTON = function (label) {
+    var b = Array.prototype.find.call(document.querySelectorAll('.fixed button'),
+      function (x) { return x.textContent.trim() === label; });
+    if (!b) return false;
+    b.click();
+    return true;
+  };
+
+  await t.test('SOURCE DUMP (True Storage): deleting a title asks; CANCEL keeps every byte, CONFIRM takes its subtree', async () => {
+    const page = await open('true-storage.html', {
+      db: tagSeed({ sourceDumps: [
+        F.dump('d-1', '2026-03-08', { mmLinks: [F.dumpLink(90, 10), F.dumpLink(91, 11)] }),
+        F.dump('d-2', '2026-03-09'),
+        F.dump('d-3', '2026-03-10', { parentId: 'd-2', mmLinks: [F.dumpLink(92, 10)] })
+      ] }),
+      hash: '#sourcedump'
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-delete="d-2"]'); },
+      { message: 'the delete button on a title with a child' });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    await page.evaluate(CLICK_SEL, '[data-dump-delete="d-2"]');
+    await page.waitFor(DIALOG_BUTTON, { args: ['CANCEL'], message: 'the delete prompt, answered CANCEL' });
+    await sleep(300);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'CANCEL wrote nothing at all');
+
+    await page.evaluate(CLICK_SEL, '[data-dump-delete="d-2"]');
+    await page.waitFor(DIALOG_BUTTON, { args: ['CONFIRM'], message: 'the delete prompt, answered CONFIRM' });
+    const left = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var ids = ((((db.slots || [])[0] || {}).sourceDumps) || []).map(function (d) { return d.id; });
+      return ids.indexOf('d-2') < 0 ? ids : false;
+    }, { message: 'confirming deleting the title' });
+    assert.deepEqual(left, ['d-1'], 'the title and its child went; the other title stayed');
+    assert.deepEqual((await page.evaluate(STORAGE_BY_ID, 'ts-1')).tags, [{ id: 'tg-1', dumpId: 'd-1', mmId: 10 }],
+      'no storage tag was touched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SOURCE DUMP (True Storage): removing an MM section asks; CANCEL keeps it, CONFIRM leaves tags alone', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm="10"]'); }, { message: 'the leaf card' });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    assert.equal(await page.evaluate(CLICK_IN_CARD, 10, 'remove'), true, 'the remove button');
+    await page.waitFor(DIALOG_BUTTON, { args: ['CANCEL'], message: 'the remove prompt, answered CANCEL' });
+    await sleep(300);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'CANCEL wrote nothing at all');
+
+    assert.equal(await page.evaluate(CLICK_IN_CARD, 10, 'remove'), true, 'the remove button again');
+    await page.waitFor(DIALOG_BUTTON, { args: ['CONFIRM'], message: 'the remove prompt, answered CONFIRM' });
+    const links = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = ((((db.slots || [])[0] || {}).sourceDumps) || [])[0];
+      return (d && d.mmLinks.length === 1) ? d.mmLinks.map(function (l) { return l.mmId; }) : false;
+    }, { message: 'confirming removing the section' });
+    assert.deepEqual(links, [11]);
+    // The tag on (d-1, 10) now names a pair that no longer resolves. It stays,
+    // and reads "source removed" — deleting it would lose the user's filing.
+    assert.deepEqual((await page.evaluate(STORAGE_BY_ID, 'ts-1')).tags, [{ id: 'tg-1', dumpId: 'd-1', mmId: 10 }]);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SOURCE DUMP (True Storage): untagging a chip asks, and Cancel leaves trueStorages byte-identical', async () => {
+    const page = await open('true-storage.html', { db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    await page.waitFor(function () { return !!document.querySelector('[data-storage-untag="ts-1"]'); },
+      { message: 'the chip untag button' });
+    const before = await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return JSON.stringify((((db.slots || [])[0] || {}).trueStorages) || null);
+    });
+
+    await answering(page, false, CLICK_SOON_SEL, ['[data-storage-untag="ts-1"]']);
+    await sleep(300);
+    assert.equal(await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return JSON.stringify((((db.slots || [])[0] || {}).trueStorages) || null);
+    }), before, 'Cancel wrote nothing');
+
+    await answering(page, true, CLICK_SOON_SEL, ['[data-storage-untag="ts-1"]']);
+    assert.deepEqual(await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (((db.slots || [])[0] || {}).trueStorages || [])[0];
+      return (s && s.tags.length === 0) ? s.tags : false;
+    }, { message: 'confirming still untags' }), []);
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -10905,7 +11673,26 @@ test('browser suites', skipUnlessChrome, async t => {
   await phoneCase('documentations.html', 'documentations', ['pages', 'add', 'home']);
   await phoneCase('sir-ks02.html', 'ks02',
     ['calendar', 'ks02', 'mg', 'ks03', 'kolb', 'srch', 'home']);
-  await phoneCase('true-storage.html', 'true-storage', ['multiverse', 'tree', 'home']);
+  await phoneCase('true-storage.html', 'true-storage', ['multiverse', 'sourcedump', 'tree', 'home']);
+
+  await t.test('PHONE/TRUE-STORAGE: the SOURCE DUMP tab is not cropped on a leaf', async () => {
+    /* The bar case above measures the default tab, the canvas. The copy of
+       KS02's page is a different layout — a breadcrumb, MM cards with inline
+       forms and storage chips — so it is measured on its own, on a leaf, where
+       the most is drawn. */
+    const page = await open('true-storage.html', {
+      db: tagSeed(), hash: withQuery('?dump=d-1', '#sourcedump'), viewport: PHONE
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-mm="11"]'); },
+      { message: 'the leaf at a phone width' });
+    const m = await page.evaluate(NOT_CROPPED);
+    assert.equal(m.scrollWidth, m.clientWidth,
+      'the SOURCE DUMP tab overflows to the RIGHT at ' + m.vw + 'px (scrollWidth ' + m.scrollWidth + ')');
+    assert.deepEqual(m.escaped, [],
+      m.escapedCount + ' element(s) on the SOURCE DUMP tab sit outside the viewport with nothing to scroll them');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
 
   await t.test('PHONE/PROGRESS: the schedule opens in DAY mode, and an explicit WEEK survives', async () => {
     /* DAY is the whole reason this page stopped being cropped: week mode applies

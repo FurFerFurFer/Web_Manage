@@ -45,7 +45,7 @@ if (require.main === module) {
   const port = Number(process.argv[2] || 8877);
   startServer(port).then(server => {
     console.log('Track World demo: http://127.0.0.1:' + server.address().port);
-    console.log('Synthetic data only. Press Ctrl+C to stop.');
+    console.log('Demo data or a user-selected, read-only workspace file. Press Ctrl+C to stop.');
     process.on('SIGINT', () => server.close(() => process.exit(0)));
     process.on('SIGTERM', () => server.close(() => process.exit(0)));
   }).catch(error => { console.error(error.message); process.exitCode = 1; });

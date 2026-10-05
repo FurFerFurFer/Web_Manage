@@ -37,6 +37,11 @@ test('review petals follow Track’s finished-day and skipped rules, not the sch
   assert.deepEqual([node.pending,node.reviewed],[0,1]);
   assert.equal(node.color,'#ef4444');
 });
+test('an unnamed legacy mind map keeps an identity and a searchable sky caption',()=>{
+  const graph=Sky.project({mms:[{id:1,type:'2'}]},Layout,Cal,'2026-09-09');
+  assert.equal(graph.nodes[0].name,'Unnamed mind map');assert.equal(graph.nodes[0].id,1);
+  assert.ok(graph.nodes[0].name.toLocaleLowerCase().includes('unnamed'));
+});
 test('shared parents, cycles and disconnected nodes keep one star per MM and bounded sizes',()=>{
   const slot={mms:[{id:1,parentIds:[2]},{id:2,parentIds:[1]},{id:3,parentIds:[1,2]},{id:4,parentIds:[3]},{id:5,parentIds:[999]}]};
   const sky=Sky.project(slot,Layout,Cal,'2026-09-09');

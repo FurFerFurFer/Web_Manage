@@ -10,7 +10,8 @@
    renders the storages back inside the dump — and it renders them at FOUR
    sites, because an mmLink's content is drawn in four places: the source-dump
    leaf card, the MM detail S&C tab for a leaf MM, the same tab for a non-leaf
-   MM, and DescendantSCNode.
+   MM, and DescendantSCNode. True Storage's SOURCE DUMP tab, a copy of KS02's
+   page, draws the leaf card a fifth time, on the other page.
 
    That is exactly the shape of a bug this project has already paid for. The
    deadline caution predicate was spelled out at three call sites, one of them
@@ -61,10 +62,13 @@
 
   // ── the one matcher ──────────────────────────────────────────────────────
 
-  // Ids are compared with === and never coerced. `dumpId` and `mmId` come from
-  // sir-ks02.html's numeric nid() counter and JSON.parse gives them back as
-  // numbers, so both sides of every comparison are already the same type — as
-  // long as no caller routes an id through a DOM dataset, which stringifies.
+  // Ids are compared with === and never coerced. An `mmId` comes from
+  // sir-ks02.html's numeric nid() counter. A `dumpId` is a number when KS02
+  // minted the dump and a string when True Storage's SOURCE DUMP tab did
+  // (TrackStorage.newId). Either way a tag stores the dump's own stored id, and
+  // JSON.parse hands each back with its type intact, so both sides of every
+  // comparison are already the same type — as long as no caller routes an id
+  // through a DOM dataset, which stringifies.
   function tagMatches(tag, dumpId, mmId) {
     return isMap(tag) && tag.dumpId === dumpId && tag.mmId === mmId;
   }

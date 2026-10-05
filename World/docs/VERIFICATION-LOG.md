@@ -1230,3 +1230,88 @@ earlier unfinished reviews do not carry forward); `core` skipped-review exclusio
 **Not covered:** laptop visual acceptance of the strip, backdrop, band and night treatment;
 real GPU frame times (PLAN §25.13); label placement at density (visible overlap and
 in-label scrollbars — reported, not changed); the minimap's crowded grove; browser zoom.
+
+## 2026-09-27 — character research saved; route deferred, learning first
+
+**Scope:** documentation only, following the user's request to retain the character
+options and analysis, prefer free if possible, decide later and turn to learning features.
+The research record preserves the three routes, sources/visual references, prices versus
+labour, public-repository licensing, Ubuntu/hardware checks, motion gaps, controller and
+Babylon integration limits, and the independent comparison with the retrospective.
+The commission recommendation is explicitly the research's recommendation, not a user
+decision. No replacement route or specific learning-feature implementation was selected.
+
+Updated the concept draft, README, NOTES handover and movement comparison so historical
+procedural-production instructions cannot be read as a current selection or a requirement
+to finish character review before learning work. No operating rule changed; AGENTS.md was
+not edited. No runtime, asset, dependency, Track data or external service was modified.
+
+**Verification:** inspected the documentation diff; `git diff --check` passed. A local
+read-only Markdown link-target check examined 57 relative paths in the new research and
+four updated documents, with no missing targets (fragment anchors were not checked).
+The working tree was clean at preflight. Only the new research and five World Markdown
+files changed. No game/browser suites ran because there was no implementation change.
+
+**Evidence limits retained:** no downloaded model/animation archive inspection, Blender
+launch, asset import, checkout/commission quote, or sustained hardware benchmark. Source
+listings do not establish visual acceptance. Prices, licences, availability, repository
+visibility and tool compatibility need rechecking before a later acquisition decision.
+
+## 2026-09-29 — real-read decision and route preflight
+
+Recorded the user's Today/Memory Grove read-only decision in draft §§5.7, 10 and 21,
+the read-only operating gate in AGENTS, and the next increment in NOTES. Existing
+September 27 documentation edits were preserved. No runtime change is implemented yet;
+the user's normal Track address was requested before choosing live versus export.
+
+Rechecked `tools/serve.js` (separate loopback server, default 8877, four pure Track
+helpers, outbound connections forbidden), `storage-isolation.js` (native storage never
+obtained; every `track_` key refused), root README (Track's documented local server is
+8765), `index.html`'s `exportSlot` (one whole slot JSON), and PLAN §25.12 P6 (approved
+same-origin connection or native bridge). Inspected Today, sky projection, ground-star
+selection and demo Quest links for source/identity separation. No personal data or
+browser profile was read. No connection, install, deployment or live-data workaround
+was attempted. `git diff --check` passed; runtime suites do not apply to this
+decision-only preflight. Implementation and its playtest checklist remain pending.
+
+## 2026-09-30 — real Today and Memory Grove through a read-only workspace file
+
+**Route:** after the user asked the agent to look up the address, inspected the installed
+Track desktop launcher's address only. It opens Chrome at
+`https://furferfurfer.github.io/Web_Manage/index.html`, separate from World's loopback
+origin. Live would require a hosted change/deploy or an installed bridge, which crosses
+the user's no-harm rule. Stopped live there and implemented the explicitly authorized
+single-workspace export route. No workaround, Track-file edit, install, deployment,
+browser-profile read or personal-export access occurred.
+
+**Behavior:** the native file input reads into a frozen session snapshot, using Track's
+schema validator and existing calendar/KS03 projection meanings. Real Today and sky use
+the local day; midnight changes the view without moving records. Replacement clears old
+MM identity/search, empty data stays empty, invalid files preserve the previous source,
+and overlapping file reads honor the latest choice. Reload forgets the file. The screen
+distinguishes real export snapshots from demo data; file-open time is not a sync or export
+timestamp. Real details have no edit, draft, save or review controls. Direct source
+attachments are displayed; inherited/aggregated source views remain in Track, disclosed
+on screen. Notebook, Quest, map, ground markers and stamina remain synthetic. Demo links
+cannot select a real MM by matching numeric ID or list index. The native-storage guard
+and server's four pure-module allowlist / `connect-src 'none'` are unchanged.
+
+**Corrections and evidence:** an unnamed legacy MM previously produced an undefined sky
+caption. A copied scratch tree with the old projection failed exactly that added offline
+case (6 pass, 1 fail; expected `Unnamed mind map`, received `undefined`); the final
+projection passed all 7. An initial file-reader test failed on cross-VM array identity;
+that was a test assertion issue, corrected by comparing plain values. The first full sky
+browser run exposed the expanded export instructions pushing the ordinary MM sky button
+outside the narrow panel. Kept the disclosure initially open in Today and collapsed it in
+Memory. The sky test now checks the actual hit target before clicking; the final sky run
+passed all 12 subtests. Downstream failures from the initial missed click were cascades,
+not separate defects.
+
+**Boundaries:** all fixtures, file names, captured images and sentinel storage were
+synthetic; screenshots and logs stay under `/tmp`. No personal content entered the
+repository. Tests use isolated headless Chrome/SwiftShader, not the user's profile. They
+do not establish actual-laptop graphics performance, physical touch/file-picker behavior,
+live sync, inherited-source parity or daily study benefit. Comparing a fresh personal
+export with Track is the user's playtest, not a claimed automated result. The root Track
+suite does not apply to this World-only change. Existing September 27 documentation and
+research edits were preserved; no commit was made.

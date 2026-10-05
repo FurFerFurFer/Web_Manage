@@ -10,7 +10,8 @@
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
-  <script src="scripts/true-storage-core.js?v=2"></script>
+  <script src="scripts/true-storage-core.js?v=3"></script>
+  <script src="scripts/source-dump-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -240,21 +241,19 @@
     }
 
     // Every dump from the root down to `dumpId`, for the breadcrumb path.
-    // ONE definition: this used to be spelled out twice — guarded in the ?dump=
-    // deep-link effect and unguarded 300 lines away in onGoToSourceDump, which
-    // is the same duplication shape that cost this project the deadline caution
-    // predicate. `seen` matters because the walk goes UP from an arbitrary dump,
-    // so unlike the downward walks it can start inside a parentId cycle.
-    function dumpPathTo(dumpId, dumps, seen = new Set()) {
-      const d = (dumps || []).find(x => x.id === dumpId);
-      if (!d || seen.has(dumpId)) return [];
-      seen.add(dumpId);
-      return d.parentId ? [...dumpPathTo(d.parentId, dumps, seen), dumpId] : [dumpId];
-    }
+    // ONE definition, now in source-dump-core.js, shared with the copy of this
+    // page's SOURCE DUMP view on true-storage.html. It used to be spelled twice
+    // in this file — guarded in the ?dump= deep-link effect and unguarded 300
+    // lines away in onGoToSourceDump — the duplication shape that cost this
+    // project the deadline caution predicate. The walk carries a cycle guard
+    // because it goes UP from an arbitrary dump, so unlike the downward walks
+    // it can start inside a parentId cycle. The name stays so call sites do not
+    // change.
+    function dumpPathTo(dumpId, dumps) { return TrackSourceDump.pathTo(dumpId, dumps); }
 
-    function isLeafMM(mmId, mmsArray) {
-      return !mmsArray.some(m => (m.parentIds || []).includes(mmId));
-    }
+    // Also the leaf half of the rule for which MMs a source dump may link
+    // (TrackSourceDump.canLinkMM), so it lives beside that rule.
+    function isLeafMM(mmId, mmsArray) { return TrackSourceDump.isLeafMM(mmId, mmsArray); }
 
 	    function getAncestors(mmId,mmsArray){
 	      const result=[];const visited=new Set([mmId]);
@@ -269,12 +268,9 @@
 	      return result;
 	    }
 
-    function getSCTextBlocks(link) {
-      const blocks = Array.isArray(link?.textBlocks) ? link.textBlocks : [];
-      if (blocks.length) return blocks;
-      const legacyText = (link?.text || "").trim();
-      return legacyText ? [{ id: link.id + "_m", title: "", explanation: legacyText }] : [];
-    }
+    // A section written before `textBlocks` existed carries its prose in
+    // `text`, shown as one `<id>_m` block (TrackSourceDump.isLegacyBlock).
+    function getSCTextBlocks(link) { return TrackSourceDump.textBlocksOf(link); }
 
     function scLinkHasContent(link) {
       return getSCTextBlocks(link).length > 0 || (Array.isArray(link?.links) && link.links.length > 0);
@@ -1142,7 +1138,7 @@
       },[dragIdx,dragOverIdx,isLeaf]);
 
       return (
-        <div className="p-4 max-w-2xl mx-auto overflow-y-auto pb-20 h-screen-nav">
+        <div data-mm-detail={mm.id} className="p-4 max-w-2xl mx-auto overflow-y-auto pb-20 h-screen-nav">
           <div className="flex items-center justify-between mb-3">
             <button onClick={onBack} className="text-gray-500 hover:text-white text-xs">← back</button>
 	            <button onClick={()=>requestConfirmDelete(
@@ -1443,7 +1439,8 @@
             const relativeDepth={};
             if(!isLeaf){
               // The result map doubles as the cycle guard, the same shape
-              // deleteDumpEntry's `toDelete` uses. `descendants.some(...)` is a
+              // TrackSourceDump.withoutEntry's visited list uses (it was
+              // deleteDumpEntry's `toDelete`). `descendants.some(...)` is a
               // membership test, not a visited test: a node already given a
               // depth was re-entered, so a cycle recursed forever here too.
               // First depth seen wins, which is the shallowest.
@@ -1491,7 +1488,7 @@
 
             const renderTextBlocksSection=(dump,link)=>{
               const tbs=getSCTextBlocks(link);
-              const isMigrated=id=>id===link.id+'_m';
+              const isMigrated=id=>TrackSourceDump.isLegacyBlock(link,{id});
               return (
                 <>
 	                  {tbs.map(tb=>(
@@ -2373,7 +2370,7 @@
     }
 
     function TransferPicker({mms,mmColor,currentMmId,search,setSearch,onSelect,onCancel}){
-      const options=mms.filter(m=>(isLeafMM(m.id,mms)||m.sourceDumpActivated===true)&&m.id!==currentMmId&&m.name.toLowerCase().includes(search.toLowerCase()));
+      const options=mms.filter(m=>TrackSourceDump.canLinkMM(m,mms)&&m.id!==currentMmId&&m.name.toLowerCase().includes(search.toLowerCase()));
       return (
         <div className="mt-1 bg-gray-800 border border-indigo-800 rounded p-2 mb-2">
           <div className="text-xs text-gray-500 mb-1">Transfer to MM:</div>
@@ -2487,11 +2484,11 @@
 	      }
 	      const requestConfirmDelete=(title,message,onConfirm)=>setConfirmDelete({title,message,onConfirm});
 
-      const filteredMMs=mms.filter(m=>(isLeafMM(m.id,mms)||m.sourceDumpActivated===true)&&m.name.toLowerCase().includes(mmSearch.toLowerCase()));
+      const filteredMMs=mms.filter(m=>TrackSourceDump.canLinkMM(m,mms)&&m.name.toLowerCase().includes(mmSearch.toLowerCase()));
       const alreadyLinked=mmPickerFor!=null?(sourceDumps.find(d=>d.id===mmPickerFor)?.mmLinks||[]).map(l=>l.mmId):[];
 
 	      return (
-	        <div className="overflow-y-auto flex-1 p-4 max-w-2xl mx-auto w-full">
+	        <div className="overflow-y-auto flex-1 p-4 max-w-2xl mx-auto w-full" data-source-dump-view>
 	          <ConfirmDialog
 	            open={!!confirmDelete}
 	            title={confirmDelete?.title}
@@ -2501,13 +2498,13 @@
 	          />
 	          {/* Breadcrumb */}
           <div className="flex items-center gap-1 mb-4 flex-wrap">
-            <button onClick={()=>setDumpPath([])} className={`text-xs px-2 py-1 rounded ${dumpPath.length===0?"text-white font-bold":"text-gray-400 hover:text-white"}`}>Home</button>
+            <button data-dump-crumb="home" onClick={()=>setDumpPath([])} className={`text-xs px-2 py-1 rounded ${dumpPath.length===0?"text-white font-bold":"text-gray-400 hover:text-white"}`}>Home</button>
             {dumpPath.map((id,i)=>{
               const e=sourceDumps.find(d=>d.id===id);
               return (
                 <React.Fragment key={id}>
                   <span className="text-gray-600 text-xs">›</span>
-                  <button onClick={()=>setDumpPath(dumpPath.slice(0,i+1))}
+                  <button data-dump-crumb={id} onClick={()=>setDumpPath(dumpPath.slice(0,i+1))}
                     className={`text-xs px-2 py-1 rounded truncate max-w-[160px] ${i===dumpPath.length-1?"text-white font-bold":"text-gray-400 hover:text-white"}`}>
                     {e?.title||"?"}
                   </button>
@@ -2532,8 +2529,8 @@
           {currentEntry&&currentChildren.length===0&&(
             <div className="mb-5">
               <div className="text-xs text-gray-500 tracking-widest mb-2">SOURCE & CITE</div>
-              {currentEntry.mmLinks.length===0&&<div className="text-gray-600 text-xs italic mb-2">No MMs linked yet.</div>}
-              {currentEntry.mmLinks.map(link=>{
+              {(currentEntry.mmLinks||[]).length===0&&<div className="text-gray-600 text-xs italic mb-2">No MMs linked yet.</div>}
+              {(currentEntry.mmLinks||[]).map(link=>{
                 const mm=mms.find(m=>m.id===link.mmId);
                 const isPickingLink=showLinkFormFor&&showLinkFormFor.dumpId===currentEntry.id&&showLinkFormFor.linkId===link.id;
                 const isAddingText=showTextBlockForm&&showTextBlockForm.dumpId===currentEntry.id&&showTextBlockForm.linkId===link.id;
@@ -2544,7 +2541,7 @@
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:mm?(mm.type==="anchor"?"#6b7280":mm.type==="1"?"#ef4444":mmColor(mm.id)):"#6b7280"}}/>
-                        <span className="text-xs font-bold text-gray-200 cursor-pointer hover:text-white underline decoration-dotted" onClick={()=>mm&&onOpenMMSC&&onOpenMMSC(mm.id)}>{mm?.name||"unknown MM"}</span>
+                        <span data-dump-mm-name={link.mmId} className="text-xs font-bold text-gray-200 cursor-pointer hover:text-white underline decoration-dotted" onClick={()=>mm&&onOpenMMSC&&onOpenMMSC(mm.id)}>{mm?.name||"unknown MM"}</span>
                         <span className="text-xs text-gray-600">{mm?.type==="anchor"?"Anchor":mm?`T${mm.type}`:""}</span>
                       </div>
 	                      <button onClick={()=>requestConfirmDelete(
@@ -2557,7 +2554,7 @@
 	                      <div key={tb.id} className="bg-gray-800 rounded p-2 mb-1 select-text">
 	                        <div className="flex items-start gap-2 mb-0.5">
 	                          <div className="text-xs font-bold text-gray-200 flex-1 min-w-0 truncate">{tb.title||"text"}</div>
-	                          {tb.id!==link.id+'_m'&&(
+	                          {!TrackSourceDump.isLegacyBlock(link,tb)&&(
 	                            <div className="flex items-center gap-1 shrink-0">
 	                              <button onClick={()=>{setTransferPickerFor({dumpId:currentEntry.id,linkId:link.id,itemType:"text",itemId:tb.id,currentMmId:link.mmId});setTransferMmSearch("");}} className="text-indigo-600 hover:text-indigo-400 text-xs px-1">-&gt;</button>
 	                              <button onClick={()=>requestConfirmDelete(
@@ -2653,7 +2650,7 @@
           <div>
             {!currentChildren.length&&!currentEntry&&<div className="text-gray-600 text-xs text-center py-10">No titles yet. Create one with "+ title".</div>}
             {currentChildren.map(child=>(
-              <div key={child.id} className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded mb-2">
+              <div key={child.id} data-dump-row={child.id} className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded mb-2">
                 <div className="flex items-center px-4 py-3 gap-2">
                   {editingTitleId===child.id?(
                     <input autoFocus value={editingTitleVal} onChange={e=>setEditingTitleVal(e.target.value)}
@@ -2681,21 +2678,21 @@
                         </span>
                       );
                     } else {
-                      const mmCount=child.mmLinks.length;
+                      const mmCount=(child.mmLinks||[]).length;
                       return (
                         <span className="relative shrink-0" onClick={mmCount>0?toggle:undefined}>
                           <span className={`text-xs ${mmCount>0?(isOpen?"text-white drop-shadow-[0_0_6px_rgba(255,255,255,0.9)] cursor-pointer underline decoration-dotted":"text-indigo-400 cursor-pointer underline decoration-dotted"):"text-gray-600"}`}>{mmCount} MM{mmCount!==1?"s":""}</span>
                           {isOpen&&mmCount>0&&(
                             <div className="absolute right-0 top-5 z-50 bg-gray-800 border border-gray-600 rounded shadow-lg min-w-max py-1">
-                              {child.mmLinks.map(link=>{const mm=mms.find(m=>m.id===link.mmId);return <div key={link.id} className="px-3 py-1 text-xs text-gray-200 whitespace-nowrap">{mm?mm.name:link.mmId}</div>;})}
+                              {(child.mmLinks||[]).map(link=>{const mm=mms.find(m=>m.id===link.mmId);return <div key={link.id} className="px-3 py-1 text-xs text-gray-200 whitespace-nowrap">{mm?mm.name:link.mmId}</div>;})}
                             </div>
                           )}
                         </span>
                       );
                     }
                   })()}
-                  <span onClick={e=>{e.stopPropagation();setDumpPath(p=>[...p,child.id]);}} className="bg-gray-400 text-black text-xs px-2 py-0.5 rounded shrink-0 cursor-pointer transition-all duration-150 hover:scale-110 hover:bg-gray-200 hover:shadow-[0_0_8px_rgba(255,255,255,0.7)] inline-block">navigate</span>
-	                  <button onClick={e=>{e.stopPropagation();requestConfirmDelete(
+                  <span data-dump-navigate={child.id} onClick={e=>{e.stopPropagation();setDumpPath(p=>[...p,child.id]);}} className="bg-gray-400 text-black text-xs px-2 py-0.5 rounded shrink-0 cursor-pointer transition-all duration-150 hover:scale-110 hover:bg-gray-200 hover:shadow-[0_0_8px_rgba(255,255,255,0.7)] inline-block">navigate</span>
+	                  <button data-dump-delete={child.id} onClick={e=>{e.stopPropagation();requestConfirmDelete(
 	                    "Delete source dump?",
 	                    `Delete "${child.title}" and all its contents? This cannot be undone.`,
 	                    ()=>onDeleteEntry(child.id)
@@ -2808,6 +2805,7 @@
       const [trueStorages,setTrueStorages]=useState([]);
       const [focusDumpMm,setFocusDumpMm]=useState(null);
       const dumpDeepLinkRef=useRef(false);
+      const mmDeepLinkRef=useRef(false);
 
       const mmMap=useMemo(()=>Object.fromEntries(mms.map(m=>[m.id,m])),[mms]);
       const selectedKolb=useMemo(()=>kolbs.find(k=>k.id===selectedKolbId)||null,[kolbs,selectedKolbId]);
@@ -2913,6 +2911,31 @@
         }
       },[sourceDumps]);
 
+      // ?mm=<id> WITHOUT ?dump= opens that MM's detail on its S&C tab — what
+      // clicking an MM's name on the SOURCE DUMP page does (onOpenMMSC), and
+      // the link True Storage's copy of that page follows into KS02. With
+      // ?dump= present, `mm` keeps the meaning the effect above gives it: the
+      // ring on that dump's card. The two never compete for one URL.
+      //
+      // Fires once, behind its own ref, as soon as the MMs are loaded. MM ids
+      // are numbers and a query string is text, so compare as text. A ?mm=
+      // naming nothing opens nothing and raises no error.
+      useEffect(()=>{
+        if (mmDeepLinkRef.current||!mms.length) return;
+        mmDeepLinkRef.current=true;
+        let wantMm=null,hasDump=false;
+        try{
+          const q=new URLSearchParams(window.location.search);
+          wantMm=q.get('mm'); hasDump=q.has('dump');
+        }catch{}
+        if (hasDump||wantMm==null) return;
+        const target=mms.find(m=>String(m.id)===String(wantMm));
+        if (!target) return;
+        setSelectedMM(target.id);
+        setSelectedMMMode("sc");
+        setView("ks03");
+      },[mms]);
+
       // The ring is a hint, not a mode: drop it once it has been seen.
       useEffect(()=>{
         if (focusDumpMm==null) return;
@@ -2970,6 +2993,15 @@
 
       function setMMRating(mmId,rating){setMms(p=>p.map(m=>m.id===mmId?{...m,rating}:m));}
       function setMMColor(mmId,color){setMms(p=>p.map(m=>m.id===mmId?{...m,customColor:color}:m));}
+      // The source-dump writers are defined ONCE, in source-dump-core.js, and
+      // shared with the copy of this page's SOURCE DUMP view on
+      // true-storage.html: the same click must store the same thing on either
+      // page. Each handler here only mints the ids — nid(), so this page's
+      // records stay numeric — and hands the core's result to the autosave.
+      // Ids are minted OUTSIDE the updater, which may be re-invoked. A writer
+      // that changes nothing returns the same list, so React bails out and the
+      // autosave never fires for a no-op.
+      //
       // Adding a sub-title under a dump that already has mmLinks MOVES them down
       // to the new child and empties the parent's. Any storage tag naming that
       // (dumpId, mmId) pair has to move with them, or it stops resolving and
@@ -2978,19 +3010,14 @@
       //
       // `movesLinks` is read from current state BEFORE setSourceDumps, never
       // from inside the updater: an updater may be re-invoked, so a side effect
-      // in there could fire twice or against a stale snapshot.
+      // in there could fire twice or against a stale snapshot. withEntry
+      // refuses a parent that is not in the list it is handed, and movesLinks
+      // reads that same state, so the two cannot disagree about whether a
+      // title was written.
       function addDumpEntry(title,parentId){
         const newId=nid();
-        const parent=parentId?sourceDumps.find(d=>d.id===parentId):null;
-        const movesLinks=!!(parent&&(parent.mmLinks||[]).length>0);
-        setSourceDumps(p=>{
-          const cur=parentId?p.find(d=>d.id===parentId):null;
-          const inherited=cur&&(cur.mmLinks||[]).length>0?cur.mmLinks:[];
-          return [
-            ...p.map(d=>d.id===parentId&&(d.mmLinks||[]).length>0?{...d,mmLinks:[]}:d),
-            {id:newId,title:title.trim(),createdAt:today(),parentId:parentId||null,mmLinks:inherited}
-          ];
-        });
+        const movesLinks=TrackSourceDump.inheritsLinks(sourceDumps,parentId);
+        setSourceDumps(p=>TrackSourceDump.withEntry(p,{id:newId,title,parentId,createdAt:today()}));
         if (movesLinks){
           // trueStorages is true-storage.html's key. This is the one foreign
           // write KS02 may make, and only in this shape: a fresh
@@ -3003,34 +3030,21 @@
           if (next) setTrueStorages(next);
         }
       }
-      function addDumpMMLink(dumpId,mmId){setSourceDumps(p=>p.map(d=>d.id===dumpId&&!(d.mmLinks||[]).some(l=>l.mmId===mmId)?{...d,mmLinks:[...d.mmLinks,{id:nid(),mmId,text:"",textBlocks:[],links:[]}]}:d));}
-      function removeDumpMMLink(dumpId,linkId){setSourceDumps(p=>p.map(d=>d.id===dumpId?{...d,mmLinks:d.mmLinks.filter(l=>l.id!==linkId)}:d));}
-      function addDumpURLLink(dumpId,linkId,urlLink){
-        const url=(urlLink.url||"").trim();
-        const label=(urlLink.label||url).trim();
-        if(!url)return;
-        setSourceDumps(p=>p.map(d=>d.id!==dumpId?d:{...d,mmLinks:(d.mmLinks||[]).map(l=>l.id!==linkId?l:{...l,links:[...(l.links||[]),{id:nid(),label,url}]})}));
-      }
-      function removeDumpURLLink(dumpId,linkId,urlId){setSourceDumps(p=>p.map(d=>d.id===dumpId?{...d,mmLinks:(d.mmLinks||[]).map(l=>l.id===linkId?{...l,links:(l.links||[]).filter(u=>u.id!==urlId)}:l)}:d));}
-      function addDumpTextBlock(dumpId,linkId,block){
-        const explanation=(block.explanation||"").trim();
-        if(!explanation)return;
-        const nb={...block,explanation,title:(block.title||"").trim(),id:block.id||nid()};
-        setSourceDumps(p=>p.map(d=>d.id!==dumpId?d:{...d,mmLinks:(d.mmLinks||[]).map(l=>l.id!==linkId?l:{...l,textBlocks:[...(l.textBlocks||[]),nb]})}));
-      }
-      function removeDumpTextBlock(dumpId,linkId,blockId){setSourceDumps(p=>p.map(d=>d.id===dumpId?{...d,mmLinks:(d.mmLinks||[]).map(l=>l.id===linkId?{...l,textBlocks:(l.textBlocks||[]).filter(b=>b.id!==blockId)}:l)}:d));}
-      function transferDumpTextBlock(dumpId,fromLinkId,blockId,toMmId){setSourceDumps(p=>p.map(d=>{if(d.id!==dumpId)return d;const fromLink=d.mmLinks.find(l=>l.id===fromLinkId);const block=(fromLink?.textBlocks||[]).find(b=>b.id===blockId);if(!block)return d;const toLink=d.mmLinks.find(l=>l.mmId===toMmId);let mmLinks;if(toLink){mmLinks=d.mmLinks.map(l=>{if(l.id===fromLinkId)return{...l,textBlocks:(l.textBlocks||[]).filter(b=>b.id!==blockId)};if(l.mmId===toMmId)return{...l,textBlocks:[...(l.textBlocks||[]),block]};return l;});}else{mmLinks=[...d.mmLinks.map(l=>l.id===fromLinkId?{...l,textBlocks:(l.textBlocks||[]).filter(b=>b.id!==blockId)}:l),{id:nid(),mmId:toMmId,text:"",textBlocks:[block],links:[]}];}return{...d,mmLinks};}));}
-      function transferDumpURLLink(dumpId,fromLinkId,urlId,toMmId){setSourceDumps(p=>p.map(d=>{if(d.id!==dumpId)return d;const fromLink=d.mmLinks.find(l=>l.id===fromLinkId);const urlLink=(fromLink?.links||[]).find(u=>u.id===urlId);if(!urlLink)return d;const toLink=d.mmLinks.find(l=>l.mmId===toMmId);let mmLinks;if(toLink){mmLinks=d.mmLinks.map(l=>{if(l.id===fromLinkId)return{...l,links:(l.links||[]).filter(u=>u.id!==urlId)};if(l.mmId===toMmId)return{...l,links:[...(l.links||[]),urlLink]};return l;});}else{mmLinks=[...d.mmLinks.map(l=>l.id===fromLinkId?{...l,links:(l.links||[]).filter(u=>u.id!==urlId)}:l),{id:nid(),mmId:toMmId,text:"",textBlocks:[],links:[urlLink]}];}return{...d,mmLinks};}));}
+      function addDumpMMLink(dumpId,mmId){const id=nid();setSourceDumps(p=>TrackSourceDump.withMMLink(p,dumpId,mmId,id));}
+      function removeDumpMMLink(dumpId,linkId){setSourceDumps(p=>TrackSourceDump.withoutMMLink(p,dumpId,linkId));}
+      function addDumpURLLink(dumpId,linkId,urlLink){const id=nid();setSourceDumps(p=>TrackSourceDump.withURLLink(p,dumpId,linkId,urlLink,id));}
+      function removeDumpURLLink(dumpId,linkId,urlId){setSourceDumps(p=>TrackSourceDump.withoutURLLink(p,dumpId,linkId,urlId));}
+      function addDumpTextBlock(dumpId,linkId,block){const id=nid();setSourceDumps(p=>TrackSourceDump.withTextBlock(p,dumpId,linkId,block,id));}
+      function removeDumpTextBlock(dumpId,linkId,blockId){setSourceDumps(p=>TrackSourceDump.withoutTextBlock(p,dumpId,linkId,blockId));}
+      function transferDumpTextBlock(dumpId,fromLinkId,blockId,toMmId){const id=nid();setSourceDumps(p=>TrackSourceDump.transferTextBlock(p,dumpId,fromLinkId,blockId,toMmId,id));}
+      function transferDumpURLLink(dumpId,fromLinkId,urlId,toMmId){const id=nid();setSourceDumps(p=>TrackSourceDump.transferURLLink(p,dumpId,fromLinkId,urlId,toMmId,id));}
       function toggleSourceDumpActivation(mmId){
         setMms(p=>p.map(m=>m.id===mmId?{...m,sourceDumpActivated:!m.sourceDumpActivated}:m));
       }
-      function deleteDumpEntry(dumpId){
-        const toDelete=new Set();
-        const collect=id=>{if(toDelete.has(id))return;toDelete.add(id);sourceDumps.filter(d=>d.parentId===id).forEach(d=>collect(d.id));};
-        collect(dumpId);
-        setSourceDumps(p=>p.filter(d=>!toDelete.has(d.id)));
-      }
-      function renameDumpEntry(dumpId,title){if(!title.trim())return;setSourceDumps(p=>p.map(d=>d.id===dumpId?{...d,title:title.trim()}:d));}
+      // The dump and every descendant, through a visited-guarded walk. Storage
+      // tags naming it are deliberately left alone: they read "source removed".
+      function deleteDumpEntry(dumpId){setSourceDumps(p=>TrackSourceDump.withoutEntry(p,dumpId));}
+      function renameDumpEntry(dumpId,title){setSourceDumps(p=>TrackSourceDump.withTitle(p,dumpId,title));}
       function renameMMFn(mmId,name){if(!name.trim())return;setMms(p=>p.map(m=>m.id===mmId?{...m,name:name.trim()}:m));}
       function saveLinSession(items,title){
         const record={id:nid(),title:title||today(),date:today(),items};
@@ -3207,6 +3221,15 @@
       const selSessions=selDay?(sessionsByDate[dStr(year,month,selDay)]||[]):[];
       const currentMM=selectedMM?mmMap[selectedMM]:null;
 
+      /* +MM takes its parent from where the user is: from inside an MM (its
+         detail panel open) that MM is the one parent; from anywhere else the
+         form starts at root. Set on EVERY open, because CANCEL keeps the draft —
+         without the reset, a parent chosen inside an MM would still be selected
+         the next time +MM is pressed from the canvas. Read from currentMM, the MM
+         the panel is drawing, never the bare selectedMM id: that can outlive its
+         MM when another tab deletes it, and would store a parent naming nothing. */
+      const openAddMM=()=>{setNewMM(p=>({...p,parentIds:currentMM?[currentMM.id]:[]}));setAddMMModal(true);};
+
       const mmDetailProps={
         mms,mgChanges,kolbs,mmColor,sirSessionsMap,levelTemplates,
         onBack:()=>setSelectedMM(null),onNavigate:(id,mode)=>openMM(id,mode||selectedMMMode),
@@ -3261,7 +3284,7 @@
             <div className="theme-toggle-host" data-theme-toggle-host></div>
             <div className="flex items-center gap-2">
               <div className="flex gap-1">
-                <button onClick={()=>setAddMMModal(true)} className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs font-bold">+MM</button>
+                <button data-add-mm onClick={openAddMM} className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs font-bold">+MM</button>
                 <button onClick={()=>setKolbModal({free:true})} className="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-xs font-bold">+Kolb</button>
                 <button onClick={()=>setLinModal({step:1,selectedMMIds:[],currentMMIdx:0,pendingItems:[],change:null,title:""})} className="bg-green-800 hover:bg-green-700 text-white px-2 py-1 rounded text-xs font-bold">+Lin</button>
               </div>
@@ -3725,7 +3748,7 @@
 
           {addMMModal&&(
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 overflow-y-auto">
-              <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 w-full max-w-sm my-4">
+              <div data-new-mm-modal className="bg-gray-900 border border-gray-700 rounded-lg p-5 w-full max-w-sm my-4">
                 <div className="font-bold mb-4 tracking-widest text-xs">NEW MIND MAP</div>
                 <input value={newMM.name} onChange={e=>setNewMM(p=>({...p,name:e.target.value}))} placeholder="MM name"
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 mb-3 text-white placeholder-gray-600 text-sm"/>
@@ -3742,13 +3765,15 @@
                     placeholder="Explanation (optional)" rows={2}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 mb-3 text-white placeholder-gray-600 text-sm resize-none"/>
                 )}
-                <div className="mb-1 text-xs text-gray-400">Parent MM:</div>
+                {/* The list scrolls, so a parent chosen for the user can sit out of
+                    view; the readout names it either way. */}
+                <div className="mb-1 text-xs text-gray-400">Parent MM: <span data-new-mm-parents className="text-gray-200">{newMM.parentIds.length?newMM.parentIds.map(pid=>mmMap[pid]?.name).filter(Boolean).join(", "):"none (root)"}</span></div>
                 <input value={parentSearch} onChange={e=>setParentSearch(e.target.value)} placeholder="Search parents..."
                   className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 mb-1 text-white placeholder-gray-600 text-xs outline-none focus:border-gray-500"/>
                 <div className="max-h-32 overflow-y-auto space-y-0.5 mb-3">
-                  <button onClick={()=>setNewMM(p=>({...p,parentIds:[]}))} className={`w-full text-left text-xs px-3 py-1.5 rounded ${newMM.parentIds.length===0?"bg-gray-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>No parent (root)</button>
+                  <button data-new-mm-parent="root" aria-pressed={newMM.parentIds.length===0} onClick={()=>setNewMM(p=>({...p,parentIds:[]}))} className={`w-full text-left text-xs px-3 py-1.5 rounded ${newMM.parentIds.length===0?"bg-gray-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>No parent (root)</button>
                   {mms.filter(m=>m.name.toLowerCase().includes(parentSearch.toLowerCase())).map(m=>(
-                    <button key={m.id} onClick={()=>setNewMM(p=>({...p,parentIds:p.parentIds.includes(m.id)?p.parentIds.filter(x=>x!==m.id):[...p.parentIds,m.id]}))}
+                    <button key={m.id} data-new-mm-parent={m.id} aria-pressed={newMM.parentIds.includes(m.id)} onClick={()=>setNewMM(p=>({...p,parentIds:p.parentIds.includes(m.id)?p.parentIds.filter(x=>x!==m.id):[...p.parentIds,m.id]}))}
                       className={`w-full text-left text-xs px-3 py-1.5 rounded flex items-center gap-2 ${newMM.parentIds.includes(m.id)?"bg-indigo-800 text-white":"bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
                       <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id)}}/>
                       <span className="truncate">{m.name}</span>

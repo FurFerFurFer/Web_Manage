@@ -72,6 +72,14 @@ applies to it.
 
 ### Track owns the data and the mutation boundary
 
+The 2026-09-29 decision opens real READS for Today and Memory Grove only. See the
+concept draft §5.7: live reads stop at the first Track harm, including a required Track
+file change, changed opening workflow, deploy, install or outside service. The approved
+fallback is a user-selected single-workspace export read into memory, kept outside the
+repository. Never use personal data in tests, logs or screenshots. Other panels remain
+labelled demo. This increment offers no real editing, saving or review actions; the
+confirmed future write scope below keeps all its existing gates.
+
 The Track application owns `track_db`. Section 18 of the concept draft lists fourteen
 data-safety guardrails, and they are binding. The ones an implementation most often
 forgets:
@@ -104,7 +112,7 @@ a storage capability probe during import. Keep it in document-local memory, neve
 it obtain native storage, and retain the browser test that traps native storage access
 while preserving a synthetic sentinel. Shared `schema.js`, `calendar-core.js`,
 `quest-core.js` and `graph-layout.js` are loaded through the demo server for synthetic fixture creation and
-read-only views; no bootstrap or synchronization script may
+approved read-only views; no bootstrap or synchronization script may
 be exposed or loaded there.
 
 A task scoped to this directory changes files in this directory. Editing `index.html`,

@@ -92,6 +92,19 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
 
 ## 4. Player perspective and movement
 
+- **Current direction (2026-09-27): research saved; route deferred; learning first.**
+  The user reopened the character for read-only research, then said: **“ideally i'd want
+  free but I'll decide this later: I'll start building on the actual learning feature.”**
+  [The options and analysis](CHARACTER-REBUILD-RESEARCH-2026-09-27.md) preserve native
+  Blender/free foundations, a $30 anime base, and a custom commission, with costs,
+  licences, laptop limits and motion gaps. **No route is selected.** The research's
+  commission recommendation is not a user decision; free is a preference, not approval
+  of a tool or asset. Character implementation remains deferred, with the existing body
+  as a placeholder and the accepted controller unchanged. The next priority is learning
+  features; its specific increment is not decided by this record. Character acceptance
+  does not gate that work. Installation, acquisition, spending and live-data gates stand.
+  This supersedes older instructions below that describe a closed production choice or
+  require character review before information/action work.
 - **Visual verdict and stop instruction (2026-09-20).** After the latest playable
   hand-back, the user said: **“2-5 is okay but not that good but 1 is as bad as always”**
   and **“just note it No plan of fixing”**. Playtest 1 is the foot-ground push-off and
@@ -102,7 +115,7 @@ distant scenery, clothing, and atmosphere should feel governed by the same condi
   and stop: no further body-animation fix, investigation, replacement proposal or
   playtest is planned.** This supersedes the continuation/review queue below unless
   the user explicitly reopens the work.
-- **Current increment — local production reaffirmed (2026-09-20).** The user's latest
+- **Historical entry — local production reaffirmed (2026-09-20; corrected below).** The user's latest
   continuation explicitly selects **local procedural rebuild on the existing rig** and
   closes the production question. This supersedes the pending research direction in
   September 19 ruling 1 for this increment. Keep distinct walk/jog/run/dash sets, body
@@ -625,7 +638,7 @@ stars, and the user needs many MMs to judge whether the experience works. The cu
 three-MM fixture cannot answer that last question. Interface footprint, star atmosphere,
 and the size/topology of a larger synthetic fixture remain open choices; no specific
 redesign or fixture expansion has been selected. Preserve the accepted motion settings.
-Real-data reads and exported-slot loading remain separately gated.
+That playtest did not open the real-data gate; the September 29 decision below opens reads only.
 
 **User decisions (2026-09-23), answering that feedback:** the user chose, from options
 presented with their trade-offs, **A+B / C / B**:
@@ -647,6 +660,33 @@ presented with their trade-offs, **A+B / C / B**:
 MM's label covers another MM's star, and a clickable label opened the wrong mind map. Labels
 are therefore captions: the star and Find open an MM, and clicking a name no longer does.
 Label placement and hierarchy at density remain open and unchanged.
+
+**Next learning increment, chosen 2026-09-29:** show the user's real mind maps in this
+sky and their real daily schedule in Today, read-only, to judge through daily use whether
+the World helps them study. Reuse Track's calendar, KS03 positions, relationships, colors
+and review meanings. Notebook, Quest, map and stamina streak remain explicitly labelled
+demo data. Real records have no editing, save, review-completion or draft controls in
+this increment. This opens the real-data gate for these READS only; §10's write gates
+remain unchanged.
+
+Live reads are preferred only if Track keeps working exactly as before: no changed page,
+feature, opening address or workflow, slowdown, save/sync risk, Track-file change, deploy,
+install or outside service. On encountering any such harm, stop pursuing live reads;
+do not seek a workaround. Use one workspace JSON exported by Track Home's `exportSlot`
+and explicitly opened inside World instead. Read it into memory only; refresh by exporting
+and opening again. The user keeps the file outside the repository. Never put personal data
+in fixtures, tests, logs or screenshots. Always identify real versus demo data and whether
+the real view is a file snapshot rather than live.
+
+**Route established 2026-09-30:** the installed Track launcher opens
+`https://furferfurfer.github.io/Web_Manage/index.html` in Chrome. The local World is a
+different browser origin. A live connection would require changing/deploying the hosted
+Track site or installing a bridge, so the no-harm rule stopped that route without a
+workaround. The authorized fallback is implemented: explicitly choose a Home workspace
+export, view Today and the sky from its immutable memory snapshot, and export/open again
+to refresh. Reload returns to labelled demo data. Ground markers and their map geography
+remain demo; they must not select a real MM by coincident list position. The daily-use
+verdict remains for the user; implementation and tests do not establish study benefit.
 
 **Confirmed sky treatment, clarified 2026-09-09:** stars and connections appear directly
 in the 3D sky, rather than in an SVG chart or a separate full-screen panel. Readable labels
@@ -915,6 +955,11 @@ that leaves the world running. Reload restores the original synthetic fixture. T
 proves the interface, not a live connection to Track or cross-device synchronization.
 
 ## 10. Two-way connection and action safety
+
+**September 29 increment:** Today and the Memory Grove may read real data under §5.7's
+no-harm/live-or-export rule. This task authorizes no real writes, reviews or saves. The
+two-way feature scope below remains a later requirement behind its existing command,
+identity, validation, acknowledgment and recovery gates.
 
 The two-way link covers personal notebook notes and full MM interaction from the Memory
 Grove's selected-star view. Track continues to own the records and the meaning of every
@@ -1497,6 +1542,13 @@ be defined before implementation so synchronization cannot overwrite either side
 
 ## 21. Open decisions, prioritized
 
+**Current priority (2026-09-29):** real read-only Today schedules and Memory Grove mind
+maps, with live reads only under §5.7's no-harm rule and an explicit, memory-only workspace
+export as the fallback. Daily study use is the acceptance question. Other panels stay
+labelled demo; writes remain separately gated. Character-route selection is deferred; free is preferred and no
+route is chosen. See §4 and the [saved research](CHARACTER-REBUILD-RESEARCH-2026-09-27.md).
+This priority does not authorize new tools, purchases or live Track mutations.
+
 **Settled world structure:** one separate world per Track slot; natural paths through
 mountains, plains, or waters; fast travel through regional or landmark gateways. See
 Section 5. The remaining questions below concern details of that direction.
@@ -1544,9 +1596,10 @@ The subsequent 2026-09-12 user playtest accepted the tap-Shift sprint and camera
 checklist. On 2026-09-13 the user explicitly accepted controller fluidity and rejected the
 first humanoid animation, then also rejected its rewrite in the 20:00 demo recording.
 The current ground speeds and dash boost are fixed for the animation correction (§4).
-The user selected the local procedural rebuild on September 14 (§4); its visual review
-remains open. The sustained
-hardware benchmark remains open. This acceptance does not mark unimplemented features complete.
+The September 14 local procedural selection is historical; the body was rejected and
+replacement research is now saved with route selection deferred (§4, September 27).
+The sustained hardware benchmark remains open. This acceptance does not mark
+unimplemented features complete.
 
 The user also questioned why work was delivered as small feature subsets and why a demo
 was needed. The demo is an implementation and verification stage of the same project,
@@ -1648,16 +1701,12 @@ alternative if real-weather integration is too complicated. See Sections 3, 14 a
 12. The garden home's detailed layout and the separate sanctuaries' identities.
 13. The visual and interface identity of each additional functional place.
 14. The degree of regional art-direction variation.
-15. Detailed avatar identity and any later customization. The user selected **A1** for the
-    humanoid increment: the fixed botanical traveler and a local articulated rig with
-    procedural animation, using the existing engine. Its right-hand carry and automatic
-    stow remain the notebook relationship defined in §4. The September 13 continuation
-    cleared the raised Ultra gate for the reference-based local animation rewrite, while
-    the body animation was subsequently rejected again. On September 14 the user selected
-    a local procedural rebuild on the existing rig, closing the hand-off production gate. The user reaffirmed the
-    Aether-based botanical model and full non-combat animation target in §4; detailed
-    appearance translation needs visual review. External asset/clip acquisition,
-    installation and spending retain their separate approval gates.
+15. Detailed avatar identity and replacement production route. **Deferred, 2026-09-27;
+    free preferred, no route selected.** The Aether-based botanical target, core motions
+    and notebook carry/stow remain as defined in §4; A1 is the current rejected
+    placeholder, not a renewed production choice. The [saved comparison](CHARACTER-REBUILD-RESEARCH-2026-09-27.md)
+    preserves free Blender, paid-base and commission routes. External asset/clip
+    acquisition, installation and spending retain their separate approval gates.
 
 ### Device and accessibility
 
@@ -1889,6 +1938,13 @@ with it. **The `25.N` numbering is kept**, so every existing reference to "Secti
 
 <a id="next-work-sequence"></a>
 
+**Current ordering (2026-09-27): learning features first; character choice later.**
+The user prefers a free character route but has selected none. Preserve the current body
+and controller while the learning-feature increment is specified; do not resume character
+tuning or require character visual acceptance before that work. Read §4 and the
+[research record](CHARACTER-REBUILD-RESEARCH-2026-09-27.md) for the deferred decision.
+This is a priority change, not a live-data or installation approval.
+
 **Planning review (updated 2026-09-13):** build on the existing synthetic demo. The original
 documentation pass and first scene exist; the scene has not passed the full movement,
 information, atmosphere or sustained-hardware gates. The following baseline comes from
@@ -1901,7 +1957,7 @@ it is not an actual-laptop playtest or graphics benchmark.
 | Panel switching | The toolbar and Today bud remain available while a companion panel is open; Tab includes both panel and toolbar; the user accepted test 3 | Retain this accepted behavior; future nested confirmation dialogs must still own focus |
 | Track information | Today uses canonical calendar reads; the notebook follows Track's list/Add/automatic editing/Back/Delete flow in synthetic memory; MM information includes identity, connections, MG/Kolb/SIR/+Lin records, comments, links and direct source content | Complete real notebook commands/recovery, source inheritance/aggregation/order/tags and full MM actions through their separate command boundary; preserve Track's functional interface throughout |
 | Unpaused panels | Panels suppress gameplay input while inertia, gravity, collision and environment continue; browser checks cover mid-jump reading, holding a climbing grip, gliding onto an island while editing notes, and cancellation of a held launch | Extend this contract to swimming and additional nested dialogs; no protective pause |
-| Traversal | Controller fluidity is accepted; the September 14 local procedural rebuild is selected and playable for visual review. Walk 5.2, run 12 and dash 16.2 remain fixed | Judge the four motion sets, compact reach and reference timing against the inspected ground/climb clips. Player glide/notebook references, complete grip geometry, speed/scale parity, stamina policy concerns and hardware proof remain open |
+| Traversal | Controller fluidity is accepted; the rejected body remains a placeholder. Replacement route deferred on September 27, free preferred. Walk 5.2, run 12 and dash 16.2 remain fixed | Preserve the controller; revisit saved character research only when requested. Character acceptance does not block learning features. Grip geometry, speed/scale parity, stamina policy concerns and hardware proof remain open |
 | Evening and midnight | Default local clock, optional fixed test times, full dated Today buckets and Previous/Today/Next history; preview uses the after-20:00 note/caution/deadline trigger, with pure boundary tests | Extend browser suspend/resume and midnight coverage and add a category-specific unfinished-work rollup; no record rescheduling |
 | Memory Grove | The user accepted the fixed upward camera animation and Babylon celestial meshes in the live sky; projected labels support inspection, matched review petals, displayed-sky rotation/FOV zoom, search and animated return; movement stays locked throughout | Preserve the accepted experience while proving dense/long/empty rendered networks and completing selected-MM fidelity/actions; the small fixture does not close the full sky gate |
 | Quest and geographic map | Top-left minimap and starred HUD; full-screen canonical Quest list/details; scene-derived map; session pins with edit/cancel/removal; mapped Quest/landmark/pin navigation with bearing and distance | Prove reference coverage, dense/empty states, pin recovery and the separate real read adapter; add region/layer/gateway travel only with corresponding geography and rules |
@@ -1919,11 +1975,11 @@ the historical external tool, pricing or service findings in Sections 24–25.4.
 now includes direct unpaused panel switching, corrected upright camera orbit, Quest and its starred
 popup, expanded MM records and a grounded synthetic KS03 sky, plus launch/glide traversal,
 two islands, coherent fantasy weather controls and a local clock with dated Today history.
-The earlier A1 body was rejected in physical review. The September 14 local procedural
-selection closes the reopened production gate; judge the rebuilt body while preserving
-the current movement speeds.
-After visual acceptance, continue the hardware/reference proofs and
-remaining information/action inventory. The
+The earlier A1 body was rejected in physical review. **September 27 supersedes the old
+character-first ordering:** replacement research is saved, route selection is deferred
+with free preferred, and learning features take priority. Preserve the current movement
+speeds; do not schedule another body review as a prerequisite to information/action work.
+Hardware/reference proofs remain independent unfinished work. The
 [movement comparison](MOVEMENT-DEMO-COMPARISON.md) keeps unmeasured parity explicit.
 This sequence does not mark P1–P3 complete; current
 behavior and verification limits live in [README](README.md).

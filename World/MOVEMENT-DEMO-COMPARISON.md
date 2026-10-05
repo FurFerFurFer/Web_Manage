@@ -1,5 +1,11 @@
 # Movement reference and demo comparison
 
+**Current status (2026-09-27):** the [character research](CHARACTER-REBUILD-RESEARCH-2026-09-27.md)
+is saved; free is preferred and **no replacement route is selected**. Implementation is
+deferred while the user turns to learning features. Older production selections and
+review instructions below are historical, not permission to resume the rejected body.
+The current controller remains unchanged; draft §4 owns the latest direction.
+
 The visible character and full non-combat animation target is Genshin/Aether, reaffirmed
 by the user after the hand-off. Current explicit controller contracts remain authoritative. The user explicitly accepted controller
 fluidity on 2026-09-13 and rejected the humanoid's body animation. The subsequent local
@@ -575,14 +581,14 @@ cannot establish that the motion looks right at playback speed. The remaining vi
 review is required; no skinned asset or paid tool has been demonstrated necessary to close it.
 
 <a id="production-options-awaiting-direction"></a>
-### Production options — historical research, local path selected
+### Production options — historical research, superseded by the September 27 comparison
 
-The user reaffirmed the **existing local procedural rig** in the latest September 20
-continuation, closing the intervening research question for this increment. The structured
-question is closed; there is no paid-option blocker or pending purchase for this increment.
-The table below preserves September 13 research only. Prices/licences have not been
-rechecked for this rebuild and must be verified before any later decision depends on them.
-No purchase, download, installation or asset import has occurred.
+The September 20 continuation was an old prompt re-sent, **not a fresh reaffirmation**
+(draft §4's September 23 correction). The [September 27 comparison](CHARACTER-REBUILD-RESEARCH-2026-09-27.md)
+is the newer research. The user deferred the choice, with free preferred, and turned to
+learning features. The table below preserves September 13 findings only; its prices,
+licences and “selected” labels do not establish current direction. No acquisition or
+character replacement is authorized by this record.
 
 | Candidate | Verified price/limits | Fit and unresolved work |
 | --- | --- | --- |
@@ -598,10 +604,9 @@ source; adaptation labor and target-hardware performance remain unmeasured.
 [Babylon loader documentation](https://github.com/BabylonJS/Documentation/blob/master/content/features/featuresDeepDive/importers/loadingFileTypes.md),
 [Blender license](https://www.blender.org/about/license/).
 
-If visual review still finds unacceptable shape or joint deformation, record the specific
-gap before proposing a different approach; the current selection does not authorize switching. If an asset
-cannot meet the laptop budget or requires an unsuitable silhouette, reject that candidate
-before committing further adaptation work.
+When the user revisits the deferred choice, use the newer research and its visual/hardware
+proof limits. Do not resume another rigid-body review or interpret the historical local
+selection as the chosen replacement route.
 
 The Space priority and four-jump-height threshold are the user's 2026-09-12 playtest correction.
 Clearance is relative to the actual surface below the player; absolute island altitude is

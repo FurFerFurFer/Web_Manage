@@ -10,7 +10,8 @@
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
-  <script src="scripts/true-storage-core.js?v=2"></script>
+  <script src="scripts/true-storage-core.js?v=3"></script>
+  <script src="scripts/source-dump-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -32,6 +33,8 @@
     const { useState, useMemo, useRef, useEffect, useCallback } = React;
 
     const TS = window.TrackTrueStorage;
+    // The one definition of how a source dump is edited, shared with KS02.
+    const SD = window.TrackSourceDump;
 
     // Same palettes as KS03, so a storage node and an MM node read as the same
     // kind of object on screen.
@@ -66,6 +69,32 @@
       if (!slots.some(s=>s.id===slotId)) return false;
       db.slots=slots.map(s=>s.id===slotId?{...s,...patch}:s);
       return TrackStorage.saveDB(db);
+    }
+    // `sourceDumps` belongs to sir-ks02.html, which saves it from its React
+    // state. The SOURCE DUMP tab edits it too, and only in the one shape
+    // AGENTS.md allows for a key a page does not own: a FRESH read-modify-write
+    // of that key alone — never the autosave below, and never from this page's
+    // React copy. KS02 writes `trueStorages` the same way (_mutateSlotKey), and
+    // documentations.html writes calendarNotes and deadlines the same way.
+    //
+    // `fn` is handed the RAW stored list, not the filtered copy this page
+    // renders, so an edit can never drop a record the page does not draw (a
+    // dump naming itself as its parent). It returns the next list, or the same
+    // one to mean "no change" — then nothing is written and no sync upload is
+    // armed.
+    //
+    // Returns the stored list, or null when nothing was written: a slot
+    // deleted in another tab, a no-op, or a save that the quota guard or an
+    // unreadable database refused. A refusal is never shown as if it landed.
+    function _mutateSourceDumps(slotId, fn) {
+      const db=_getTrackDB(), slots=db.slots||[];
+      const cur=slots.find(s=>s.id===slotId);
+      if (!cur) return null;
+      const before=Array.isArray(cur.sourceDumps)?cur.sourceDumps:[];
+      const next=fn(before);
+      if (next===before||!Array.isArray(next)) return null;
+      db.slots=slots.map(s=>s.id===slotId?{...s,sourceDumps:next}:s);
+      return TrackStorage.saveDB(db)?next:null;
     }
 
     // ── local calendar dates (never toISOString — that is a UTC day) ─────────
@@ -104,7 +133,9 @@
       return TrackStorage.saveDB({slots:[s],activeSlotId:s.id});
     }
 
-    // ── source-dump reading (read-only: sir-ks02.html owns these) ────────────
+    // ── source-dump reading ───────────────────────────────────────────────────
+    // sir-ks02.html owns `sourceDumps`. The tag rows below only read it; the
+    // SOURCE DUMP tab edits it, through _mutateSourceDumps alone.
 
     const dumpIsLeaf = (dumps, d) => !dumps.some(o => o.parentId === d.id);
     const dumpById   = (dumps, id) => dumps.find(d => d.id === id) || null;
@@ -112,19 +143,35 @@
     const linkFor    = (dump, mmId) => (dump && Array.isArray(dump.mmLinks))
       ? (dump.mmLinks.find(l => l.mmId === mmId) || null) : null;
 
-    // Same fallback as getSCTextBlocks in sir-ks02.html: an mmLink written
-    // before textBlocks existed carries its prose in `text`.
-    function scTextBlocks(link) {
-      const blocks = Array.isArray(link?.textBlocks) ? link.textBlocks : [];
-      if (blocks.length) return blocks;
-      const legacy = (link?.text || "").trim();
-      return legacy ? [{ id: link.id + "_m", title: "", explanation: legacy }] : [];
-    }
+    // The list this page RENDERS: KS02's filter, once. A dump naming itself as
+    // its parent is hidden on both pages; a write never filters (see
+    // _mutateSourceDumps), so hiding it here cannot delete it.
+    const visibleDumps = list => (Array.isArray(list) ? list : []).filter(d => d && d.parentId !== d.id);
+
+    // An mmLink written before textBlocks existed carries its prose in `text`.
+    // One definition, in source-dump-core.js; the name is KS02's, so the SOURCE
+    // DUMP copy below reads exactly like the page it copies.
+    function getSCTextBlocks(link) { return SD.textBlocksOf(link); }
 
     // The link back into KS02. sir-ks02.html honours ?dump= and &mm= and opens
     // KS03 → SOURCE DUMP on that leaf.
     const dumpHref = (dumpId, mmId) =>
       `sir-ks02.html?dump=${encodeURIComponent(dumpId)}&mm=${encodeURIComponent(mmId)}#ks03`;
+
+    // An MM's name on the SOURCE DUMP tab leads INTO KS02: ?mm=<id> with no
+    // ?dump= opens that MM's detail on its S&C tab — what clicking the same
+    // name on KS02's own SOURCE DUMP page does.
+    const ks02MMHref = mmId => `sir-ks02.html?mm=${encodeURIComponent(mmId)}#ks03`;
+
+    // This page's own address for a place on the SOURCE DUMP tab: honoured on
+    // mount, and written into the history entry just before an MM link is
+    // followed, so the Back button returns here — on that dump, with that card
+    // ringed — rather than to the canvas.
+    const sourceDumpHref = (dumpId, mmId) =>
+      'true-storage.html' +
+      (dumpId != null ? `?dump=${encodeURIComponent(dumpId)}` +
+        (mmId != null ? `&mm=${encodeURIComponent(mmId)}` : '') : '') +
+      '#sourcedump';
 
     // ── shared UI ────────────────────────────────────────────────────────────
 
@@ -535,6 +582,361 @@
       );
     }
 
+    // ── SOURCE DUMP — a documented TWIN of KS02's page ───────────────────────
+    // TransferPicker, StorageTags and SourceDumpView below are COPIES of the
+    // components of the same names in sir-ks02.html (KS03 → SOURCE DUMP), so
+    // this tab looks and behaves exactly like that page. They are copies, not
+    // one shared file, because each page is its own inline-Babel app with no
+    // module system — and the app is supported opened straight from disk,
+    // where a separately loaded JSX file cannot be fetched.
+    //
+    // What keeps the copy honest:
+    //   - every EDIT goes through source-dump-core.js, the one definition both
+    //     pages call, so the same click stores the same thing on either page;
+    //   - tests/browser.test.js compares the controls both pages draw for the
+    //     same data (the SOURCE DUMP parity case) and fails the moment they
+    //     differ. A change to one copy is a change to both, made on purpose.
+    //
+    // The ONLY intended differences, each because this page is not KS02:
+    //   1. The MM name is a LINK into KS02 — ks02MMHref, that MM's S&C tab —
+    //      where KS02 opens the MM in place. onLeaveForMM first rewrites this
+    //      page's history entry, so Back returns to the same dump.
+    //   2. A storage chip opens that storage HERE (onOpenStorage) instead of
+    //      reloading this page with ?storage=.
+    //   3. Tag and untag act on this page's OWN trueStorages, through its state
+    //      and autosave; KS02 has to reach that foreign key through
+    //      _mutateSlotKey. The untag prompt is KS02's text, word for word.
+
+    function TransferPicker({mms,mmColor,currentMmId,search,setSearch,onSelect,onCancel}){
+      const options=mms.filter(m=>TrackSourceDump.canLinkMM(m,mms)&&m.id!==currentMmId&&m.name.toLowerCase().includes(search.toLowerCase()));
+      return (
+        <div className="mt-1 bg-gray-800 border border-indigo-800 rounded p-2 mb-2">
+          <div className="text-xs text-gray-500 mb-1">Transfer to MM:</div>
+          <input autoFocus value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search MMs..."
+            className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs outline-none mb-1"/>
+          <div className="max-h-32 overflow-y-auto">
+            {options.length===0&&<div className="text-gray-600 text-xs text-center py-2">No MMs found.</div>}
+            {options.map(m=>(
+              <div key={m.id} onClick={()=>onSelect(m.id)}
+                className="flex items-center gap-2 px-2 py-1 rounded mb-0.5 cursor-pointer hover:bg-gray-700">
+                <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id)}}/>
+                <span className="text-xs text-gray-200">{m.name}</span>
+                <span className="text-xs text-gray-600 ml-auto">{m.type==="anchor"?"Anchor":`T${m.type}`}</span>
+              </div>
+            ))}
+          </div>
+          <button onClick={onCancel} className="text-xs text-gray-500 hover:text-gray-300 mt-1">cancel</button>
+        </div>
+      );
+    }
+
+    function StorageTags({dump, link, trueStorages, onTag, onUntag, onOpenStorage}) {
+      const [picking,setPicking]=useState(false);
+      const [q,setQ]=useState("");
+      const list=trueStorages||[];
+      const tagged=TrackTrueStorage.storagesForLink(list,dump.id,link.mmId);
+      const options=list.filter(s=>
+        !TrackTrueStorage.hasTag(list,s.id,dump.id,link.mmId)&&
+        (s.name||"").toLowerCase().includes(q.toLowerCase()));
+      return (
+        <div className="mt-2" data-storage-tags={`${dump.id}:${link.mmId}`}>
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[10px] tracking-widest text-gray-600 mr-1">STORAGE</span>
+            {tagged.map(s=>(
+              <span key={s.id} className="inline-flex items-center gap-1 bg-gray-800 border border-gray-700 rounded pl-2 pr-1 py-0.5">
+                {/* TWIN DIFFERENCE 2: opens the storage here, in place. */}
+                <a href={`true-storage.html?storage=${encodeURIComponent(s.id)}`}
+                  data-storage-chip={s.id}
+                  onClick={e=>{if(onOpenStorage){e.preventDefault();onOpenStorage(s.id);}}}
+                  className="text-xs text-amber-300 hover:text-amber-100 max-w-[12rem] truncate">⛁ {s.name}</a>
+                <button onClick={()=>onUntag&&onUntag(s.id,dump.id,link.mmId)}
+                  data-storage-untag={s.id}
+                  title="Remove this storage tag" className="text-gray-600 hover:text-red-400 text-xs px-0.5">×</button>
+              </span>
+            ))}
+            {!tagged.length&&<span className="text-[10px] text-gray-700 italic">none</span>}
+            <button onClick={()=>{setPicking(p=>!p);setQ("");}}
+              data-storage-add={`${dump.id}:${link.mmId}`}
+              className="text-xs text-gray-600 hover:text-gray-300 ml-1">+ storage</button>
+          </div>
+          {picking&&(
+            <div className="mt-1 bg-gray-900 border border-amber-900 rounded p-2">
+              {!list.length?(
+                <div className="text-xs text-gray-600 text-center py-2">
+                  No storages yet. Create them in <a href="true-storage.html" className="text-amber-300 underline">True Storage</a>.
+                </div>
+              ):(
+                <>
+                  <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="search storages..."
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs outline-none mb-1"/>
+                  <div className="max-h-40 overflow-y-auto">
+                    {!options.length&&<div className="text-xs text-gray-600 text-center py-2">Nothing left to tag.</div>}
+                    {options.map(s=>(
+                      <div key={s.id} data-storage-option={s.id}
+                        onClick={()=>{onTag&&onTag(s.id,dump.id,link.mmId);setPicking(false);setQ("");}}
+                        className="px-2 py-1 text-xs text-gray-200 rounded cursor-pointer hover:bg-gray-800 truncate">⛁ {s.name}</div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button onClick={()=>setPicking(false)} className="text-xs text-gray-500 hover:text-gray-300 mt-1">cancel</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function SourceDumpView({sourceDumps,mms,mmColor,dumpPath,setDumpPath,onAddEntry,onDeleteEntry,onRename,onAddMMLink,onRemoveMMLink,onAddURLLink,onRemoveURLLink,onAddTextBlock,onRemoveTextBlock,onTransferTextBlock,onTransferURLLink,onLeaveForMM,trueStorages,onTagStorage,onUntagStorage,onOpenStorage,focusMmId}) {
+      const [showCreate,setShowCreate]=useState(false);
+      const [createTitle,setCreateTitle]=useState("");
+      const [mmPickerFor,setMmPickerFor]=useState(null);
+      const [mmSearch,setMmSearch]=useState("");
+      const [showLinkFormFor,setShowLinkFormFor]=useState(null);
+      const [newLinkForm,setNewLinkForm]=useState({label:"",url:""});
+      const [showTextBlockForm,setShowTextBlockForm]=useState(null);
+      const [textBlockDraft,setTextBlockDraft]=useState({title:"",explanation:""});
+      const [editingTitleId,setEditingTitleId]=useState(null);
+      const [editingTitleVal,setEditingTitleVal]=useState("");
+      const [hoveredBadgeId,setHoveredBadgeId]=useState(null);
+      const [transferPickerFor,setTransferPickerFor]=useState(null);
+      const [transferMmSearch,setTransferMmSearch]=useState("");
+      const [confirmDelete,setConfirmDelete]=useState(null);
+
+      const currentParentId=dumpPath.length>0?dumpPath[dumpPath.length-1]:null;
+      const currentEntry=currentParentId!=null?sourceDumps.find(d=>d.id===currentParentId):null;
+      const currentChildren=sourceDumps.filter(d=>d.parentId===currentParentId);
+
+      function handleCreate(){
+        if(!createTitle.trim())return;
+        onAddEntry(createTitle,currentParentId);
+        setCreateTitle("");setShowCreate(false);
+      }
+      const requestConfirmDelete=(title,message,onConfirm)=>setConfirmDelete({title,message,onConfirm});
+
+      const filteredMMs=mms.filter(m=>TrackSourceDump.canLinkMM(m,mms)&&m.name.toLowerCase().includes(mmSearch.toLowerCase()));
+      const alreadyLinked=mmPickerFor!=null?(sourceDumps.find(d=>d.id===mmPickerFor)?.mmLinks||[]).map(l=>l.mmId):[];
+
+      return (
+        <div className="overflow-y-auto flex-1 p-4 max-w-2xl mx-auto w-full" data-source-dump-view>
+          <ConfirmDialog
+            open={!!confirmDelete}
+            title={confirmDelete?.title}
+            message={confirmDelete?.message}
+            onConfirm={()=>{confirmDelete?.onConfirm&&confirmDelete.onConfirm();setConfirmDelete(null);}}
+            onCancel={()=>setConfirmDelete(null)}
+          />
+          {/* Breadcrumb */}
+          <div className="flex items-center gap-1 mb-4 flex-wrap">
+            <button data-dump-crumb="home" onClick={()=>setDumpPath([])} className={`text-xs px-2 py-1 rounded ${dumpPath.length===0?"text-white font-bold":"text-gray-400 hover:text-white"}`}>Home</button>
+            {dumpPath.map((id,i)=>{
+              const e=sourceDumps.find(d=>d.id===id);
+              return (
+                <React.Fragment key={id}>
+                  <span className="text-gray-600 text-xs">›</span>
+                  <button data-dump-crumb={id} onClick={()=>setDumpPath(dumpPath.slice(0,i+1))}
+                    className={`text-xs px-2 py-1 rounded truncate max-w-[160px] ${i===dumpPath.length-1?"text-white font-bold":"text-gray-400 hover:text-white"}`}>
+                    {e?.title||"?"}
+                  </button>
+                </React.Fragment>
+              );
+            })}
+            <button onClick={()=>{setShowCreate(true);setCreateTitle("");}} className="ml-auto text-xs bg-indigo-800 hover:bg-indigo-700 text-white px-2 py-1 rounded font-bold">+ title</button>
+          </div>
+
+          {/* Create title form */}
+          {showCreate&&(
+            <div className="flex gap-2 mb-4">
+              <input autoFocus value={createTitle} onChange={e=>setCreateTitle(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter")handleCreate();if(e.key==="Escape")setShowCreate(false);}}
+                placeholder="New title..." className="flex-1 bg-gray-900 border border-indigo-700 rounded px-3 py-1.5 text-xs text-white outline-none"/>
+              <button onClick={handleCreate} className="bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-bold">add</button>
+              <button onClick={()=>setShowCreate(false)} className="bg-gray-800 text-gray-400 px-3 py-1.5 rounded text-xs">cancel</button>
+            </div>
+          )}
+
+          {/* Current entry's MM links (source&cite sections) */}
+          {currentEntry&&currentChildren.length===0&&(
+            <div className="mb-5">
+              <div className="text-xs text-gray-500 tracking-widest mb-2">SOURCE & CITE</div>
+              {(currentEntry.mmLinks||[]).length===0&&<div className="text-gray-600 text-xs italic mb-2">No MMs linked yet.</div>}
+              {(currentEntry.mmLinks||[]).map(link=>{
+                const mm=mms.find(m=>m.id===link.mmId);
+                const isPickingLink=showLinkFormFor&&showLinkFormFor.dumpId===currentEntry.id&&showLinkFormFor.linkId===link.id;
+                const isAddingText=showTextBlockForm&&showTextBlockForm.dumpId===currentEntry.id&&showTextBlockForm.linkId===link.id;
+                const tbs=getSCTextBlocks(link);
+                return (
+                  <div key={link.id} data-dump-mm={link.mmId}
+                    className={`bg-gray-900 border rounded mb-3 p-3 ${focusMmId===link.mmId?"border-amber-600 ring-1 ring-amber-700/50":"border-gray-800"}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:mm?(mm.type==="anchor"?"#6b7280":mm.type==="1"?"#ef4444":mmColor(mm.id)):"#6b7280"}}/>
+                        {/* TWIN DIFFERENCE 1: a link into KS02, not an in-page open. */}
+                        <a data-dump-mm-name={link.mmId} href={mm?ks02MMHref(mm.id):undefined}
+                          onClick={()=>mm&&onLeaveForMM&&onLeaveForMM(currentEntry.id,mm.id)}
+                          className="text-xs font-bold text-gray-200 cursor-pointer hover:text-white underline decoration-dotted">{mm?.name||"unknown MM"}</a>
+                        <span className="text-xs text-gray-600">{mm?.type==="anchor"?"Anchor":mm?`T${mm.type}`:""}</span>
+                      </div>
+                      <button onClick={()=>requestConfirmDelete(
+                        "Remove MM link?",
+                        `Remove "${mm?.name||"this MM"}" and its S&C data from this source dump?`,
+                        ()=>onRemoveMMLink(currentEntry.id,link.id)
+                      )} className="text-xs text-red-800 hover:text-red-500">remove</button>
+                    </div>
+                    {tbs.map(tb=>(
+                      <div key={tb.id} className="bg-gray-800 rounded p-2 mb-1 select-text">
+                        <div className="flex items-start gap-2 mb-0.5">
+                          <div className="text-xs font-bold text-gray-200 flex-1 min-w-0 truncate">{tb.title||"text"}</div>
+                          {!TrackSourceDump.isLegacyBlock(link,tb)&&(
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button onClick={()=>{setTransferPickerFor({dumpId:currentEntry.id,linkId:link.id,itemType:"text",itemId:tb.id,currentMmId:link.mmId});setTransferMmSearch("");}} className="text-indigo-600 hover:text-indigo-400 text-xs px-1">-&gt;</button>
+                              <button onClick={()=>requestConfirmDelete(
+                                "Remove text block?",
+                                `Remove "${tb.title||"this text block"}" from this source dump?`,
+                                ()=>onRemoveTextBlock(currentEntry.id,link.id,tb.id)
+                              )} className="text-red-800 hover:text-red-500 text-xs px-1">x</button>
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-300 whitespace-pre-wrap">{tb.explanation}</div>
+                      </div>
+                    ))}
+                    {transferPickerFor?.linkId===link.id&&transferPickerFor?.itemType==="text"&&(
+                      <TransferPicker mms={mms} mmColor={mmColor} currentMmId={transferPickerFor.currentMmId} search={transferMmSearch} setSearch={setTransferMmSearch}
+                        onSelect={toMmId=>{onTransferTextBlock(currentEntry.id,link.id,transferPickerFor.itemId,toMmId);setTransferPickerFor(null);setTransferMmSearch("");}}
+                        onCancel={()=>{setTransferPickerFor(null);setTransferMmSearch("");}}/>
+                    )}
+                    {isAddingText?(
+                      <div className="mt-1 bg-gray-800 border border-indigo-800 rounded p-2 mb-2">
+                        <input value={textBlockDraft.title} onChange={e=>setTextBlockDraft(p=>({...p,title:e.target.value}))} placeholder="title (optional)" className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs outline-none mb-1"/>
+                        <textarea value={textBlockDraft.explanation} onChange={e=>setTextBlockDraft(p=>({...p,explanation:e.target.value}))} placeholder="explanation..." rows={3} className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-xs text-gray-100 resize-none outline-none mb-1"/>
+                        <div className="flex gap-1">
+                          <button onClick={()=>{if(textBlockDraft.explanation.trim()){onAddTextBlock(currentEntry.id,link.id,textBlockDraft);setTextBlockDraft({title:"",explanation:""});setShowTextBlockForm(null);}}} className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs">add</button>
+                          <button onClick={()=>setShowTextBlockForm(null)} className="bg-gray-700 text-gray-300 px-2 py-1 rounded text-xs">cancel</button>
+                        </div>
+                      </div>
+                    ):(
+                      <button onClick={()=>{setShowTextBlockForm({dumpId:currentEntry.id,linkId:link.id});setTextBlockDraft({title:"",explanation:""});}} className="text-xs text-gray-600 hover:text-gray-400 mt-1 mr-3">+ add text</button>
+                    )}
+                    {(link.links||[]).map(u=>(
+                      <div key={u.id} className="flex items-center gap-2 bg-gray-800 rounded px-2 py-1 mb-1">
+                        <a href={u.url} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 hover:text-indigo-100 truncate flex-1 min-w-0">{u.label||u.url}</a>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={()=>{setTransferPickerFor({dumpId:currentEntry.id,linkId:link.id,itemType:"url",itemId:u.id,currentMmId:link.mmId});setTransferMmSearch("");}} className="text-indigo-600 hover:text-indigo-400 text-xs px-1">-&gt;</button>
+                          <button onClick={()=>requestConfirmDelete(
+                            "Remove citation link?",
+                            `Remove "${u.label||u.url}" from this source dump?`,
+                            ()=>onRemoveURLLink(currentEntry.id,link.id,u.id)
+                          )} className="text-red-700 hover:text-red-400 text-xs px-1">x</button>
+                        </div>
+                      </div>
+                    ))}
+                    {transferPickerFor?.linkId===link.id&&transferPickerFor?.itemType==="url"&&(
+                      <TransferPicker mms={mms} mmColor={mmColor} currentMmId={transferPickerFor.currentMmId} search={transferMmSearch} setSearch={setTransferMmSearch}
+                        onSelect={toMmId=>{onTransferURLLink(currentEntry.id,link.id,transferPickerFor.itemId,toMmId);setTransferPickerFor(null);setTransferMmSearch("");}}
+                        onCancel={()=>{setTransferPickerFor(null);setTransferMmSearch("");}}/>
+                    )}
+                    {isPickingLink?(
+                      <div className="flex gap-1 mt-1">
+                        <input value={newLinkForm.label} onChange={e=>setNewLinkForm(p=>({...p,label:e.target.value}))} placeholder="label" className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs outline-none"/>
+                        <input value={newLinkForm.url} onChange={e=>setNewLinkForm(p=>({...p,url:e.target.value}))} placeholder="url" className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs outline-none"/>
+                        <button onClick={()=>{if(newLinkForm.url.trim()){onAddURLLink(currentEntry.id,link.id,newLinkForm);setNewLinkForm({label:"",url:""});setShowLinkFormFor(null);}}} className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs">add</button>
+                        <button onClick={()=>setShowLinkFormFor(null)} className="bg-gray-700 text-gray-300 px-2 py-1 rounded text-xs">cancel</button>
+                      </div>
+                    ):(
+                      <button onClick={()=>{setShowLinkFormFor({dumpId:currentEntry.id,linkId:link.id});setNewLinkForm({label:"",url:""}); }} className="text-xs text-gray-600 hover:text-gray-400 mt-1">+ citation link</button>
+                    )}
+                    <StorageTags dump={currentEntry} link={link} trueStorages={trueStorages}
+                      onTag={onTagStorage} onUntag={onUntagStorage} onOpenStorage={onOpenStorage}/>
+                  </div>
+                );
+              })}
+              {/* Add MM button / picker */}
+              {mmPickerFor===currentEntry.id?(
+                <div className="bg-gray-900 border border-indigo-800 rounded p-3 mb-3">
+                  <input autoFocus value={mmSearch} onChange={e=>setMmSearch(e.target.value)} placeholder="Search MMs..."
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs outline-none mb-2"/>
+                  <div className="max-h-48 overflow-y-auto">
+                    {filteredMMs.length===0&&<div className="text-gray-600 text-xs text-center py-2">No MMs found.</div>}
+                    {filteredMMs.map(m=>{
+                      const already=alreadyLinked.includes(m.id);
+                      return (
+                        <div key={m.id} onClick={()=>{if(!already){onAddMMLink(currentEntry.id,m.id);setMmPickerFor(null);setMmSearch("");}}}
+                          className={`flex items-center gap-2 px-2 py-1.5 rounded mb-0.5 ${already?"opacity-40 cursor-not-allowed":"cursor-pointer hover:bg-gray-800"}`}>
+                          <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id)}}/>
+                          <span className="text-xs text-gray-200">{m.name}</span>
+                          <span className="text-xs text-gray-600 ml-auto">{m.type==="anchor"?"Anchor":`T${m.type}`}</span>
+                          {already&&<span className="text-xs text-gray-600">linked</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button onClick={()=>{setMmPickerFor(null);setMmSearch("");}} className="text-xs text-gray-500 hover:text-gray-300 mt-1">cancel</button>
+                </div>
+              ):(
+                <button onClick={()=>{setMmPickerFor(currentEntry.id);setMmSearch("");}} className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded mb-4">+ add MM</button>
+              )}
+            </div>
+          )}
+
+          {/* Children list */}
+          <div>
+            {!currentChildren.length&&!currentEntry&&<div className="text-gray-600 text-xs text-center py-10">No titles yet. Create one with "+ title".</div>}
+            {currentChildren.map(child=>(
+              <div key={child.id} data-dump-row={child.id} className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded mb-2">
+                <div className="flex items-center px-4 py-3 gap-2">
+                  {editingTitleId===child.id?(
+                    <input autoFocus value={editingTitleVal} onChange={e=>setEditingTitleVal(e.target.value)}
+                      onBlur={()=>{onRename(child.id,editingTitleVal);setEditingTitleId(null);}}
+                      onKeyDown={e=>{if(e.key==="Enter"){onRename(child.id,editingTitleVal);setEditingTitleId(null);}if(e.key==="Escape")setEditingTitleId(null);}}
+                      className="flex-1 bg-transparent border-b border-indigo-500 text-white text-sm outline-none font-bold"/>
+                  ):(
+                    <span className="flex-1 font-bold text-sm cursor-pointer" onClick={e=>e.stopPropagation()} onDoubleClick={()=>{setEditingTitleId(child.id);setEditingTitleVal(child.title);}}>{child.title}</span>
+                  )}
+                  {(()=>{
+                    const childSubs=sourceDumps.filter(d=>d.parentId===child.id);
+                    const isOpen=hoveredBadgeId===child.id;
+                    const open=e=>{e.stopPropagation();setHoveredBadgeId(child.id);};
+                    const close=()=>setHoveredBadgeId(null);
+                    const toggle=e=>{e.stopPropagation();setHoveredBadgeId(v=>v===child.id?null:child.id);};
+                    if(childSubs.length>0){
+                      return (
+                        <span className="relative shrink-0" onClick={toggle}>
+                          <span className={`text-xs cursor-pointer underline decoration-dotted ${isOpen?"text-white drop-shadow-[0_0_6px_rgba(255,255,255,0.9)]":"text-indigo-400"}`}>{childSubs.length} sub{childSubs.length!==1?"s":""}</span>
+                          {isOpen&&(
+                            <div className="absolute right-0 top-5 z-50 bg-gray-800 border border-gray-600 rounded shadow-lg min-w-max py-1">
+                              {childSubs.map(s=><div key={s.id} className="px-3 py-1 text-xs text-gray-200 whitespace-nowrap">{s.title}</div>)}
+                            </div>
+                          )}
+                        </span>
+                      );
+                    } else {
+                      const mmCount=(child.mmLinks||[]).length;
+                      return (
+                        <span className="relative shrink-0" onClick={mmCount>0?toggle:undefined}>
+                          <span className={`text-xs ${mmCount>0?(isOpen?"text-white drop-shadow-[0_0_6px_rgba(255,255,255,0.9)] cursor-pointer underline decoration-dotted":"text-indigo-400 cursor-pointer underline decoration-dotted"):"text-gray-600"}`}>{mmCount} MM{mmCount!==1?"s":""}</span>
+                          {isOpen&&mmCount>0&&(
+                            <div className="absolute right-0 top-5 z-50 bg-gray-800 border border-gray-600 rounded shadow-lg min-w-max py-1">
+                              {(child.mmLinks||[]).map(link=>{const mm=mms.find(m=>m.id===link.mmId);return <div key={link.id} className="px-3 py-1 text-xs text-gray-200 whitespace-nowrap">{mm?mm.name:link.mmId}</div>;})}
+                            </div>
+                          )}
+                        </span>
+                      );
+                    }
+                  })()}
+                  <span data-dump-navigate={child.id} onClick={e=>{e.stopPropagation();setDumpPath(p=>[...p,child.id]);}} className="bg-gray-400 text-black text-xs px-2 py-0.5 rounded shrink-0 cursor-pointer transition-all duration-150 hover:scale-110 hover:bg-gray-200 hover:shadow-[0_0_8px_rgba(255,255,255,0.7)] inline-block">navigate</span>
+                  <button data-dump-delete={child.id} onClick={e=>{e.stopPropagation();requestConfirmDelete(
+                    "Delete source dump?",
+                    `Delete "${child.title}" and all its contents? This cannot be undone.`,
+                    ()=>onDeleteEntry(child.id)
+                  );}} className="text-red-800 hover:text-red-500 text-xs shrink-0">×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     // ── connections (ported from ConnectionsPicker in sir-ks02.html) ─────────
 
     function ConnectionsPicker({storages, storage, onSaveParents, onDetachChild, colorOf}) {
@@ -794,7 +1196,7 @@
       // dangling. Say so and keep the row removable — never delete the user's
       // tag as a side effect of a delete somewhere else.
       const gone = !dump || !link;
-      const blocks = link ? scTextBlocks(link) : [];
+      const blocks = link ? getSCTextBlocks(link) : [];
       const urls = (link && Array.isArray(link.links)) ? link.links : [];
       return (
         <div className="mb-1 rounded border border-gray-800 bg-gray-900" data-tag-id={tag.id}>
@@ -841,7 +1243,7 @@
                         className="text-xs text-indigo-300 hover:text-indigo-100 truncate flex-1 min-w-0">{u.label||u.url}</a>
                     </div>
                   ))}
-                  <div className="text-[10px] text-gray-600 mt-2">Read-only here — edit this in KS02.</div>
+                  <div className="text-[10px] text-gray-600 mt-2">Read-only here — edit this on the SOURCE DUMP tab, or in KS02.</div>
                 </>
               )}
             </div>
@@ -968,6 +1370,16 @@
 
     // ── app ──────────────────────────────────────────────────────────────────
 
+    /* The ONE view table for this page. The header, the phone bar at the
+       bottom of App, and the hash reader below all map it, so a view added
+       here appears in all three places or in none. SOURCE DUMP is second so the
+       first two tabs read exactly like KS03's own MULTIVERSE · SOURCE DUMP. */
+    const VIEWS = [["multiverse","MULTIVERSE"],["sourcedump","SOURCE DUMP"],["tree","SRCH"]];
+    const viewFromHash = () => {
+      const h = window.location.hash.slice(1);
+      return VIEWS.some(([v]) => v === h) ? h : "multiverse";
+    };
+
     function App() {
       // Same contract as documentations.html: decided once at mount, and never
       // re-decided, so a refused bootstrap cannot flip to "ready" without the
@@ -976,11 +1388,18 @@
       const [activeSlotId,setActiveSlotId]=useState(null);
       const [storages,setStorages]=useState([]);
       const [manualPos,setManualPos]=useState({});
-      // Read-only mirrors of keys sir-ks02.html owns. Held so the tag rows can
-      // render; never written back from here.
+      // Mirrors of keys sir-ks02.html owns. `mms` is never written from here.
+      // `dumps` is what this page RENDERS (visibleDumps); the SOURCE DUMP tab
+      // edits the stored key through _mutateSourceDumps and then adopts the
+      // stored result here — never the other way round.
       const [dumps,setDumps]=useState([]);
       const [mms,setMms]=useState([]);
-      const [view,setView]=useState(()=>window.location.hash.slice(1)==="tree"?"tree":"multiverse");
+      const [view,setView]=useState(viewFromHash);
+      // The SOURCE DUMP tab's breadcrumb and its brief card ring. Held here,
+      // as KS02 holds them in its App, so opening a storage from a chip and
+      // coming back keeps the place.
+      const [dumpPath,setDumpPath]=useState([]);
+      const [focusDumpMm,setFocusDumpMm]=useState(null);
       const [selectedId,setSelectedId]=useState(null);
       const [focusId,setFocusId]=useState(null);
       const [treeFocusId,setTreeFocusId]=useState(null);
@@ -994,6 +1413,16 @@
         return i>=0?PALETTE[i%PALETTE.length]:"#6b7280";
       },[storages]);
 
+      // A documented twin of mmColor in sir-ks02.html, so an MM's dot is the
+      // same colour on both copies of the SOURCE DUMP page. Data colour, like
+      // PALETTE itself: theme-invariant.
+      const mmColor=useCallback(id=>{
+        const mm=mms.find(m=>m.id===id);
+        if (mm&&mm.customColor) return mm.customColor;
+        const i=mms.findIndex(m=>m.id===id);
+        return i>=0?PALETTE[i%PALETTE.length]:"#6b7280";
+      },[mms]);
+
       const current=useMemo(()=>storages.find(s=>s.id===selectedId)||null,[storages,selectedId]);
 
       // on mount: adopt the active slot
@@ -1005,20 +1434,59 @@
         setActiveSlotId(slot.id);
         setStorages(slot.trueStorages||[]);
         setManualPos(slot.trueStoragePos||{});
-        setDumps((slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
+        const visible=visibleDumps(slot.sourceDumps);
+        setDumps(visible);
         setMms(slot.mms||[]);
         loadedRef.current=true;
-        // ?storage=<id> deep link, the counterpart of documentations.html's
-        // ?page= and progress.html's ?date=. An id naming nothing opens nothing.
         try {
-          const want=new URLSearchParams(location.search).get('storage');
+          const q=new URLSearchParams(location.search);
+          // ?storage=<id> deep link, the counterpart of documentations.html's
+          // ?page= and progress.html's ?date=. An id naming nothing opens nothing.
+          const want=q.get('storage');
           if (want&&(slot.trueStorages||[]).some(s=>s.id===want)) {
             setSelectedId(want);
             setFocusId(want);
             setTreeFocusId(want);
           }
+          // ?dump=<id>[&mm=<id>] opens the SOURCE DUMP tab on that dump — the
+          // counterpart of KS02's own ?dump= link, and where Back lands after an
+          // MM name was followed into KS02 (sourceDumpHref). Dump ids are
+          // numbers when KS02 minted them and strings when this page did, and a
+          // query string is always text, so compare as text. An id naming
+          // nothing opens the tab at Home, with no error.
+          const wantDump=q.get('dump');
+          if (wantDump!=null) {
+            setView('sourcedump');
+            const target=visible.find(d=>String(d.id)===String(wantDump));
+            if (target) {
+              setDumpPath(SD.pathTo(target.id,visible));
+              const wantMm=q.get('mm');
+              const link=wantMm==null?null:(Array.isArray(target.mmLinks)?target.mmLinks:[])
+                .find(l=>l&&String(l.mmId)===String(wantMm));
+              if (link) setFocusDumpMm(link.mmId);
+            }
+          }
         } catch {}
       },[slotReady]);
+
+      // The ring is a hint, not a mode: drop it once it has been seen — the
+      // same 2.5s KS02 gives its own.
+      useEffect(()=>{
+        if (focusDumpMm==null) return;
+        const t=setTimeout(()=>setFocusDumpMm(null),2500);
+        return ()=>clearTimeout(t);
+      },[focusDumpMm]);
+
+      // A workspace switched in another tab: the breadcrumb names the OLD
+      // slot's dumps, so the new one starts at Home. Only on a change between
+      // two real slots — the mount sets the first id in the same batch as a
+      // ?dump= path, and resetting then would undo the deep link.
+      const shownSlotRef=useRef(null);
+      useEffect(()=>{
+        const prev=shownSlotRef.current;
+        shownSlotRef.current=activeSlotId;
+        if (prev&&activeSlotId&&prev!==activeSlotId) { setDumpPath([]); setFocusDumpMm(null); }
+      },[activeSlotId]);
 
       // autosave: ONLY the two keys this page owns, merged into a fresh read.
       // loadedRef stops the empty initial state being written over stored data
@@ -1052,7 +1520,7 @@
           setActiveSlotId(prev=>prev===slot.id?prev:slot.id);
           fresh(setStorages,slot.trueStorages||[]);
           fresh(setManualPos,slot.trueStoragePos||{});
-          fresh(setDumps,(slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
+          fresh(setDumps,visibleDumps(slot.sourceDumps));
           fresh(setMms,slot.mms||[]);
         };
         const onStorage=e=>{ if (!e.key||e.key==='track_db') refresh(); };
@@ -1066,7 +1534,7 @@
       },[]);
 
       useEffect(()=>{
-        const onHash=()=>setView(window.location.hash.slice(1)==="tree"?"tree":"multiverse");
+        const onHash=()=>setView(viewFromHash());
         window.addEventListener('hashchange',onHash);
         return ()=>window.removeEventListener('hashchange',onHash);
       },[]);
@@ -1172,6 +1640,66 @@
         });
       }
 
+      // ── SOURCE DUMP edits. `sourceDumps` is KS02's key: each edit is ONE
+      //    fresh read-modify-write of it (_mutateSourceDumps), through the
+      //    shared writers in source-dump-core.js — never this page's React
+      //    copy, never the autosave. Ids come from genId(): strings, which can
+      //    never collide with KS02's numeric nid() counter. A new title's
+      //    createdAt is the LOCAL day. ────────────────────────────────────
+
+      // Adopt what was stored, as this page renders it. Returns the stored list,
+      // or null when nothing was written (a refusal leaves the screen as it was).
+      function editDumps(fn){
+        const next=_mutateSourceDumps(activeSlotId,fn);
+        if (next) setDumps(visibleDumps(next));
+        return next;
+      }
+      // Adding a title under a dump with MM sections MOVES them down to the new
+      // child, so a storage tag naming the parent has to follow them
+      // (TrackTrueStorage.repointDump) or it reads "source removed" while the
+      // content is merely one level down. That tag lives in THIS page's own
+      // key, so it moves through this page's state and autosave — and only once
+      // the dump write has landed: a refused write leaves the sections, and so
+      // the tags, where they were.
+      function addDumpEntry(title,parentId){
+        const newId=genId();
+        let moved=false;
+        const next=editDumps(d=>{
+          moved=SD.inheritsLinks(d,parentId);
+          return SD.withEntry(d,{id:newId,title,parentId,createdAt:localToday()});
+        });
+        if (next&&moved) setStorages(p=>TS.repointDump(p,parentId,newId));
+      }
+      // The dump and its descendants. Storage tags naming it are deliberately
+      // left alone: they read "source removed" and stay removable by hand.
+      function deleteDumpEntry(dumpId){editDumps(d=>SD.withoutEntry(d,dumpId));}
+      function renameDumpEntry(dumpId,title){editDumps(d=>SD.withTitle(d,dumpId,title));}
+      function addDumpMMLink(dumpId,mmId){const id=genId();editDumps(d=>SD.withMMLink(d,dumpId,mmId,id));}
+      function removeDumpMMLink(dumpId,linkId){editDumps(d=>SD.withoutMMLink(d,dumpId,linkId));}
+      function addDumpURLLink(dumpId,linkId,urlLink){const id=genId();editDumps(d=>SD.withURLLink(d,dumpId,linkId,urlLink,id));}
+      function removeDumpURLLink(dumpId,linkId,urlId){editDumps(d=>SD.withoutURLLink(d,dumpId,linkId,urlId));}
+      function addDumpTextBlock(dumpId,linkId,block){const id=genId();editDumps(d=>SD.withTextBlock(d,dumpId,linkId,block,id));}
+      function removeDumpTextBlock(dumpId,linkId,blockId){editDumps(d=>SD.withoutTextBlock(d,dumpId,linkId,blockId));}
+      function transferDumpTextBlock(dumpId,fromLinkId,blockId,toMmId){const id=genId();editDumps(d=>SD.transferTextBlock(d,dumpId,fromLinkId,blockId,toMmId,id));}
+      function transferDumpURLLink(dumpId,fromLinkId,urlId,toMmId){const id=genId();editDumps(d=>SD.transferURLLink(d,dumpId,fromLinkId,urlId,toMmId,id));}
+
+      // The leaf card's storage chips — this page's OWN key, so plain state.
+      // Removing by (dump, MM) pair, because a chip has no tag id in hand; the
+      // prompt is KS02's untagStorage text, and it lives in the handler because
+      // every path through it deletes.
+      function untagPair(storageId,dumpId,mmId){
+        if(!window.confirm('Remove this storage tag?\n\nThe storage itself is not deleted.')) return;
+        setStorages(p=>TS.withoutPair(p,storageId,dumpId,mmId));
+      }
+
+      // Following an MM name into KS02. Rewrite the CURRENT history entry to
+      // this tab's own address for where the user stands, then let the link's
+      // navigation push KS02 — so Back returns to this dump, with that MM's
+      // card ringed, instead of to the canvas.
+      function leaveForMM(dumpId,mmId){
+        try { history.replaceState(history.state,'',sourceDumpHref(dumpId,mmId)); } catch {}
+      }
+
       const openStorage=id=>{setSelectedId(id);};
 
       if (!slotReady) {
@@ -1191,10 +1719,8 @@
         );
       }
 
-      /* The ONE view table for this page — the header below and the phone bar
-         at the bottom of this component both map it, so a view added here
-         appears in both places or in neither. */
-      const VIEWS = [["multiverse","MULTIVERSE"],["tree","SRCH"]];
+      // VIEWS is the one view table, declared above App so the hash reader can
+      // use it too; the header below and the phone bar both map it.
       const goToView = v => { setView(v); setSelectedId(null); };
 
       return (
@@ -1236,6 +1762,23 @@
                 storages={storages} manualPos={manualPos} setManualPos={setManualPos}
                 onOpen={openStorage} colorOf={colorOf} onFill={setColor}
                 onDuplicate={duplicateStorage} focusId={focusId}/>
+            </div>
+          ):view==="sourcedump"?(
+            // The copy of KS02's KS03 → SOURCE DUMP page — see the TWIN comment
+            // above SourceDumpView. Same data: `dumps` is the stored key, and
+            // every edit is a fresh read-modify-write of it.
+            <div className="flex flex-col h-screen-nav">
+              <SourceDumpView sourceDumps={dumps} mms={mms} mmColor={mmColor}
+                dumpPath={dumpPath} setDumpPath={setDumpPath}
+                onAddEntry={addDumpEntry} onDeleteEntry={deleteDumpEntry} onRename={renameDumpEntry}
+                onAddMMLink={addDumpMMLink} onRemoveMMLink={removeDumpMMLink}
+                onAddURLLink={addDumpURLLink} onRemoveURLLink={removeDumpURLLink}
+                onAddTextBlock={addDumpTextBlock} onRemoveTextBlock={removeDumpTextBlock}
+                onTransferTextBlock={transferDumpTextBlock} onTransferURLLink={transferDumpURLLink}
+                onLeaveForMM={leaveForMM}
+                trueStorages={storages} onTagStorage={addTag} onUntagStorage={untagPair}
+                onOpenStorage={openStorage}
+                focusMmId={focusDumpMm}/>
             </div>
           ):(
             <div className="overflow-y-auto h-screen-nav">

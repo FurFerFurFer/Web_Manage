@@ -209,6 +209,11 @@ breakpoints so the two cannot drift apart silently.
 
 - Anchor, type-1, and type-2 mind maps.
 - Parent/child mind-map relationships.
+- `+MM` takes its parent from where you are. Pressed from inside an MM — its detail open, in
+  KS02, MG, KS03 or SRCH — that MM is pre-chosen as the new MM's one parent; pressed from
+  anywhere else, the form starts at **No parent (root)**. The parent list stays editable before
+  ADD, and the form names the chosen parent above the list, which scrolls. CANCEL still keeps the
+  rest of the draft — name, type, explanation — but never the parent.
 - Search and sibling reordering.
 - Multiverse-style visual positioning.
 - Custom colors.
@@ -218,6 +223,10 @@ breakpoints so the two cannot drift apart silently.
 - Ratings and level templates.
 - Mind-map stage tracking.
 - Connections between related learning material.
+- Two links in: `sir-ks02.html?dump=<dump>[&mm=<mm>]#ks03` opens KS03 → SOURCE DUMP on that dump
+  (briefly ringing the MM's card), and `sir-ks02.html?mm=<mm>#ks03` — no `dump` — opens that MM's
+  detail on its S&C tab, which is where an MM's name on True Storage's SOURCE DUMP tab leads. When
+  both are given, `dump` wins and `mm` stays the ring.
 
 ### Kolb learning records
 
@@ -964,7 +973,8 @@ pointing back into the source material they came from. The relationship model an
 are KS03's, and the nested list is SRCH's format — the difference is that the records are
 storages rather than MMs, and that opening one gives an editor rather than a KS02 stage view.
 
-Two views, switched from the header:
+Three views, switched from the header (and from the phone bar), each reachable by its own hash —
+`#multiverse`, `#sourcedump`, `#tree`:
 
 - **MULTIVERSE** — the same canvas as KS03: drag a node to place it, scroll or pinch to zoom,
   drag the background to pan, `+` / `−` / `↺` to zoom and reset, `⊞` to rearrange, a fill-colour
@@ -972,11 +982,59 @@ Two views, switched from the header:
   Duplicate, and arrows from parent to child. Storages have no Anchor/T1/T2 types, so every node
   is drawn the same way; a faint outer ring means the storage carries at least one source-dump
   tag. Manual positions persist in `trueStoragePos`, exactly as MM positions persist in `pos`.
+- **SOURCE DUMP** — KS02's KS03 → SOURCE DUMP page, here as well. It sits second so the first two
+  tabs read exactly like KS03's own. See "The SOURCE DUMP tab" below.
 - **SRCH** — the nested-by-parent/child list, with the same filter box, indent guides, collapse
   toggles and `⇅` drag-to-arrange-among-siblings. Sibling order is the records' order inside
   `trueStorages`; there is no separate order field. A drag onto a node that is **not** a sibling
   is refused rather than applied, because it would reorder the stored array without changing
   anything the user can see.
+
+#### The SOURCE DUMP tab
+
+The same page as KS02's KS03 → SOURCE DUMP, editing the same data: the breadcrumb and `+ title`,
+`navigate` into a title, double-click to rename, `×` to delete a title with everything under it,
+and on a leaf the SOURCE & CITE cards — `+ add MM`, `remove`, `+ add text`, `+ citation link`,
+`->` to transfer a text block or citation to another MM, and the `STORAGE` chips with
+`+ storage`. Deletes ask through the same styled dialog KS02's page uses; untagging a chip asks
+through the browser's confirm, with KS02's text.
+
+**Synced, both ways.** An edit made here is in KS02 the moment it is saved, and an edit made in
+KS02 appears here — live, in an open tab, through the same `storage` refresh every page uses.
+KS02 still owns `sourceDumps` and saves it from its own state; this page writes it **only** as a
+fresh read-modify-write of that one key, never from its own copy and never through its
+autosave — the same rule KS02 already follows for `trueStorages` and Documentations for day notes
+and deadlines. So an edit here cannot undo something KS02 saved a moment earlier. It is **not**
+proof against everything: a KS02 tab that saved within the few milliseconds before the `storage`
+event reached it could still write its stale list, which is the exposure every page writing a key
+it does not own already has.
+
+**One set of writers.** Every edit on either page goes through `source-dump-core.js`
+(`window.TrackSourceDump`), so the same click stores the same thing on both. Records made here
+take a `TrackStorage.newId()` string id and the *local* day; records made in KS02 keep its
+numeric `nid()` ids. A source-dump list therefore holds both kinds, which is safe because every
+reader compares stored ids with `===` and nothing converts them.
+
+**Three differences, all because this page is not KS02:**
+
+- An MM's name is a link **into KS02**: `sir-ks02.html?mm=<id>#ks03` opens that MM's detail on
+  its S&C tab — what clicking the same name on KS02's own page does. Just before leaving, the page
+  rewrites its own history entry to `true-storage.html?dump=<dump>&mm=<mm>#sourcedump`, so
+  **Back** returns to the same title with that MM's card briefly ringed.
+- A `STORAGE` chip opens that storage **here**, in place; `← back` returns to the same title.
+- Tagging a storage from a chip writes this page's own `trueStorages` directly.
+
+The page itself is a **copy** of KS02's — a documented twin, not a shared file, because each page
+is its own inline-Babel app with no module system and the app is supported opened straight from
+disk, where a separately loaded JSX file cannot be fetched. What keeps the copy honest is a
+browser case that draws both pages from the same data and compares every control they show: a
+change to one copy fails it until the other copy follows.
+
+Two smaller behaviours of the shared writers, on both pages: adding a title under a title that
+was deleted in another tab is **refused** rather than stored — the new title would name a parent
+that no longer exists, so no root would lead to it — and a transfer onto the MM a block already
+belongs to changes nothing (the picker never offered it; the old handler would have dropped the
+block).
 
 Both canvases share one layout, `graph-layout.js`, because they draw the same shape from the
 same two fields — `id` and `parentIds`. It used to be ~120 duplicated lines in each page.
@@ -1004,10 +1062,14 @@ one. Prevention alone would not help the cycles that already exist in stored dat
 
 Source dumps are a separate graph with a *singular* `parentId`, which changes what is reachable: a
 dump inside a cycle has its one parent inside that cycle, so it is nobody's descendant and no root
-leads to it. Downward walks — the tag picker, `deleteDumpEntry` — therefore cannot meet one at all.
+leads to it. Downward walks from a root — the tag picker, deleting a title — therefore cannot meet one.
 Only the upward walk can, because it starts wherever it is asked to, so the breadcrumb path builder
-`dumpPathTo` carries the guard and has exactly one definition. Nothing in the current UI creates
-such a cycle; `addDumpEntry` only ever attaches a new dump to an existing parent.
+carries the guard and has exactly one definition — `TrackSourceDump.pathTo` in
+`source-dump-core.js`, which KS02's `dumpPathTo` and True Storage's SOURCE DUMP tab both call.
+`TrackSourceDump.withoutEntry`, the descendant walk behind deleting a title, keeps a visited list
+anyway, because a duplicated id from a re-imported file can splice a cycle into an ordinary
+subtree. Nothing in the current UI creates such a cycle; adding a title only ever attaches it to
+an existing parent, and refuses one that no longer exists.
 
 Opening a storage shows, top to bottom:
 
@@ -1030,15 +1092,16 @@ tree fully expanded with each leaf's MM sections listed; picking a section recor
 already tagged are shown greyed rather than offered twice.
 
 Each tag renders as one row — `dump title · MM name`. Clicking the row **expands it in place** to
-show that MM section's text blocks and citation links, read-only, because `sourceDumps` belongs to
-KS02. Clicking the row again closes it. The expanded panel's title is a link to
+show that MM section's text blocks and citation links, read-only there — the SOURCE DUMP tab is
+where this page edits them. Clicking the row again closes it. The expanded panel's title is a link to
 `sir-ks02.html?dump=<dump>&mm=<mm>#ks03`, which opens KS03 → SOURCE DUMP on that leaf and briefly
 rings the MM's card.
 
 The same tag appears on the KS02 side, under that MM's section, everywhere that section's content
 is drawn: the source-dump leaf card, the S&C tab of a leaf MM, the S&C tab of a non-leaf MM, and a
 descendant node inside it. Each chip links to `true-storage.html?storage=<id>`. Tags can be created
-and removed from either side — KS02 has its own `+ storage` picker and an `×` on each chip.
+and removed from either side — KS02 has its own `+ storage` picker and an `×` on each chip, and so
+does the leaf card on True Storage's SOURCE DUMP tab, whose chips open the storage in place.
 
 Because an mmLink's content is drawn at four separate sites, the match that decides which storages
 belong to a pair lives in exactly one place, `true-storage-core.js`, and no call site re-spells it.
@@ -1132,11 +1195,11 @@ Each page writes only the keys it owns, merging them into a fresh read of the st
 | `progress.html` | `goals`, `saActions`, `saEntries`, `mmEntries`, `mgSchedule`, `calendarNotes`, `deadlines` |
 | `sir-ks02.html` | `sessions`, `mms`, `kolbs`, `mgChanges`, `linChanges`, `linDayTitles`, `pos`, `levelTemplates`, `sourceDumps` |
 | `documentations.html` | `docPages`, plus `calendarNotes` and `deadlines` through a fresh read-modify-write |
-| `true-storage.html` | `trueStorages`, `trueStoragePos` |
+| `true-storage.html` | `trueStorages`, `trueStoragePos`, plus `sourceDumps` through a fresh read-modify-write |
 | `notes-widget.js` | `notes`, `dateNotes` |
 | `index.html` | the slot list itself — create, rename, delete, import |
 
-`sir-ks02.html` reads `mgSchedule` but never writes it; that key belongs to `progress.html`. It also reads `trueStorages`, and writes it in exactly one narrow case — adding or removing a source-dump tag — through a fresh single-key read-modify-write (`_mutateSlotKey`), never through its autosave patch. `true-storage.html` reads `sourceDumps` and `mms` and never writes either. Adding a key to a page's write set means adding it to this table.
+`sir-ks02.html` reads `mgSchedule` but never writes it; that key belongs to `progress.html`. It also reads `trueStorages`, and writes it in exactly one narrow case — adding or removing a source-dump tag — through a fresh single-key read-modify-write (`_mutateSlotKey`), never through its autosave patch. `true-storage.html` is the mirror image: `sourceDumps` belongs to KS02, and True Storage's SOURCE DUMP tab writes it only through a fresh single-key read-modify-write (`_mutateSourceDumps`) of the **stored** list, never through its autosave and never from its React copy; it reads `mms` and never writes it. Adding a key to a page's write set means adding it to this table.
 
 Progress and KS02 also bind each React snapshot to the id of the slot it came from. A
 cross-tab `storage` or `visibilitychange` refresh adopts the selected slot's data and id in
@@ -1197,7 +1260,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, timetable blocks, PDF export |
-| `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, explanation, and source-dump tags |
+| `true-storage.html` | Storages: KS03-style multiverse canvas, a SOURCE DUMP tab that is a documented copy of KS02's page and edits the same data, SRCH-style nested tree, one link, explanation, and source-dump tags |
 | `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry, the deadline rules, and `refOccupies` — the one test for which days a pasted timetable entry falls on (`window.TrackCalendar`) |
 | `scripts/viewport.js` | The one definition, in JavaScript, of what counts as a phone (`window.TrackViewport`) — `PHONE_PX`, `PHONE_QUERY`, `isPhone()` and a `subscribe()` returning its own disposer. Reads `window.matchMedia` and nothing else: no `document`, no storage, no date code |
 | `scripts/theme.js` | Initial appearance selection, the Grit/Night switch, persistence, and cross-tab updates. Holds the one normaliser that aliases the superseded `light` and maps an appearance to a `color-scheme` keyword |
@@ -1207,6 +1270,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/notes-widget.js` | Floating per-slot notes widget — the Sorted and Date tabs, the picker, the full-screen side-by-side view and Send |
 | `scripts/notes-core.js` | The one definition of what a note is (`window.TrackNotes`): the total `dateNotes` reader, the delete-on-empty writer, the Date-note tags (`TAGS`, the `dateNoteTag` reader, the `dateNoteLocked` test and the `withDateTag` writer), the Sorted patch writer that never recreates a deleted note, `appendSent`, the local-day labels, and the month grid the calendar pop-up draws |
 | `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
+| `scripts/source-dump-core.js` | The one definition of how a source dump is read and edited (`window.TrackSourceDump`) — the breadcrumb path, the legacy text-block fallback, which MMs a dump may link, and every writer KS02's page and True Storage's SOURCE DUMP tab share. Holds no date code; a new title's day is a parameter |
 | `scripts/graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
 | `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`) — membership, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Read by `progress.html` and `index.html`, so neither can drift. Holds no date code; the day is a parameter |
@@ -1246,6 +1310,7 @@ Track-website/
 │   ├── schedule-paste-core.js
 │   ├── quest-core.js
 │   ├── schema.js
+│   ├── source-dump-core.js
 │   ├── storage-guard.js
 │   ├── theme.js
 │   └── true-storage-core.js
@@ -1262,6 +1327,7 @@ Track-website/
     ├── schema.test.js
     ├── notes-core.test.js
     ├── true-storage-core.test.js
+    ├── source-dump-core.test.js
     ├── graph-layout.test.js
     ├── doc-table-core.test.js
     ├── viewport.test.js
@@ -1627,12 +1693,13 @@ It runs three layers:
 | Offline notes tests | `tests/notes-core.test.js` | What a note is, in `notes-core.js`: the delete-on-empty `dateNotes` writer and its identity-when-unchanged contract, spreading so an unknown key survives, a JSON-parsed `__proto__` kept as data, the total reader over any value, `datedDays` skipping a bad key without deleting it, the Sorted patch reporting a missing note instead of recreating it, `appendSent`, and the day labels — weekday, Today/Yesterday, month, year and DST boundaries — in every swept zone. Tags: unclear as the default of a written day, no tag on an unwritten one, an inherited name never a tag, choosing unclear deleting the key, refusal by identity, a bare string upgraded with its text, and an unknown tag carried through an edit and gone with an emptied day. The lock: a cleared or Eternal day refusing every change to its text, emptying included; only a written day showing one of those two counting as locked; and unclear unlocking it. The month grid: 42 consecutive days from a Sunday across leap, year and DST boundaries, which fails west of UTC if seeded from a parsed string |
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
+| Offline source-dump tests | `tests/source-dump-core.test.js` | Every source-dump writer both Source Dump pages share, in `source-dump-core.js`: KS02's record shapes, a new title taking over its parent's MM sections, a parent that no longer exists refused, a duplicated parent id losing no section, the descendant delete and the breadcrumb path across a parentId cycle, transfers into an existing and a new section with a self-transfer refused, the legacy `text` block, which MMs a dump may link, identity when nothing changes, spreading so unknown keys survive, totality over damaged input — all with numeric and string ids mixed, as KS02 and True Storage mint them |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
 | Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, column widths normalising to a conserved total and following a row or column change, band geometry and the row/column move that permutes `rows`, `merges` and `colWidths` together, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Date tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Date list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Date tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Date list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone |
 
 The first three offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
@@ -1640,14 +1707,15 @@ That sweep is the point, not a detail: `calendar-core.js` exists to turn instant
 into *local* calendar days, `schema.js` stamps a new slot with one and
 `notes-core.js` names a stored day's weekday, and the
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
-machine running in UTC. `true-storage-core.test.js`, `graph-layout.test.js`,
-`doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`,
-`viewport.test.js` and `cdp-cleanup.test.js` run **once**: none of those modules holds any date code, so a
-sweep would cost five runs and prove the same thing. The last two have to *earn*
-that rather than merely claim it — one reads days, the other expires a tick at the
-end of one — so each suite carries a structural case that greps its module, with
-comments stripped first, and fails if a `Date` ever appears. Both take the day as
-a parameter instead.
+machine running in UTC. `true-storage-core.test.js`, `source-dump-core.test.js`,
+`graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`,
+`quest-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` run **once**: none of those
+modules holds any date code, so a sweep would cost five runs and prove the same thing. Three of
+them have to *earn* that rather than merely claim it — `schedule-paste-core.js` reads days,
+`quest-core.js` expires a tick at the end of one, and `source-dump-core.js` stamps a new title
+with one — so each suite carries a structural case that greps its module, with comments
+stripped first, and fails if a `Date` ever appears. All three take the day as a parameter
+instead.
 
 A run **cleans up after itself, including when it is interrupted.** `close()`
 cannot throw, so a profile directory that refuses to delete prints a warning and
@@ -1773,6 +1841,7 @@ node --check scripts/firebase-sync.js
 node --check scripts/notes-core.js
 node --check scripts/notes-widget.js
 node --check scripts/true-storage-core.js
+node --check scripts/source-dump-core.js
 node --check scripts/graph-layout.js
 node --check scripts/doc-table-core.js
 node --check scripts/schedule-paste-core.js
@@ -2156,6 +2225,8 @@ The latest commits before this documentation update show current work concentrat
 - Routing all five `track_db` readers through one validated load boundary, so a malformed stored database can no longer white-screen a page or be silently bootstrapped over.
 - The first committed automated tests.
 - True Storage: the fourth workspace page, and per-pair source-dump tagging shared with KS02.
+- True Storage's SOURCE DUMP tab: KS02's Source Dump page, editing the same data through one
+  shared set of writers, with MM names that open the MM in KS02.
 
 These are implemented areas, not roadmap items. Possible follow-up work belongs in `NOTES.md`.
 

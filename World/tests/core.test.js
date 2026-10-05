@@ -102,7 +102,7 @@ test('render interpolation fills the frames between fixed simulation steps',()=>
 });
 
 test('demo source has no storage or network plumbing and only loads four pure Track helpers',()=>{
-  const files=['demo-core.js','flight-core.js','character-motion.js','character-animation.js','character-rig.js','sky-core.js','sky-view.js','sky-scene.js','map-core.js','map-view.js','scene.js','app.js'];
+  const files=['demo-core.js','track-reader.js','flight-core.js','character-motion.js','character-animation.js','character-rig.js','sky-core.js','sky-view.js','sky-scene.js','map-core.js','map-view.js','scene.js','app.js'];
   for(const file of files) {
     const source=fs.readFileSync(path.resolve(__dirname,'../scripts',file),'utf8');
     assert.doesNotMatch(source,/\b(localStorage|sessionStorage|indexedDB|fetch|XMLHttpRequest|WebSocket|sendBeacon)\b/,file);

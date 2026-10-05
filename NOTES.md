@@ -910,7 +910,9 @@ changes nothing performs no write. `sir-ks02.html` does not: its autosave effect
 same bytes back, which sets `track_db_pending` and arms a sync upload for a no-op.
 
 Harmless to the data — the write is correct, just needless — but it costs an upload per tab
-focus and makes `track_db_pending` a noisier signal than it should be. Apply the same
+focus and makes `track_db_pending` a noisier signal than it should be. It now also fires after
+every edit on True Storage's SOURCE DUMP tab while a KS02 tab is open: KS02 adopts the edited
+`sourceDumps` on the `storage` event and its autosave writes the same bytes straight back. Apply the same
 compare-before-write there. Check `progress.html` and `documentations.html` for the same
 shape before assuming KS02 is the only one.
 
@@ -949,7 +951,10 @@ shape the `graph-layout.js` one-definition rule forbids, and it would have had t
 twice more to cover the pages that do not have it.
 
 The residue is a split surface. Some deletions raise a styled in-page modal, others a browser
-dialog, and which one a user sees depends on nothing they can perceive.
+dialog, and which one a user sees depends on nothing they can perceive. True Storage's
+SOURCE DUMP tab widened it on that page: its four source-dump deletes use the styled modal
+(through the existing copy — no third one was made), because the page it copies does, while
+its tag removals stay on the browser dialog.
 
 Proposed direction:
 
@@ -1031,6 +1036,30 @@ identify the unresolved risks and candidate next checks.
   about the game project only, whose canvas and input model are a separate problem.
 
 ## Additional Small Ideas
+
+### The Source Dump page exists twice
+
+True Storage's SOURCE DUMP tab is a documented twin of KS02's page, and README describes it.
+These are the edges it leaves open:
+
+- **The twin is a copy, so a change has to be made twice.** Every *edit* already has one
+  definition (`source-dump-core.js`), and the parity browser case fails the moment the two
+  pages draw different controls. But the UI itself is ~330 lines in each page. If the page
+  starts changing often, the honest fix is one shared component — which, with no build step
+  and the app supported opened from disk, means writing it with `React.createElement` in a
+  classic script rather than JSX (or doing Proposal 6 first). Do not start that to tidy the
+  duplication alone; it rewrites KS02's working page.
+- **`progress.html` still carries its own `getSCTextBlocks`.** It reads source dumps for MM
+  entry pins and does not load `source-dump-core.js`. Loading it and delegating would make
+  the legacy-text rule one definition across all three pages.
+- **KS02 does not reset its breadcrumb when the workspace is switched in another tab.** True
+  Storage's SOURCE DUMP tab does, so it starts the new slot at Home; KS02 keeps a `dumpPath`
+  naming the old slot's dumps and shows "No titles yet" until Home is pressed. Adding a title
+  there is refused rather than orphaned, so nothing is lost — it only reads wrong.
+- **A source-dump record made on True Storage has a string id; KS02's have numbers.** Both
+  are handled, by `===` on stored values. If a future feature ever sorts or compares dump ids
+  numerically — `repairTransferredParentSCDumps` already does, and deliberately skips strings —
+  it has to decide what a string id means to it.
 
 ### Notes: what Date notes and side by side do not cover yet
 

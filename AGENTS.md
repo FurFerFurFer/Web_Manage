@@ -69,7 +69,7 @@ Active files:
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule |
 | `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
-| `true-storage.html` | Storages: KS03-style multiverse canvas, SRCH-style nested tree, one link, an explanation, and source-dump tags |
+| `true-storage.html` | Storages: KS03-style multiverse canvas, a SOURCE DUMP tab that is a documented twin of KS02's page and edits the same `sourceDumps`, SRCH-style nested tree, one link, an explanation, and source-dump tags |
 | `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
 | `scripts/theme.js` | Initial theme selection, persistent light/dark switching, cross-tab appearance updates |
 | `scripts/viewport.js` | The one definition, in JavaScript, of what counts as a phone AND of what counts as a touch-primary device (`window.TrackViewport`): `PHONE_PX`, `PHONE_QUERY`, `COARSE_POINTER_QUERY`, `isPhone`, `isTouchPrimary`, `subscribe`. Reads `window.matchMedia` and NOTHING else — no `document`, no storage, no date code — which is what keeps its suite offline and unswept |
@@ -77,6 +77,7 @@ Active files:
 | `scripts/storage-guard.js` | The one `track_db` load boundary (`loadDB` — parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, both banners (`window.TrackStorage`) |
 | `scripts/firebase-sync.js` | Firebase authentication, gzipped/chunked whole-database synchronization, sync status surface |
 | `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship (`window.TrackTrueStorage`): the pair matcher, the pure tag writers, and the parent/child tree |
+| `scripts/source-dump-core.js` | The one definition of how a source dump is read and edited (`window.TrackSourceDump`): `pathTo` (the cycle-guarded breadcrumb), `textBlocksOf` / `isLegacyBlock`, `isLeafMM` / `canLinkMM`, `inheritsLinks`, and every writer both Source Dump pages share. Holds NO date code — a new title's `createdAt` is a parameter — which is why its suite runs once rather than swept |
 | `scripts/graph-layout.js` | The one radial canvas layout (`window.TrackGraphLayout`): `computeLayerLayout`, `applyRepulsion`, and the cycle guards that keep a parent cycle from blowing the stack on either canvas page |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format (`window.TrackSchedulePaste`): `parseScheduleText`, `formatScheduleText`, and the day/time cell readers. Holds NO date code, which is why its suite runs once rather than swept |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape (`window.TrackDocTable`): `mergeMap`, the pure merge writers, and the `::: track-table` paste format in both directions |
@@ -87,7 +88,7 @@ Active files:
 | `docs/` | User-facing paste specifications for the Track application |
 | `World/` | The Track World game project — concept draft, its reference imagery, and its own `AGENTS.md`, which governs every change inside that directory. Nothing there is part of the Track runtime, and nothing there may write Track data |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `notes-core.test.js`, `true-storage-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `notes-core.test.js`, `true-storage-core.test.js`, `source-dump-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -101,7 +102,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=17`, `scripts/schema.js?v=9`, `scripts/calendar-core.js?v=8`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-core.js?v=3`, `scripts/notes-widget.js?v=5`, `scripts/true-storage-core.js?v=2`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
+Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=17`, `scripts/schema.js?v=9`, `scripts/calendar-core.js?v=8`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-core.js?v=3`, `scripts/notes-widget.js?v=5`, `scripts/true-storage-core.js?v=3`, `scripts/source-dump-core.js?v=1`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
 
 The phone layout lives at **`max-width: 720px`**, and `--phone-tabbar-h` is the **one
 definition** of the bottom tab bar's height. It is `0px` on `:root` and set only inside
@@ -463,7 +464,7 @@ A written day's record may carry `tag`: `cleared` or `eternal`. Red **`unclear` 
 A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may carry `tags` — each one naming a **pair**: a source-dump leaf (`dumpId`) and one MM linked inside it (`mmId`). Four rules follow, and the first is the load-bearing one:
 
 - The comparison that decides which storages belong to a pair has exactly **one** definition, `TrackTrueStorage.storagesForLink` in `true-storage-core.js`, and the tag record's shape has exactly one, `withTag`. `sir-ks02.html` draws an mmLink's content at **four** sites — the source-dump leaf card, the S&C tab for a leaf MM, the S&C tab for a non-leaf MM, and `DescendantSCNode` — and every one of them renders the shared `StorageTags` component through the single `renderStorageTags` helper. Never spell `t.dumpId === … && t.mmId === …` at a call site. This rule is written from a shipped bug in a different feature with the identical shape: the deadline caution predicate was spelled out at three sites, one dropped half of it, and the timeline mismarked every due day until it was found. `tests/browser.test.js` therefore asserts **negatively** at each surface — a chip must be absent under the other MM in the same dump, and absent under the same MM in another dump.
-- `trueStorages` and `trueStoragePos` are owned by `true-storage.html` and must never join `sir-ks02.html`'s `_writeSlotKeys` autosave patch, which is built from that page's React snapshot. KS02 may add or remove a tag, and only through `_mutateSlotKey` — a fresh read-modify-write of that one key. `true-storage.html` is the mirror image: it reads `sourceDumps` and `mms` and writes neither.
+- `trueStorages` and `trueStoragePos` are owned by `true-storage.html` and must never join `sir-ks02.html`'s `_writeSlotKeys` autosave patch, which is built from that page's React snapshot. KS02 may add or remove a tag, and only through `_mutateSlotKey` — a fresh read-modify-write of that one key. `true-storage.html` is the mirror image: `sourceDumps` is KS02's, and True Storage's SOURCE DUMP tab writes it **only** through `_mutateSourceDumps` — a fresh read-modify-write of that one key, handed the **raw stored** list — and never through its autosave or from its React `dumps` (which is filtered for rendering, so writing it back would delete what the filter hides). It reads `mms` and never writes it.
 - Deleting a source dump, or removing an MM link from one, must **not** touch `trueStorages`. A tag whose pair no longer resolves renders as *source removed* and stays removable by hand, exactly as a day note outlives the documentation page that authored it.
 - Every traversal of a parent/child graph carries a **cycle guard**, without exception. `parentIds`
   is plural and the connections picker on both canvas pages lets a user pick a descendant as a
@@ -477,8 +478,8 @@ A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may
   node still on the stack was never in it, and the RangeError escaping a React render left `#root`
   empty — KS02 losing CAL/KS02/MG/KS03/KOLB/SRCH at once, recoverable only by hand-editing
   `localStorage`. Guarded reference implementations: `graph-layout.js` (`leafCount`, `layout`),
-  `true-storage-core.js` `buildTree`, `sir-ks02.html` `getAncestors`, `getDescendants`,
-  `dumpPathTo`, `deleteDumpEntry.collect` and `SrchView.buildTree`.
+  `true-storage-core.js` `buildTree`, `source-dump-core.js` `pathTo` and `withoutEntry`,
+  `sir-ks02.html` `getAncestors`, `getDescendants` and `SrchView.buildTree`.
 - The radial canvas layout has exactly **one** definition, `graph-layout.js`, loaded by
   `sir-ks02.html` and `true-storage.html` as a one-line delegate each. It was ~120 duplicated lines
   per page, which meant the cycle guard above had to be written twice — the same duplication shape
@@ -487,9 +488,17 @@ A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may
 - Source dumps are a **different** graph: `parentId` is singular, so a dump inside a cycle has its
   one parent inside that cycle and is nobody's descendant. Downward walks cannot reach one; only
   the upward breadcrumb walk can, because it starts wherever it is asked to. That walk is
-  `dumpPathTo` and it has one definition — it used to be spelled twice, guarded at one site and
-  unguarded 300 lines away at the other.
+  `TrackSourceDump.pathTo` and it has one definition — it used to be spelled twice, guarded at one
+  site and unguarded 300 lines away at the other; KS02's `dumpPathTo` is now a delegate to it.
 - `parentIds` and `tags` are deliberately **not** validated in `schema.js` beyond the object-item check every list field gets. `mms` carries the identical `parentIds` exposure and is not validated either, so gating one and not the other would invent an inconsistent rule. `true-storage-core.js` pays for that instead: every nested list is read through a helper that cannot throw, and `buildTree` terminates on a parent cycle.
+
+The **Source Dump page exists twice**: `SourceDumpView` (with `TransferPicker` and `StorageTags`) in `sir-ks02.html`, under KS03, and its documented twin in `true-storage.html`, the SOURCE DUMP tab. Both edit the same `sourceDumps`. Five rules follow, and the first two are the load-bearing ones:
+
+- **Every source-dump writer has ONE definition, in `source-dump-core.js`.** Both pages' handlers are one-line delegates that only mint ids: KS02 passes `nid()` and feeds its autosave; True Storage passes `TrackStorage.newId()` strings and goes through `_mutateSourceDumps`. Never spell a `sourceDumps` transform at a call site — two spellings of one edit is how the same click would come to store two different things. The writers return their input **unchanged** when nothing changes, which is what lets the RMW skip the write and lets React bail out of an autosave.
+- **The UI is a TWIN, and a change to one copy is a change to both.** It is a copy rather than a shared file because the pages have no module system and the app is supported opened from disk, where a separately loaded JSX file cannot be fetched. The tripwire is the browser case `PARITY: the SOURCE DUMP copy draws exactly the controls KS02 draws`, which collects every control both pages draw for one seed and fails on any difference. The twin's header comment lists its only three intended differences — the MM name is a link into KS02 (`?mm=`, its S&C tab), a storage chip opens the storage in place, and tagging acts on True Storage's own state — and a fourth must be added there on purpose, not discovered by the parity case.
+- **`sourceDumps` holds ids of both types.** A record minted on True Storage carries a string; KS02's carry `nid()` numbers. Every reader compares stored values with `===` and a query string with `String()`; nothing may coerce a dump, section, block or citation id with `Number()`, `parseInt` or a DOM dataset. The one numeric reader is `repairTransferredParentSCDumps`, whose `Number.isFinite` check deliberately skips string ids — correct, because its heuristic is about ids from KS02's own counter.
+- `TrackSourceDump.withEntry` **refuses** a parent id that is not in the list it is handed. A parent deleted in another tab would otherwise get a child whose `parentId` names nothing — reachable from no root, so stored, synced and unreachable. It also empties only the FIRST record with the parent id, so a duplicated id cannot lose the other record's sections.
+- KS02's `?mm=<id>` (with no `?dump=`) opens that MM on its S&C tab; with `?dump=` present, `mm` stays the dump card's ring. The two effects never compete for one URL, and a browser case pins the precedence.
 
 A storage's `link` is at most **one**, and clearing it **deletes the key** rather than storing `''` — the same absence-is-meaningful rule as a day note's `time`. A storage that never had a link and one whose link was cleared must be the same state.
 
@@ -531,7 +540,7 @@ Five rules follow, and the first two are the load-bearing ones:
   the first goal. Never write a sweeping "nothing in this panel computes to indigo" assertion —
   `PALETTE[0]` is `#6366f1`. Assert `[data-accent]`-hooked elements only.
 
-Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`. `progress.html`'s `uid()`, `documentations.html`'s `genId()`, `true-storage.html`'s `genId()` and `notes-widget.js`'s `generateId()` are delegates with a local fallback; do not reintroduce a page-local id shape. `sir-ks02.html` keeps its numeric `nid()` counter for its own records — which is also why a storage id must stay a string: a tag holds one id of each kind, and the two counters must never be able to collide. Never rewrite a stored id.
+Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`. `progress.html`'s `uid()`, `documentations.html`'s `genId()`, `true-storage.html`'s `genId()` and `notes-widget.js`'s `generateId()` are delegates with a local fallback; do not reintroduce a page-local id shape. `sir-ks02.html` keeps its numeric `nid()` counter for its own records — which is also why a storage id must stay a string: a tag holds one id of each kind, and the two counters must never be able to collide. A source-dump record made on True Storage's SOURCE DUMP tab is NOT one of KS02's own records and takes a `genId()` string, so `sourceDumps` holds both types (see the Source Dump twin rules). Never rewrite a stored id.
 
 Every **read** of `track_db` must go through `TrackStorage.loadDB()` from `storage-guard.js`, never a bare `JSON.parse(localStorage.getItem('track_db') …)`. All six readers — `getDB` (`index.html`), `_getTrackDB` (`progress.html`, `sir-ks02.html`, `documentations.html`, `true-storage.html`) and `_twDB` (`notes-widget.js`) — are one-line delegates. `JSON.parse` does not throw on `'null'`, `'42'` or `'[…]'`, so a hand-rolled `try/catch` around it is not a check. Three rules follow:
 
@@ -639,6 +648,7 @@ firebase-sync.js
 notes-core.js
 notes-widget.js
 true-storage-core.js
+source-dump-core.js
 graph-layout.js
 doc-table-core.js
 schedule-paste-core.js
@@ -911,6 +921,7 @@ node --check scripts/firebase-sync.js
 node --check scripts/notes-core.js
 node --check scripts/notes-widget.js
 node --check scripts/true-storage-core.js
+node --check scripts/source-dump-core.js
 node --check scripts/graph-layout.js
 node --check scripts/doc-table-core.js
 node --check scripts/schedule-paste-core.js
@@ -924,7 +935,7 @@ Then run the committed suite — it is the only automated check that sees the in
 node tests/run.js
 ```
 
-It runs `tests/calendar-core.test.js`, `tests/schema.test.js` and `tests/notes-core.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js`, `tests/quest-core.test.js`, `tests/viewport.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+It runs `tests/calendar-core.test.js`, `tests/schema.test.js` and `tests/notes-core.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/source-dump-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js`, `tests/quest-core.test.js`, `tests/viewport.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
 
 - Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
 - A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.
@@ -1125,13 +1136,14 @@ it describes. **Read it when you need it**: to audit what was verified and when,
 work in an area whose entry records a defect or a known gap, or to check whether something
 is covered by a test or only by code reading. A new entry is appended there, not here.
 
-What a passing run looks like, as of the 2026-09-07 entry — `node tests/run.js`, **17
-suites**: `calendar-core` (107) and `schema` (65) swept under five timezones (UTC, UTC+14,
-UTC-11, America/Los_Angeles, Asia/Kathmandu) with identical results, then `true-storage-core`
-(24), `graph-layout` (21), `doc-table-core` (103), `schedule-paste-core` (35), `quest-core`
-(54) and `cdp-cleanup` (13) once each — they hold no date code — then **251 browser subtests**
-in headless Chrome. Idle it takes ~9.5 minutes; at load ~2.5 it takes ~13.6. Treat that range
-as a load measurement, not a property of the suite.
+What a passing run looks like, as of the 2026-10-05 entry — `node tests/run.js`, **24
+suites**: `calendar-core` (107), `schema` (68) and `notes-core` (33) swept under five
+timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) with identical results,
+then `true-storage-core` (24), `source-dump-core` (33), `graph-layout` (21), `doc-table-core`
+(103), `schedule-paste-core` (35), `quest-core` (54), `viewport` (10) and `cdp-cleanup` (13)
+once each — they hold no date code — then **318 browser subtests** in headless Chrome. At
+load ~1.5–3 the whole run took 21–27 minutes. Treat that range as a load measurement, not a
+property of the suite.
 
 Still unverified, across everything: real touch hardware, the live Firebase project, real
 multi-device behaviour, and print output. Those gaps are permanent features of this
@@ -1190,6 +1202,11 @@ to a past one. Each cost this project real time at least once.
   binding every method to the real context**; `Object.create(t)` throws on its private
   fields, after the browser launches and before the after-hook registers, which leaks a node
   process on a live CDP connection.
+- **A case that fails before its `page.close()` leaves its tab open, and an open tab is a live
+  writer.** A KS02 tab adopts every later `storage` event and its autosave writes its own
+  filtered `sourceDumps` straight back, so one network blip in one case has failed a later,
+  unrelated case on a plausible-looking value. Read the FIRST failure's `realErrors` before
+  believing the ones after it.
 - **A trailing `grep` for failures makes a passing run exit 1** when it matches nothing.
   Check the thing itself, not the summary you were handed — `nohup … &` likewise reports exit
   0 the moment the wrapper shell exits, while the suite is still running.
@@ -1258,6 +1275,13 @@ to a past one. Each cost this project real time at least once.
   missing an edit you know you made usually means that, not that it vanished — confirm with
   `git show HEAD:<file> | rg <your change>` before re-applying anything.
 - `rg -rn` is **not** `rg -n`: ripgrep reads `-r` as `--replace`. Use `rg -n`.
+- **This machine sleeps, and a run that spans a sleep is void.** The tell is wall time: a
+  narrowed run that takes ~2 minutes reported 77,696s, and its failures were the contention
+  signature (`CDP connection closed`, mounting timeouts) on cases its change could not touch.
+  Run doctored baselines **one at a time**, each set behind an undoctored **CONTROL** copy
+  that must pass: a failing control is what says the whole set is void rather than evidence.
+  (A parallel pair run just after the resume showed the same signature; the two causes were
+  not separated, so treat parallel runs as suspect, not as proven harmful.)
 
 ## Definition of Done
 

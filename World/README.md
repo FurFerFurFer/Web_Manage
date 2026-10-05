@@ -2,8 +2,14 @@
 
 A Babylon.js garden runs locally with a third-person articulated botanical traveler, a clock plaza,
 a bridge, low terrace steps, a grounded mind-map constellation and a playable flight
-route across two floating islands. It uses synthetic data. Real Track integration, full
-MM editing and the finished world's art and traversal remain separate unfinished work.
+route across two floating islands. Today and the Memory Grove sky can read one real Track
+workspace export in memory. The rest stays demo data. Live integration, real MM editing
+and the finished world's art and traversal remain separate unfinished work.
+
+Character replacement research is [recorded for a later decision](CHARACTER-REBUILD-RESEARCH-2026-09-27.md).
+On 2026-09-27 the user deferred the route, expressed a preference for free, and made
+learning features the next priority. No replacement route is selected or implemented;
+the existing character and accepted controller remain unchanged. See NOTES for the handover.
 
 ## Run it
 
@@ -30,7 +36,42 @@ The pinned engine is already included under `vendor/babylonjs-9.25.0/`. No packa
 manager, build step, external font, asset download or internet connection is required
 to run this copy. World uses the repository's existing `schema.js?v=7` and
 `calendar-core.js?v=7`, `quest-core.js?v=1` and `graph-layout.js?v=1`, exposed by this server as
-`/track-core/` modules used only for reading synthetic data.
+`/track-core/` modules used only for fixture creation and read-only views.
+
+## Read your Track workspace
+
+1. Open Track as usual. On its Home page, export the workspace you want as JSON. Keep
+   that file outside this repository.
+2. In World, open **Today** (T) or **Mind maps** (K), then **Open your Track export**
+   and choose that file. It is read locally into memory; it is never uploaded or saved.
+3. Today shows the file's schedule for the computer's local day. **Mind maps → View
+   stars in the Grove** shows its mind maps. Find a name or select a star to read it.
+4. After editing Track, export again and use **Change file or return to demo** to open
+   the newer copy. The same control accepts another workspace or **Use demo data**.
+   Reloading World clears the file and returns both views to demo.
+
+The source labels say **Real data · export file · read-only** or **Demo data**. The file
+name and opening time are in the source disclosure; the opening time is not a claim about
+when the file was exported or synced. This is a snapshot, not live. Real MM details have
+no edit, draft, save or review controls. An invalid file keeps the previous source and
+shows an error. Canonical validation warnings are disclosed. Files over 32 MB are refused
+before reading; ambiguous mind-map IDs and unreadable structures are refused rather than
+guessed at. Empty workspaces show empty views, never a substitute demo workspace.
+
+**Route decision:** the installed Track shortcut opens the GitHub Pages site at
+`https://furferfurfer.github.io/Web_Manage/index.html`; World runs at `127.0.0.1:8877`.
+A live connection across those origins would require a hosted Track change/deploy or an
+installed bridge, crossing the user's no-harm rule. Live was stopped there; no workaround
+was attempted. Track's files, opening method, browser storage and sync were not changed.
+
+Notebook, Quest, map, ground stations and stamina still use the synthetic workspace and
+are marked demo. With a file loaded, a demo Quest link cannot open a real MM, and clicking
+a ground station opens the MM chooser without selecting a real identity. The ground
+stations do not represent imported MMs; the overhead sky does. Source attachments in real
+MM details currently show direct attachments only, with that limit stated on screen.
+Inherited/aggregated source views and real actions remain in Track. The real views always
+use local time; fixed demo-clock choices return only in demo mode. Midnight changes the
+view, never the dates stored in the file.
 
 ## Controls
 
@@ -228,12 +269,12 @@ readable and editable without the scene.
   light changes. Weather does not alter collision, movement or Track records.
 - Use an independent daylight/night **light study**. It is explicitly separate from the
   demo clock and does not claim to implement the final world's astronomical time system.
-- Read synthetic Today information through `TrackCalendar.buildDaySchedule`: authored
+- Read demo or exported Today information through `TrackCalendar.buildDaySchedule`: authored
   notes, schedule blocks, due deadlines, chosen caution days, reviews, MG focus and a
   separate reference timetable. Untimed notes remain untimed even when their automatic
   schedule block begins at 08:00. Reference entries are not counted as tasks.
 - The default clock follows the computer's local date/time, including after sleep. Optional
-  fixed clock states show 17:40, 20:10 and 00:10 on the following day. After 20:00, a tomorrow
+  fixed clock states in demo mode show 17:40, 20:10 and 00:10 on the following day. After 20:00, a tomorrow
   preview appears only if tomorrow has a day note, chosen warning or deadline. Its records
   remain explicitly dated tomorrow; a review alone does not trigger it. Today also includes
   canonical milestone periods and Kolb/MG, +Lin, notebook-capture and source-capture buckets.
@@ -253,7 +294,8 @@ readable and editable without the scene.
   restores the original synthetic note and clears session edits/additions.
 - Read selected-MM type/stage, connections, current MG/rating and history, all recorded Kolb
   fields, SIR sessions, +Lin records, comments, links and direct source text/URLs. Text is
-  shown in full inside the panel. Separate name/observation drafts stay in memory. Inherited
+  shown in full inside the panel. Separate name/observation drafts exist only for demo data
+  and stay in memory; file-backed MM records are read-only. Inherited
   and aggregated source views, source ordering/tags, and full MM actions remain unfinished.
 - Enter the overhead MM sky while grounded inside Memory Grove (the trees to the left of
   the plaza). **Mind maps → View stars in the Grove** is an explicit demo travel shortcut
@@ -263,7 +305,7 @@ readable and editable without the scene.
   including when pressed before entry finishes. Walking stays locked through both
   transitions and inspection. **Reduce motion** skips the camera animation.
   Selecting an MM opens its information, with **Back to the stars** to resume the same sky
-  without replaying entry. Every synthetic MM is a luminous Babylon scene mesh above the
+  without replaying entry. Every MM in the selected source is a luminous Babylon scene mesh above the
   Grove, including those without reviews today. Connections and review petals are also
   rendered in the scene; the HTML layer supplies only controls and projected labels/hit
   targets. Stars use Track's `computeLayerLayout` plus saved `slot.pos` overrides, KS03
@@ -278,8 +320,9 @@ readable and editable without the scene.
   flat KS03 space, so separation under projection remains a dense-network proof gate.
   Larger-parent sizing is a demo treatment: cycles share a size, and child sizes decrease
   along the condensed graph. Filled petals mean reviews due;
-  outlined petals mean reviewed, with exact counts in the label. The matching ground petals
-  use the same canonical calendar result, including skipped and actual finished-day rules.
+  outlined petals mean reviewed, with exact counts in the label. Ground petals continue to
+  use the demo workspace; sky petals use the selected source. Both use the same canonical
+  calendar rules, including skipped and actual finished-day rules.
   Navigation changes only the display mapping: `sky-core.js`'s canonical KS03 coordinates
   and saved `slot.pos` overrides remain unchanged, including MM 103 at **(510, 70)**.
   **Reduce motion** retains direct dragging while skipping entry/return transitions;
@@ -310,7 +353,7 @@ readable and editable without the scene.
 - Read the synthetic workspace's full Quest tree and starred list directly from its tab.
   `TrackQuest.questTree` preserves chosen sibling order and context ancestors, skips aliases
   and promotes milestone children. `starRollup` supplies the parent grouping and counts.
-  Missing linked MMs stay labelled; available linked MMs can open their existing draft panel
+  Missing linked MMs stay labelled; in demo mode available linked MMs can open their existing draft panel
   from the selected Quest details.
   Quest has no completion, daily routine ticks, star, reorder or management controls.
   The full-screen menu places the canonical list on the left and selected details on the
@@ -362,9 +405,11 @@ readable and editable without the scene.
 
 ## Data isolation
 
-The game does not load a Track page, Firebase, the storage guard, a user export, or a
-live database. Fixtures are created through the canonical schema with synthetic IDs.
-Drafts never modify the fixture. There is no game persistence or synchronization.
+The game does not load a Track page, Firebase, the storage guard or a live database.
+An explicit file picker can read a single-workspace export into an immutable, session-only
+snapshot. No file contents are sent to the server, put in browser storage, or logged.
+Fixtures and all test captures use synthetic data only. Demo drafts never modify either
+the fixture or a loaded file. There is no game persistence or synchronization.
 
 `storage-isolation.js` runs before Babylon.js. The engine's import-time storage probe
 (`setItem('test')` / `removeItem('test')`) receives document-local memory storage. The
@@ -380,9 +425,9 @@ sentinel remained byte-identical. No personal browser profile is used for that t
 ## Scale checkpoint playtest
 
 **Review status:** foot-ground push-off/body momentum (1) is rejected; checks 2–5 were
-judged “okay but not that good”. Body-animation work is stopped at the user's request,
-with no fix or further review planned. The checklist below is retained as a reference
-to that verdict, not a new request to test.
+judged “okay but not that good”. Replacement research is saved, but implementation and
+route selection are deferred at the user's request (2026-09-27); free is preferred.
+The checklist below records the rejected build's review, not a new request to test.
 
 Reload the local demo, enter the garden, and press **Home** to reset camera framing.
 The scale changes step-to-body proportions; it does not replace the rigid character model.
@@ -408,6 +453,7 @@ From the repository root:
 
 ```bash
 node World/tests/core.test.js
+node World/tests/track-reader.test.js
 node World/tests/sky-core.test.js
 node World/tests/map-core.test.js
 node World/tests/flight-core.test.js
@@ -415,11 +461,20 @@ node World/tests/stamina-core.test.js
 node World/tests/character-motion.test.js
 node World/tests/character-animation.test.js
 node World/tests/browser.test.js
+node World/tests/real-data.test.js
 node World/tests/camera.test.js
 node World/tests/sky.test.js
 node World/tests/map.test.js
 node World/tests/flight.test.js
 ```
+
+The file-reader checks use synthetic workspace JSON only. They cover canonical calendar
+and sky parity, missing legacy fields, warnings, invalid files, immutable identities and
+local midnight/year boundaries. The file browser suite drives the picker handler through
+load, replacement, empty files, overlapping reads, return to demo and reload; it checks
+real/demo labels, the absence of real edit/review controls, unchanged native storage and
+no data requests. It never loads a personal export. Daily-use comparison with the user's
+workspace and physical file-picker interaction remain part of the playtest.
 
 The offline commands use Node's built-in test runner directly: synthetic schema/calendar
 parity, Quest fixtures (numeric MM IDs, missing links, saved order and starred grouping),
@@ -564,6 +619,7 @@ documentation diff were reviewed; game/browser suites were not rerun for that fe
 | `scripts/flight-core.js` | Charge/release, glide deployment and cancellation rules; demo tuning without Track state |
 | `scripts/stamina-core.js` | The one definition of sprint: the dash/hold-to-lock/short-dash-unsprint state machine, the KS03-streak budget it spends, recovery and the single `canSprint` gate, plus the read-only streak projection. Holds no date code — the day and its arithmetic are parameters |
 | `scripts/app.js` | Panel state, canonical calendar reads and memory-only drafts |
+| `scripts/track-reader.js` | Single-workspace JSON validation, immutable memory snapshot and canonical day projection; no persistence or network |
 | `scripts/sky-core.js` | Read-only KS03 projection, hierarchy sizing and canonical review cues |
 | `scripts/sky-motion.js` | Pure spherical display mapping and the user-selected sky control settings |
 | `scripts/sky-scene.js` | Celestial scene meshes, the seeded background star field, procedural light/petal textures and world-to-screen projection |
@@ -578,6 +634,7 @@ documentation diff were reviewed; game/browser suites were not rerun for that fe
 | `tests/` | Dependency-free offline and real-browser behavior checks |
 | `NOTES.md` | Remaining proof, limitations to resolve and next decisions |
 | `MOVEMENT-DEMO-COMPARISON.md` | Selected movement references compared with the actual demo and unmeasured differences |
+| `CHARACTER-REBUILD-RESEARCH-2026-09-27.md` | Deferred character options, recommendation versus user preference, prices/licences, laptop and integration limits, and visual references |
 | `docs/VERIFICATION-LOG.md` | Character increment's execution evidence and automation limits |
 
 Babylon.js **9.25.0** was downloaded with explicit dependency approval on 2026-09-06.

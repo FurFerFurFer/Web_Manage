@@ -323,7 +323,10 @@ test('grounded Grove sky, selection, live weather, review cues and camera return
       await click('[data-panel="help"]');
       await page.evaluate(()=>[...document.querySelectorAll('#panel-content button')].find(button=>button.textContent==='Return to the start').click());
       await click('[data-panel="memory"]');
-      assert.ok(await page.evaluate(()=>!!document.getElementById('memory-sky')),'star entry is visible in the MM panel');
+      assert.ok(await page.evaluate(()=>{
+        const button=document.getElementById('memory-sky'),box=button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));
+      }),'star entry is visible and clickable without scrolling the MM panel');
       await page.evaluate(()=>{const input=document.getElementById('mm-observation');input.value='A thought before stargazing';input.dispatchEvent(new Event('input',{bubbles:true}));});
       const point=await page.evaluate(()=>{const box=document.getElementById('memory-sky').getBoundingClientRect();return {x:box.x+box.width/2,y:box.y+box.height/2};});
       await page.session.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',buttons:1,clickCount:1});

@@ -48,7 +48,7 @@
       // Track's calendar owns skipped/finished-day semantics. Ask it per identity
       // because its display rows intentionally do not carry a source MM id.
       const reviews=calendar.buildDaySchedule({mms:[mm],sessions:sessions.get(mm.id)},day).sir;
-      return {id:mm.id,index,name:mm.name,x:position.x,y:position.y,manual:position===manual,
+      return {id:mm.id,index,name:typeof mm.name==='string'?mm.name:'Unnamed mind map',x:position.x,y:position.y,manual:position===manual,
         color:mm.customColor||(mm.type==='anchor'?'#6b7280':mm.type==='1'?'#ef4444':palette[index%palette.length]),
         radius:10+18/(levels.get(mm.id)+1),depth:levels.get(mm.id),
         pending:reviews.filter(r=>!r.done).length,reviewed:reviews.filter(r=>r.done).length};

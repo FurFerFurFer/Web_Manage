@@ -2653,3 +2653,146 @@ errors:
   browser's own and is not driven;
 - two real tabs. The cross-tab case writes storage and dispatches the `storage` event in one
   page, the pattern this suite already uses for the theme.
+
+### True Storage's SOURCE DUMP tab: a synced copy of KS02's page (2026-10-05)
+
+The user asked for True Storage's second tab to be an exact, synced copy of KS02's Source
+Dump page (KS03 → SOURCE DUMP), with MM names that lead to the MM in KS02. They chose:
+- **Insert, don't replace.** The tabs are now MULTIVERSE · SOURCE DUMP · SRCH.
+- **Fully editable.** The tab edits the same `sourceDumps` KS02 does.
+- **A copy plus a drift test.** The UI is a documented twin, and nothing in KS02's UI was
+  rewritten.
+
+What changed:
+- **`scripts/source-dump-core.js`** (`window.TrackSourceDump`, new) holds every source-dump
+  writer both pages share, plus the readers they had each spelled: `pathTo`,
+  `textBlocksOf`, `isLegacyBlock`, `isLeafMM`, `canLinkMM` and `inheritsLinks`.
+- **`sir-ks02.html`:**
+  - the 11 writers and three helpers are one-line delegates to the core, so their names and
+    call sites are unchanged;
+  - the two picker filters and both `_m` checks call the core;
+  - the view carries test hooks (`data-source-dump-view`, `data-dump-row`,
+    `data-dump-navigate`, `data-dump-delete`, `data-dump-mm-name`, `data-dump-crumb`);
+  - `?mm=<id>` (with no `?dump=`) opens that MM's S&C tab;
+  - `mmLinks` reads in the view are guarded with `||[]`, in both copies.
+- **`true-storage.html`:**
+  - the twin (`TransferPicker`, `StorageTags`, `SourceDumpView`);
+  - `_mutateSourceDumps`, a fresh single-key read-modify-write of the RAW stored list;
+  - the eleven handlers, which mint `genId()` strings and stamp `localToday()`;
+  - `?dump=&mm=`, and the history-entry rewrite that makes Back return to the same title;
+  - a breadcrumb reset when the workspace is switched in another tab;
+  - `VIEWS` hoisted to one table that the header, the bar and the hash reader all use;
+  - the tag rows' hint now names the SOURCE DUMP tab.
+- **`true-storage-core.js`:** a comment only (a dump id may now be a string). Its `?v`
+  went 2→3 on both pages.
+
+**Behaviour changes on KS02**, which come with the shared writers:
+- A title added under a parent deleted in another tab is refused rather than orphaned.
+- A transfer onto its own section is a no-op. The old handler removed the block and never
+  re-added it.
+- Only the first record of a duplicated parent id gives up its sections.
+- A writer that changes nothing hands back the same list, so React bails out and KS02's
+  autosave no longer fires for a no-op.
+
+**Baseline before any change.** A full `node tests/run.js` on a frozen copy of
+`48f8b41`: all 23 suites passed, and the browser layer went 302/302 in about 21 minutes.
+Every later failure is therefore attributable.
+
+**Offline: `tests/source-dump-core.test.js`, 33 cases, run once.** It failed first with the
+module absent. Doctored core baselines, one rule per scratch tree, `tests/` copied for real:
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| D1 | `withEntry` without the missing-parent refusal | `withEntry REFUSES a parent that no longer exists`, **alone**, on reference equality |
+| D2 | the transfer without its self-target guard | the self-transfer case and `transferURLLink …`, on reference equality and `onto its own section: no change` |
+| D3 | `withEntry` empties every record with the parent id | the duplicate-id case, **alone**, on `no MM section was lost` |
+| D4 | `withTitle` rebuilds the dump from a field list | the spread case, **alone**, on the unknown key |
+| D5 | `textBlocksOf` without the legacy `text` fallback | the `textBlocksOf` and `isLegacyBlock` cases |
+
+**Browser: section 2h (new), three prompt cases and a phone case.**
+- A narrowed run on the repository (the new cases plus every existing tag, chip, cycle, KS02
+  and True Storage case) went 58/58.
+- Doctored browser baselines ran **one at a time**, behind an undoctored CONTROL copy.
+- The filter was `SOURCE DUMP|PARITY|LIVE:|string id|\?mm=|re-points the tag`: 17 cases.
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL | nothing — an undoctored copy | nothing: 17/17, in four separate runs (50–56s each) |
+| B1 | edits computed from the tab's React copy and written through `_writeSlotKeys` | the fresh read-modify-write case, **alone**, on `the title written elsewhere survived …` |
+| B9 | `_mutateSourceDumps` handed the RENDERED (filtered) list | the same case, **alone**, on its other assertion: `the record this page does not draw survived …` |
+| B2 | `addDumpEntry` without the tag repoint | the True Storage repoint case, **alone**, on `the tag followed its sections to the new child` |
+| B3 | KS02's `?mm=` effect does nothing | the MM → KS02 → Back case and the KS02 `?mm=` case, both on their wait for MM 10's S&C tab (the behaviour is absent, so no wrong value exists to report) |
+| B4 | the `?mm=` effect ignores `?dump=` | the KS02 `?mm=` case, **alone**, on `?dump= wins: the dump opened, not the MM detail` |
+| B5 | `+ add MM` removed from the copy only | PARITY, **alone**, on `the leaf: the two copies of the SOURCE DUMP page differ` |
+| B6 | `untagPair` without its confirm | the untag prompt case, **alone**, on `no dialog was raised` |
+| B7 | `leaveForMM` does not rewrite the history entry | the MM → KS02 → Back case, **alone**, on `the history entry says where the user stood` |
+| B8 | the slot-switch reset removed | the workspace-switch case, **alone**, on `slot B's titles, at Home` |
+
+How to read the table:
+- B1 and B9 share a case but fail different assertions. B3 and B7 share a case but fail
+  different waits or values. Every other failure set is a singleton.
+- B2, B4 and B8 first failed by **timing out** rather than on a wrong value. Each case now
+  waits for something that lands whether the code is right or wrong, then asserts the value.
+  The rows above are runs against the restructured cases.
+
+**Runs discarded, and why:**
+- **A first doctored set.** It spanned a machine sleep. Its CONTROL reported 77,696s for a
+  ~2-minute run and failed 9 cases on `CDP connection closed` and mounting timeouts, and a
+  parallel doctor failed cases its change could not touch. The lesson is now in AGENTS.md
+  ("This machine").
+- **One B8 run.** All 17 failed on mount timeouts, including the KS02-only repoint case: a
+  CDN outage.
+- **Another B8 run.** The KS02 repoint case failed `realErrors` on
+  `net::ERR_SOCKET_NOT_CONNECTED` for the gstatic Firebase SDK, and that failure cascaded. It
+  stopped before `page.close()`, so its KS02 tab stayed open. That tab adopted the next
+  case's seeded write on the `storage` event, and its autosave wrote KS02's FILTERED list back
+  over it. That case then failed on the raw-list assertion. **After any failure in section
+  2h, read later failures as possibly cascaded:** an open KS02 tab rewrites `sourceDumps`.
+
+**Smoke, on `python3 -m http.server 8765`.**
+- All five pages mounted, the notes widget was present, Firebase was skipped to offline, and
+  no page errors were raised.
+- The SOURCE DUMP leaf was screenshotted at 1280×860 and 390×844 (Grit). The header reads
+  MULTIVERSE · SOURCE DUMP · SRCH, the phone bar carries the same tab, and nothing is
+  cropped.
+
+**Full runs.**
+- **The first full run on the working tree is not counted as clean.** Another session was
+  editing this same working tree while it ran. It edited `sir-ks02.html` and
+  `tests/browser.test.js` to add +MM parent pre-selection, built on the new `?mm=` link, so
+  that run's pages were served from a tree that changed underneath it. The fingerprint of
+  `scripts/`, `styles/`, `tests/` and the five pages differed at the two ends; HEAD stayed
+  `48f8b41`. For the record it went 23/23 offline and browser 317/318. The one failure,
+  `DOCUMENTATIONS draws the same class in a calendar block`, was a mount timeout on a page
+  this change does not touch.
+- **The counted run used a frozen snapshot of this change alone.** It was rebuilt from the
+  last CONTROL copy plus the one later edit, and checked file for file against the pre-run
+  fingerprint. `node tests/run.js` in the snapshot passed 23 of 24 suites:
+  - every offline suite, in every zone: calendar-core 107, schema 68 and notes-core 33,
+    then true-storage-core 24, source-dump-core 33, graph-layout 21, doc-table-core 103,
+    schedule-paste-core 35, quest-core 54, viewport 10 and cdp-cleanup 13;
+  - browser **316/318**, in about 26.5 minutes at load ~2. The two failures were consecutive
+    Quest cases on `progress.html`, which this change does not touch: `CDP connection
+    closed` on navigation, then a mount timeout. That is the contention signature, and
+    another session was busy on this machine at the time.
+- **Those two, and the Documentations case from the first run, were rerun narrowed on the same
+  snapshot: 3/3.** All three also passed in the clean baseline. So every one of the 318
+  browser cases has passed on this change set, but **not in one uninterrupted run**. A fully
+  green single run on a quiet machine is the one result this entry does not have.
+- **The other session's +MM work is not part of this entry, and this entry did not verify
+  it.** It sits in the same files (`sir-ks02.html`, `tests/browser.test.js`, a README bullet)
+  and was left untouched.
+
+**Not covered:**
+- Real touch hardware.
+- The live Firebase project.
+- Two real devices.
+- **Back.** Chrome may restore True Storage from its back/forward cache (nothing registers
+  `unload`). The Back case therefore asserts the rewritten address, which a restore keeps
+  too. The reload road, a real load of that address, is covered separately by the
+  `?dump=&mm=` case.
+- **The two copies are compared by their CONTROLS** (text and placeholders), not their
+  layout or classes. A drift in styling alone would not trip the parity case.
+- **The ms window.** A KS02 tab that saves between a True Storage write and its own
+  `storage` event can still write its stale list. That window is the same for every page
+  writing a key it does not own, and it is not driven.

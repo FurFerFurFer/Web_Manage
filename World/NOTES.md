@@ -3,8 +3,17 @@
 ## Start here
 
 - **Phase:** P1-P3 in progress, Step 2: prove the defining experience in the small scene.
-  P4 onward is untouched; real Track reads/writes remain separately gated.
-- **Next increment: the user's laptop playtest of the 2026-09-23 sky (A+B / C / B).**
+  P6's exported-file read route is ready for daily-use acceptance; real writes remain gated.
+- **Next increment: daily study playtest of real read-only Today and Memory Grove.**
+  Compare a fresh workspace export with Track's day and mind-map sky, then report whether
+  either view helps study and which information is missing or hard to reach. Refresh by
+  exporting and opening again. Keep personal files outside the repository and feedback
+  free of personal exports/screenshots. Notebook, Quest, map, ground stations and stamina
+  remain labelled demo. Do not reopen the stopped live route without new user direction;
+  no Track change, deploy, install or external bridge is authorized. See README for the
+  route and controls, and draft §§5.7/10/18 for the decision and unchanged write gates.
+- **Remaining sky playtest, not a prerequisite to choosing the learning increment:**
+  the 2026-09-23 sky (A+B / C / B).
   Full-bleed sky with one compact strip, a seeded background universe with night while
   stargazing, and a 35-MM fixture — see [draft §5.7](TRACK-WORLD-CONCEPT-DRAFT.md#57-memory-grove-and-the-ks03-sky).
   Record the verdict on each of the three separately, and on the **label-as-caption**
@@ -13,28 +22,25 @@
 - **Sky decisions now evidenced and awaiting direction:** label placement, hierarchy and
   long-name treatment at density (labels overlap heavily at Fit all and long names scroll
   inside their label); whether the faint band reads at all; the Grove's 35 stations and
-  the minimap's crowded grove; and the real-data read/export scope. Present options
-  before changing any of them. The need for many MMs does not open the real-data gate;
-  keep storage isolation intact.
+  the minimap's crowded grove. Present options before changing their design. The scoped
+  September 29 read decision does not authorize changing the storage-isolation guard.
 - **Performance to confirm on the laptop:** the 35-station scene draws about 40 more calls
   per frame than the three-station one (257 vs 217 at spawn) at +20% vertices (231k vs
   193k). Headless timing is inconclusive under contention; the PLAN §25.13 gate decides.
   The World browser suite runs close to its 150 s budget under heavy load on either tree.
-- **Body-animation work stopped; no next increment or fix planned.** Foot-ground
-  push-off/body momentum in walking and running (playtest 1) remains **rejected**.
-  Playtests 2–5 are **okay but not that good**, not strong visual acceptance. The user's exact
-  verdict and instruction are recorded in [draft §4](TRACK-WORLD-CONCEPT-DRAFT.md#4-player-perspective-and-movement).
-  Do not resume tuning, investigate another remedy, schedule another review or propose
-  a production replacement unless the user explicitly reopens the work. The motion
-  backlog and unresolved timing questions below are inactive, not a queued fix plan.
-  The existing local procedural production selection remains closed.
+- **Character route deferred; free preferred, no route selected.** Use the saved
+  [options and analysis](CHARACTER-REBUILD-RESEARCH-2026-09-27.md) when the user chooses to
+  revisit it. Neither the research's commission recommendation nor the preference for
+  free authorizes a production route. The rejected body remains the current placeholder;
+  do not resume tuning, acquisition, replacement or another character playtest during
+  learning work. The motion backlog below is inactive. See [draft §4](TRACK-WORLD-CONCEPT-DRAFT.md#4-player-perspective-and-movement).
 - **Do NOT do:** lower 5.2/12/16.2, retune 1.70/1.88/2.05/2.20 Hz, rename the four set
   keys, add a slow-walk control or a heavy landing/roll, or return to small adjustments
   of one shared gait. Preserve the distinct sets and the coordinated support/push trajectory.
-- **Gates:** purchases, downloads, installs, dependencies, external services and any
-  different production approach require an explicit answer. If the local result has an
-  evidenced remaining gap, name what is visible and distinguish evidence from a guess;
-  a later alternative must not block shipping the local result.
+- **Gates:** purchases, downloads, installs, dependencies, external services and a
+  character production approach require an explicit answer. The deferred route does
+  not authorize more work on the rejected local body. Live Track integration retains
+  its scoped command, identity, validation and recovery requirements.
 - **Preserve:** walk **5.2**, run **12**, dash **16.2**, current dash/hold/unsprint and stamina
   tuning, camera drag, Space priority and glide clearance. Preserve full-cycle rates
   **1.70 / 1.88 / 2.05 / 2.20 Hz**. Do not lower speeds for the gait. Include all four sets
@@ -87,13 +93,16 @@
   Quarter-speed conversion divides recorded duration by four, so it multiplies cadence
   by four; do not repeat the earlier inverted conversion. Measurement remains information,
   never permission to retune.
-- **After visual acceptance:** perform the physical laptop proof in **PLAN §25.13**, then
-  continue the information/action inventory and dense sky/Quest/map proofs.
+- **Independent remaining proofs:** physical laptop performance (**PLAN §25.13**),
+  information/action fidelity and dense sky/Quest/map behaviour. Character visual
+  acceptance is not a prerequisite to the next learning-feature task.
 
-**Reading order:** [AGENTS.md](AGENTS.md) → this block → draft **§5.7** → README's MM-sky
-paragraph → `sky-core.js`, `sky-motion.js`, `sky-scene.js`, `sky-view.js`,
-`storage-isolation.js` and the sky tests. Draft §4 and the movement comparison apply only
-if the user explicitly reopens the stopped body-animation work.
+**Reading order:** [AGENTS.md](AGENTS.md) → this block → draft **§§5.7, 10 and 18** →
+README's current information/action and data-isolation behaviour → the actual Track
+interface and World source/tests for Today and the Memory Grove, including
+`track-reader.js` and `real-data.test.js`. Use only synthetic data for further verification.
+For a later character decision, read draft §4 and the saved research above; do not infer
+a selected route from historical procedural-production instructions.
 Read concept and PLAN by slice only; PLAN §25.13 is needed only for hardware proof.
 Do not read `vendor/`, the root verification log, or spawn subagents for this increment.
 
@@ -114,10 +123,10 @@ Do not read `vendor/`, the root verification log, or spawn subagents for this in
   not net ground travel. Do not silently retune either behavior or the numeric budget.
   Keep the zero-streak exhaustion regression and the current dash/hold/unsprint contracts.
   Extending stamina to climbing, gliding or swimming needs separate direction.
-- **Rigid-body visual limits still need user review.** Inspect joint/clothing seams and
-  the foot-to-body relationship without claiming that more angle tuning or a paid model
-  must solve them. The selected local approach remains authoritative. The base tier's
-  airborne intervals are accepted; do not impose a no-flight gait or a new slow-walk control.
+- **Deferred character decision:** free is preferred; select a replacement route only
+  when the user returns to the saved comparison. Do not request another review of the
+  rejected rigid body. The base tier's airborne intervals remain accepted; do not impose
+  a no-flight gait or a new slow-walk control.
 - Compare the charged launch and two-island glide route with the user's slingshot
   reference on the physical laptop. Tune trajectories, controls and landing feel; design
   additional geography only after the sustained performance route passes.
@@ -196,7 +205,7 @@ Do not read `vendor/`, the root verification log, or spawn subagents for this in
   paths. Add explicit context-loss and repeated load/unload tests.
 - P2: extend the dated-history navigation with a category-specific unfinished-work rollup;
   add browser-level midnight and suspend/resume cases alongside the pure clock checks.
-  Retain synthetic-only testing until real integration is separately authorized.
+  Retain synthetic-only testing, including when exercising the real-file read path.
 - P3: validate the runtime cel shader, coherent environment over the whole scene, audio
   layers, and one approved Blender-to-GLB asset loop. The independent night light study
   does not implement the final shared clock/environment contract.
@@ -211,8 +220,9 @@ Do not read `vendor/`, the root verification log, or spawn subagents for this in
   including large-network sky navigation and the separate command/recovery proofs.
 - Stable slot worlds, natural routes, regional/landmark gateways, goal geography and
   truthful completed/reopened history through P4/P8.
-- Separate Track-owned safe read/write commands, conflict/retry/recovery, then real
-  integration through P5–P7. Never make the demo's memory storage into a Track writer.
+- Separate Track-owned safe write commands and conflict/retry/recovery through P5/P7.
+  The file reader does not open those gates or authorize a live connection. Never make
+  the demo's memory storage into a Track writer.
 - Persistent game state and draft recovery; current demo drafts reset on reload.
 - Art production choices, avatar/rig/book attachments, complete climbing/vaulting/swimming,
   private release and recovery. Scope and approval gates remain in `AGENTS.md` and the
