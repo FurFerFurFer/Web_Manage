@@ -2796,3 +2796,97 @@ How to read the table:
 - **The ms window.** A KS02 tab that saves between a True Storage write and its own
   `storage` event can still write its stale list. That window is the same for every page
   writing a key it does not own, and it is not driven.
+
+### `+MM` from inside an MM pre-chooses that MM as the parent (2026-10-05)
+
+The user asked that pressing `+MM` while inside an MM pick that MM as the new MM's one parent.
+`openAddMM` (`sir-ks02.html`) sets the draft's `parentIds` on **every** open, by two rules:
+- inside an MM — `currentMM`, the object the detail panel draws in KS02, MG, KS03 and SRCH —
+  it becomes `[currentMM.id]`, replacing any parents left in the draft;
+- anywhere else it becomes `[]`.
+
+The second rule exists because CANCEL keeps the draft. Without it, a parent chosen inside an MM
+would still be selected the next time `+MM` is pressed from the canvas. Only the parent is
+reset; name, type and explanation still survive CANCEL, and a case pins that split. The form
+also names the chosen parent above the list, because the list scrolls and the pre-chosen row
+can sit out of view.
+
+Nothing stored changed shape: `parentIds` is an existing field and `addMM` is untouched. No
+migration, importer, exporter or sync path is involved. The change shipped in `3289d84`, which
+the user committed together with the SOURCE DUMP work above.
+
+**Hooks**: `data-add-mm`, `data-new-mm-modal`, `data-new-mm-parent` with `aria-pressed`,
+`data-new-mm-parents` and `data-mm-detail`. `aria-pressed` is styled nowhere outside
+`.cal-legend-item`. Every doctored tree carries all of them, because each swap touches only the
+opener, so no baseline could fail on a missing hook.
+
+**Another session shared the working tree.** This change's first edits landed while the SOURCE
+DUMP session's first full run was in flight. Nobody saw that until afterwards, and it is why the
+entry above does not count that run. From then on:
+- the pre-feature baseline was a scratch tree, never a repository state, so the repository was
+  never red for a run built from it;
+- nothing the suite reads was edited while another session's run was in flight.
+
+**Doctored baselines**, one swap per scratch root:
+- The repository is symlinked except dot-entries, `tests/` is a real copy, and `sir-ks02.html`
+  is a real copy. That holds for CONTROL too, so CONTROL differs from each baseline only by the
+  swap.
+- The builder refused a swap matching other than exactly once, and a doctored file
+  byte-identical to the repository's.
+- Runs went through a task-owned `--require` preload that never declares a non-matching child,
+  so the plan count is what ran: `1..2` for `^KS02 \+MM `.
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL (before and after) | none | nothing — 2/2 |
+| A-pre-feature | the button back to `onClick={()=>setAddMMModal(true)}` | both cases. The inside case got `['root']` where it expected `['10']`; the outside case got `['10']` where it expected `['root']`, because the old form carried a cancelled parent out of the MM |
+| B-no-outside-reset | the outside rule: the draft is left alone unless inside an MM | the outside case, **alone**, on `the cancelled parent did not follow`: it got `['10']` where it expected `['root']` |
+| C-no-inside-choice | the inside rule: every open starts at root | the inside case, **alone**, on `the MM the user is in is chosen`: it got `['root']` where it expected `['10']` |
+
+B and C fail disjoint single cases, so each case guards exactly one half of the opener. The
+outside case picks its parent BY HAND (root first, then MM 10), so it stands whether or not the
+inside rule ran. That is what keeps C from failing it too.
+
+**A void first set.** The first closing CONTROL failed the inside case on
+`waitFor timed out after 30000ms — navigation to …/sir-ks02.html?mm=10#ks03`, in 35s rather
+than 7s. Another session's full run had launched its Chrome at the same moment. That is a
+mounting timeout, the contention signature, not an assertion. By rule the set was void, so all
+five runs were repeated after that run finished:
+- CONTROL, A, B, C and CONTROL again, one at a time;
+- 6–7s each, every one with plan count `1..2`;
+- both controls passed;
+- A, B and C failed on exactly the assertions and values in the table, matching the first set.
+
+One of the other session's narrowed runs overlapped the start of the repeat. The steady wall
+times and the two passing controls are what make the repeat usable anyway.
+
+**Two void full runs: the laptop suspended both times.**
+- **The first** ran from 16:57 to 21:57: 17,981s of wall time against 1,420s measured by the
+  browser suite. The journal has `Lid closed. Suspending...` at 17:08:56. All 7 failures were
+  the sleep signature:
+  - three were `CDP connection closed` during navigation;
+  - four were first-`waitFor` timeouts;
+  - case 151 reported "timed out after 30000ms" after 1,597ms measured, because the wall clock
+    jumped on resume.
+- **The second**, on `3289d84`, spanned a 5-second suspend: the lid closed at 22:19:07 and
+  reopened at 22:19:12. That was exactly while case 265 ran, and only that case failed:
+  `QUEST: an unarranged group stores no order at all` died loading `progress.html#quest` on
+  `CDP connection closed`. Wall time moved only about 7s against measured time, so **wall time
+  alone would have missed this suspend**; the journal caught it. The case passed when re-run
+  alone: plan `1..1`, exit 0, 7s.
+- Both `+MM` cases passed in both runs. Neither run is counted.
+
+**Full run on `3289d84`: `node tests/run.js`, all 24 suites passed, browser 320/320.**
+- The plan count was `1..320`, and exit 0 was read from the log.
+- It ran from 07:49:52 to 08:12:04: 1,332s of wall time against 1,328.5s measured. The journal
+  shows no lid close or suspend in that window.
+- `md5sum` of `scripts/`, `styles/`, `tests/` and the five pages was identical at both ends, and
+  HEAD was unchanged.
+- It covers the whole of `3289d84`: the SOURCE DUMP entry's 318 cases plus the two `+MM` cases.
+  It is therefore also the single uninterrupted green run that the entry above says it lacks.
+
+**Not covered:**
+- `currentMM` over the bare `selectedMM` holds by construction and has no case of its own. It is
+  what keeps a parent id from naming an MM another tab deleted. Such an id would make the new MM
+  a canvas root (`graph-layout.js` treats a missing parent as absent), not unreachable.
+- Real touch hardware. The button is a plain `onClick`.
