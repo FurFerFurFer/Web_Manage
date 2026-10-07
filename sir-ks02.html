@@ -2031,6 +2031,7 @@
       return (
         <div className="relative">
           <div ref={isFocused?nodeRef:null} style={{paddingLeft: depth * 16}}
+            data-srch-mm={mm.id} data-srch-focused={isFocused?"true":undefined}
             className={`flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-800 cursor-pointer${isFocused?" bg-indigo-900/40 outline outline-1 outline-indigo-700/50":""} ${arrangeDragOver==='before'?'border-t-2 border-green-500':arrangeDragOver==='after'?'border-b-2 border-green-500':''}`}
             onClick={() => onOpen(mm.id)}
             onMouseEnter={() => setHov(true)}
@@ -2125,7 +2126,7 @@
       const tree = filterTree(buildTree(), q.toLowerCase());
 
       return (
-        <div className="p-4 max-w-2xl mx-auto">
+        <div data-srch-view className="p-4 max-w-2xl mx-auto">
           <div className="text-xs text-gray-500 mb-3 tracking-widest">SRCH — NESTED BY PARENT / CHILD</div>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter MMs..."
             className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 mb-3 text-white placeholder-gray-600 text-xs focus:outline-none focus:border-indigo-500"/>
@@ -2784,7 +2785,6 @@
       const [selectedKolbId,setSelectedKolbId]=useState(null);
       const [kolbLinkSearch,setKolbLinkSearch]=useState("");
       const [parentSearch,setParentSearch]=useState("");
-      const [focusMM,setFocusMM]=useState(null);
       const [srchFocusId,setSrchFocusId]=useState(null);
       const [ks02SelectedStage,setKs02SelectedStage]=useState(null);
       const [linChanges,setLinChanges]=useState([]);
@@ -3138,7 +3138,13 @@
         if (newMM.ksStage==="sir"&&newMM.type!=="anchor") setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId:id,date:addDays(today(),iv),repIndex:i,done:false,skipped:false}))]);
         setNewMM({name:"",type:"1",parentIds:[],ksStage:"1",explanation:""});setAddMMModal(false);
         setParentSearch("");
-        if(view==="srch"){setSelectedMM(null);setSrchFocusId(id);}else{setView("ks03");setSelectedMM(null);setFocusMM(id);}
+        /* Where ADD leaves you follows where you ARE, like openAddMM's parent:
+           inside an MM you stay in it, and the new child appears there; from
+           anywhere else SRCH opens on the new MM. Read currentMM, not the
+           parent chosen in the form, which the user may have changed — and
+           not the bare selectedMM id, which can outlive an MM deleted in
+           another tab. */
+        if(!currentMM){goToView("srch");setSrchFocusId(id);}
       }
       function deleteMMFn(mmId){
         setMms(p=>p.filter(m=>m.id!==mmId).map(m=>({...m,parentIds:(m.parentIds||[]).filter(p=>p!==mmId)})));
@@ -3594,7 +3600,7 @@
                 </div>
               </div>
               {ks03SubView==="multiverse"&&(
-                <MultiverseCanvas mms={mms} mgChanges={mgChanges} manualPos={manualPos} setManualPos={setManualPos} onOpen={id=>openMM(id,"ks03")} mmColor={mmColor} onFillMM={setMMColor} onDuplicate={duplicateMM} focusId={focusMM}/>
+                <MultiverseCanvas mms={mms} mgChanges={mgChanges} manualPos={manualPos} setManualPos={setManualPos} onOpen={id=>openMM(id,"ks03")} mmColor={mmColor} onFillMM={setMMColor} onDuplicate={duplicateMM}/>
               )}
               {ks03SubView==="sourcedump"&&(
                 <SourceDumpView sourceDumps={sourceDumps} mms={mms} mmColor={mmColor}

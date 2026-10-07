@@ -4181,6 +4181,75 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* Where ADD leaves the user follows where they ARE, by two rules — from
+     outside an MM SRCH opens on the new MM, from inside one the user stays in
+     it — and each case below guards exactly one of them. */
+  const NEW_MM_NAMED = function (name) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var slot = (db.slots || [])[0] || {};
+    return (slot.mms || []).filter(function (m) { return m.name === name; })[0] || false;
+  };
+  const addNewMM = async (page, name) => {
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-new-mm-modal] input[placeholder="MM name"]'), value);
+      return true;
+    }, SET_REACT_INPUT, name);
+    assert.equal(await page.evaluate(NEW_MM_PRESS, 'ADD'), true, 'ADD pressed');
+    // Wait for the write to land, never for the view: a wrong landing must
+    // report itself, not time out.
+    const made = await page.waitFor(NEW_MM_NAMED, { args: [name], message: 'the new MM being saved' });
+    await sleep(300);
+    return made;
+  };
+
+  await t.test('KS02 +MM outside an MM opens SRCH on the new MM', async () => {
+    const page = await open('sir-ks02.html', { db: seedDb(), hash: '#ks02' });
+    await waitMounted(page, 'sir-ks02.html');
+    await openNewMMForm(page, 'the NEW MIND MAP form');
+    // The SRCH highlight clears itself after 1.5s, so a poll after ADD can miss
+    // it under load. Record every row that is ever drawn focused instead.
+    await page.evaluate(function () {
+      window.__srchFocused = [];
+      new MutationObserver(function () {
+        var el = document.querySelector('[data-srch-focused]');
+        if (el) window.__srchFocused.push(el.getAttribute('data-srch-mm'));
+      }).observe(document.body, { subtree: true, childList: true, attributes: true });
+      return true;
+    });
+    const made = await addNewMM(page, 'Fresh root');
+
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-srch-view]'); }), true,
+      'SRCH is open after ADD');
+    assert.equal(await page.evaluate(function (id) {
+      return !!document.querySelector('[data-srch-view] [data-srch-mm="' + id + '"]');
+    }, made.id), true, 'and lists the new MM');
+    assert.equal((await page.evaluate(function () { return window.__srchFocused; })).indexOf(String(made.id)) >= 0, true,
+      'the new MM is the row SRCH focused');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-mm-detail]'); }), false,
+      'no MM detail is open over it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KS02 +MM inside an MM stays in that MM', async () => {
+    const page = await open('sir-ks02.html', { db: seedDb(), hash: withQuery('?mm=10', '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-mm-detail="10"]'); },
+      { message: "?mm= opening MM 10's detail" });
+    await openNewMMForm(page, 'the NEW MIND MAP form');
+    const made = await addNewMM(page, 'Child that stays');
+
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-mm-detail="10"]'); }), true,
+      'the user is still inside MM 10 after ADD');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-srch-view]'); }), false,
+      'SRCH did not open');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-new-mm-modal]'); }), false,
+      'the form closed');
+    assert.deepEqual(made.parentIds, [10], 'precondition: the new MM was made under MM 10');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   await t.test('a workspace switched in another tab starts the SOURCE DUMP tab at Home', async () => {
     /* The breadcrumb names dumps of the slot it was built in. Kept across a
        switch, it would point into a slot that has no such dump: the page would

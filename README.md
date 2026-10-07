@@ -214,6 +214,9 @@ breakpoints so the two cannot drift apart silently.
   anywhere else, the form starts at **No parent (root)**. The parent list stays editable before
   ADD, and the form names the chosen parent above the list, which scrolls. CANCEL still keeps the
   rest of the draft — name, type, explanation — but never the parent.
+- Where ADD leaves you follows the same rule. From inside an MM you **stay in that MM**, on the
+  same tab, and the new child appears there — even if you changed the parent in the form. From
+  anywhere else **SRCH opens** with the new MM scrolled into view and briefly highlighted.
 - Search and sibling reordering.
 - Multiverse-style visual positioning.
 - Custom colors.

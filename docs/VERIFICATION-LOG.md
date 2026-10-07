@@ -2890,3 +2890,73 @@ times and the two passing controls are what make the repeat usable anyway.
   what keeps a parent id from naming an MM another tab deleted. Such an id would make the new MM
   a canvas root (`graph-layout.js` treats a missing parent as absent), not unreachable.
 - Real touch hardware. The button is a plain `onClick`.
+
+### Where ADD leaves you: SRCH on the new MM, or stay inside the MM (2026-10-07)
+
+The user asked that adding an MM on `sir-ks02.html` land on the new MM in SRCH, except when
+`+MM` was pressed from inside an MM, where it should stay in that MM. Before this change, ADD
+stayed on SRCH when started there and otherwise jumped to the KS03 canvas centred on the new MM.
+Either way it closed any open MM detail.
+
+The rule is decided at ADD from `currentMM`, the same value `openAddMM` reads for the parent:
+- **inside an MM**, nothing navigates. The view, `selectedMM` and the detail's own tab are left
+  alone;
+- **anywhere else**, `goToView("srch")`, the function the header tabs use, then
+  `setSrchFocusId(id)`, which reuses SRCH's existing scroll-into-view and 1.5s highlight.
+
+It follows where the user **is**, not the parent picked in the form. `focusMM`, the KS03
+canvas's focus state, had this line as its only setter and was removed with its prop.
+`MultiverseCanvas` is untouched; its `if(!focusId)return;` covers the absent prop. Nothing
+stored changed shape, and no migration, importer, exporter or sync path is involved.
+
+**Hooks**, landed before any baseline, in every tree: `data-srch-view` on `SrchView`,
+`data-srch-mm` on each SRCH row, and `data-srch-focused="true"` on the focused row only.
+
+**Cases**: `KS02 +MM outside an MM opens SRCH on the new MM` (from `#ks02`) and
+`KS02 +MM inside an MM stays in that MM` (from `?mm=10#ks03`). Both wait for the new MM to
+land in `track_db`, never for the view. The SRCH highlight clears itself after 1.5s, so the
+outside case records focused rows with a `MutationObserver` installed before ADD, rather than
+polling a state that can expire under load.
+
+**Doctored baselines**, one swap per scratch root, one at a time, using the same harness as the
+2026-10-05 `+MM` entry:
+- The repo is symlinked except dot-entries; `tests/` and `sir-ks02.html` are real copies, for
+  CONTROL too.
+- The builder refuses a swap that matches other than exactly once, or a doctored page that is
+  byte-identical to the repo's.
+- A task-owned `--require` preload declares only the matching children, so the plan count is
+  what ran: `1..4` for `^KS02 \+MM `.
+- The runner prints the root it serves and the served page's md5.
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL (before and after) | none | nothing — 4/4 |
+| A-pre-feature | the old line, minus `setFocusMM` (that state is gone; it never affected the view) | both new cases: outside on `SRCH is open after ADD`, inside on `the user is still inside MM 10 after ADD` |
+| B-no-stay | always `goToView("srch")` | the inside case **alone**, on `the user is still inside MM 10 after ADD` |
+| C-no-SRCH | outside goes to `goToView("ks03")` | the outside case **alone**, on `SRCH is open after ADD` |
+| D-no-focus | outside opens SRCH but focuses nothing | the outside case **alone**, on `the new MM is the row SRCH focused` |
+
+- B and C fail disjoint single cases, so each case guards exactly one half of the rule.
+- D exists because in A and C the outside case dies on its first assertion, so the
+  focus check had never been seen failing. D shows the observer's record is not vacuously true.
+- The two pre-existing `+MM` cases passed in every tree.
+- Each run took 13–14s at load 2.5–4.5, and the journal shows no lid close or suspend between
+  21:11 and 21:14.
+
+**Full run: `node tests/run.js`, all 24 suites passed, browser 322/322.**
+- The plan count was `1..322`: the 320 of `3289d84` plus the two new cases. Exit 0 was read
+  from the log.
+- It ran from 21:14:04 to 21:37:12: 1,388s of wall time against 1,385s measured. The journal
+  shows no lid close or suspend in that window.
+- `md5sum` of `scripts/`, `styles/`, `tests/` and the five pages was identical at both ends, and
+  HEAD was unchanged. Only README and this log were edited during the run, and the suite reads
+  neither.
+
+**Not covered:**
+- Two consequences of reading `currentMM` hold by construction and have no case of their own:
+  - staying in the MM even after the user changes the parent in the form;
+  - landing on SRCH when another tab deletes the MM while the form is open.
+- On SRCH, a new MM placed under a parent the user had already collapsed stays hidden, so it
+  is not scrolled to. Collapse is `SrchMMNode`'s own local state, and this change does not
+  touch it.
+- Real touch hardware. ADD is a plain `onClick`.
