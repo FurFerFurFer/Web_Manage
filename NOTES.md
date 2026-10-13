@@ -1,6 +1,6 @@
 # Track Ideas and Unfinished Work
 
-Audit date: 2026-08-10
+Audit date: 2026-10-09
 
 ## Purpose
 
@@ -36,11 +36,8 @@ moving the code that reads and writes it.
 
 ## Proposal 1: Remaining Import Work
 
-The whole-slot importer now validates the canonical top-level envelope and recursive goal
-tree shapes through `schema.js`, refuses those malformed inputs without writing, fills
-legacy gaps, and preserves unknown keys. Other nested domains are not yet universally
-shape-validated. See README, "Per-slot export and import". Two import-policy pieces are
-still open.
+What the importer does today is in README, "Per-slot export and import". Nested domains
+outside the goal tree are not yet shape-validated, and two import-policy pieces are open.
 
 ### Nested ID remapping
 
@@ -127,14 +124,8 @@ downloaded backup.
 
 ### Remaining validation invariants
 
-`validateDatabase` already checks: the root is an object, `slots` is an array, every slot
-has an unambiguous id, list fields are arrays of objects, map fields are plain objects,
-goal `children`, `toLearn`, `mmTargets` and `milestones` have safe shapes recursively,
-`createdAt` and calendar-item dates are real `YYYY-MM-DD` days, and an optional day-note
-`time` is absent or a valid `HH:MM`. Missing or duplicate slot ids and structurally unsafe
-goal trees are fatal; a dangling `activeSlotId` and semantic date/time flaws are warnings.
-
-Still to add:
+What `validateDatabase` checks today is in README, "Canonical slot schema", and which
+findings are fatal is in "Reading the stored database". Still to add:
 
 - Goal and task IDs are unique within their intended scope.
 - Linked task and mind-map references resolve or are intentionally marked missing.
@@ -618,11 +609,10 @@ beyond calendar aggregation and the currently covered browser regressions.
 
 ### Interaction matrix still needed
 
-- Mouse and touch drag. The Documentations sidebar tree and the Progress Task
-  Priority matrix are now covered by synthetic-TouchEvent cases; the Progress
-  goal tree, the KS02 and True Storage trees and both canvases are still
-  mouse-only in the product as well as untested, and are the obvious next
-  candidates for the same parallel touch path.
+- Mouse and touch drag. The Progress goal tree and the KS02 and True Storage trees
+  are mouse-only in the product as well as untested, and are the obvious next
+  candidates for a parallel touch path. Both canvases already drag nodes, pan and
+  pinch by touch, but no case covers it.
 - Near-edge auto-scroll — implemented for the Documentations sidebar drag and
   the Task Priority quadrant lists, and in both places it rests on code reading
   rather than on the suite or on a hand check.
@@ -1000,10 +990,8 @@ commit: the five banners, `#nw-btn` / `#nw-panel`, `#fb-overlay`, `.theme-toggle
 also precisely the change whose only observable effect is on notched hardware, which this
 environment can never verify — so it wants a real device in hand, not a test.
 
-**Per-page phone polish beyond the shell.** Done: the bar, the shell reservation, the
-Schedule's DAY default and its wrapped control row, all three pane switchers (goal detail,
-Milestones, Schedule day mode), the Documentations drawer, and the row arm model. Not yet
-looked at on a phone in any depth: the KS03 and True Storage pan/zoom canvases (they handle
+**Per-page phone polish beyond the shell.** Not yet looked at on a phone in any depth: the
+KS03 and True Storage pan/zoom canvases (they handle
 touch already, but nothing has measured whether a node is reachable at 390px), the MG levels
 accordion, the Kolb editor, and the several `w-[528px]`-class popups in `progress.html`
 that carry no `max-w-[…vw]` cap the way the Documentations modals do.
@@ -1016,6 +1004,36 @@ surface costs a tap, and a control that already has a permanent target does not 
 One smaller thing, found while measuring and left alone deliberately: the `.ks02-page`
 header measures ~57px at ≤720px, not the 52px `h-screen-nav` subtracts
 (`padding-block: 0.375rem` around a `min-height: 2.75rem` button). It predates this work.
+
+## Proposal 17: Make the Knowledge Record Follow the Declarative/Procedural Model
+
+Decided with the user on 2026-10-08. The reasoning is in [docs/CONCEPTS.md](docs/CONCEPTS.md).
+Items 1–3 are built: a Procedural MM has no SIR (README, "Spaced Interval Review"), a new Kolb
+sends it back to S1 (README, "Kolb learning records"), and it is judged by its MG level alone
+(README, "Goals, tasks, and milestones"). What is left is naming and level criteria, which
+the user put off on 2026-10-13 ("later") — do not start either until they bring them up.
+
+### 4. Names still to choose
+
+- The **KS02** tab (the encoding wheel: MMs grouped by phase).
+- The two screens both called **KS03**: the panel inside an MM (phase, SIR, connections,
+  links, comments) and the top tab "MIND MAP STORAGE" (Multiverse and Source Dump). KS meant
+  "Knowledge System". Candidates so far: CORE for the panel, ATLAS for the tab.
+- A name for each phase S1–S4.
+
+### 5. Levels with checkable criteria
+
+Waiting on the user's level descriptions. The aim is to describe each level by things that
+can be checked ("did it without the guide", "three clean runs in a row") rather than judged
+by feel, because rating yourself is least reliable at the lowest and highest levels of the
+four stages of competence.
+
+### 6. One arrow, two meanings
+
+Parent → child means either "part of" or "learn before" (docs/CONCEPTS.md). Features that pass
+things along the arrow assume the first: an activated Source Dump shares sources with
+ancestors **and** descendants. Nothing to change yet. Revisit if a feature needs to tell the
+two apart — for example with an optional kind on the link.
 
 ## Track World: Computer Feasibility
 
@@ -1061,12 +1079,12 @@ These are the edges it leaves open:
   numerically — `repairTransferredParentSCDumps` already does, and deliberately skips strings —
   it has to decide what a string id means to it.
 
-### Notes: what Date notes and side by side do not cover yet
+### Notes: what the Journal and side by side do not cover yet
 
 The two kinds of note, the full-screen side-by-side view and Send work and are documented
 in README. These are the edges they leave open:
 
-- **Date notes are not on the app's calendars.** The notes widget's own pop-up fills each
+- **Journal days are not on the app's calendars.** The notes widget's own pop-up fills each
   written day with its tag colour, but the Home calendar's "Floating note" dots still come
   from the Sorted notes' `createdAt`. Drawing a Date note on its own day there is a natural
   next step, and its tag colour is the natural fill. It belongs in `calendar-core.js`,
@@ -1077,7 +1095,7 @@ in README. These are the edges they leave open:
   button beside the lock note would save a step on a phone. It would write nothing, so
   it needs no confirmation. It does need a decision on what it says when the clipboard
   API is refused, which happens outside a secure context.
-- **The Date tab's list has no tag filter.** The picker's filter matches tag words, and
+- **The Journal's list has no tag filter.** The picker's filter matches tag words, and
   the calendar shows every tag at a glance. "Every unclear day" as a list has no home yet.
 - **The side-by-side view is forgotten on navigation or reload.** The open panes and their
   sizes live in memory only. Remembering them would be a per-device view preference, in
@@ -1099,15 +1117,14 @@ in README. These are the edges they leave open:
 The feature works and is documented in README. These are the edges it does not cover:
 
 - **Home shows no quest progress.** A leaf draws a tick only when `completed` is literally
-  true; there is no `n/m` counter beside a parent as there is in the Progress tab. That is
-  deliberate — `countProgress` lives in `progress.html`, and copying it into `index.html`
-  would create exactly the twin `quest-core.js` exists to prevent. Fixing it properly means
-  moving the counter into a shared module, which is a bigger change than the readout is worth.
+  true; there is no `n/m` counter beside a parent as there is in the Progress tab. The old
+  blocker is gone: the counter now lives in the shared `milestone-core.js`
+  (`TrackMilestone.countLeaves`, which `countProgress` delegates to), and Home already loads
+  it. What is left is calling it from Home's quest readout — never a copy of it in
+  `index.html`.
 - **Quests cannot be starred, reordered or removed from Home.** Home is read-only for quests
   because it does not own `goals`. Giving it a control means adding `goals` to its write set
   and to the ownership table.
-- **Quest order is tree order.** There is no user-chosen ordering, and no drag to reorder the
-  quest list independently of the goal tree.
 - **There is no "clear all quests".** If one is ever added it *is* destructive — unlike
   un-questing a single row, which writes `false` and deletes nothing — so it must ask first.
 - **The starred rollup cannot be expanded.** A starred parent shows one row; there is no
@@ -1156,6 +1173,59 @@ AGENTS.md states the rule without exception: *every traversal of a parent/child 
 carries a cycle guard*. This is the one known place that does not. The fix is a per-path
 `seen` copied per branch, matching `TrackTrueStorage.buildTree`'s contract — a repeated node
 is drawn once and its branch ends there — plus a cyclic-mm case seen timing out first.
+
+### Knowledge Record: found while building "a Procedural MM has no SIR"
+
+Found while building Proposal 17 item 1 and **not** changed there — each is outside that scope:
+
+- **Moving a Declarative MM out of SIR deletes its sessions without asking.** `+LIN`'s
+  `Revert → S4` (or lower) from SIR or FINISHED drops every session of that MM, and nothing
+  says so; AGENTS.md wants every delete confirmed. The three-step `+LIN` flow is a deliberate
+  act, but its last step never mentions the sessions. The Procedural case now asks; this one
+  predates it. Asking here would reuse the same prompt in `saveLinSession`.
+- **An Anchor keeps its SIR sessions, and they are still drawn.** Switching an MM to Anchor
+  stashes its phase and sets `ksStage: null`, but leaves its sessions in `sessions`, so they
+  stay on every calendar for an MM that has no phases (docs/CONCEPTS.md). `liveSessions` is
+  the one place to decide that, if it should change.
+- **`onDupeKolb` is passed into the MM panel and never used.** The only `dupe` button is on
+  the KOLB tab and duplicates onto the same MM.
+
+### Overdue milestones: found along the way, and left out
+
+Found while building the overdue-milestone warnings (README "Milestone accountability") and
+**not** fixed there — each is outside that scope:
+
+- **`computeMMAutoComplete` probably never finds a mind map.** It loops over
+  `Object.entries(node.mmTargets)`, whose keys are strings, and looks each up with
+  `m.id === mmId` against the NUMERIC ids `nid()` mints. The goal ring's "met" count in
+  `GoalNode` does the same. If so, a countable leaf with mind-map targets never auto-completes
+  and the header's done count under-reports. Found by reading the code, **not reproduced**. The
+  fix is to iterate `toLearn` as `milestone-core.js` does, with a numeric-id case seen failing
+  first. Both sites now read their targets through `targetOf` (Proposal 17, item 3), but since
+  they never find the mind map that read is inert there, and no browser case covers either —
+  fixing the id lookup is what will switch the Procedural rule on at these two sites.
+- **A link cycle can still white-screen Progress.** The "link existing task" picker offers a
+  task's own ancestors. `countProgress` is now guarded (it delegates to
+  `TrackMilestone.countLeaves`), but `getLeaves`, `isComplete` following a link to a link, the
+  `GoalNode` link render and `renderMilestoneTask` are not — so `buildToLearnTree` above is not
+  the only unguarded walk. Repro: link a task under one of its own descendants. Guard each
+  walker, and consider refusing ancestors in the picker as well; stored or synced data can still
+  carry a cycle, so the picker alone is not a fix.
+- **The Milestones tab lists a linked owner twice.** A sub-goal linked under a second goal is
+  reached from both, so its rows, their React keys and the panel's totals are duplicated.
+  `TrackMilestone.report` counts the owner once, so the duplicate rows at least agree.
+- **Picker modals are a fixed 528px.** On a 390px phone the add-task and MM pickers — the new
+  OVERDUE rows included — are wider than the screen. Pre-existing and not measured here.
+- **Other date inputs still commit on every change.** The milestone fields now commit only a
+  complete in-range day; the deadline, day-note and part date inputs still write whatever
+  Chrome's year segment passes through. Harmless where nothing is derived from the
+  intermediate values, but it is the same shape.
+- **No midnight re-render on the Milestones tab or the goal tree.** Home redraws when its tab is
+  shown again and the Schedule's minute timer re-renders it, but a Milestones tab left open past
+  midnight keeps yesterday's lateness until something else renders it.
+- **Declined by the user on 2026-10-08, not forgotten:** a Home alert card, a count on the
+  MILESTONES tab, and an early "behind pace" warning before the end date. Offer them again only
+  if asked.
 
 ### Finish routing the canvas pages' hard-coded UI accents through the theme
 

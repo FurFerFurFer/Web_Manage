@@ -10,6 +10,7 @@
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
   <script src="scripts/quest-core.js?v=2"></script>
+  <script src="scripts/milestone-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -17,7 +18,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=17">
+  <link rel="stylesheet" href="styles/styles.css?v=18">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -631,21 +632,19 @@
       return progress.done >= progress.total;
     }
 
-    function countProgress(node, resolveLink, checkSchedDone = false) {
-      if (!node) return { done: 0, total: 0 };
-      if (node.isLink) {
-        const orig = resolveLink && resolveLink(node.linkedTaskId);
-        if (!orig) return { done: 0, total: 0 };
-        return countProgress(orig, resolveLink, checkSchedDone);
-      }
-      if (isMilestoneNode(node) && (node.children || []).length === 0)
-        return { done: 0, total: 0 };
-      if ((node.children || []).length === 0)
-        return { done: node.completed ? 1 : 0, total: 1 };
-      return (node.children || []).reduce((acc, c) => {
-        const p = countProgress(c, resolveLink, checkSchedDone);
-        return { done: acc.done + p.done, total: acc.total + p.total };
-      }, { done: 0, total: 0 });
+    /* One-line delegates to milestone-core.js (TrackMilestone), which is the one
+       definition of milestone membership, leaf counting and mind-map targets.
+       The Milestones tab and the calendar tails on Home and Documentations must
+       not be able to disagree about what "done" means, and Home cannot read
+       this page — so the rules live in the shared file and these names stay
+       only so their many call sites here do not move. Do not re-inline them:
+       a second spelling is how the deadline caution predicate came to be wrong
+       at one of three surfaces. countLeaves also carries a per-path cycle
+       guard, which the version it replaced did not (a link to an ancestor used
+       to recurse until the stack blew). The third argument this used to take
+       was never read. */
+    function countProgress(node, resolveLink) {
+      return TrackMilestone.countLeaves(node, resolveLink);
     }
 
     function toggleLeaf(goals, id) {
@@ -898,63 +897,52 @@
       return next;
     }
 
-    function updateMilestonePeriod(goals, ownerId, milestoneId, startDate, endDate) {
+    /* The one writer of a milestone's dates. `slip` — {today, mms, sirDone,
+       baseline} — is what records a late milestone's moved end in `slips`
+       (TrackMilestone.withSlip, the one writer of that key). The baseline is
+       the state the edit STARTED from: a focused date input captures it on
+       focus, because a typed date passes through other days on the way and
+       must not move it; anything else — the clear button — is judged against
+       this tree as it stands before the write. `today` arrives from the
+       caller, so the updater stays a pure function of `goals` and what it was
+       handed. */
+    function updateMilestonePeriod(goals, ownerId, milestoneId, startDate, endDate, slip) {
       const period = normalizeMilestonePeriod(startDate, endDate);
-      return goals.map(g => {
-        if (g.id === ownerId) {
-          return {
-            ...g,
-            milestones: (g.milestones || []).map(m =>
-              m.id === milestoneId ? withMilestonePeriod(m, period.startDate, period.endDate) : m
-            ),
-          };
-        }
-        return { ...g, children: updateMilestonePeriod(g.children || [], ownerId, milestoneId, period.startDate, period.endDate) };
-      });
+      let base = slip ? slip.baseline : null;
+      if (slip && !base) {
+        const owner = findNode(goals, ownerId);
+        const def = owner && (owner.milestones || []).find(m => m && m.id === milestoneId);
+        base = def
+          ? TrackMilestone.baselineOf(TrackMilestone.statusOf(owner, def, goals, slip.mms, slip.sirDone, slip.today))
+          : null;
+      }
+      function walk(nodes) {
+        return nodes.map(g => {
+          if (g.id === ownerId) {
+            return {
+              ...g,
+              milestones: (g.milestones || []).map(m => {
+                if (m.id !== milestoneId) return m;
+                const next = withMilestonePeriod(m, period.startDate, period.endDate);
+                return slip ? TrackMilestone.withSlip(next, base, slip.today) : next;
+              }),
+            };
+          }
+          return { ...g, children: walk(g.children || []) };
+        });
+      }
+      return walk(goals);
     }
 
+    // Delegates to milestone-core.js — see countProgress above. blocksOf
+    // collects a block reached both directly and through a link ONCE; the walk
+    // it replaced collected it twice and so counted its tasks twice.
     function collectMilestoneOwners(node, allGoals) {
-      const out = [];
-      const seen = new Set();
-      function walk(n) {
-        if (!n) return;
-        if (n.isLink) {
-          const orig = allGoals && findNode(allGoals, n.linkedTaskId);
-          if (orig) walk(orig);
-          return;
-        }
-        const subGoals = (n.children || []).filter(c => c.isSubGoal);
-        if (subGoals.length === 0) {
-          if (!seen.has(n.id)) {
-            seen.add(n.id);
-            out.push(n);
-          }
-          return;
-        }
-        subGoals.forEach(walk);
-      }
-      walk(node);
-      return out;
+      return TrackMilestone.ownersOf(node, allGoals);
     }
 
     function collectMilestoneBlocks(owner, milestoneId, allGoals) {
-      const out = [];
-      const seen = new Set();
-      function walk(n) {
-        if (!n) return;
-        if (n.isLink) {
-          const orig = allGoals && findNode(allGoals, n.linkedTaskId);
-          if (orig && !seen.has(orig.id)) {
-            seen.add(orig.id);
-            walk(orig);
-          }
-          return;
-        }
-        if (isMilestoneNode(n) && n.milestoneId === milestoneId) out.push(n);
-        (n.children || []).forEach(walk);
-      }
-      (owner.children || []).forEach(walk);
-      return out;
+      return TrackMilestone.blocksOf(owner, milestoneId, allGoals);
     }
 
     // Selection/ghost records match a rendered block by id, plus date for routines
@@ -1441,6 +1429,10 @@
       empty:     'var(--color-border)',
       muted:     'var(--color-text-muted)',
       onSurface: 'var(--color-text)',
+      // a late milestone (milestone-core.js). Grit's danger value is what
+      // styles.css already remaps .text-red-* to, so the two cannot disagree.
+      danger:     'var(--color-danger)',
+      dangerSoft: 'var(--color-danger-soft)',
     };
     const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     const MILESTONE_CAL_START = "2026-01-01";
@@ -1449,10 +1441,9 @@
     const getFirstDay = (y,m) => new Date(y,m,1).getDay();
     const dStr        = (y,m,d) => `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
 
+    // Delegate to milestone-core.js — see countProgress.
     function buildSirDoneMap(sessions) {
-      const map = {};
-      (sessions || []).forEach(s => { if (s.done) map[s.mmId] = (map[s.mmId] || 0) + 1; });
-      return map;
+      return TrackMilestone.sirDoneMap(sessions);
     }
 
     function buildMMTree(mms) {
@@ -1541,50 +1532,63 @@
 
     // ── MM goal-target helpers ────────────────────────────────────────────────
 
-    const STAGE_ORDER = { 1:1, 2:2, 3:3, 4:4, sir:5, sir1:6, sir2:7, sir3:8, sir4:9, sir5:10, finished:11 };
+    // The stage table and the target test live in milestone-core.js, which
+    // decides whether a to-learn waypoint is reached for the overdue rule —
+    // see countProgress. STAGE_ORDER is the module's frozen table.
+    const STAGE_ORDER = TrackMilestone.STAGE_ORDER;
     const STAGE_COLORS_SIR = ["#7c3aed","#2563eb","#0891b2","#0d9488","#059669"];
 
     // target = { stage?: stageKey, level?: number, milestones?: [{milestoneId, stage, level}] }
+    // A target carrying waypoints is judged by its LAST one; pass ONE waypoint
+    // to judge that milestone alone.
     function isMMTargetMet(mm, target, sirDoneMap) {
-      if (!target) return true;
-      const eff = (target.milestones?.length > 0)
-        ? target.milestones[target.milestones.length - 1]
-        : target;
-      let effOrder;
-      if (mm.ksStage === 'sir') {
-        const done = (sirDoneMap || {})[mm.id] || 0;
-        effOrder = 5 + done;
-      } else {
-        effOrder = STAGE_ORDER[mm.ksStage] || 0;
-      }
-      const stageMet = !eff.stage || effOrder >= (STAGE_ORDER[eff.stage] || 0);
-      const levelMet = !eff.level || (mm.rating || 0) >= Number(eff.level);
-      return stageMet && levelMet;
+      return TrackMilestone.targetMet(mm, target, sirDoneMap);
+    }
+
+    // A Procedural MM has no SIR (docs/CONCEPTS.md). The phase an MM is IN is
+    // milestone-core.js's stageOf — a Procedural MM stored in SIR or FINISHED
+    // reads as S4 — and the sessions this page draws are its liveSessions,
+    // applied once where `sessions` enters the page. Draw a phase through this,
+    // never from `mm.ksStage`. Nothing stored changes, and this page never
+    // writes `sessions`.
+    function stageOf(mm) {
+      return TrackMilestone.stageOf(mm);
+    }
+
+    // A Procedural MM's target is its MG level alone, and a phase-only target is
+    // NO target (milestone-core.js's targetFor). Every "does this MM have a
+    // target?" read goes through this. Never pass its result to a writer: the
+    // target writers re-read the raw `mmTargets`, which is what keeps a stored
+    // phase target, unread, for the day the MM is switched back to Declarative.
+    function targetOf(mm, target) {
+      return TrackMilestone.targetFor(mm, target);
     }
 
     // Returns null (no active targets), true (all met), or false (some unmet)
     function computeMMAutoComplete(goal, mms, sirDoneMap) {
-      const entries = Object.entries(goal.mmTargets || {});
+      const entries = Object.entries(goal.mmTargets || {}).map(([mmId, t]) => {
+        const mm = mms.find(m => m.id === mmId);
+        return [mm, targetOf(mm, t)];
+      });
       const active = entries.filter(([, t]) => t && (t.stage || t.level || (t.milestones || []).length > 0));
       if (active.length === 0) return null;
-      return active.every(([mmId, target]) => {
-        const mm = mms.find(m => m.id === mmId);
-        return mm && isMMTargetMet(mm, target, sirDoneMap);
-      });
+      return active.every(([mm, target]) => mm && isMMTargetMet(mm, target, sirDoneMap));
     }
 
     // Returns 0.0–1.0 for a single MM's fractional progress toward its target
     function mmProgressFraction(mm, target, sirDoneMap) {
       if (!mm || !target) return 0;
+      // Callers pass a target already read through targetOf — they need it for
+      // their own "has a target?" gate — so a Procedural MM's phase is gone.
       const eff = (target.milestones?.length > 0)
         ? target.milestones[target.milestones.length - 1]
         : target;
       let stageFrac = null, levelFrac = null;
       if (eff.stage) {
         const targetOrder = STAGE_ORDER[eff.stage] || 1;
-        const effOrder = mm.ksStage === 'sir'
+        const effOrder = stageOf(mm) === 'sir'
           ? 5 + ((sirDoneMap || {})[mm.id] || 0)
-          : (STAGE_ORDER[mm.ksStage] || 0);
+          : (STAGE_ORDER[stageOf(mm)] || 0);
         stageFrac = Math.min(1, effOrder / targetOrder);
       }
       if (eff.level) {
@@ -1604,13 +1608,19 @@
     // ── MindMapsBadge ─────────────────────────────────────────────────────────
 
     function MindMapsBadge({ mm, sirDoneMap }) {
-      const sirDone = mm.ksStage === 'sir' ? ((sirDoneMap || {})[mm.id] || 0) : 0;
+      const stage = stageOf(mm);
+      const sirDone = stage === 'sir' ? ((sirDoneMap || {})[mm.id] || 0) : 0;
       const stageLabel =
-        mm.ksStage === 'sir'       ? (sirDone >= 5 ? 'FIN' : `SIR T${sirDone+1}`)
-        : mm.ksStage === 'finished' ? 'FIN'
-        : mm.ksStage               ? `S${mm.ksStage}`
+        stage === 'sir'       ? (sirDone >= 5 ? 'FIN' : `SIR T${sirDone+1}`)
+        : stage === 'finished' ? 'FIN'
+        : stage               ? `S${stage}`
         : null;
-      const typeLabel = mm.type === 'anchor' ? 'Anchor' : `T${mm.type}`;
+      // Stored types stay 'anchor' / '1' / '2'; they were shown as T1 / T2, which
+      // collided with the SIR review numbers right beside them.
+      const typeLabel = mm.type === 'anchor' ? 'Anchor'
+        : String(mm.type) === '1' ? 'Declarative'
+        : String(mm.type) === '2' ? 'Procedural'
+        : String(mm.type ?? '');
       const color = mm.color || '#6366f1';
       return (
         <span className="inline-flex items-center gap-1 flex-shrink-0 flex-wrap">
@@ -1620,9 +1630,9 @@
           </span>
           <span className="text-[9px] px-1 py-0.5 rounded bg-gray-800 text-gray-500">{typeLabel}</span>
           {stageLabel && (
-            <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-900/50 text-indigo-300">{stageLabel}</span>
+            <span data-mm-badge-stage={mm.id} className="text-[9px] px-1 py-0.5 rounded bg-indigo-900/50 text-indigo-300">{stageLabel}</span>
           )}
-          {mm.ksStage === 'sir' && (
+          {stage === 'sir' && (
             <span className="inline-flex gap-0.5 items-center">
               {[0,1,2,3,4].map(i => (
                 <span key={i} style={{
@@ -1648,7 +1658,7 @@
     function MMTreeNode({ node, depth, sirDoneMap }) {
       const [collapsed, setCollapsed] = useState(false);
       const { mm, children } = node;
-      const sirDone = mm.ksStage === 'sir' ? ((sirDoneMap || {})[mm.id] || 0) : 0;
+      const sirDone = stageOf(mm) === 'sir' ? ((sirDoneMap || {})[mm.id] || 0) : 0;
       return (
         <div>
           <div style={{ paddingLeft: depth * 20 }}
@@ -1663,8 +1673,8 @@
               }
               <MindMapsBadge mm={mm} sirDoneMap={sirDoneMap} />
             </div>
-            {mm.ksStage === 'sir' && (
-              <div style={{ paddingLeft: 20 }} className="flex items-center gap-1 pb-1">
+            {stageOf(mm) === 'sir' && (
+              <div data-mm-tree-sir={mm.id} style={{ paddingLeft: 20 }} className="flex items-center gap-1 pb-1">
                 {SIR_INTERVALS.map((iv, i) => {
                   const done = i < sirDone;
                   const isNext = i === sirDone;
@@ -1699,7 +1709,7 @@
 
     function MindMapsPanel() {
       const mms = _readMMs();
-      const sessions = _readSessions();
+      const sessions = TrackMilestone.liveSessions(_readSessions(), mms);
       const sirDoneMap = buildSirDoneMap(sessions);
       const tree = buildMMTree(mms);
       if (!mms.length) return (
@@ -1707,14 +1717,14 @@
           <div className="text-3xl mb-3">◎</div>
           <div className="text-sm">No Mind Maps in this slot.</div>
           <div className="text-xs mt-1 text-gray-500">
-            Create MMs in <a href="sir-ks02.html" className="text-indigo-400 hover:underline">KS02 Tracker</a>.
+            Create MMs in <a href="sir-ks02.html" className="text-indigo-400 hover:underline">Knowledge Record</a>.
           </div>
         </div>
       );
       return (
         <div>
           <div className="text-gray-700 tracking-widest mb-4 text-xs">
-            {mms.length} MIND MAPS — read only · manage in KS02 Tracker
+            {mms.length} MIND MAPS — read only · manage in Knowledge Record
           </div>
           <div className="rounded-xl border border-gray-800 bg-gray-900/70 px-3 py-2">
             {tree.map(node => <MMTreeNode key={node.mm.id} node={node} depth={0} sirDoneMap={sirDoneMap} />)}
@@ -1998,7 +2008,7 @@
       function tickPct(val) { return (val / goalVal) * 100; }
 
       return (
-        <div>
+        <div data-learn-bar={label}>
           <div className="text-[10px] text-gray-600 tracking-widest mb-1">{label}</div>
           <div className="relative" style={{ paddingTop: 32 }}>
 
@@ -2164,19 +2174,20 @@
       }
 
       const milestoneEntries = sortMsBySubgoalOrder(tgt.milestones || []);
-      const effOrder = mm.ksStage === 'sir' ? 5 + ((sirDoneMap || {})[mm.id] || 0) : (STAGE_ORDER[mm.ksStage] || 0);
-      const firstUnmetEntryIdx = milestoneEntries.findIndex(e => {
-        const stageMet = !e.stage || effOrder >= (STAGE_ORDER[e.stage] || 0);
-        const levelMet = !e.level || (mm.rating || 0) >= Number(e.level);
-        return !(stageMet && levelMet);
-      });
-      const hasTarget = !!(tgt.stage || tgt.level || milestoneEntries.length > 0);
+      // One waypoint judged alone — the same test milestone-core.js applies
+      // when it counts a milestone's to-learn, so these chips and the overdue
+      // count cannot disagree.
+      const firstUnmetEntryIdx = milestoneEntries.findIndex(e => !isMMTargetMet(mm, e, sirDoneMap));
+      // Read through targetOf; `tgt` itself stays raw, because the writers
+      // below spread it and must keep a Procedural MM's phase target stored.
+      const readTgt = targetOf(mm, tgt) || {};
+      const hasTarget = !!(readTgt.stage || readTgt.level || (readTgt.milestones || []).length > 0);
       const met = hasTarget && isMMTargetMet(mm, tgt, sirDoneMap);
       const indicator = !hasTarget
-        ? <span className="text-gray-700 text-[10px]">·</span>
+        ? <span data-learn-indicator="none" className="text-gray-700 text-[10px]">·</span>
         : met
-          ? <span className="text-emerald-400 text-[10px] font-bold">✓</span>
-          : <span className="text-amber-400 text-[10px]">○</span>;
+          ? <span data-learn-indicator="met" className="text-emerald-400 text-[10px] font-bold">✓</span>
+          : <span data-learn-indicator="open" className="text-amber-400 text-[10px]">○</span>;
 
       const invalidIdxs = new Set(
         milestoneEntries.map((e, i) => {
@@ -2222,7 +2233,8 @@
         const prevStageOrder = STAGE_ORDER[prevEntry?.stage] || 0;
         const nextStageOrder = STAGE_ORDER[nextEntry?.stage] || STAGE_ORDER[tgt.stage] || 1;
         let stage;
-        if (nextStageOrder > prevStageOrder) {
+        // A Procedural MM's waypoint is a level; a phase there would be unread.
+        if (!TrackMilestone.isProcedural(mm) && nextStageOrder > prevStageOrder) {
           const targetOrder = nextStageOrder > prevStageOrder + 1 ? nextStageOrder - 1 : nextStageOrder;
           stage = ORDER_TO_STAGE_MAP[targetOrder];
         }
@@ -2314,14 +2326,15 @@
       ];
 
       return (
-        <div style={{ paddingLeft: depth * 14 }}>
+        <div data-learn-row={mmId} style={{ paddingLeft: depth * 14 }}>
           <div className="flex flex-col gap-1">
             <div
               className="flex items-center gap-2 flex-wrap rounded transition-all duration-150"
               style={hovDelete ? { boxShadow: '0 0 10px 2px rgba(239,68,68,0.35)', background: 'rgba(127,29,29,0.18)' } : {}}>
               <MindMapsBadge mm={mm} sirDoneMap={sirDoneMap} />
-              {mm.type !== 'anchor' && (
-                <select
+              {/* A Procedural MM is judged by its level alone: no phase target. */}
+              {mm.type !== 'anchor' && !TrackMilestone.isProcedural(mm) && (
+                <select data-learn-stage
                   value={lastEntry ? (lastEntry.stage || '') : (tgt.stage || '')}
                   onChange={e => lastEntry
                     ? updateMilestoneEntry(lastEntry.milestoneId, 'stage', e.target.value)
@@ -2422,16 +2435,16 @@
             {hasTarget && (
               <div className="ml-10 mt-2 flex flex-col gap-4">
                 {/* KS02 interactive bar */}
-                {(lastEntry?.stage || tgt.stage) && (() => {
+                {!TrackMilestone.isProcedural(mm) && (lastEntry?.stage || tgt.stage) && (() => {
                   const SLABEL = {'1':'S1','2':'S2','3':'S3','4':'S4',sir:'SIR',sir1:'T2',sir2:'T3',sir3:'T4',sir4:'T5',sir5:'FIN'};
                   const ORDER_TO_STAGE = Object.fromEntries(
                     Object.entries(STAGE_ORDER).filter(([k]) => k !== 'finished').map(([k,v]) => [v,k])
                   );
                   const goalStage = lastEntry?.stage || tgt.stage;
                   const goalOrder = STAGE_ORDER[goalStage] || 1;
-                  const currOrder = mm.ksStage === 'sir'
+                  const currOrder = stageOf(mm) === 'sir'
                     ? 5 + ((sirDoneMap || {})[mm.id] || 0)
-                    : (STAGE_ORDER[mm.ksStage] || 0);
+                    : (STAGE_ORDER[stageOf(mm)] || 0);
                   const fillPct = Math.min(100, (currOrder / goalOrder) * 100);
                   return (
                     <MilestoneBar
@@ -2884,11 +2897,10 @@
             >
               {mmAutoComplete !== null
                 ? (() => {
-                    const targets = Object.entries(node.mmTargets || {}).filter(([,t]) => t && (t.stage || t.level));
-                    const metCount = targets.filter(([mmId, target]) => {
-                      const mm = (mms||[]).find(m => m.id === mmId);
-                      return mm && isMMTargetMet(mm, target);
-                    }).length;
+                    const targets = Object.entries(node.mmTargets || {})
+                      .map(([mmId, t]) => { const mm = (mms||[]).find(m => m.id === mmId); return [mm, targetOf(mm, t)]; })
+                      .filter(([, t]) => t && (t.stage || t.level));
+                    const metCount = targets.filter(([mm, target]) => mm && isMMTargetMet(mm, target)).length;
                     const allMet = metCount === targets.length;
                     return (
                       <div className="flex-shrink-0 flex flex-col items-center mt-0.5" title="Auto-completes when MM targets are met">
@@ -3020,7 +3032,7 @@
                   (node.toLearn || []).forEach(mmId => {
                     const mm = (mms || []).find(m => m.id === mmId);
                     if (!mm) return;
-                    const tgt = (node.mmTargets || {})[mmId] || {};
+                    const tgt = targetOf(mm, (node.mmTargets || {})[mmId]) || {};
                     if (!(tgt.stage || tgt.level)) return;
                     total++;
                     if (isMMTargetMet(mm, tgt, sirDoneMap)) done++;
@@ -3037,7 +3049,7 @@
                       </button>
                     </div>
                     {mmProg.total > 0 && (
-                      <div className="mb-2">
+                      <div className="mb-2" data-node-learn={`${mmProg.done}/${mmProg.total}`}>
                         <ProgressBar done={mmProg.done} total={mmProg.total} slim />
                       </div>
                     )}
@@ -3589,7 +3601,7 @@
         tl.forEach(mmId => {
           const mm = (mms || []).find(m => m.id === mmId);
           if (!mm) return;
-          const tgt = targets[mmId] || {};
+          const tgt = targetOf(mm, targets[mmId]) || {};
           if (!(tgt.stage || tgt.level)) return;
           total++;
           done += mmProgressFraction(mm, tgt, sirDoneMap);
@@ -3603,7 +3615,7 @@
         effectiveToLearn.forEach(mmId => {
           const mm = (mms || []).find(m => m.id === mmId);
           if (!mm) return;
-          const tgt = effectiveMmTargets[mmId] || {};
+          const tgt = targetOf(mm, effectiveMmTargets[mmId]) || {};
           if (!(tgt.stage || tgt.level)) return;
           total++;
           done += mmProgressFraction(mm, tgt, sirDoneMap);
@@ -3654,7 +3666,7 @@
                   style={{ stroke: heroColor, transition: 'stroke-dasharray 0.6s ease' }}/>
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-black tabular-nums leading-none" style={{ color: heroColor }}>{heroPct}%</span>
+                <span data-goal-hero-pct className="text-3xl font-black tabular-nums leading-none" style={{ color: heroColor }}>{heroPct}%</span>
                 <span className="text-[10px] text-gray-600 mt-0.5 font-mono">{heroProg.done}/{heroProg.total}</span>
               </div>
             </div>
@@ -3705,7 +3717,7 @@
                           <div className="flex items-center gap-3 flex-wrap">
                             <span className="text-[10px] font-mono text-gray-500 tabular-nums">{sp.done}/{sp.total} tasks</span>
                             {sgMm.total > 0 && (
-                              <span className={`text-[10px] font-mono tabular-nums ${sgMm.done >= sgMm.total ? 'text-emerald-500' : 'text-purple-400'}`}>
+                              <span data-subgoal-learn={sg.id} className={`text-[10px] font-mono tabular-nums ${sgMm.done >= sgMm.total ? 'text-emerald-500' : 'text-purple-400'}`}>
                                 {Math.round(sgMm.done * 10) / 10}/{sgMm.total} learned
                               </span>
                             )}
@@ -3754,7 +3766,7 @@
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] tracking-widest text-gray-600">TO LEARN</span>
                 {mmProg.total > 0 && (
-                  <span className="text-[10px] font-mono text-gray-600">{Math.round(mmProg.done * 10) / 10}/{mmProg.total} targets met</span>
+                  <span data-panel-learn-count className="text-[10px] font-mono text-gray-600">{Math.round(mmProg.done * 10) / 10}/{mmProg.total} targets met</span>
                 )}
               </div>
               {mmProg.total > 0 && (
@@ -3768,11 +3780,11 @@
                 {effectiveToLearn.map(mmId => {
                   const mm = (mms || []).find(m => m.id === mmId);
                   if (!mm) return null;
-                  const tgt = effectiveMmTargets[mmId] || {};
+                  const tgt = targetOf(mm, effectiveMmTargets[mmId]) || {};
                   const hasTarget = !!(tgt.stage || tgt.level);
                   const met = hasTarget && isMMTargetMet(mm, tgt, sirDoneMap);
                   return (
-                    <div key={mmId} className="flex items-center gap-2">
+                    <div key={mmId} data-panel-learn={mmId} data-state={!hasTarget ? 'none' : met ? 'met' : 'open'} className="flex items-center gap-2">
                       <MindMapsBadge mm={mm} sirDoneMap={sirDoneMap} />
                       {hasTarget && (
                         <span className={`text-[10px] ml-auto ${met ? 'text-emerald-400' : 'text-amber-400'}`}>
@@ -3795,7 +3807,37 @@
 
     // ── MilestonesPanel ───────────────────────────────────────────────────────
 
-    function MilestonesPanel({ goals, setGoals, selectedMilestone, setSelectedMilestone }) {
+    /* A milestone's start or end date. It commits only a COMPLETE day inside
+       the calendar's range, and never ''. Chrome's year segment passes through
+       0002, 0020 and 0202 on the way to 2026, and every one of those used to be
+       written — collapsing the period on each keystroke and, now that a late
+       milestone's moved end is recorded as a slip, it would write slip records
+       nothing could delete. The draft is local; blur puts back what is stored.
+       So emptying the field by keyboard no longer clears a date: the `clear`
+       button does, and it asks first. */
+    function MilestoneDateInput({ field, value, onCommit, onFocus, onBlur }) {
+      const [draft, setDraft] = useState(value || '');
+      const focused = useRef(false);
+      useEffect(() => { if (!focused.current) setDraft(value || ''); }, [value]);
+      return (
+        <input type="date"
+          data-ms-date={field}
+          min={MILESTONE_CAL_START}
+          max={MILESTONE_CAL_END}
+          value={draft}
+          onClick={e => e.stopPropagation()}
+          onFocus={() => { focused.current = true; if (onFocus) onFocus(); }}
+          onBlur={() => { focused.current = false; setDraft(value || ''); if (onBlur) onBlur(); }}
+          onChange={e => {
+            const v = e.target.value;
+            setDraft(v);
+            if (TrackSchema.isDay(v) && v >= MILESTONE_CAL_START && v <= MILESTONE_CAL_END && v !== (value || '')) onCommit(v);
+          }}
+          className="bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-[10px] text-gray-300 outline-none focus:border-cyan-500" />
+      );
+    }
+
+    function MilestonesPanel({ goals, setGoals, mms, sirDoneMap, selectedMilestone, setSelectedMilestone }) {
       const selectedRowRef = useRef(null);
       const calendarScrollRef = useRef(null);
       const todayCellRef = useRef(null);
@@ -3810,6 +3852,17 @@
       const [msPane, setMsPane] = useState('list'); // 'list' | 'calendar'
       const todayStr = toDateStr(new Date());
       const todayInMilestoneCalendar = todayStr >= MILESTONE_CAL_START && todayStr <= MILESTONE_CAL_END;
+      // The edit a focused date input started from — see updateMilestonePeriod.
+      const slipGestureRef = useRef(null);
+
+      // Where every milestone stands today, tasks AND to-learn. milestone-core.js
+      // is the one definition, shared with the calendar tails on Home and
+      // Documentations and with the Schedule's late flags, so the tab and those
+      // surfaces cannot disagree about which milestones are late.
+      const report = useMemo(
+        () => TrackMilestone.report(goals || [], mms || [], sirDoneMap || {}, todayStr),
+        [goals, mms, sirDoneMap, todayStr]
+      );
 
       const groups = useMemo(() => (goals || []).map((goal, idx) => {
         const owners = collectMilestoneOwners(goal, goals || []);
@@ -3827,20 +3880,26 @@
       const milestoneItems = useMemo(() => groups.flatMap((group, groupIdx) =>
         group.owners.flatMap((owner, ownerIdx) =>
           (owner.milestones || []).map((m, idx) => {
-            const blocks = collectMilestoneBlocks(owner, m.id, goals || []);
-            const progress = blocks.reduce((acc, b) => {
-              const p = countProgress(b, id => goals && findNode(goals, id));
-              return { done: acc.done + p.done, total: acc.total + p.total };
-            }, { done: 0, total: 0 });
+            const key = `${owner.id}|${m.id}`;
+            // The report lists each id once per owner; a second definition with
+            // the same id (hand-edited data) gets a status of its own.
+            const status = (report[key] && report[key].def === m)
+              ? report[key]
+              : TrackMilestone.statusOf(owner, m, goals || [], mms || [], sirDoneMap || {}, todayStr);
+            const blocks = status.blocks;
+            const progress = status.tasks;
             const pct = progress.total ? Math.round(progress.done / progress.total * 100) : 0;
             const full = progress.total > 0 && progress.done >= progress.total;
-            const progressColor = progress.total === 0 ? ACCENT.muted : full ? ACCENT.done : ACCENT.live;
+            const late = status.state === 'overdue';
+            const progressColor = late ? ACCENT.danger : progress.total === 0 ? ACCENT.muted : full ? ACCENT.done : ACCENT.live;
             return {
-              key: `${owner.id}|${m.id}`,
+              key,
               group,
               owner,
               milestone: m,
               idx,
+              status,
+              late,
               blocks,
               tasks: blocks.flatMap(block => block.children || []),
               progress,
@@ -3850,7 +3909,7 @@
             };
           })
         )
-      ), [groups, goals]);
+      ), [groups, goals, report, mms, sirDoneMap, todayStr]);
 
       const milestoneItemMap = useMemo(
         () => Object.fromEntries(milestoneItems.map(item => [item.key, item])),
@@ -3893,8 +3952,20 @@
         setSelectedMilestone({ ownerId, milestoneId });
       }
 
-      function setMilestonePeriod(ownerId, milestoneId, startDate, endDate) {
-        setGoals(prev => updateMilestonePeriod(prev, ownerId, milestoneId, startDate, endDate));
+      // `today` is read here, in the handler, so the updater stays a pure
+      // function of `prev` and what it captured.
+      function setMilestonePeriod(ownerId, milestoneId, startDate, endDate, baseline) {
+        const slip = { today: toDateStr(new Date()), mms: mms || [], sirDone: sirDoneMap || {}, baseline: baseline || null };
+        setGoals(prev => updateMilestonePeriod(prev, ownerId, milestoneId, startDate, endDate, slip));
+      }
+
+      // A date input's focus opens a "gesture" whose baseline is the state the
+      // edit started from; its blur closes it.
+      function beginDateGesture(key) {
+        slipGestureRef.current = { key, baseline: TrackMilestone.baselineOf(report[key]) };
+      }
+      function endDateGesture() {
+        slipGestureRef.current = null;
       }
 
       function handleDateInput(ownerId, milestone, field, value) {
@@ -3903,22 +3974,35 @@
         let endDate = field === 'end' ? value || null : milestone.endDate || null;
         if (field === 'start' && value && endDate && value > endDate) endDate = value;
         if (field === 'end' && value && startDate && value < startDate) startDate = value;
-        setMilestonePeriod(ownerId, milestone.id, startDate, endDate);
+        const gesture = slipGestureRef.current;
+        const baseline = gesture && gesture.key === `${ownerId}|${milestone.id}` ? gesture.baseline : null;
+        setMilestonePeriod(ownerId, milestone.id, startDate, endDate, baseline);
       }
 
       function clearMilestonePeriod(ownerId, milestoneId) {
-        if (!window.confirm('Clear this milestone’s start and end dates?')) return;
+        // a late milestone's confirm says that clearing is recorded as a slip;
+        // for any other it is byte-identical to what it always was
+        const notice = TrackMilestone.slipNotice(report[`${ownerId}|${milestoneId}`]);
+        if (!window.confirm('Clear this milestone’s start and end dates?' + (notice ? '\n\n' + notice : ''))) return;
         chooseMilestone(ownerId, milestoneId);
-        setMilestonePeriod(ownerId, milestoneId, null, null);
+        setMilestonePeriod(ownerId, milestoneId, null, null, null);
+      }
+
+      // A late milestone is drawn on through today (its status's drawEnd, the
+      // one definition of the drawn span); everything else through its end.
+      function drawnEnd(item) {
+        return item.late ? item.status.drawEnd : item.milestone.endDate;
+      }
+      function coversDay(item, dateStr) {
+        return !!(item && item.milestone.startDate && item.milestone.endDate &&
+          dateStr >= item.milestone.startDate && dateStr <= drawnEnd(item));
+      }
+      function isOverrunDay(item, dateStr) {
+        return item.late && dateStr > item.milestone.endDate;
       }
 
       function activeMilestonesForDate(dateStr) {
-        return milestoneItems.filter(item =>
-          item.milestone.startDate &&
-          item.milestone.endDate &&
-          dateStr >= item.milestone.startDate &&
-          dateStr <= item.milestone.endDate
-        );
+        return milestoneItems.filter(item => coversDay(item, dateStr));
       }
 
       function renderMilestoneTask(task, depth = 0, keyPrefix = '', isActive = false) {
@@ -3994,19 +4078,19 @@
                 const ds = dStr(year, month, day);
                 const isToday = ds === todayStr;
                 const active = activeMilestonesForDate(ds);
-                const selectedActive = selectedItem &&
-                  selectedItem.milestone.startDate &&
-                  selectedItem.milestone.endDate &&
-                  ds >= selectedItem.milestone.startDate &&
-                  ds <= selectedItem.milestone.endDate;
-                const tint = active[0]?.chipColor || '#080d18';
+                const selectedActive = coversDay(selectedItem, ds);
+                // the tint comes from a period on this day; a day carrying only
+                // late tails is tinted with the danger token instead
+                const inPeriod = active.filter(item => !isOverrunDay(item, ds));
+                const tint = inPeriod[0]?.chipColor || '#080d18';
                 return (
                   <div key={ds}
                     ref={isToday ? todayCellRef : null}
+                    data-ms-day={ds}
                     data-accent={isToday ? 'today-cell' : undefined}
                     className="min-h-[92px] p-1.5 flex flex-col cursor-default"
                     style={{
-                      backgroundColor: active.length ? `${tint}12` : 'var(--color-app-bg)',
+                      backgroundColor: inPeriod.length ? `${tint}12` : active.length ? ACCENT.dangerSoft : 'var(--color-app-bg)',
                       outline: selectedActive ? `1px solid ${selectedItem.chipColor}` : isToday ? `1px solid ${ACCENT.progress}` : 'none',
                       outlineOffset: '-1px',
                     }}>
@@ -4017,17 +4101,27 @@
                       {active.map(item => {
                         const chipSelected = item.key === selectedKey;
                         const displayName = `${item.milestone.title} - ${item.owner.title}`;
+                        // a day past a late milestone's end: its overrun, dashed
+                        // in the danger token, with a `!` on today
+                        const overrun = isOverrunDay(item, ds);
                         return (
                           <button key={item.key}
+                            data-ms-chip={item.key}
+                            data-ms-chip-overrun={overrun ? item.key : undefined}
                             onClick={e => { e.stopPropagation(); chooseMilestone(item.owner.id, item.milestone.id); }}
-                            title={`${item.group.goal.title} / ${displayName}`}
+                            title={`${item.group.goal.title} / ${displayName}` + (item.late ? ' · ' + TrackMilestone.label(item.status) : '')}
                             className={`w-full text-left rounded px-1 py-0.5 text-[9px] leading-tight truncate border transition-colors ${chipSelected ? 'bg-white/10' : 'hover:bg-white/5'}`}
-                            style={{
+                            style={overrun ? {
+                              borderColor: ACCENT.danger,
+                              borderStyle: 'dashed',
+                              color: ACCENT.danger,
+                              backgroundColor: ACCENT.dangerSoft,
+                            } : {
                               borderColor: `${item.chipColor}${chipSelected ? 'ff' : '88'}`,
                               color: item.chipColor,
                               backgroundColor: chipSelected ? `${item.chipColor}2b` : `${item.chipColor}17`,
                             }}>
-                            {displayName}
+                            {overrun && ds === todayStr ? '! ' : ''}{displayName}
                           </button>
                         );
                       })}
@@ -4100,16 +4194,28 @@
                                 const dateLabel = m.startDate && m.endDate
                                   ? m.startDate === m.endDate ? m.startDate : `${m.startDate} to ${m.endDate}`
                                   : 'no dates';
+                                const status = item?.status || null;
+                                const badge = TrackMilestone.label(status);
+                                const learn = status ? status.learn : { met: 0, total: 0, open: [] };
+                                const slipText = TrackMilestone.slipLabel(m, todayStr);
+                                const openNames = learn.open
+                                  .map(id => ((mms || []).find(x => x.id === id) || {}).name)
+                                  .filter(Boolean);
                                 return (
                                   <div key={m.id}
                                     ref={isSelected ? selectedRowRef : null}
+                                    data-ms-row={`${owner.id}|${m.id}`}
+                                    data-ms-state={status ? status.state : undefined}
+                                    aria-current={isSelected ? 'true' : undefined}
                                     onClick={() => chooseMilestone(owner.id, m.id)}
                                     className={`rounded border cursor-pointer transition-colors ${
                                       isSelected
                                         ? 'border-cyan-500/80 bg-cyan-950/20'
                                         : 'border-transparent bg-gray-950/30 hover:border-gray-700'
                                     }`}
-                                    style={!isSelected && isActive ? { borderColor: `${item?.chipColor}60`, backgroundColor: `${item?.chipColor}08` } : undefined}>
+                                    style={!isSelected && item?.late
+                                      ? { borderColor: ACCENT.danger, backgroundColor: ACCENT.dangerSoft }
+                                      : !isSelected && isActive ? { borderColor: `${item?.chipColor}60`, backgroundColor: `${item?.chipColor}08` } : undefined}>
                                     <div className="flex items-center gap-3 px-2 py-1.5">
                                       <span className="w-5 text-[10px] text-gray-600 tabular-nums flex-shrink-0">{(item?.idx || 0) + 1}.</span>
                                       <div className="flex-1 min-w-0">
@@ -4127,29 +4233,48 @@
                                         {item?.progress.done || 0}/{item?.progress.total || 0}
                                       </span>
                                     </div>
+                                    {/* where it stands, in the words every surface uses
+                                        (TrackMilestone.label), then its to-learn and any
+                                        slips. Wraps rather than truncates: on a phone
+                                        the overdue line is the point of the row. */}
+                                    {(badge || learn.total > 0 || slipText) && (
+                                      <div className="ml-9 mr-2 pb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+                                        {badge && (
+                                          <span data-ms-badge className={status.state === 'overdue' ? 'font-semibold tracking-wide' : ''}
+                                            style={{ color: status.state === 'overdue' ? ACCENT.danger : status.state === 'done' ? ACCENT.done : ACCENT.muted }}>
+                                            {status.state === 'done' ? '✓ done' : badge}
+                                          </span>
+                                        )}
+                                        {learn.total > 0 && (
+                                          <span data-ms-learn className="font-mono tabular-nums"
+                                            title={openNames.length ? 'Not reached yet: ' + openNames.join(', ') : 'Every to-learn waypoint is reached'}
+                                            style={{ color: learn.met >= learn.total ? ACCENT.done : item?.late ? ACCENT.danger : ACCENT.muted }}>
+                                            ◎ {learn.met}/{learn.total} to-learn
+                                          </span>
+                                        )}
+                                        {slipText && (
+                                          <span data-ms-slips style={{ color: ACCENT.danger }}>{slipText}</span>
+                                        )}
+                                      </div>
+                                    )}
                                     <div className="ml-9 mr-2 pb-2 flex flex-wrap items-center gap-2">
                                       <label className="flex items-center gap-1 text-[10px] text-gray-600">
                                         <span>start</span>
-                                        <input type="date"
-                                          min={MILESTONE_CAL_START}
-                                          max={MILESTONE_CAL_END}
-                                          value={m.startDate || ''}
-                                          onClick={e => e.stopPropagation()}
-                                          onChange={e => handleDateInput(owner.id, m, 'start', e.target.value)}
-                                          className="bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-[10px] text-gray-300 outline-none focus:border-cyan-500" />
+                                        <MilestoneDateInput field="start" value={m.startDate}
+                                          onFocus={() => beginDateGesture(`${owner.id}|${m.id}`)}
+                                          onBlur={endDateGesture}
+                                          onCommit={v => handleDateInput(owner.id, m, 'start', v)} />
                                       </label>
                                       <label className="flex items-center gap-1 text-[10px] text-gray-600">
                                         <span>end</span>
-                                        <input type="date"
-                                          min={MILESTONE_CAL_START}
-                                          max={MILESTONE_CAL_END}
-                                          value={m.endDate || ''}
-                                          onClick={e => e.stopPropagation()}
-                                          onChange={e => handleDateInput(owner.id, m, 'end', e.target.value)}
-                                          className="bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-[10px] text-gray-300 outline-none focus:border-cyan-500" />
+                                        <MilestoneDateInput field="end" value={m.endDate}
+                                          onFocus={() => beginDateGesture(`${owner.id}|${m.id}`)}
+                                          onBlur={endDateGesture}
+                                          onCommit={v => handleDateInput(owner.id, m, 'end', v)} />
                                       </label>
                                       {(m.startDate || m.endDate) && (
                                         <button
+                                          data-ms-clear
                                           onClick={e => { e.stopPropagation(); clearMilestonePeriod(owner.id, m.id); }}
                                           className="text-[10px] text-gray-600 hover:text-red-400 transition-colors">
                                           clear
@@ -5015,7 +5140,7 @@
       if (!t2mms.length) {
         return (
           <div className="text-gray-600 text-center py-20 text-xs">
-            No T2 Mind Maps yet. Add MGs in the KS02 Tracker.
+            No procedural mind maps yet. Add MGs in Knowledge Record.
           </div>
         );
       }
@@ -5023,7 +5148,7 @@
       return (
         <div className="p-6 max-w-2xl mx-auto w-full">
           <div className="flex items-center justify-between mb-4">
-            <div className="text-gray-700 tracking-widest text-xs">MG — MARGINAL GAINS · T2 MIND MAPS</div>
+            <div className="text-gray-700 tracking-widest text-xs">MG — MARGINAL GAINS · PROCEDURAL MIND MAPS</div>
             <button onClick={() => window.location.href = 'sir-ks02.html#mg'}
               className="bg-emerald-800 hover:bg-emerald-700 text-white px-3 py-1 rounded text-xs font-bold tracking-widest">SCHEDULE FOCUS →</button>
           </div>
@@ -5085,7 +5210,7 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, setSaActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, refSchedules, initialDate, initialDeadlineId }) {
+    function SchedulePanel({ goals, setGoals, saActions, setSaActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, refSchedules, initialDate, initialDeadlineId, onOpenMilestone }) {
       const START_HOUR  = 0;
       const END_HOUR    = 24;
       const TIME_COL_W  = 56;
@@ -5117,7 +5242,7 @@
       };
       const sirSessionDisplayDate = session =>
         session?.done && session.finishDate ? session.finishDate : session?.date;
-      const sirStageLabel = (mm) => { if (mm.ksStage==='sir') { const d=(sirDoneMap[mm.id]||0); return d>=5?'FIN':`SIR T${d+1}`; } return stageLabel(mm.ksStage); };
+      const sirStageLabel = (mm) => { if (stageOf(mm)==='sir') { const d=(sirDoneMap[mm.id]||0); return d>=5?'FIN':`SIR T${d+1}`; } return stageLabel(stageOf(mm)); };
 
       const ultimateMMs = useMemo(() => {
         const ids = new Set(goals.flatMap(g => g.toLearn || []));
@@ -5128,6 +5253,18 @@
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
+      const todayStr = toDateStr(today);
+
+      // Late milestones — milestone-core.js decides, the Milestones tab and the
+      // calendar tails agree. TODAY's day column and month cell carry a ⚑ for
+      // each, and both pickers pin their leftover work for today and later.
+      // The 60s nowY interval re-renders this panel, so the answer rolls over
+      // at midnight without a reload.
+      const lateReport = useMemo(
+        () => TrackMilestone.report(goals || [], mms || [], sirDoneMap, todayStr),
+        [goals, mms, sirDoneMap, todayStr]
+      );
+      const lateMilestones = useMemo(() => TrackMilestone.lateList(lateReport), [lateReport]);
 
       // Deep link from the universal calendar (index.html) — progress.html?date=YYYY-MM-DD#schedule.
       // T12:00:00 keeps the parse on the local calendar day; bare 'YYYY-MM-DD'
@@ -5729,34 +5866,59 @@
         ? inProgress.filter(t => (t.title || '').toLowerCase().includes(search.toLowerCase()))
         : inProgress;
       const activePickerDs = pickerDay || mmPickerDay;
+      // The unfinished, schedulable tasks of milestone `m` on `owner` — the ONE
+      // collector the late and the active picker lists both use.
+      function milestoneOpenTasks(owner, m) {
+        const taskMap = new Map();
+        collectMilestoneBlocks(owner, m.id, goals || []).forEach(block => {
+          flattenAll(block.children || []).forEach(task => {
+            const target = task.isLink ? findNode(goals || [], task.linkedTaskId) : task;
+            if (!target || isMilestoneNode(target) || getLeaves(target, goals || []).length === 0 || isComplete(target, goals || [])) return;
+            if (!taskMap.has(target.id)) taskMap.set(target.id, target);
+          });
+        });
+        return [...taskMap.values()];
+      }
+      /* The picker's milestones for its day: LATE ones first — for today and
+         later only, a past day being view-only — then those whose period covers
+         the day. A late milestone's leftover tasks used to sink back into the
+         general pile the day after its end; pinning them here is what turns the
+         overdue warning into something that can be scheduled. A late milestone
+         cannot also be active on such a day: its end is already behind it. */
       const activeMilestoneSchedules = useMemo(() => {
         if (!activePickerDs) return [];
         const ds = activePickerDs;
         const out = [];
         const seenMs = new Set();
+        if (ds >= todayStr) {
+          for (const st of lateMilestones) {
+            if (seenMs.has(st.milestoneId)) continue;
+            seenMs.add(st.milestoneId);
+            out.push({ owner: st.owner, milestone: st.def, tasks: milestoneOpenTasks(st.owner, st.def), late: st });
+          }
+        }
         for (const goal of goals || []) {
           for (const owner of collectMilestoneOwners(goal, goals || [])) {
             for (const m of owner.milestones || []) {
               if (!m.startDate || !m.endDate || ds < m.startDate || ds > m.endDate) continue;
               if (seenMs.has(m.id)) continue;
               seenMs.add(m.id);
-              const taskMap = new Map();
-              collectMilestoneBlocks(owner, m.id, goals || []).forEach(block => {
-                flattenAll(block.children || []).forEach(task => {
-                  const target = task.isLink ? findNode(goals || [], task.linkedTaskId) : task;
-                  if (!target || isMilestoneNode(target) || getLeaves(target, goals || []).length === 0 || isComplete(target, goals || [])) return;
-                  if (!taskMap.has(target.id)) taskMap.set(target.id, target);
-                });
-              });
-              out.push({ owner, milestone: m, tasks: [...taskMap.values()] });
+              out.push({ owner, milestone: m, tasks: milestoneOpenTasks(owner, m), late: null });
             }
           }
         }
         return out;
-      }, [goals, activePickerDs]);
+      }, [goals, activePickerDs, lateMilestones, todayStr]);
       const activeMilestoneTaskIds = useMemo(() => {
         const ids = new Set();
-        activeMilestoneSchedules.forEach(s => s.tasks.forEach(t => ids.add(t.id)));
+        activeMilestoneSchedules.forEach(s => { if (!s.late) s.tasks.forEach(t => ids.add(t.id)); });
+        return ids;
+      }, [activeMilestoneSchedules]);
+      // a late milestone's tasks, which the Directory tree colours in the
+      // danger token ahead of the active milestone's cyan
+      const lateTaskIds = useMemo(() => {
+        const ids = new Set();
+        activeMilestoneSchedules.forEach(s => { if (s.late) s.tasks.forEach(t => ids.add(t.id)); });
         return ids;
       }, [activeMilestoneSchedules]);
 
@@ -5834,6 +5996,8 @@
         const isRoutine = node.taskType === 'routine';
         const leafCount = getLeaves(node, goals).length;
         const isMilestoneTask = activeMilestoneTaskIds.has(node.id);
+        // late before active: a task still owed to a milestone that has ended
+        const isLateTask = lateTaskIds.has(node.id);
         if (search.trim()) {
           const selfMatch = (node.title || '').toLowerCase().includes(search.toLowerCase());
           if (!selfMatch && !hasChildren) return null;
@@ -5841,6 +6005,8 @@
         return (
           <div key={node.id}>
             <div
+              data-picker-node={node.id}
+              data-picker-node-late={isLateTask ? true : undefined}
               className="flex items-center hover:bg-gray-800 transition-colors"
               style={{ paddingLeft: `${depth * 14 + 10}px` }}
             >
@@ -5853,9 +6019,11 @@
               >
                 {hasChildren
                   ? <span className="text-gray-600 w-3 text-center flex-shrink-0">{isExpanded ? '▾' : '▸'}</span>
-                  : <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isMilestoneTask ? 'bg-cyan-400' : isRoutine ? 'bg-amber-500' : 'bg-gray-600'}`} />
+                  : <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isLateTask ? '' : isMilestoneTask ? 'bg-cyan-400' : isRoutine ? 'bg-amber-500' : 'bg-gray-600'}`}
+                      style={isLateTask ? { backgroundColor: ACCENT.danger } : undefined} />
                 }
-                <span className={`flex-1 truncate ${isMilestoneTask ? 'text-cyan-200' : isRoutine ? 'text-amber-400' : hasChildren ? 'text-gray-200 font-medium' : 'text-gray-400'}`}>
+                <span className={`flex-1 truncate ${isLateTask ? '' : isMilestoneTask ? 'text-cyan-200' : isRoutine ? 'text-amber-400' : hasChildren ? 'text-gray-200 font-medium' : 'text-gray-400'}`}
+                  style={isLateTask ? { color: ACCENT.danger } : undefined}>
                   {node.title}
                 </span>
                 {hasChildren && <span className="text-gray-600 text-[10px] ml-1 flex-shrink-0">{leafCount}</span>}
@@ -6170,7 +6338,6 @@
         setSearch('');
       }
 
-      const todayStr  = toDateStr(today);
       const weekLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${
         days[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
@@ -6771,7 +6938,7 @@
             {schedView === 'calendar' && <span className="flex-1" />}
             <div className="flex gap-1 ml-auto">
               {[['timeline','TIMELINE'],['calendar','CALENDAR']].map(([v,l])=>(
-                <button key={v} onClick={()=>setSchedView(v)}
+                <button key={v} data-sched-view={v} onClick={()=>setSchedView(v)}
                   className={`text-xs px-2 py-1 rounded font-bold transition ${schedView===v?'bg-white text-gray-950':'text-gray-500 hover:text-white'}`}>{l}</button>
               ))}
             </div>
@@ -6863,6 +7030,7 @@
                           return (
                             <button key={s.id}
                               type="button"
+                              data-sched-sir-badge={mm.id}
                               title={`${scheduledStage} ${sessionStatus} · ${mm.name}`}
                               aria-label={`${scheduledStage} ${sessionStatus} for ${mm.name}`}
                               onClick={e => { e.stopPropagation(); setSirSessionPopup({ s, mm }); }}
@@ -6926,6 +7094,20 @@
                           <span className="flex-1 text-[10px] text-amber-300 truncate leading-tight">{d.title}</span>
                         </button>
                       ))}
+                      {/* TODAY only: one ⚑ per late milestone, opening it in the
+                          MILESTONES tab. Lateness is a statement about now —
+                          repeated on every day since the end it would bury the
+                          day it is about. */}
+                      {isToday && lateMilestones.map(st => (
+                        <button key={st.key} type="button"
+                          data-ms-late-flag={st.key}
+                          onClick={e => { e.stopPropagation(); if (onOpenMilestone) onOpenMilestone(st.ownerId, st.milestoneId); }}
+                          title={`${st.title}${st.ownerTitle ? ' — ' + st.ownerTitle : ''} · ${TrackMilestone.label(st)}`}
+                          className="w-full flex items-center gap-0.5 rounded px-0.5 py-0.5 hover:bg-red-900/30 transition-colors text-left">
+                          <span className="text-[10px] flex-shrink-0 font-bold" style={{ color: ACCENT.danger }}>⚑</span>
+                          <span className="flex-1 text-[10px] truncate leading-tight" style={{ color: ACCENT.danger }}>{st.title}</span>
+                        </button>
+                      ))}
                     </div>
                     </div>
 
@@ -6954,6 +7136,7 @@
                         onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); setPickerView('tree'); }}
                         className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
                       <button
+                        data-day-add-mm={ds}
                         onClick={() => { setMmPickerDay(mmPickerDay === ds ? null : ds); setPickerDay(null); setMgPickerDay(null); setSearch(''); }}
                         className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">◎</button>
                       {!isPast && <button
@@ -7609,7 +7792,7 @@
                       const isPickedUp = mouseDownInfo?.blockType === 'mmEntry' && mouseDownInfo.id === entry.id && !dragged;
                       const col = mm.color || '#6366f1';
                       const stg = sirStageLabel(mm);
-                      const stgCol = mm.ksStage ? STAGE_COLORS_SCHED[mm.ksStage] : col;
+                      const stgCol = stageOf(mm) ? STAGE_COLORS_SCHED[stageOf(mm)] : col;
                       const commentOpen = timelineMode === 'day' && openComments.has(entry.id);
                       if (top < -height || top >= TOTAL_H) return null;
                       const { title: activeMsTitle, isActive: inCurrentMilestone } = findActiveMsForMM(entry.mmId, ds);
@@ -8625,7 +8808,7 @@
                   </div>
                   <div className="overflow-y-auto flex-1">
                     {t2mms.length === 0 && (
-                      <div className="px-3 py-3 text-[10px] text-gray-600">No T2 MGs yet.</div>
+                      <div className="px-3 py-3 text-[10px] text-gray-600">No procedural MGs yet.</div>
                     )}
                     {visibleMGs.map(mm => {
                       const active = dayMGs.includes(mm.id);
@@ -8675,16 +8858,19 @@
                   {/* Tab bar */}
                   <div className="flex border-b border-gray-800 flex-shrink-0">
                     <button
+                      data-picker-tab="tree"
                       onClick={() => setPickerView('tree')}
                       className={`flex-1 py-2 text-xs font-medium tracking-wide transition-colors ${pickerView === 'tree' ? 'text-indigo-400 border-b-2 border-indigo-500 bg-indigo-950/20' : 'text-gray-600 hover:text-gray-400'}`}>
                       Directory
                     </button>
                     <button
+                      data-picker-tab="routines"
                       onClick={() => setPickerView('routines')}
                       className={`flex-1 py-2 text-xs font-medium tracking-wide transition-colors ${pickerView === 'routines' ? 'text-amber-400 border-b-2 border-amber-500 bg-amber-950/20' : 'text-gray-600 hover:text-gray-400'}`}>
                       Routines
                     </button>
                     <button
+                      data-picker-tab="milestone"
                       onClick={() => setPickerView('milestone')}
                       className={`flex-1 py-2 text-xs font-medium tracking-wide transition-colors ${pickerView === 'milestone' ? 'text-cyan-400 border-b-2 border-cyan-500 bg-cyan-950/20' : 'text-gray-600 hover:text-gray-400'}`}>
                       Milestone
@@ -8766,6 +8952,43 @@
                   <div className="overflow-y-auto flex-1">
                     {pickerView === 'tree' && (
                       <>
+                        {/* OVERDUE: each late milestone's leftover tasks, pinned
+                            above the tree for today and later. The day after a
+                            milestone ends is exactly when these used to sink back
+                            into the general pile. The same `+` as the Milestone
+                            tab, so scheduling one is the same write. */}
+                        {activeMilestoneSchedules.some(s => s.late) && (
+                          <div data-picker-late className="border-b border-gray-800">
+                            {activeMilestoneSchedules.filter(s => s.late).map(s => {
+                              const lateTasks = s.tasks.filter(taskMatchesSearch);
+                              return (
+                                <React.Fragment key={s.milestone.id}>
+                                  <div data-picker-late-ms={s.milestone.id} className="px-3 py-1.5" style={{ backgroundColor: ACCENT.dangerSoft }}>
+                                    <div className="text-xs font-medium truncate" style={{ color: ACCENT.danger }}>{s.milestone.title || s.owner.title}</div>
+                                    <div className="text-[10px] mt-0.5 truncate" style={{ color: ACCENT.danger }}>{TrackMilestone.label(s.late)}</div>
+                                  </div>
+                                  {lateTasks.length === 0
+                                    ? <div className="px-3 py-1.5 text-[10px] text-gray-600 italic">
+                                        {s.tasks.length ? 'no tasks match' : 'no tasks left — what remains is to-learn (◎)'}
+                                      </div>
+                                    : lateTasks.map(t => (
+                                        <div key={t.id} data-picker-late-task={t.id} className="flex items-center hover:bg-gray-800 transition-colors">
+                                          <div className="flex-1 flex items-center gap-2 px-3 py-1.5 text-xs min-w-0">
+                                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: ACCENT.danger }} />
+                                            <span className="truncate flex-1 text-gray-200">{t.title}</span>
+                                          </div>
+                                          <button
+                                            onClick={e => { e.stopPropagation(); assignToDate(t, ds); }}
+                                            className="flex-shrink-0 w-7 h-7 flex items-center justify-center text-gray-600 hover:text-indigo-400 transition-colors text-base mr-1"
+                                          >+</button>
+                                        </div>
+                                      ))
+                                  }
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                        )}
                         {/* Goals tree */}
                         {(goals || []).map(g => renderPickerTreeNode(g, 0, ds))}
                         {/* Actions */}
@@ -8818,14 +9041,21 @@
                               const msTasks = ms.tasks.filter(taskMatchesSearch);
                               return (
                                 <React.Fragment key={ms.milestone.id}>
-                                  <div className="px-3 py-2 border-b border-cyan-900/50 bg-cyan-950/20 flex-shrink-0">
-                                    <div className="text-xs text-cyan-300 font-medium truncate">{ms.milestone.title || ms.owner.title}</div>
-                                    <div className="text-[10px] text-cyan-700 mt-0.5">{ms.milestone.startDate} → {ms.milestone.endDate}</div>
+                                  {/* a late milestone comes first and reads as late */}
+                                  <div data-picker-ms={ms.milestone.id} data-picker-ms-late={ms.late ? true : undefined}
+                                    className={`px-3 py-2 border-b flex-shrink-0 ${ms.late ? 'border-gray-800' : 'border-cyan-900/50 bg-cyan-950/20'}`}
+                                    style={ms.late ? { backgroundColor: ACCENT.dangerSoft } : undefined}>
+                                    <div className={`text-xs font-medium truncate ${ms.late ? '' : 'text-cyan-300'}`}
+                                      style={ms.late ? { color: ACCENT.danger } : undefined}>{ms.milestone.title || ms.owner.title}</div>
+                                    <div className={`text-[10px] mt-0.5 ${ms.late ? '' : 'text-cyan-700'}`}
+                                      style={ms.late ? { color: ACCENT.danger } : undefined}>
+                                      {ms.milestone.startDate} → {ms.milestone.endDate}{ms.late ? ' · ' + TrackMilestone.label(ms.late) : ''}
+                                    </div>
                                   </div>
                                   {msTasks.length === 0
                                     ? <div className="px-3 py-4 text-xs text-gray-600 text-center">no tasks match</div>
                                     : msTasks.map(t => (
-                                        <div key={t.id} className="flex items-center hover:bg-cyan-950/30 transition-colors border-b border-cyan-900/20">
+                                        <div key={t.id} data-picker-ms-task={t.id} className="flex items-center hover:bg-cyan-950/30 transition-colors border-b border-cyan-900/20">
                                           <div className="flex-1 flex items-center gap-2 px-3 py-1.5 text-xs min-w-0">
                                             <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 flex-shrink-0" />
                                             <span className="text-cyan-100 truncate flex-1">{t.title}</span>
@@ -8865,9 +9095,15 @@
               !search.trim() || m.name.toLowerCase().includes(search.toLowerCase())
             );
             const _mmSortW = { '4':6, '3':7, '2':8, '1':9, finished:11 };
-            const _mmW = mm => { if (mm.ksStage==='sir') { const d=sirDoneMap[mm.id]||0; return d>=5?1:d>=4?2:d>=3?3:d>=2?4:5; } return mm.ksStage==null?10:(_mmSortW[mm.ksStage]??10); };
-            const dueMMs   = visibleMMs.filter(m => dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
-            const otherMMs = visibleMMs.filter(m => !dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
+            const _mmW = mm => { const stg = stageOf(mm); if (stg==='sir') { const d=sirDoneMap[mm.id]||0; return d>=5?1:d>=4?2:d>=3?3:d>=2?4:5; } return stg==null?10:(_mmSortW[stg]??10); };
+            // The to-learn a late milestone is still waiting on, pinned first —
+            // for today and later, as the task picker pins leftover tasks. The
+            // groups are a PARTITION: a pinned mind map leaves the two below.
+            const lateMM = new Map();
+            if (ds >= todayStr) lateMilestones.forEach(st => st.learn.open.forEach(id => { if (!lateMM.has(id)) lateMM.set(id, st); }));
+            const lateMMs  = visibleMMs.filter(m => lateMM.has(m.id));
+            const dueMMs   = visibleMMs.filter(m => !lateMM.has(m.id) && dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
+            const otherMMs = visibleMMs.filter(m => !lateMM.has(m.id) && !dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
             return (
               <>
                 <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setMmPickerDay(null); setSearch(''); }} />
@@ -8879,14 +9115,38 @@
                       className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-emerald-600" />
                   </div>
                   <div className="overflow-y-auto flex-1">
+                    {lateMMs.length > 0 && (
+                      <>
+                        <div data-mm-picker-group="late" className="px-3 py-1 text-[9px] font-bold tracking-widest border-b border-gray-800/50"
+                          style={{ color: ACCENT.danger }}>OVERDUE MILESTONE</div>
+                        {lateMMs.map(mm => {
+                          const st = lateMM.get(mm.id);
+                          const stg = sirStageLabel(mm);
+                          return (
+                            <button key={mm.id} data-mm-pick={mm.id} data-mm-pick-late={st.key}
+                              onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
+                              title={`${st.title} · ${TrackMilestone.label(st)}`}
+                              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors hover:bg-gray-800">
+                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: ACCENT.danger }} />
+                              <span className="flex-1 truncate text-gray-200">{mm.name}</span>
+                              <span className="text-[9px] flex-shrink-0 truncate" style={{ maxWidth: 80, color: ACCENT.danger }}>{st.title}</span>
+                              {stg && <span className="text-[9px] text-gray-600 flex-shrink-0">{stg}</span>}
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
+                    {lateMMs.length > 0 && ((hasDue && dueMMs.length > 0) || otherMMs.length > 0) && (
+                      <div className="border-t border-gray-800/50 my-0.5" />
+                    )}
                     {hasDue && dueMMs.length > 0 && (
                       <>
-                        <div className="px-3 py-1 text-[9px] text-emerald-600 tracking-widest border-b border-gray-800/50">SIR DUE TODAY</div>
+                        <div data-mm-picker-group="due" className="px-3 py-1 text-[9px] text-emerald-600 tracking-widest border-b border-gray-800/50">SIR DUE TODAY</div>
                         {dueMMs.map(mm => {
                           const stg = sirStageLabel(mm);
                           const { title: msTitle, isActive } = findActiveMsForMM(mm.id, ds);
                           return (
-                            <button key={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
+                            <button key={mm.id} data-mm-pick={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
                               className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? 'bg-cyan-950/50 hover:bg-cyan-900/50' : 'hover:bg-emerald-950/40'}`}>
                               <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-500" />
                               <span className="flex-1 truncate text-emerald-400">{mm.name}</span>
@@ -8904,7 +9164,7 @@
                       const stg = sirStageLabel(mm);
                       const { title: msTitle, isActive } = findActiveMsForMM(mm.id, ds);
                       return (
-                        <button key={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
+                        <button key={mm.id} data-mm-pick={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
                           className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? 'bg-cyan-950/50 hover:bg-cyan-900/50' : 'hover:bg-gray-800'}`}>
                           <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: isActive ? ACCENT.live : ACCENT.muted }} />
                           <span className={`flex-1 truncate ${isActive ? 'text-cyan-300' : 'text-gray-500'}`}>{mm.name}</span>
@@ -8928,9 +9188,9 @@
             const close = () => setSirSessionPopup(null);
             const color = mmColor(mm.id);
             const sirDone = (sirDoneMap || {})[mm.id] || 0;
-            const currentStageLbl = mm.ksStage === 'sir'
+            const currentStageLbl = stageOf(mm) === 'sir'
               ? (sirDone >= SIR_INTERVALS.length ? 'FIN' : `SIR T${sirDone + 1}`)
-              : stageLabel(mm.ksStage) || mm.ksStage || '—';
+              : stageLabel(stageOf(mm)) || stageOf(mm) || '—';
             const sessionStageLbl = scheduledSirStageLabel(s);
             const sessionStageStatusLbl = s.done ? 'DONE' : 'SCHEDULED';
             const displayDate = sirSessionDisplayDate(s);
@@ -8962,7 +9222,7 @@
                     <button
                       onClick={() => { close(); window.open('sir-ks02.html', '_blank'); }}
                       className="w-full py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded transition-colors">
-                      Open KS02 Tracker →
+                      Open Knowledge Record →
                     </button>
                   </div>
                 </div>
@@ -9445,6 +9705,7 @@
                   const dayCaution=deadlinesCautionOn(ds);
                   return (
                     <div key={day}
+                      data-sched-month-day={ds}
                       className={`group rounded p-1 cursor-pointer min-h-[48px] border transition ${isSel?"border-white":"border-gray-800 hover:border-gray-600"} ${isToday?"bg-gray-800":"bg-gray-900"}`}
                       onClick={()=>setSelDay(isSel?null:day)}>
                       <div className="flex items-center justify-between mb-1">
@@ -9472,7 +9733,7 @@
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-0.5">
-                        {active.slice(0,4).map(s=><div key={s.id} className="w-2 h-2 rounded-full" style={{backgroundColor:mmColor(s.mmId)}}/>)}
+                        {active.slice(0,4).map(s=><div key={s.id} data-sched-sir-dot={s.mmId} className="w-2 h-2 rounded-full" style={{backgroundColor:mmColor(s.mmId)}}/>)}
                         {active.length>4&&<span className="text-gray-500 text-xs">+{active.length-4}</span>}
                       </div>
                       {dayCalNotes.map(n=>(
@@ -9497,6 +9758,17 @@
                           <span className="truncate">{d.title}</span>
                         </div>
                       ))}
+                      {/* TODAY only, as on the day strip: a ⚑ per late milestone */}
+                      {isToday && lateMilestones.map(st=>(
+                        <div key={st.key} data-ms-late-flag={st.key}
+                          onClick={e=>{e.stopPropagation(); if(onOpenMilestone) onOpenMilestone(st.ownerId, st.milestoneId);}}
+                          title={`${st.title}${st.ownerTitle?' — '+st.ownerTitle:''} · ${TrackMilestone.label(st)}`}
+                          className="text-[9px] truncate leading-tight mt-0.5 flex items-center gap-0.5"
+                          style={{color: ACCENT.danger}}>
+                          <span className="flex-shrink-0 font-bold">⚑</span>
+                          <span className="truncate">{st.title}</span>
+                        </div>
+                      ))}
                     </div>
                   );
                 })}
@@ -9513,7 +9785,7 @@
                     {selSessions.map(s=>{
                       const mm=(mms||[]).find(m=>m.id===s.mmId);
                       return (
-                        <div key={s.id}
+                        <div key={s.id} data-sched-sir-row={s.mmId}
                           className="flex items-center justify-between rounded px-3 py-2 mb-1 bg-emerald-900 text-emerald-200">
                           <div className="flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full" style={{backgroundColor:mmColor(s.mmId)}}/>
@@ -9785,7 +10057,9 @@
     function computeLinActiveDays(linChanges) {
       const days = new Set();
       linChanges.forEach(lc => {
-        if ((lc.items || []).some(it => it.change?.type !== 'stageRevert'))
+        // A revert is not progress, and neither is the S1 reset a new Kolb
+        // gives a Procedural MM (`kolbReset`): both are logged, neither counts.
+        if ((lc.items || []).some(it => it.change?.type !== 'stageRevert' && it.change?.type !== 'kolbReset'))
           days.add(lc.date);
       });
       return days;
@@ -9880,13 +10154,13 @@
            target, so it must be gated on hasTarget or every untargeted mind map
            reads as done. MM completion is computed, never stored — which is why
            this row has no checkbox. */
-        const tgt = (owner.mmTargets || {})[row.mmId] || null;
+        const tgt = targetOf(row.mm, (owner.mmTargets || {})[row.mmId] || null) || null;
         const hasTarget = !!(tgt && (tgt.stage || tgt.level || (tgt.milestones || []).length > 0));
         const met = hasTarget && row.mm && isMMTargetMet(row.mm, tgt, sirDoneMap);
         return (
           <div data-quest-learn-row={owner.id + ':' + row.mmId}
             className="flex items-center gap-2 py-1 pl-2 border-l border-gray-800/60">
-            <span className={`text-[10px] w-3 ${met ? 'text-emerald-400' : hasTarget ? 'text-amber-400' : 'text-gray-700'}`}>
+            <span data-quest-learn-state={!hasTarget ? 'none' : met ? 'met' : 'open'} className={`text-[10px] w-3 ${met ? 'text-emerald-400' : hasTarget ? 'text-amber-400' : 'text-gray-700'}`}>
               {!hasTarget ? '·' : met ? '✓' : '○'}
             </span>
             <span className={`flex-1 text-xs ${row.mm ? 'text-cyan-300' : 'text-gray-600 italic'}`}>
@@ -10214,7 +10488,18 @@
         };
       }, []);
 
-      const sirDoneMap = useMemo(() => buildSirDoneMap(sessions), [sessions]);
+      // The sessions every surface below DRAWS: a Procedural MM's are left out.
+      // `sessions` stays whole; this page only reads it, never writes it.
+      const liveSessions = useMemo(() => TrackMilestone.liveSessions(sessions, mms), [sessions, mms]);
+      const sirDoneMap = useMemo(() => buildSirDoneMap(liveSessions), [liveSessions]);
+
+      // The Schedule's late-milestone ⚑ opens that milestone's row in the
+      // MILESTONES tab, where its dates and work can be fixed. Selection first,
+      // so the tab mounts with the row already selected and scrolls it in.
+      function openMilestone(ownerId, milestoneId) {
+        setSelectedMilestone({ ownerId, milestoneId });
+        setTab('milestones');
+      }
 
       const allLeaves  = flattenAll(goals).filter(isCountableLeaf);
       const doneLeaves = allLeaves.filter(n => {
@@ -10226,7 +10511,7 @@
         (n.toLearn || []).forEach(mmId => {
           const mm = (mms || []).find(m => m.id === mmId);
           if (!mm) return;
-          const tgt = (n.mmTargets || {})[mmId] || {};
+          const tgt = targetOf(mm, (n.mmTargets || {})[mmId]) || {};
           if (!(tgt.stage || tgt.level)) return;
           mmDone += mmProgressFraction(mm, tgt, sirDoneMap);
           mmTotal++;
@@ -10305,7 +10590,7 @@
                       style={{ width: `${pct}%`, backgroundColor: pct === 100 ? ACCENT.done : ACCENT.progress }}
                     />
                   </div>
-                  <span className={`w-8 text-right tabular-nums ${pct === 100 ? 'text-emerald-400' : 'text-gray-600'}`}>
+                  <span data-app-pct className={`w-8 text-right tabular-nums ${pct === 100 ? 'text-emerald-400' : 'text-gray-600'}`}>
                     {pct}%
                   </span>
                 </div>
@@ -10326,6 +10611,7 @@
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <MilestonesPanel
                 goals={goals} setGoals={setGoals}
+                mms={mms} sirDoneMap={sirDoneMap}
                 selectedMilestone={selectedMilestone}
                 setSelectedMilestone={setSelectedMilestone}
               />
@@ -10350,7 +10636,7 @@
                 goals={goals} setGoals={setGoals}
                 saActions={saActions} setSaActions={setSaActions} saEntries={saEntries} setSaEntries={setSaEntries}
                 mms={mms} mmEntries={mmEntries} setMmEntries={setMmEntries}
-                sessions={sessions}
+                sessions={liveSessions}
                 mgChanges={mgChanges} mgSchedule={mgSchedule} setMgSchedule={setMgSchedule}
                 sourceDumps={sourceDumps}
                 selectedMilestone={selectedMilestone}
@@ -10360,6 +10646,7 @@
                 refSchedules={refSchedules}
                 initialDate={initialScheduleDate}
                 initialDeadlineId={initialDeadlineId}
+                onOpenMilestone={openMilestone}
               />
             </div>
           )}
@@ -10424,6 +10711,6 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
   <script src="scripts/notes-core.js?v=3"></script>
-  <script src="scripts/notes-widget.js?v=5"></script>
+  <script src="scripts/notes-widget.js?v=6"></script>
 </body>
 </html>

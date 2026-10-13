@@ -26,10 +26,14 @@ const F = require('./lib/fixture.js');
 // and a Set built by this file would fail that check across a realm boundary,
 // so a vm context would quietly test something the browser never does.
 globalThis.window = globalThis;
-vm.runInThisContext(
-  fs.readFileSync(path.join(__dirname, '..', 'scripts', 'calendar-core.js'), 'utf8'),
-  { filename: 'calendar-core.js' }
-);
+// schema.js and milestone-core.js first, in the order index.html loads them:
+// buildMilestoneLanes asks TrackMilestone which milestones are late when a
+// caller opts in with opts.today, and TrackMilestone asks TrackSchema.isDay
+// whether a string is a real day. Both are read at call time, so nothing that
+// passes no `today` can depend on them.
+for (const file of ['schema.js', 'milestone-core.js', 'calendar-core.js']) {
+  vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'scripts', file), 'utf8'), { filename: file });
+}
 const TC = globalThis.TrackCalendar;
 
 const TZ = process.env.TZ || '(system default)';
@@ -284,6 +288,146 @@ test('hiding milestones empties the lanes entirely', () => {
     { lanesByDate: {}, laneCount: 0 });
 });
 
+/* ── the overrun tail: a late milestone drawn on through today ─────────────
+   opts.today opts IN. Which milestones are late is milestone-core.js's
+   decision (its own suite pins the rule); these cases pin the LAYOUT: where a
+   late bar is drawn, which segments say so, and that nothing on time changes.
+   "Today" is a literal, so every case means the same day under every TZ this
+   file is swept through. */
+
+const LATE_TODAY = '2026-10-08';
+const msBlock = (id, milestoneId, children) =>
+  ({ id, title: 'Block ' + id, children: children || [], completed: false, taskType: 'milestone', milestoneId });
+
+// Each top-level goal here has no sub-goals, so it is its own milestone owner.
+const lateSlot = () => F.emptySlot({
+  goals: [
+    F.task('g-late', { title: 'Late goal',
+      milestones: [F.milestone('late', '2026-08-20', '2026-09-25')],
+      children: [msBlock('b-late', 'late', [F.task('t-open'), F.task('t-done', { completed: true })])] }),
+    F.task('g-fin', { milestones: [F.milestone('fin', '2026-09-01', '2026-09-30')],
+      children: [msBlock('b-fin', 'fin', [F.task('t-fin', { completed: true })])] }),
+    F.task('g-empty', { milestones: [F.milestone('empty', '2026-09-10', '2026-09-12')] }),
+    F.task('g-act', { milestones: [F.milestone('act', '2026-10-01', '2026-10-20')],
+      children: [msBlock('b-act', 'act', [F.task('t-act')])] })
+  ]
+});
+const segOf = (lanes, ds, title) => (lanes.lanesByDate[ds] || []).find(s => s.title === title);
+const daysOf = (lanes, title) => Object.keys(lanes.lanesByDate)
+  .filter(ds => lanes.lanesByDate[ds].some(s => s.title === title)).sort();
+
+test('OVERRUN: without opts.today the lanes are exactly what they always were', () => {
+  const slot = lateSlot();
+  for (const m of [7, 8, 9]) {
+    const plain = TC.buildMilestoneLanes(slot, 2026, m);
+    assert.deepEqual(TC.buildMilestoneLanes(slot, 2026, m, {}), plain);
+    assert.deepEqual(TC.buildMilestoneLanes(slot, 2026, m, { hidden: [] }), plain);
+  }
+  assert.deepEqual(daysOf(TC.buildMilestoneLanes(slot, 2026, 9), 'Milestone late'), [],
+    'no today, no tail: a period that ended in September is not on October');
+});
+
+test('OVERRUN: with milestone-core.js not loaded, opts.today is ignored', () => {
+  const slot = lateSlot();
+  const saved = globalThis.TrackMilestone;
+  try {
+    delete globalThis.TrackMilestone;
+    assert.deepEqual(TC.buildMilestoneLanes(slot, 2026, 9, { today: LATE_TODAY }), TC.buildMilestoneLanes(slot, 2026, 9));
+  } finally {
+    globalThis.TrackMilestone = saved;
+  }
+});
+
+test('OVERRUN: a late milestone runs on to TODAY, its tail marked and its end moved to today', () => {
+  const slot = lateSlot();
+  const sep = TC.buildMilestoneLanes(slot, 2026, 8, { today: LATE_TODAY });
+  const oct = TC.buildMilestoneLanes(slot, 2026, 9, { today: LATE_TODAY });
+  assert.equal(daysOf(sep, 'Milestone late').length, 30, 'every day of September');
+  assert.deepEqual(daysOf(oct, 'Milestone late'),
+    ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08'],
+    'and October up to today, not a day further');
+  const inPeriod = segOf(sep, '2026-09-25', 'Milestone late');
+  assert.equal(inPeriod.overdue, true);
+  assert.equal(inPeriod.overrun, false, 'the planned period is not the tail');
+  assert.equal(inPeriod.isEnd, false, 'the real end day is no longer where the bar stops');
+  assert.equal(segOf(sep, '2026-09-26', 'Milestone late').overrun, true, 'the day after the end is');
+  const last = segOf(oct, LATE_TODAY, 'Milestone late');
+  assert.equal(last.overrun, true);
+  assert.equal(last.isEnd, true, 'the bar ends on today');
+  assert.equal(last.isStart, false);
+  assert.equal(last.id, 'late');
+  assert.equal(last.endDate, '2026-09-25', 'the stored end day is still reported as the end');
+  assert.equal(last.label, 'OVERDUE · 13 days · 1 task left');
+  assert.equal(segOf(oct, '2026-10-01', 'Milestone late').isStart, false, 'entering from September');
+});
+
+test('OVERRUN: a milestone that ended in August covers all of September, October to today, and no November', () => {
+  const slot = F.emptySlot({ goals: [F.task('g', { title: 'G',
+    milestones: [F.milestone('aug', '2026-08-01', '2026-08-15')],
+    children: [msBlock('b', 'aug', [F.task('open')])] })] });
+  const opts = { today: LATE_TODAY };
+  assert.equal(daysOf(TC.buildMilestoneLanes(slot, 2026, 8, opts), 'Milestone aug').length, 30);
+  assert.ok(Object.values(TC.buildMilestoneLanes(slot, 2026, 8, opts).lanesByDate).flat().every(s => s.overrun),
+    'September is all tail');
+  assert.equal(daysOf(TC.buildMilestoneLanes(slot, 2026, 9, opts), 'Milestone aug').length, 8);
+  assert.deepEqual(TC.buildMilestoneLanes(slot, 2026, 10, opts), { lanesByDate: {}, laneCount: 0 },
+    'nothing is drawn past today');
+  const aug = TC.buildMilestoneLanes(slot, 2026, 7, opts);
+  assert.equal(segOf(aug, '2026-08-01', 'Milestone aug').isStart, true);
+  assert.equal(segOf(aug, '2026-08-15', 'Milestone aug').overrun, false);
+  assert.equal(segOf(aug, '2026-08-16', 'Milestone aug').overrun, true);
+});
+
+test('OVERRUN: on-time bars keep exactly their keys, and their colours, beside a tail', () => {
+  const slot = lateSlot();
+  const plain = TC.buildMilestoneLanes(slot, 2026, 9);
+  const withTail = TC.buildMilestoneLanes(slot, 2026, 9, { today: LATE_TODAY });
+  for (const ds of Object.keys(plain.lanesByDate)) {
+    const a = segOf(plain, ds, 'Milestone act');
+    const b = segOf(withTail, ds, 'Milestone act');
+    assert.deepEqual(Object.keys(b), ['lane', 'color', 'title', 'owner', 'startDate', 'endDate', 'isStart', 'isEnd'],
+      'an on-time segment gains no key');
+    assert.deepEqual(Object.assign({}, b, { lane: a.lane }), a, ds + ': identical but for its lane');
+  }
+  assert.equal(segOf(withTail, '2026-10-05', 'Milestone act').color, TC.MS_PALETTE[0],
+    'a tail alone does not take a palette slot from the bars after it');
+});
+
+test('OVERRUN: a tail holds its lane through today, so no bar is drawn over it', () => {
+  const oct = TC.buildMilestoneLanes(lateSlot(), 2026, 9, { today: LATE_TODAY });
+  const tail = segOf(oct, '2026-10-05', 'Milestone late');
+  const act = segOf(oct, '2026-10-05', 'Milestone act');
+  assert.notEqual(tail.lane, act.lane);
+  assert.equal(oct.laneCount, 2);
+  assert.equal(segOf(oct, '2026-10-12', 'Milestone act').lane, act.lane, 'and the other bar keeps its row after');
+});
+
+test('OVERRUN: finished, empty and active milestones grow no tail', () => {
+  const opts = { today: LATE_TODAY };
+  const sep = TC.buildMilestoneLanes(lateSlot(), 2026, 8, opts);
+  const oct = TC.buildMilestoneLanes(lateSlot(), 2026, 9, opts);
+  assert.equal(daysOf(oct, 'Milestone fin').length, 0, 'every task done: it simply ended');
+  assert.equal(segOf(sep, '2026-09-30', 'Milestone fin').isEnd, true);
+  assert.equal(segOf(sep, '2026-09-30', 'Milestone fin').overdue, undefined);
+  assert.equal(daysOf(oct, 'Milestone empty').length, 0, 'nothing attached: never late');
+  assert.deepEqual(daysOf(oct, 'Milestone act'), daysOf(TC.buildMilestoneLanes(lateSlot(), 2026, 9), 'Milestone act'));
+  assert.equal(segOf(oct, '2026-10-20', 'Milestone act').isEnd, true, 'an active period ends where it ends');
+});
+
+test('OVERRUN: the hidden filter still empties everything, tails included', () => {
+  assert.deepEqual(TC.buildMilestoneLanes(lateSlot(), 2026, 9, { today: LATE_TODAY, hidden: ['milestone'] }),
+    { lanesByDate: {}, laneCount: 0 });
+});
+
+test('OVERRUN: a link cycle inside a late milestone\'s block cannot break the calendar', () => {
+  // P > C > link(P) — the "link existing task" picker offers a task's ancestors
+  const slot = F.emptySlot({ goals: [F.task('g', { title: 'G',
+    milestones: [F.milestone('cyc', '2026-09-01', '2026-09-30')],
+    children: [msBlock('b', 'cyc', [F.task('P', { children: [F.task('C', { children: [{ id: 'L', linkedTaskId: 'P', isLink: true }, F.task('leaf')] })] })])] })] });
+  const oct = TC.buildMilestoneLanes(slot, 2026, 9, { today: LATE_TODAY });
+  assert.equal(segOf(oct, LATE_TODAY, 'Milestone cyc').label, 'OVERDUE · 8 days · 1 task left');
+});
+
 // ── day schedule ───────────────────────────────────────────────────────────
 
 test('buildDaySchedule collects goal tasks and routines', () => {
@@ -380,6 +524,37 @@ test('buildDaySchedule collects supporting actions, MM entries and SIR reps', ()
   assert.deepEqual(day.sir.map(s => s.label).sort(),
     ['Mind Map A · rep 1', 'Mind Map A · rep 3']);
   assert.deepEqual(day.sir.map(s => s.done).sort(), [false, true]);
+});
+
+// NOTES Proposal 17, item 1: a Procedural MM has no SIR. Its sessions stay
+// stored (switching the type back restores them) and are left out of the day,
+// through TrackMilestone.liveSessions — calendar-core.js does not re-spell it.
+function procSirSlot(procType) {
+  return F.emptySlot({
+    mms: [F.mm(10, 'Declarative MM', { type: '1', ksStage: 'sir' }),
+      F.mm(11, 'Procedural MM', { type: procType, ksStage: 'sir' })],
+    sessions: [F.session(1, '2026-03-10', 10), F.session(2, '2026-03-10', 11),
+      F.session(3, '2026-03-01', 11, { done: true, finishDate: '2026-03-10', repIndex: 1 })]
+  });
+}
+
+test('SIR: a Procedural MM\'s sessions are not on its day; a Declarative one\'s still are', () => {
+  const day = TC.buildDaySchedule(procSirSlot('2'), '2026-03-10');
+  assert.deepEqual(day.sir.map(s => s.label), ['Declarative MM · rep 1'],
+    'neither the due rep nor the one finished today is drawn for the Procedural MM');
+  assert.deepEqual(TC.buildDaySchedule(procSirSlot('1'), '2026-03-10').sir.map(s => s.label).sort(),
+    ['Declarative MM · rep 1', 'Procedural MM · rep 1', 'Procedural MM · rep 2'],
+    'the same stored sessions, typed Declarative again, are all back');
+});
+
+test('SIR: with milestone-core.js not loaded, every session is drawn as before', () => {
+  const saved = globalThis.TrackMilestone;
+  try {
+    delete globalThis.TrackMilestone;
+    assert.equal(TC.buildDaySchedule(procSirSlot('2'), '2026-03-10').sir.length, 3);
+  } finally {
+    globalThis.TrackMilestone = saved;
+  }
 });
 
 test('each schedule family can be hidden independently', () => {
@@ -1334,6 +1509,7 @@ test('collectors never mutate the slot they are given', () => {
   const before = JSON.stringify(slot);
   TC.buildBuckets(slot, 2026, 2);
   TC.buildMilestoneLanes(slot, 2026, 2);
+  TC.buildMilestoneLanes(slot, 2026, 2, { today: '2026-10-08' });
   TC.buildDaySchedule(slot, '2026-03-10');
   TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['doc'] });
   assert.equal(JSON.stringify(slot), before, 'calendar-core.js is read-only by contract');

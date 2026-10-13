@@ -8,9 +8,10 @@
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
-  <script src="scripts/calendar-core.js?v=8"></script>
+  <script src="scripts/milestone-core.js?v=2"></script>
+  <script src="scripts/calendar-core.js?v=10"></script>
   <script src="scripts/quest-core.js?v=2"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=17">
+  <link rel="stylesheet" href="styles/styles.css?v=18">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -33,8 +34,8 @@
     <nav class="hub-container" aria-label="Track sections">
       <a class="nav-btn" href="sir-ks02.html">
         <span>
-          <span class="nav-btn-title">KS02 Tracker</span>
-          <span class="nav-btn-meta">Mind maps, Kolb cycles, SIR and marginal gains</span>
+          <span class="nav-btn-title">Knowledge Record</span>
+          <span class="nav-btn-meta">Each mind map with its Kolb cycles, marginal gains, SIR and sources</span>
         </span>
       </a>
       <a class="nav-btn" href="progress.html">
@@ -1120,9 +1121,14 @@
       }
 
       const buckets = calBuildBuckets(slot, calY, calM, calOpts);
-      const ms = calBuildMilestoneLanes(slot, calY, calM, calOpts);
-      const shownLanes = Math.min(ms.laneCount, CAL_MS_MAX_LANES);
       const todayDs = calToDateStr(new Date());
+      /* `today` opts in to the overrun tail: a milestone whose end has passed
+         with its work unfinished is drawn on through today — dashed red, with a
+         `!` on today's cell — so it sits on the current month and grows every
+         day it stays late. milestone-core.js decides which are late, and the
+         Documentations calendar block draws the same tail as this one's twin. */
+      const ms = calBuildMilestoneLanes(slot, calY, calM, Object.assign({}, calOpts, { today: todayDs }));
+      const shownLanes = Math.min(ms.laneCount, CAL_MS_MAX_LANES);
 
       for (let i = 0; i < calFirstDay(calY, calM); i++) {
         const c = document.createElement('div');
@@ -1138,6 +1144,7 @@
           + (ds === todayDs ? ' today' : '')
           + (dayLanes.length ? ' milestone' : '')
           + (ds === calSelectedDs ? ' selected' : '');
+        cell.setAttribute('data-cal-day', ds);
         const num = document.createElement('div');
         num.className = 'cal-day-num';
         num.textContent = d;
@@ -1159,9 +1166,14 @@
               const line = document.createElement('span');
               line.className = 'cal-ms-line'
                 + (seg.isStart ? ' cap-start' : (col !== 0 ? ' bridge-left' : ''))
-                + (seg.isEnd ? ' cap-end' : (col !== 6 ? ' bridge-right' : ''));
-              line.style.background = seg.color;
-              line.title = seg.title + (seg.owner ? ' — ' + seg.owner : '') + ' · ' + seg.startDate + ' → ' + seg.endDate;
+                + (seg.isEnd ? ' cap-end' : (col !== 6 ? ' bridge-right' : ''))
+                + (seg.overrun ? ' ms-overrun' : '');
+              // the tail is dashed in the danger colour by styles.css; an
+              // inline background would beat that rule
+              if (!seg.overrun) line.style.background = seg.color;
+              if (seg.overdue) line.setAttribute('data-ms-late', seg.id);
+              line.title = seg.title + (seg.owner ? ' — ' + seg.owner : '') + ' · ' + seg.startDate + ' → ' + seg.endDate
+                + (seg.overdue ? ' · ' + seg.label : '');
               row.appendChild(line);
             }
             lanes.appendChild(row);
@@ -1169,12 +1181,28 @@
           const hidden = dayLanes.filter(seg => seg.lane >= CAL_MS_MAX_LANES).length;
           if (hidden) {
             const more = document.createElement('span');
-            more.className = 'cal-ms-more';
+            const over = dayLanes.filter(seg => seg.lane >= CAL_MS_MAX_LANES);
+            // a late milestone pushed past the third lane must still read as late
+            more.className = 'cal-ms-more' + (over.some(seg => seg.overdue) ? ' ms-late' : '');
             more.textContent = '+' + hidden;
-            more.title = dayLanes.filter(seg => seg.lane >= CAL_MS_MAX_LANES).map(seg => seg.title).join('\n');
+            more.title = over.map(seg => seg.title + (seg.overdue ? ' — ' + seg.label : '')).join('\n');
             lanes.appendChild(more);
           }
           cell.appendChild(lanes);
+        }
+        /* One `!` on the day the late bars end — which is today — however many
+           milestones are late. Absolutely positioned, so it never reflows a
+           cell of the 100dvh grid. */
+        const lateEnds = dayLanes.filter(seg => seg.overdue && seg.isEnd);
+        if (lateEnds.length) {
+          const flag = document.createElement('span');
+          flag.className = 'cal-ms-late-flag';
+          flag.textContent = '!';
+          flag.setAttribute('data-cal-late-flag', String(lateEnds.length));
+          flag.setAttribute('role', 'img');
+          flag.setAttribute('aria-label', lateEnds.length + ' overdue milestone' + (lateEnds.length === 1 ? '' : 's'));
+          flag.title = lateEnds.map(seg => seg.title + ' — ' + seg.label).join('\n');
+          cell.appendChild(flag);
         }
         const cats = CAL_CATS.filter(c => bucket[c.key] && bucket[c.key].length);
         if (cats.length) {
@@ -1213,9 +1241,17 @@
       else if (window.TrackQuest && e.key === TrackQuest.ROUTINE_TICK_KEY) renderQuests();
     });
 
+    /* A late milestone's tail ends on TODAY, so a tab left open overnight would
+       keep yesterday's answer. Coming back to the tab redraws the calendar —
+       renderCalendar re-reads storage itself, so this is one render, and it
+       touches nothing stored. */
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') renderCalendar();
+    });
+
     renderSlots();
   </script>
   <script src="scripts/notes-core.js?v=3"></script>
-  <script src="scripts/notes-widget.js?v=5"></script>
+  <script src="scripts/notes-widget.js?v=6"></script>
 </body>
 </html>

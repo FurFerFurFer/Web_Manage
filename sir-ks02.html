@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SIR × KS02 × MG</title>
+  <title>Knowledge Record</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%232e6349%22/%3E%3Cg fill=%22none%22 stroke=%22white%22 stroke-width=%221.7%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2211%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%227.6%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%224.4%22/%3E%3C/g%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%221.7%22 fill=%22white%22/%3E%3C/svg%3E">
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
+  <script src="scripts/milestone-core.js?v=2"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
   <script src="scripts/source-dump-core.js?v=1"></script>
@@ -19,7 +20,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=17">
+  <link rel="stylesheet" href="styles/styles.css?v=18">
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="app-page ks02-page">
@@ -35,6 +36,19 @@
     };
     const STAGE_RING = {1:"#7c3aed",2:"#2563eb",3:"#0891b2",4:"#0d9488",sir:"#059669",finished:"#4b5563"};
     const STAGE_KEYS = ["1","2","3","4","sir"];
+    // What a mind map's stored `type` is called on screen. The stored values stay
+    // "anchor" / "1" / "2"; only the words changed (they were shown as "T1" / "T2",
+    // which collided with SIR's review numbers T1–T5). true-storage.html carries
+    // the same helper for its copy of the Source Dump page.
+    const mmTypeLabel = t => t==="anchor"?"Anchor":t==="1"?"Declarative":t==="2"?"Procedural":String(t??"");
+    // A Procedural MM has no SIR (docs/CONCEPTS.md). One definition, in
+    // milestone-core.js: stageOf is the phase an MM is IN — a Procedural MM
+    // stored in SIR or FINISHED reads as S4 — and liveSessions is the sessions
+    // that are drawn. Nothing stored changes, so switching the type back to
+    // Declarative restores SIR. DRAW a phase through stageOf, never from
+    // `mm.ksStage`; only the writers read the stored value.
+    const stageOf = mm => TrackMilestone.stageOf(mm);
+    const isProcedural = mm => TrackMilestone.isProcedural(mm);
     const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     const PALETTE = ["#6366f1","#ec4899","#f59e0b","#10b981","#3b82f6","#8b5cf6","#14b8a6","#f97316","#06b6d4","#a3e635"];
     const FILL_COLORS = [
@@ -409,7 +423,7 @@
 
     function KS02Wheel({mms,onSelectStage,selectedStage}) {
       const CX=200,CY=200,R_OUTER=175,R_INNER=55,arc=(2*Math.PI)/STAGE_KEYS.length;
-      const counts=useMemo(()=>{const c={};STAGE_KEYS.forEach(s=>{c[s]=mms.filter(m=>m.ksStage===s).length;});return c;},[mms]);
+      const counts=useMemo(()=>{const c={};STAGE_KEYS.forEach(s=>{c[s]=mms.filter(m=>stageOf(m)===s).length;});return c;},[mms]);
       function segPath(i){
         const a0=-Math.PI/2+i*arc,a1=a0+arc-0.04;
         return `M${CX+R_OUTER*Math.cos(a0)},${CY+R_OUTER*Math.sin(a0)} A${R_OUTER},${R_OUTER} 0 0,1 ${CX+R_OUTER*Math.cos(a1)},${CY+R_OUTER*Math.sin(a1)} L${CX+R_INNER*Math.cos(a1)},${CY+R_INNER*Math.sin(a1)} A${R_INNER},${R_INNER} 0 0,0 ${CX+R_INNER*Math.cos(a0)},${CY+R_INNER*Math.sin(a0)} Z`;
@@ -422,7 +436,7 @@
             {STAGE_KEYS.map((s,i)=>{
               const col=STAGE_RING[s],p=lp(i),count=counts[s]||0,isSel=selectedStage===s;
               return (
-                <g key={s} onClick={()=>onSelectStage(isSel?null:s)} className="cursor-pointer">
+                <g key={s} data-ks02-stage={s} data-count={count} onClick={()=>onSelectStage(isSel?null:s)} className="cursor-pointer">
                   <path d={segPath(i)} fill={col} fillOpacity={isSel?0.85:0.35} stroke={col} strokeWidth={isSel?2:1} strokeOpacity="0.6"/>
                   <text x={p.x} y={p.y-6} textAnchor="middle" dominantBaseline="middle" fontSize="11" fill="white" fontWeight="bold" className="pointer-events-none">{s==="sir"?"SIR":`S${s}`}</text>
                   <text x={p.x} y={p.y+8} textAnchor="middle" dominantBaseline="middle" fontSize="10" fill="white" fillOpacity="0.7" className="pointer-events-none">{count}</text>
@@ -433,7 +447,7 @@
             <text x={CX} y={CY-6} textAnchor="middle" fontSize="11" fill="#9ca3af">total</text>
             <text x={CX} y={CY+9} textAnchor="middle" fontSize="16" fill="white" fontWeight="bold">{mms.length}</text>
           </svg>
-          {mms.filter(m=>!m.ksStage).length>0&&<div className="text-xs text-gray-500 mt-1">{mms.filter(m=>!m.ksStage).length} unassigned</div>}
+          {mms.filter(m=>!stageOf(m)).length>0&&<div className="text-xs text-gray-500 mt-1">{mms.filter(m=>!stageOf(m)).length} unassigned</div>}
         </div>
       );
     }
@@ -847,7 +861,7 @@
               })}
               {mms.map(mm=>{
                 const p=nodePos[mm.id]||{x:200,y:200},col=mm.customColor||(mm.type==="anchor"?"#6b7280":mm.type==="1"?"#ef4444":mmColor(mm.id)),r=mm.type==="2"?26:mm.type==="anchor"?14:20;
-                const hasMG=mgChanges&&mgChanges.some(c=>c.mmId===mm.id),stageCol=mm.ksStage?STAGE_RING[mm.ksStage]:null;
+                const hasMG=mgChanges&&mgChanges.some(c=>c.mmId===mm.id),stageCol=stageOf(mm)?STAGE_RING[stageOf(mm)]:null;
                 return (
                   <g key={mm.id} data-mmid={mm.id} transform={`translate(${p.x},${p.y})`} onMouseDown={e=>onMouseDown(e,mm.id)} onMouseUp={e=>onMouseUp(e,mm.id)} onContextMenu={e=>{e.preventDefault();e.stopPropagation();const rect=svgRef.current.getBoundingClientRect();setCtxMenu({mmId:mm.id,x:e.clientX-rect.left,y:e.clientY-rect.top});}} style={{cursor:fillState==="on"?"crosshair":"pointer"}}>
                     {hasMG&&<circle r={r+7} fill="none" stroke={col} strokeWidth="1" strokeOpacity="0.25"/>}
@@ -867,8 +881,8 @@
           )}
           <div className="absolute bottom-3 left-3 flex gap-3 items-center text-xs text-gray-600">
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full border border-gray-500 inline-block"/>Anchor</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border border-dashed border-red-500 inline-block"/>T1</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border border-indigo-400 inline-block"/>T2</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border border-dashed border-red-500 inline-block"/>Declarative</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border border-indigo-400 inline-block"/>Procedural</span>
             <span>drag · scroll/pinch to zoom · click to open</span>
           </div>
           <div className="absolute bottom-16 right-3 flex items-center gap-1 text-xs">
@@ -1031,8 +1045,8 @@
                 {form.level&&levelTemplates&&levelTemplates[form.level]?.mgTemplate&&<div className="mt-2 px-3 py-2 bg-gray-900 border border-emerald-800 rounded text-xs text-emerald-400 pointer-events-none select-none">{levelTemplates[form.level].mgTemplate}</div>}
               </div>
               {!initialMMId&&(<div>
-                <div className="text-xs text-gray-400 mb-1">Link to MM (optional — T2 only):</div>
-                <input value={mmSearch} onChange={e=>setMmSearch(e.target.value)} placeholder="Search T2 MMs..."
+                <div className="text-xs text-gray-400 mb-1">Link to MM (optional — procedural only):</div>
+                <input value={mmSearch} onChange={e=>setMmSearch(e.target.value)} placeholder="Search procedural MMs..."
                   className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 mb-1 text-white placeholder-gray-600 text-xs"/>
                 <div className="max-h-24 overflow-y-auto space-y-0.5">
                   <button onClick={()=>setMMId("")} className={`w-full text-left text-xs px-3 py-1.5 rounded ${!mmId?"bg-gray-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>No MM (store unlinked)</button>
@@ -1044,9 +1058,9 @@
             </div>)}
             <div className="flex gap-2 mt-4">
               {step>1&&<button onClick={()=>setStep(p=>p-1)} className="flex-1 bg-gray-800 text-gray-300 py-2 rounded text-xs">← BACK</button>}
-              {step<4&&<button onClick={()=>setStep(p=>p+1)} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold">NEXT →</button>}
-              {step===4&&<button onClick={()=>{clearInterval(timerIntervalRef.current);setTimeLeft(null);onSave(form,mmId||initialMMId||null);}} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded text-xs font-bold">SAVE</button>}
-              <button onClick={onCancel} className="bg-gray-800 text-gray-400 px-3 py-2 rounded text-xs">✕</button>
+              {step<4&&<button data-kolb-next onClick={()=>setStep(p=>p+1)} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold">NEXT →</button>}
+              {step===4&&<button data-kolb-save onClick={()=>{clearInterval(timerIntervalRef.current);setTimeLeft(null);onSave(form,mmId||initialMMId||null);}} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded text-xs font-bold">SAVE</button>}
+              <button data-kolb-close onClick={onCancel} className="bg-gray-800 text-gray-400 px-3 py-2 rounded text-xs">✕</button>
             </div>
           </div>
         </div>
@@ -1156,15 +1170,15 @@
 	          />
           {confirmTypeChange&&(
             <div className="bg-gray-900 border border-yellow-700 rounded p-3 mb-3">
-              <div className="text-xs text-yellow-300 mb-1">Change <span className="font-bold text-white">{mm.name}</span> to {confirmTypeChange==="anchor"?"Anchor":`T${confirmTypeChange}`}?</div>
+              <div className="text-xs text-yellow-300 mb-1">Change <span className="font-bold text-white">{mm.name}</span> to {mmTypeLabel(confirmTypeChange)}?</div>
               <div className="text-xs text-gray-400 mb-2">{confirmTypeChange==="anchor"||confirmTypeChange==="1"?"All linked Kolbs will become unlinked.":confirmTypeChange==="2"?"MG tracking will be enabled.":""}</div>
               <div className="flex gap-2">
-                <button onClick={()=>{onChangeType(mm.id,confirmTypeChange);setConfirmTypeChange(false);}} className="flex-1 bg-yellow-700 hover:bg-yellow-600 text-white py-1.5 rounded text-xs font-bold">CONFIRM</button>
+                <button data-mm-type-confirm onClick={()=>{onChangeType(mm.id,confirmTypeChange);setConfirmTypeChange(false);}} className="flex-1 bg-yellow-700 hover:bg-yellow-600 text-white py-1.5 rounded text-xs font-bold">CONFIRM</button>
                 <button onClick={()=>setConfirmTypeChange(false)} className="flex-1 bg-gray-800 text-gray-300 py-1.5 rounded text-xs">CANCEL</button>
               </div>
             </div>
           )}
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
             <div className="w-3 h-3 rounded-full" style={{backgroundColor:mm.type==="anchor"?"#6b7280":mm.type==="1"?"#ef4444":mmColor(mm.id)}}/>
             {editingMMName?(
               <input autoFocus
@@ -1182,17 +1196,17 @@
                 onDoubleClick={()=>{setMMNameDraft(mm.name);setEditingMMName(true);}}
               >{mm.name}</span>
             )}
-            <span className={`text-xs px-2 py-0.5 rounded ${mm.type==="2"?"bg-indigo-900 text-indigo-300":mm.type==="1"?"bg-red-900 text-red-300":"bg-gray-700 text-gray-300"}`}>{mm.type==="anchor"?"Anchor":`T${mm.type}`}</span>
+            <span className={`text-xs px-2 py-0.5 rounded ${mm.type==="2"?"bg-indigo-900 text-indigo-300":mm.type==="1"?"bg-red-900 text-red-300":"bg-gray-700 text-gray-300"}`}>{mmTypeLabel(mm.type)}</span>
             {["anchor","1","2"].filter(t=>t!==mm.type).map(t=>(
-              <button key={t} onClick={()=>setConfirmTypeChange(t)} className="text-xs px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 ml-1">→ {t==="anchor"?"Anchor":`T${t}`}</button>
+              <button key={t} data-mm-type-to={t} onClick={()=>setConfirmTypeChange(t)} className="text-xs px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 ml-1">→ {mmTypeLabel(t)}</button>
             ))}
-            {mm.ksStage&&<span className={`text-xs px-2 py-0.5 rounded ${STAGE_COLORS[mm.ksStage]||""}`}>{mm.ksStage==="sir"?"SIR":mm.ksStage==="finished"?"FINISHED":`S${mm.ksStage}`}</span>}
+            {stageOf(mm)&&<span data-mm-stage-badge className={`text-xs px-2 py-0.5 rounded ${STAGE_COLORS[stageOf(mm)]||""}`}>{stageOf(mm)==="sir"?"SIR":stageOf(mm)==="finished"?"FINISHED":`S${stageOf(mm)}`}</span>}
             {mm.type==="2"&&mm.rating!=null&&<span className="text-xs px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 font-bold tracking-wide">LV {mm.rating}</span>}
           </div>
 
           <div className="flex gap-1 mb-4">
             {(mm.type==="anchor"?[["info","INFO"],["sc","S&C"]]:[["ks03","KS03"],["mg","MG"],["sc","S&C"]]).map(([m,l])=>(
-              <button key={m} onClick={()=>setMode(m)}
+              <button key={m} data-mm-mode={m} onClick={()=>setMode(m)}
                 className={`px-4 py-1.5 rounded text-xs font-bold transition ${mode===m?"bg-white text-gray-950":"bg-gray-800 text-gray-400 hover:text-white"}`}>{l}</button>
             ))}
           </div>
@@ -1235,18 +1249,19 @@
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-xs text-gray-500 tracking-widest">KS02 STAGE</div>
-                <button onClick={()=>onOpenLin(mm)} className="bg-green-800 hover:bg-green-700 text-white px-2 py-1 rounded text-xs font-bold">+Lin</button>
+                <button data-mm-open-lin onClick={()=>onOpenLin(mm)} className="bg-green-800 hover:bg-green-700 text-white px-2 py-1 rounded text-xs font-bold">+Lin</button>
               </div>
               <div className="flex gap-1 flex-wrap">
-                {STAGE_KEYS.map(s=>(
-                  <div key={s} className={`px-3 py-1.5 rounded text-xs font-bold ${mm.ksStage===s?STAGE_COLORS[s]:"bg-gray-800 text-gray-600"}`}>
+                {/* A Procedural MM's last phase is S4: it has no SIR pill. */}
+                {STAGE_KEYS.filter(s=>!(s==="sir"&&isProcedural(mm))).map(s=>(
+                  <div key={s} data-mm-stage-pill={s} aria-current={stageOf(mm)===s?"step":undefined} className={`px-3 py-1.5 rounded text-xs font-bold ${stageOf(mm)===s?STAGE_COLORS[s]:"bg-gray-800 text-gray-600"}`}>
                     {s==="sir"?"SIR":`S${s}`}
                   </div>
                 ))}
               </div>
             </div>
 
-            {mm.ksStage==="sir"&&mySessions.length>0&&(
+            {stageOf(mm)==="sir"&&mySessions.length>0&&(
               <div className="mb-4 bg-gray-900 border border-emerald-800 rounded p-3">
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-xs text-emerald-400 tracking-widest">SIR SESSIONS</div>
@@ -1260,7 +1275,7 @@
                 <SIRWheel sessions={mySessions} onSessionClick={()=>{}} onRevert={null}/>
               </div>
             )}
-            {mm.ksStage==="finished"&&(
+            {stageOf(mm)==="finished"&&(
               <div className="mb-4 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-xs text-gray-300">
                 ✓ FINISHED — all SIR reps completed.
                 <span className="ml-2 text-gray-500">Use +Lin to revert.</span>
@@ -1322,7 +1337,7 @@
           </>)}
 
           {mm.type!=="anchor"&&mode==="mg"&&(<>
-            {mm.type!=="2"&&<div className="bg-gray-900 border border-red-900 rounded p-3 text-xs text-red-300">T1 — no MG.</div>}
+            {mm.type!=="2"&&<div className="bg-gray-900 border border-red-900 rounded p-3 text-xs text-red-300">Declarative — no MG.</div>}
             {mm.type==="2"&&(<>
               <div className="bg-gray-900 border border-emerald-800 rounded p-3 mb-4">
                 <div className="text-xs text-emerald-400 mb-1">CURRENT MG</div>
@@ -1345,7 +1360,7 @@
                   <div className="mt-1 text-[10px] text-indigo-400">{mmKolbs.length} Kolb{mmKolbs.length!==1?'s':''} on this focus</div>
                 )}
               </div>
-              <button onClick={onNewKolb} className="w-full bg-indigo-700 hover:bg-indigo-600 text-white py-2 rounded text-xs font-bold mb-4">+ NEW KOLB → UPDATE MG</button>
+              <button data-mm-new-kolb onClick={onNewKolb} className="w-full bg-indigo-700 hover:bg-indigo-600 text-white py-2 rounded text-xs font-bold mb-4">+ NEW KOLB → UPDATE MG</button>
 
 
               <div className="text-xs text-gray-500 mb-3 tracking-widest">MG PROGRESSION</div>
@@ -1866,7 +1881,7 @@
           <div className="flex items-center justify-between mb-4">
             <button onClick={onBack} className="text-gray-500 hover:text-white text-xs">← back</button>
             <div className="flex items-center gap-2">
-              {dirty&&<span className="text-xs text-yellow-400">unsaved</span>}
+              {dirty&&<span data-kolb-unsaved className="text-xs text-yellow-400">unsaved</span>}
               <span className="text-xs text-gray-500">{kolb.date}</span>
             </div>
           </div>
@@ -1883,12 +1898,12 @@
                 <button onClick={()=>f(null,"mmId")} className="text-xs text-red-500 hover:text-red-300">unlink</button>
               </div>
             ):null;})()}
-            <input value={kolbLinkSearch} onChange={e=>setKolbLinkSearch(e.target.value)} placeholder="Search T2 MMs to link..."
+            <input value={kolbLinkSearch} onChange={e=>setKolbLinkSearch(e.target.value)} placeholder="Search procedural MMs to link..."
               className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 mb-1 text-white placeholder-gray-600 text-xs"/>
             <div className="max-h-24 overflow-y-auto space-y-0.5">
-              <button onClick={()=>{f(null,"mmId");setDirty(true);}} className={`w-full text-left text-xs px-3 py-1.5 rounded ${!form.mmId?"bg-gray-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>No MM (unlinked)</button>
+              <button data-kolb-link="none" onClick={()=>{f(null,"mmId");setDirty(true);}} className={`w-full text-left text-xs px-3 py-1.5 rounded ${!form.mmId?"bg-gray-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>No MM (unlinked)</button>
               {filteredT2.map(m=>(
-                <button key={m.id} onClick={()=>{f(m.id,"mmId");setDirty(true);}}
+                <button key={m.id} data-kolb-link={m.id} onClick={()=>{f(m.id,"mmId");setDirty(true);}}
                   className={`w-full text-left text-xs px-3 py-1.5 rounded flex items-center gap-2 ${form.mmId===m.id?"bg-indigo-800 text-white":"bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
                   <div className="w-2 h-2 rounded-full" style={{backgroundColor:mmColor(m.id)}}/>{m.name}
                 </button>
@@ -1964,7 +1979,7 @@
           </div>
 
           <div className="fixed bottom-0 left-0 right-0 p-4 bg-gray-950 border-t border-gray-800">
-            <button onClick={()=>{onSave({...form});setDirty(false);}} className="w-full max-w-2xl mx-auto block bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold">SAVE CHANGES</button>
+            <button data-kolb-edit-save onClick={()=>{if(onSave({...form})!==false)setDirty(false);}} className="w-full max-w-2xl mx-auto block bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded text-xs font-bold">SAVE CHANGES</button>
           </div>
         </div>
       );
@@ -2153,6 +2168,7 @@
       if(type==="stageClear")return`${stageLabel(oldValue)} → Unassigned`;
       if(type==="stageRevert")return`${stageLabel(oldValue)} → ${stageLabel(newValue)} (revert)`;
       if(type==="stageFinish")return`SIR → FINISHED`;
+      if(type==="kolbReset")return`${stageLabel(oldValue)} → S1 (new Kolb)`;
       if(type==="sirDone")return`T${change.repIndex!=null?change.repIndex+1:"?"} session done`;
       if(type==="sirSkip")return`T${change.repIndex!=null?change.repIndex+1:"?"} session skipped`;
       if(type==="sirPostpone")return`T${change.repIndex!=null?change.repIndex+1:"?"} session postponed → ${newValue}`;
@@ -2207,7 +2223,7 @@
         }
       }
 
-      const curStage=currentMM?.ksStage!=null?String(currentMM.ksStage):null;
+      const curStage=stageOf(currentMM)!=null?String(stageOf(currentMM)):null;
       function stageOptions(){
         if(curStage===null) return [{label:"Assign to Stage 1",change:{type:"stageAdvance",oldValue:null,newValue:"1"}}];
         if(curStage==="1") return [
@@ -2223,8 +2239,10 @@
           {label:"Revert → S2",change:{type:"stageRevert",oldValue:"3",newValue:"2"}},
           {label:"Revert → S1",change:{type:"stageRevert",oldValue:"3",newValue:"1"}},
         ];
+        // S4 is a Procedural MM's last phase. saveLinSession refuses the
+        // advance as well, so this is not the only thing standing in the way.
         if(curStage==="4") return [
-          {label:"Advance → SIR",change:{type:"stageAdvance",oldValue:"4",newValue:"sir"}},
+          ...(isProcedural(currentMM)?[]:[{label:"Advance → SIR",change:{type:"stageAdvance",oldValue:"4",newValue:"sir"}}]),
           {label:"Revert → S3",change:{type:"stageRevert",oldValue:"4",newValue:"3"}},
           {label:"Revert → S2",change:{type:"stageRevert",oldValue:"4",newValue:"2"}},
           {label:"Revert → S1",change:{type:"stageRevert",oldValue:"4",newValue:"1"}},
@@ -2293,8 +2311,8 @@
                         </div>
                         <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:m.type==="1"?"#ef4444":mmColor(m.id)}}/>
                         <span className="flex-1 font-medium">{m.name}</span>
-                        {m.ksStage&&<span className={`px-1.5 py-0.5 rounded text-xs ${STAGE_COLORS[m.ksStage]||"bg-gray-700 text-gray-300"}`}>{stageLabel(m.ksStage)}</span>}
-                        {!m.ksStage&&<span className="text-gray-600 text-xs">unassigned</span>}
+                        {stageOf(m)&&<span className={`px-1.5 py-0.5 rounded text-xs ${STAGE_COLORS[stageOf(m)]||"bg-gray-700 text-gray-300"}`}>{stageLabel(stageOf(m))}</span>}
+                        {!stageOf(m)&&<span className="text-gray-600 text-xs">unassigned</span>}
                       </button>
                     );
                   })}
@@ -2313,7 +2331,7 @@
                 </div>
                 <div className="space-y-1">
                   {stageOptions().map((opt,i)=>(
-                    <button key={i} onClick={()=>pickChange(opt.change)}
+                    <button key={i} onClick={()=>pickChange(opt.change)} data-lin-option={`${opt.change.type}:${opt.change.newValue}`}
                       className={`w-full text-left px-3 py-2 rounded text-xs font-medium ${opt.change.type==="stageRevert"||opt.change.type==="stageClear"||opt.change.type==="sirRevert"?"bg-red-950 hover:bg-red-900 text-red-300 border border-red-900":"bg-gray-800 hover:bg-gray-700 text-gray-200"}`}>
                       {opt.label}
                     </button>
@@ -2351,7 +2369,7 @@
                   placeholder={today()}
                   className="w-full bg-gray-800 border border-green-700 rounded px-3 py-2 text-white placeholder-gray-600 text-xs mb-1 outline-none focus:border-green-500"/>
                 <div className="text-xs text-gray-600 mb-3">Leave blank to use today's date as title.</div>
-                <button onClick={()=>onSave(pendingItems,title||today())}
+                <button data-lin-save onClick={()=>onSave(pendingItems,title||today())}
                   className="w-full bg-green-700 hover:bg-green-600 text-white py-2 rounded text-xs font-bold">SAVE</button>
               </div>
             )}
@@ -2384,7 +2402,7 @@
                 className="flex items-center gap-2 px-2 py-1 rounded mb-0.5 cursor-pointer hover:bg-gray-700">
                 <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id)}}/>
                 <span className="text-xs text-gray-200">{m.name}</span>
-                <span className="text-xs text-gray-600 ml-auto">{m.type==="anchor"?"Anchor":`T${m.type}`}</span>
+                <span className="text-xs text-gray-600 ml-auto">{mmTypeLabel(m.type)}</span>
               </div>
             ))}
           </div>
@@ -2543,7 +2561,7 @@
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:mm?(mm.type==="anchor"?"#6b7280":mm.type==="1"?"#ef4444":mmColor(mm.id)):"#6b7280"}}/>
                         <span data-dump-mm-name={link.mmId} className="text-xs font-bold text-gray-200 cursor-pointer hover:text-white underline decoration-dotted" onClick={()=>mm&&onOpenMMSC&&onOpenMMSC(mm.id)}>{mm?.name||"unknown MM"}</span>
-                        <span className="text-xs text-gray-600">{mm?.type==="anchor"?"Anchor":mm?`T${mm.type}`:""}</span>
+                        <span className="text-xs text-gray-600">{mm?mmTypeLabel(mm.type):""}</span>
                       </div>
 	                      <button onClick={()=>requestConfirmDelete(
 	                        "Remove MM link?",
@@ -2633,7 +2651,7 @@
                           className={`flex items-center gap-2 px-2 py-1.5 rounded mb-0.5 ${already?"opacity-40 cursor-not-allowed":"cursor-pointer hover:bg-gray-800"}`}>
                           <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id)}}/>
                           <span className="text-xs text-gray-200">{m.name}</span>
-                          <span className="text-xs text-gray-600 ml-auto">{m.type==="anchor"?"Anchor":`T${m.type}`}</span>
+                          <span className="text-xs text-gray-600 ml-auto">{mmTypeLabel(m.type)}</span>
                           {already&&<span className="text-xs text-gray-600">linked</span>}
                         </div>
                       );
@@ -2725,7 +2743,7 @@
         return ((a.rating ?? Infinity) - (b.rating ?? Infinity));
       });
       if (!type2mms.length)
-        return <div className="text-gray-600 text-center py-20 text-xs">No T2 Mind Maps yet.</div>;
+        return <div className="text-gray-600 text-center py-20 text-xs">No procedural mind maps yet.</div>;
       return (
         <div className="p-4 overflow-y-auto flex-1">
           <div className="flex items-center gap-3 mb-4">
@@ -2810,13 +2828,18 @@
       const mmMap=useMemo(()=>Object.fromEntries(mms.map(m=>[m.id,m])),[mms]);
       const selectedKolb=useMemo(()=>kolbs.find(k=>k.id===selectedKolbId)||null,[kolbs,selectedKolbId]);
       const kolbMap=useMemo(()=>Object.fromEntries(kolbs.map(k=>[k.id,k])),[kolbs]);
-      const sessionsByDate=useMemo(()=>{const m={};sessions.forEach(s=>{const k=s.done&&s.finishDate?s.finishDate:s.date;(m[k]=m[k]||[]).push(s);});return m;},[sessions]);
-      const sirSessionsMap=useMemo(()=>{const m={};sessions.forEach(s=>{(m[s.mmId]=m[s.mmId]||[]).push(s);});Object.keys(m).forEach(k=>{m[k].sort((a,b)=>a.repIndex-b.repIndex);});return m;},[sessions]);
+      // What is DRAWN: a Procedural MM's sessions are left out. `sessions`
+      // itself stays whole — it is what the autosave writes back, so filtering
+      // it would delete the very sessions switching back to Declarative must
+      // restore. The writers in saveLinSession read the whole list too.
+      const liveSessions=useMemo(()=>TrackMilestone.liveSessions(sessions,mms),[sessions,mms]);
+      const sessionsByDate=useMemo(()=>{const m={};liveSessions.forEach(s=>{const k=s.done&&s.finishDate?s.finishDate:s.date;(m[k]=m[k]||[]).push(s);});return m;},[liveSessions]);
+      const sirSessionsMap=useMemo(()=>{const m={};liveSessions.forEach(s=>{(m[s.mmId]=m[s.mmId]||[]).push(s);});Object.keys(m).forEach(k=>{m[k].sort((a,b)=>a.repIndex-b.repIndex);});return m;},[liveSessions]);
       const mmColor=useCallback((id)=>{const mm=mms.find(m=>m.id===id);if(mm?.customColor)return mm.customColor;const i=mms.findIndex(m=>m.id===id);return i>=0?PALETTE[i%PALETTE.length]:"#6b7280";},[mms]);
       const type2mms=useMemo(()=>mms.filter(m=>m.type==="2"),[mms]);
       const sortedKolbs=useMemo(()=>[...kolbs].sort((a,b)=>b.date.localeCompare(a.date)),[kolbs]);
       const displayKolbs=kolbView==="unlinked"?sortedKolbs.filter(k=>!k.mmId):sortedKolbs;
-      const ks02StageMMs=useMemo(()=>ks02SelectedStage?mms.filter(m=>m.ksStage===ks02SelectedStage):[],[mms,ks02SelectedStage]);
+      const ks02StageMMs=useMemo(()=>ks02SelectedStage?mms.filter(m=>stageOf(m)===ks02SelectedStage):[],[mms,ks02SelectedStage]);
 
       // on mount: load slots from unified track_db, auto-create default if none
       useEffect(()=>{
@@ -3046,7 +3069,28 @@
       function deleteDumpEntry(dumpId){setSourceDumps(p=>TrackSourceDump.withoutEntry(p,dumpId));}
       function renameDumpEntry(dumpId,title){setSourceDumps(p=>TrackSourceDump.withTitle(p,dumpId,title));}
       function renameMMFn(mmId,name){if(!name.trim())return;setMms(p=>p.map(m=>m.id===mmId?{...m,name:name.trim()}:m));}
+      // A Procedural MM stored in SIR or FINISHED reads as S4, its sessions
+      // hidden (stageOf / liveSessions). Moving it to another phase takes it
+      // out of SIR for real — and leaving SIR has always ended the run and
+      // deleted its sessions, or they would come back, stale, on an S1–S3 MM
+      // the day it is switched to Declarative. They cannot be seen, so the
+      // save asks first. These are the sessions such a move would delete; for
+      // any other MM, none.
+      function hiddenSirSessions(mm){
+        if(!isProcedural(mm)||!["sir","finished"].includes(mm.ksStage)) return [];
+        return sessions.filter(s=>s.mmId===mm.id);
+      }
+      // Returns false when the user cancelled, having written nothing.
       function saveLinSession(items,title){
+        // S4 is a Procedural MM's last phase. The option is not offered; this
+        // refuses it at the writer as well.
+        items=items.filter(({mmId,change})=>!(change.type==="stageAdvance"&&change.newValue==="sir"&&isProcedural(mmMap[mmId])));
+        if(!items.length) return true;
+        const ending=items.filter(({mmId,change})=>change.type==="stageRevert"&&hiddenSirSessions(mmMap[mmId]).length>0);
+        if(ending.length&&!window.confirm(ending.map(({mmId,change})=>{
+          const mm=mmMap[mmId],n=hiddenSirSessions(mm).length;
+          return `"${mm.name}" is Procedural, so it shows as S4 — but it is still stored as ${stageLabel(mm.ksStage)}, with ${n} SIR session${n===1?"":"s"} hidden from every calendar.\n\nMoving it to ${stageLabel(change.newValue)} takes it out of SIR, which deletes ${n===1?"that session":"those sessions"}. Switching it back to Declarative will not bring ${n===1?"it":"them"} back.`;
+        }).join("\n\n")+"\n\nSave anyway?")) return false;
         const record={id:nid(),title:title||today(),date:today(),items};
         items.forEach(({mmId,change})=>{
           const mm=mmMap[mmId];
@@ -3058,7 +3102,11 @@
               setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId,date:addDays(today(),iv),repIndex:i,done:false,skipped:false}))]);
           } else if(t==="stageRevert"){
             const newStage=change.newValue;
-            if(["sir","finished"].includes(change.oldValue)&&!["sir","finished"].includes(newStage))
+            // The STORED stage decides, not the one the option was drawn from:
+            // a Procedural MM drawn as S4 may be stored in SIR (asked above).
+            // For every other MM the two are the same value.
+            const fromStage=mm?mm.ksStage:change.oldValue;
+            if(["sir","finished"].includes(fromStage)&&!["sir","finished"].includes(newStage))
               setSessions(p=>p.filter(s=>s.mmId!==mmId));
             setMms(p=>p.map(m=>m.id===mmId?{...m,ksStage:newStage}:m));
           } else if(t==="sirRevert"){
@@ -3106,6 +3154,7 @@
         });
         setLinChanges(p=>[...p,record]);
         if(title&&title!==today())setLinDayTitles(p=>p[today()]?p:{...p,[today()]:title});
+        return true;
       }
       function addMM(){
         if (!newMM.name.trim()) return;
@@ -3135,7 +3184,7 @@
           return [...updatedParents,{id,name:newMM.name.trim(),type:newMM.type,parentIds:[...newMM.parentIds],createdAt:today(),currentMG:"",explanation:newMM.type==="anchor"?newMM.explanation.trim():"",comments:[],links:[],ksStage:newMM.type==="anchor"?null:(newMM.ksStage||null),rating:null,scBlocksOrder:[],scAggBlocksOrder:[],sourceDumpActivated:false,unclear:false}];
         });
         setManualPos(p=>({...p,[id]:initPos}));
-        if (newMM.ksStage==="sir"&&newMM.type!=="anchor") setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId:id,date:addDays(today(),iv),repIndex:i,done:false,skipped:false}))]);
+        if (newMM.ksStage==="sir"&&newMM.type!=="anchor"&&!isProcedural(newMM)) setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId:id,date:addDays(today(),iv),repIndex:i,done:false,skipped:false}))]);
         setNewMM({name:"",type:"1",parentIds:[],ksStage:"1",explanation:""});setAddMMModal(false);
         setParentSearch("");
         /* Where ADD leaves you follows where you ARE, like openAddMM's parent:
@@ -3156,7 +3205,9 @@
         const m=src.name.match(/^(.*) \(copy(?: (\d+))?\)$/);
         const newName=m?`${m[1]} (copy ${m[2]?parseInt(m[2])+1:2})`:src.name+" (copy)";
         setMms(p=>[...p,{...src,id:newId,name:newName,createdAt:today()}]);
-        if(src.ksStage==="sir"&&src.type!=="anchor")
+        // A Procedural MM has no SIR, so its copy gets no sessions — whatever
+        // its stored stage says. The copy reads as S4, like its source.
+        if(src.ksStage==="sir"&&src.type!=="anchor"&&!isProcedural(src))
           setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId:newId,date:addDays(today(),iv),repIndex:i,done:false,skipped:false}))]);
       }
       function saveParents(mmId,pids){setMms(p=>p.map(m=>m.id===mmId?{...m,parentIds:pids}:m));}
@@ -3194,10 +3245,39 @@
           setMms(p=>p.map(m=>m.id===mmId?{...m,type:"2",ksStage:savedKsStage!=null?savedKsStage:m.ksStage,currentMG:savedCurrentMG!=null?savedCurrentMG:m.currentMG,_savedKolbIds:undefined,_savedKsStage:undefined,_savedCurrentMG:undefined}:m));
         }
       }
+      // A Kolb ARRIVING on a Procedural MM sends it back to S1 (docs/CONCEPTS.md:
+      // a reflection brings new information, which has to be built in again).
+      // It arrives in two ways, and both come through here: a new Kolb saved on
+      // it (saveKolb — SAVE, or the timer running out), and an old Kolb moved
+      // onto it from another MM or from none (the KOLB tab's edit save). Editing
+      // a Kolb in place and `dupe` are not arrivals and never reset. An MM that
+      // is unassigned or already at S1 is left alone. The reset is logged as its
+      // own LIN change, `kolbReset`, which the streak does not count. One still
+      // STORED in SIR holds hidden sessions that leaving SIR deletes —
+      // saveLinSession's rule — so it asks first; null means Cancel, and the
+      // caller must then write nothing at all.
+      function kolbResetPlan(mmId,lead){
+        const target=mmId?mmMap[mmId]:null;
+        const fromStage=target?stageOf(target):null;
+        const resets=isProcedural(target)&&fromStage!=null&&fromStage!==""&&String(fromStage)!=="1";
+        const hidden=resets?hiddenSirSessions(target):[];
+        if(hidden.length&&!window.confirm(`${lead} "${target.name}" back to S1.\n\nIt is Procedural, so it shows as S4 — but it is still stored as ${stageLabel(target.ksStage)}, with ${hidden.length} SIR session${hidden.length===1?"":"s"} hidden from every calendar. Going back to S1 takes it out of SIR, which deletes ${hidden.length===1?"that session":"those sessions"}.\n\nSave anyway?`)) return null;
+        return {mmId,resets,hidden,fromStage};
+      }
+      function applyKolbReset(plan,kid){
+        if(!plan||!plan.resets) return;
+        const {mmId,hidden,fromStage}=plan;
+        setMms(p=>p.map(m=>m.id===mmId?{...m,ksStage:"1"}:m));
+        if(hidden.length) setSessions(p=>p.filter(s=>s.mmId!==mmId));
+        setLinChanges(p=>[...p,{id:nid(),title:today(),date:today(),items:[{mmId,change:{type:"kolbReset",oldValue:String(fromStage),newValue:"1",kolbId:kid}}]}]);
+      }
       function saveKolb(form,mmId){
+        const plan=kolbResetPlan(mmId,"Saving this Kolb sends");
+        if(!plan) return false;
         const kid=nid();
         const mgValue=(form.mgAdd||form.experiments||"").trim();
         setKolbs(p=>[...p,{id:kid,mmId:mmId||null,...form,date:today()}]);
+        applyKolbReset(plan,kid);
         if (mmId){const mm=mmMap[mmId];if (mm&&mm.type==="2"){
           if (mgValue){
             setMgChanges(p=>[...p,{id:nid(),mmId,kolbId:kid,oldMG:mm.currentMG||"(none)",newMG:mgValue,experiment:form.experiments||"",date:today()}]);
@@ -3312,11 +3392,11 @@
                   const allDay=(sessionsByDate[ds]||[]).filter(s=>!s.skipped);
                   const isToday=ds===today(),isSel=selDay===day;
                   return (
-                    <div key={day} onClick={()=>setSelDay(isSel?null:day)}
+                    <div key={day} data-ks02-cal-day={ds} onClick={()=>setSelDay(isSel?null:day)}
                       className={`rounded p-1 cursor-pointer min-h-[48px] border transition ${isSel?"border-white":"border-gray-800 hover:border-gray-600"} ${isToday?"bg-gray-800":"bg-gray-900"}`}>
                       <div className={`text-xs mb-1 ${isToday?"text-white font-bold":"text-gray-400"}`}>{day}</div>
                       <div className="flex flex-wrap gap-0.5">
-                        {allDay.slice(0,4).map(s=><div key={s.id} className={`w-2 h-2 rounded-full ${s.done?"opacity-35":""}`} style={{backgroundColor:mmColor(s.mmId)}}/>)}
+                        {allDay.slice(0,4).map(s=><div key={s.id} data-ks02-cal-dot={s.mmId} data-day={ds} className={`w-2 h-2 rounded-full ${s.done?"opacity-35":""}`} style={{backgroundColor:mmColor(s.mmId)}}/>)}
                         {allDay.length>4&&<span className="text-gray-500 text-xs">+{allDay.length-4}</span>}
                       </div>
                     </div>
@@ -3328,7 +3408,7 @@
                   <div className="font-bold mb-2 text-xs tracking-widest text-gray-300">{MONTH_NAMES[month]} {selDay}</div>
                   {!selSessions.length&&<div className="text-gray-500 text-xs">No sessions.</div>}
                   {selSessions.filter(s=>!s.skipped).map(s=>(
-                    <div key={s.id} onClick={()=>{openMM(s.mmId,"ks03");setView("ks02");}}
+                    <div key={s.id} data-ks02-cal-session={s.mmId} onClick={()=>{openMM(s.mmId,"ks03");setView("ks02");}}
                       className={`flex items-center justify-between rounded px-3 py-2 mb-1 cursor-pointer hover:opacity-80 ${s.done?"bg-gray-800 text-gray-500":"bg-emerald-900 text-emerald-200"}`}>
                       <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full ${s.done?"opacity-40":""}`} style={{backgroundColor:mmColor(s.mmId)}}/>
@@ -3435,18 +3515,18 @@
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full" style={{backgroundColor:mm.type==="1"?"#ef4444":mmColor(mm.id)}}/>
                         <span className="font-bold text-sm">{mm.name}</span>
-                        {mm.ksStage==="sir"&&(()=>{const d=sirSessionsMap[mm.id]?.filter(x=>x.done).length||0;return <span className="text-xs text-emerald-400">{d>=5?'FIN':`SIR T${d+1}`}</span>;})()}
+                        {stageOf(mm)==="sir"&&(()=>{const d=sirSessionsMap[mm.id]?.filter(x=>x.done).length||0;return <span className="text-xs text-emerald-400">{d>=5?'FIN':`SIR T${d+1}`}</span>;})()}
                       </div>
                       <span className="text-gray-500 text-xs">→</span>
                     </div>
                   ))}
                 </div>
               )}
-              {ks02SubView==="wheel"&&mms.filter(m=>m.ksStage==="finished").length>0&&(
+              {ks02SubView==="wheel"&&mms.filter(m=>stageOf(m)==="finished").length>0&&(
                 <div className="mt-4">
                   <div className="text-xs font-bold tracking-widest mb-2 text-gray-400">FINISHED</div>
-                  {mms.filter(m=>m.ksStage==="finished").map(mm=>(
-                    <div key={mm.id} onClick={()=>openMM(mm.id,"ks03")} className="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded px-3 py-2 mb-1 cursor-pointer hover:border-gray-500 opacity-60">
+                  {mms.filter(m=>stageOf(m)==="finished").map(mm=>(
+                    <div key={mm.id} data-ks02-finished-mm={mm.id} onClick={()=>openMM(mm.id,"ks03")} className="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded px-3 py-2 mb-1 cursor-pointer hover:border-gray-500 opacity-60">
                       <div className="w-2 h-2 rounded-full" style={{backgroundColor:mmColor(mm.id)}}/>
                       <span className="text-sm">{mm.name}</span>
                       <span className="text-xs text-gray-500 ml-auto">✓</span>
@@ -3454,10 +3534,10 @@
                   ))}
                 </div>
               )}
-              {ks02SubView==="wheel"&&mms.filter(m=>!m.ksStage).length>0&&(
+              {ks02SubView==="wheel"&&mms.filter(m=>!stageOf(m)).length>0&&(
                 <div className="mt-4">
                   <div className="text-xs text-gray-600 mb-2 tracking-widest">UNASSIGNED</div>
-                  {mms.filter(m=>!m.ksStage).map(mm=>(
+                  {mms.filter(m=>!stageOf(m)).map(mm=>(
                     <div key={mm.id} onClick={()=>openMM(mm.id,"ks03")} className="flex items-center justify-between bg-gray-900 border border-gray-800 rounded px-3 py-2 mb-1 cursor-pointer hover:border-gray-600 opacity-40">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full" style={{backgroundColor:mm.type==="1"?"#ef4444":mmColor(mm.id)}}/>
@@ -3632,7 +3712,7 @@
               {displayKolbs.map(k=>{
                 const mm=k.mmId?mmMap[k.mmId]:null,hasMG=mgChanges.some(c=>c.kolbId===k.id);
                 return (
-                  <div key={k.id} onClick={()=>setSelectedKolbId(k.id)} className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded px-4 py-3 mb-2 cursor-pointer">
+                  <div key={k.id} data-kolb-row={k.id} onClick={()=>setSelectedKolbId(k.id)} className="bg-gray-900 border border-gray-800 hover:border-gray-600 rounded px-4 py-3 mb-2 cursor-pointer">
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
                         {mm?(<><div className="w-2 h-2 rounded-full" style={{backgroundColor:mmColor(mm.id)}}/><span className="text-xs text-gray-300">{mm.name}</span></>):<span className="text-xs text-gray-500 italic">unlinked</span>}
@@ -3661,6 +3741,12 @@
                 mmColor={mmColor} levelTemplates={levelTemplates}
                 onBack={()=>setSelectedKolbId(null)}
                 onSave={(updated)=>{
+                  // Moved onto a different MM, or from none: an arrival, so the
+                  // same reset as a new Kolb (kolbResetPlan). Asked before any
+                  // write; false keeps the view's edits unsaved.
+                  const arrives=!!updated.mmId&&updated.mmId!==k.mmId;
+                  const plan=arrives?kolbResetPlan(updated.mmId,"Moving this Kolb sends"):null;
+                  if(arrives&&!plan) return false;
                   const mgValue=(updated.mgAdd||updated.experiments||"").trim();
                   setKolbs(p=>p.map(kb=>kb.id===k.id?{...kb,...updated}:kb));
                   if (updated.mmId!==k.mmId){
@@ -3698,6 +3784,7 @@
                   if (updated.mmId&&mmMap[updated.mmId]?.type==="2"&&updated.level){
                     setMms(p=>p.map(m=>m.id===updated.mmId?{...m,rating:Number(updated.level)}:m));
                   }
+                  applyKolbReset(plan,k.id);
                   setSelectedKolbId(k.id);
                 }}
               />
@@ -3759,7 +3846,7 @@
                 <input value={newMM.name} onChange={e=>setNewMM(p=>({...p,name:e.target.value}))} placeholder="MM name"
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 mb-3 text-white placeholder-gray-600 text-sm"/>
                 <div className="flex gap-2 mb-3">
-                  {[["anchor","Anchor"],["1","T1"],["2","T2"]].map(([t,label])=>(
+                  {[["anchor","Anchor"],["1","Declarative"],["2","Procedural"]].map(([t,label])=>(
                     <button key={t} onClick={()=>setNewMM(p=>({...p,type:t}))}
                       className={`flex-1 py-2 rounded text-xs font-bold ${newMM.type===t?"bg-white text-gray-950":"bg-gray-800 text-gray-400"}`}>
                       {label}
@@ -3796,7 +3883,7 @@
 
           {kolbModal&&<KolbForm mmOptions={type2mms} initialMMId={kolbModal.mmId||null} levelTemplates={levelTemplates} onSave={saveKolb} onCancel={()=>setKolbModal(null)} kolbs={kolbs}/>}
 
-          {linModal&&<LinModal mms={mms} sessions={sessions} sirSessionsMap={sirSessionsMap} mmColor={mmColor} linModal={linModal} setLinModal={setLinModal} linDayTitles={linDayTitles} onSave={(items,title)=>{saveLinSession(items,title);setLinModal(null);}}/>}
+          {linModal&&<LinModal mms={mms} sessions={sessions} sirSessionsMap={sirSessionsMap} mmColor={mmColor} linModal={linModal} setLinModal={setLinModal} linDayTitles={linDayTitles} onSave={(items,title)=>{if(saveLinSession(items,title))setLinModal(null);}}/>}
         </div>
       );
     }
@@ -3805,6 +3892,6 @@
     root.render(<App/>);
   </script>
   <script src="scripts/notes-core.js?v=3"></script>
-  <script src="scripts/notes-widget.js?v=5"></script>
+  <script src="scripts/notes-widget.js?v=6"></script>
 </body>
 </html>

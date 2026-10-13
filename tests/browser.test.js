@@ -4327,7 +4327,10 @@ test('browser suites', skipUnlessChrome, async t => {
         goals: [
           F.task('g-1', {
             title: 'Root goal',
-            milestones: [F.milestone('ms-1', '2026-03-01', '2026-03-10')],
+            // a slip record rides the same path: item-level, inside goals,
+            // named by no allow-list, and with its `to` absent on a clear
+            milestones: [F.milestone('ms-1', '2026-03-01', '2026-03-10', { slips: [
+              { from: '2026-02-20', to: '2026-03-10', on: '2026-02-25' }, { from: '2026-01-31', on: '2026-02-02' }] })],
             toLearn: [10, 11], questLearn: [10], starLearn: [10],
             quest: true, star: false,
             children: [F.task('g-1a', {
@@ -4422,6 +4425,9 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(qGoal.starLearn, [10], 'and its star');
     assert.equal(qGoal.children.find(k => k.id === 'g-1a').star, true,
       'a nested node kept its flags too');
+    assert.deepEqual(qGoal.milestones[0].slips,
+      [{ from: '2026-02-20', to: '2026-03-10', on: '2026-02-25' }, { from: '2026-01-31', on: '2026-02-02' }],
+      'and a milestone\'s slip record, record for record, a cleared slip still without its `to`');
 
     assert.equal(imported.calendarNotes.find(n => n.id === 'cn-sched').blockOff, true,
       'blockOff round-tripped — the one key that decides whether an item is on the grid');
@@ -12245,5 +12251,1115 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.ok(lock.text >= 120, 'and the locked text keeps room to be read: ' + lock.text + 'px');
     assert.deepEqual(realErrors(page), []);
     await page.close();
+  });
+
+  /* ── 18. Overdue milestones ──────────────────────────────────────────────
+     A milestone whose end has passed with its work unfinished is LATE.
+     milestone-core.js decides that, and its own suite pins the rule; these
+     cases pin where it SHOWS, one surface per case: the Home and
+     Documentations month tails (one shared layout in calendar-core.js, two
+     renderers), the Milestones tab's row and calendar (progress.html's own
+     code), the Schedule's ⚑ rows and its two pickers, and the slip record the
+     period writer keeps. A surface forgotten while its sibling works is this
+     repository's recurring bug, so no case covers two.
+
+     Every date is relative to TODAY. The late milestone ran from 20 days ago
+     to 5 days ago, so its PERIOD may sit in last month — but its tail always
+     reaches today's cell, so every calendar assertion is made there. A
+     fixed-day assertion fails on the 1st to 5th of every month: the trap
+     51968a0 fixed for the caution picker. */
+
+  const msBlock = (id, milestoneId, children) =>
+    ({ id, title: 'Block ' + id, children: children || [], completed: false, taskType: 'milestone', milestoneId });
+  const LATE_KEY = 'g-late|ms-late';
+  const lateGoal = (over = {}) => F.task('g-late', Object.assign({
+    title: 'Exam prep',
+    milestones: [F.milestone('ms-late', dayFromToday(-20), dayFromToday(-5), { title: 'Chapter one' })],
+    children: [msBlock('blk-late', 'ms-late', [
+      F.task('t-open-1', { title: 'Read the notes' }),
+      F.task('t-open-2', { title: 'Do the problems' }),
+      F.task('t-done', { title: 'Watch the lecture', completed: true })])]
+  }, over));
+  // seedDb's populated slot, with its goal tree replaced and its dated noise
+  // cleared so nothing else competes for today's cell
+  const lateDb = (goals = [lateGoal()]) => seedDb({
+    goals, calendarNotes: [], deadlines: [], mmEntries: [], sessions: [], saEntries: []
+  });
+  // Every task done; what keeps it late is MM 10 (no stage yet) short of stage 2.
+  const lateLearnDb = () => lateDb([lateGoal({
+    toLearn: [10],
+    mmTargets: { 10: { milestones: [{ milestoneId: 'ms-late', stage: '2' }] } },
+    children: [msBlock('blk-late', 'ms-late', [F.task('t-done', { title: 'Watch the lecture', completed: true })])]
+  })]);
+  // The colour a `var(--color-danger)` resolves to on this page, measured.
+  const DANGER_RGB = function () {
+    var p = document.createElement('span');
+    p.style.color = 'var(--color-danger)';
+    document.body.appendChild(p);
+    var c = getComputedStyle(p).color;
+    p.remove();
+    return c;
+  };
+  const READ_MS = function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var s = (db.slots || [])[0] || {};
+    var g = (s.goals || []).filter(function (x) { return x.id === 'g-late'; })[0];
+    return g ? (g.milestones || [])[0] : null;
+  };
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const shortDay = ds => MON[+ds.slice(5, 7) - 1] + ' ' + (+ds.slice(8, 10))
+    + (ds.slice(0, 4) === TODAY.slice(0, 4) ? '' : ', ' + ds.slice(0, 4));
+  /* Every case here closes its page however it ends. A case that fails before
+     its own page.close() leaves its tab open, and an open progress.html tab is
+     a LIVE WRITER: it adopts the next case's seed from the storage event and
+     writes its own state back, racing that case's writes. The first
+     doctored-baseline run of this section showed exactly that — the SLIP cases
+     failing on a stale `to` in every tree where an earlier Milestones case had
+     failed, and in no other. close() is idempotent, so each case's own
+     close at its end stays. */
+  const openHere = async (tc, file, opts) => {
+    const page = await open(file, opts);
+    tc.after(() => page.close());
+    return page;
+  };
+  const openMilestonesTab = async (tc, db) => {
+    const page = await openHere(tc, 'progress.html', { db, hash: '#milestones' });
+    await page.waitFor(function (k) { return !!document.querySelector('[data-ms-row="' + k + '"]'); },
+      { args: [LATE_KEY], message: 'the late milestone row' });
+    return page;
+  };
+  // One date-input gesture, as a user makes it: focus, one or more committed
+  // days, blur. Each day is waited on in storage before the next is typed, so
+  // the next commit's `prev` holds it — that is what a real keystroke sees.
+  const typeEnd = async (page, key, values, { blur = true } = {}) => {
+    await page.evaluate(function (k) {
+      var el = document.querySelector('[data-ms-row="' + k + '"] [data-ms-date="end"]');
+      el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      return true;
+    }, key);
+    for (const v of values) {
+      await page.evaluate(function (setterSrc, k, val) {
+        var set = new Function('return ' + setterSrc)();
+        set(document.querySelector('[data-ms-row="' + k + '"] [data-ms-date="end"]'), val);
+        return true;
+      }, SET_REACT_INPUT, key, v);
+      if (/^2\d{3}-/.test(v)) {
+        await page.waitFor(function (val) {
+          var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+          var g = (((db.slots || [])[0] || {}).goals || []).filter(function (x) { return x.id === 'g-late'; })[0];
+          return !!g && g.milestones[0].endDate === val;
+        }, { args: [v], message: 'the end day ' + v + ' landing in storage' });
+      }
+    }
+    if (blur) {
+      await page.evaluate(function (k) {
+        var el = document.querySelector('[data-ms-row="' + k + '"] [data-ms-date="end"]');
+        el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+        return true;
+      }, key);
+    }
+  };
+
+  // ── the month tails ──────────────────────────────────────────────────────
+
+  await t.test('HOME: a late milestone runs on to TODAY as a dashed tail, with a "!" on today', async tc => {
+    const page = await openHere(tc, 'index.html', { db: lateDb() });
+    const cell = await page.waitFor(function (t) {
+      var c = document.querySelector('#cal-grid [data-cal-day="' + t + '"]');
+      if (!c) return false;
+      var line = c.querySelector('.cal-ms-line[data-ms-late]');
+      var flag = c.querySelector('.cal-ms-late-flag');
+      return {
+        late: line ? line.getAttribute('data-ms-late') : null,
+        overrun: !!line && line.classList.contains('ms-overrun'),
+        ends: !!line && line.classList.contains('cap-end'),
+        dashed: line ? getComputedStyle(line).backgroundImage : '',
+        flag: flag ? flag.getAttribute('data-cal-late-flag') : null,
+        title: line ? line.title : ''
+      };
+    }, { args: [TODAY], message: "today's cell on the Home calendar" });
+    // the claim this case is named for, first
+    assert.equal(cell.late, 'ms-late', 'the late milestone is drawn on today');
+    assert.equal(cell.overrun, true, 'as its overrun tail, not as its period');
+    assert.match(cell.dashed, /repeating-linear-gradient/, 'dashed in the danger colour');
+    assert.equal(cell.ends, true, 'and the bar ends on today');
+    assert.equal(cell.flag, '1', 'today carries one "!"');
+    assert.match(cell.title, /OVERDUE · 5 days · 2 tasks left/);
+    const tail = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('#cal-grid .cal-ms-line.ms-overrun'),
+        function (l) { return l.closest('[data-cal-day]').getAttribute('data-cal-day'); });
+    });
+    const end = dayFromToday(-5);
+    assert.ok(tail.length > 0 && tail.every(ds => ds > end && ds <= TODAY),
+      'every tail day is after the end and no later than today: ' + JSON.stringify(tail));
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME GUARD: a finished or an empty past milestone grows no tail', async tc => {
+    const page = await openHere(tc, 'index.html', { db: lateDb([
+      F.task('g-fin', { title: 'Done goal',
+        milestones: [F.milestone('ms-fin', dayFromToday(-20), dayFromToday(-5), { title: 'Finished' })],
+        children: [msBlock('blk-fin', 'ms-fin', [F.task('t-f', { completed: true })])] }),
+      F.task('g-empty', { title: 'Empty goal',
+        milestones: [F.milestone('ms-empty', dayFromToday(-20), dayFromToday(-5), { title: 'Nothing in it' })] })
+    ]) });
+    await page.waitFor(function (t) { return !!document.querySelector('#cal-grid [data-cal-day="' + t + '"]'); },
+      { args: [TODAY], message: "today's cell on the Home calendar" });
+    const marks = await page.evaluate(function () {
+      return {
+        tails: document.querySelectorAll('#cal-grid .cal-ms-line.ms-overrun, #cal-grid [data-ms-late]').length,
+        flags: document.querySelectorAll('#cal-grid .cal-ms-late-flag').length
+      };
+    });
+    assert.deepEqual(marks, { tails: 0, flags: 0 }, 'nothing is owed, so nothing runs on');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME GUARD: a task linked under its own descendant cannot take the calendar down', async tc => {
+    // P > C > link(P): the "link existing task" picker offers a task's ancestors
+    const page = await openHere(tc, 'index.html', { db: lateDb([lateGoal({
+      children: [msBlock('blk-late', 'ms-late', [F.task('P', { title: 'Parent', children: [
+        F.task('C', { title: 'Child', children: [{ id: 'L', linkedTaskId: 'P', isLink: true }, F.task('leaf', { title: 'Leaf' })] })] })])]
+    })]) });
+    const title = await page.waitFor(function (t) {
+      var line = document.querySelector('#cal-grid [data-cal-day="' + t + '"] .cal-ms-line[data-ms-late]');
+      return line ? line.title : false;
+    }, { args: [TODAY], message: "today's tail despite the cycle" });
+    assert.match(title, /OVERDUE · 5 days · 1 task left/, 'the cycle counts nothing; the real leaf still does');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME: coming back to the tab redraws the calendar', async tc => {
+    const page = await openHere(tc, 'index.html', { db: lateDb() });
+    await page.waitFor(function (t) { return !!document.querySelector('#cal-grid [data-cal-day="' + t + '"] .cal-ms-late-flag'); },
+      { args: [TODAY], message: "today's flag" });
+    // finish the work in THIS tab, which fires no storage event here — only
+    // the visibility listener can bring the calendar up to date
+    await page.evaluate(function (writeSrc) {
+      var write = new Function('return ' + writeSrc)();
+      var db = JSON.parse(localStorage.getItem('track_db'));
+      var goals = JSON.parse(JSON.stringify(db.slots[0].goals));
+      goals[0].children[0].children.forEach(function (t) { t.completed = true; });
+      return write('goals', goals);
+    }, WRITE_SLOT_KEY.toString());
+    assert.equal(await page.evaluate(function () { return document.visibilityState; }), 'visible',
+      'precondition: the listener redraws only a VISIBLE tab, so a hidden one would prove nothing');
+    await page.evaluate(function () { document.dispatchEvent(new Event('visibilitychange')); return true; });
+    await page.waitFor(function (t) { return !document.querySelector('#cal-grid [data-cal-day="' + t + '"] .cal-ms-late-flag'); },
+      { args: [TODAY], message: 'the flag gone once the tab is shown again' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: a late milestone runs on to TODAY in a calendar block', async tc => {
+    const page = await openHere(tc, 'documentations.html', { db: lateDb() });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    const cell = await page.waitFor(function (t) {
+      var c = document.querySelector('.doc-cal [data-cal-day="' + t + '"]');
+      if (!c) return false;
+      var line = c.querySelector('.cal-ms-line[data-ms-late]');
+      var flag = c.querySelector('.cal-ms-late-flag');
+      return {
+        late: line ? line.getAttribute('data-ms-late') : null,
+        overrun: !!line && line.classList.contains('ms-overrun'),
+        dashed: line ? getComputedStyle(line).backgroundImage : '',
+        flag: flag ? flag.getAttribute('data-cal-late-flag') : null
+      };
+    }, { args: [TODAY], message: "today's cell in the calendar block" });
+    assert.equal(cell.late, 'ms-late', 'the late milestone is drawn on today');
+    assert.equal(cell.overrun, true, 'as its tail');
+    assert.match(cell.dashed, /repeating-linear-gradient/);
+    assert.equal(cell.flag, '1');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  // ── the Milestones tab ───────────────────────────────────────────────────
+
+  await t.test('MILESTONES: a late row reads "OVERDUE · 5 days · 2 tasks left", in red', async tc => {
+    const page = await openMilestonesTab(tc, lateDb());
+    const row = await page.evaluate(function (k, dangerSrc) {
+      var r = document.querySelector('[data-ms-row="' + k + '"]');
+      var b = r.querySelector('[data-ms-badge]');
+      var danger = new Function('return ' + dangerSrc)()();
+      return { state: r.getAttribute('data-ms-state'), badge: b ? b.textContent.trim() : null,
+        badgeRed: !!b && getComputedStyle(b).color === danger,
+        borderRed: getComputedStyle(r).borderTopColor === danger };
+    }, LATE_KEY, DANGER_RGB.toString());
+    assert.equal(row.badge, 'OVERDUE · 5 days · 2 tasks left', 'the wording the user asked for');
+    assert.equal(row.state, 'overdue');
+    assert.equal(row.badgeRed, true, 'in the danger colour');
+    assert.equal(row.borderRed, true, 'and the row is outlined in it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('MILESTONES: to-learn alone keeps a milestone late', async tc => {
+    const page = await openMilestonesTab(tc, lateLearnDb());
+    const row = await page.evaluate(function (k) {
+      var r = document.querySelector('[data-ms-row="' + k + '"]');
+      var b = r.querySelector('[data-ms-badge]'), l = r.querySelector('[data-ms-learn]');
+      return { state: r.getAttribute('data-ms-state'), badge: b && b.textContent.trim(),
+        learn: l && l.textContent.trim(), why: l && l.title };
+    }, LATE_KEY);
+    assert.equal(row.badge, 'OVERDUE · 5 days · 1 to-learn left', 'every task is done; MM 10 is not');
+    assert.equal(row.state, 'overdue');
+    assert.equal(row.learn, '◎ 0/1 to-learn');
+    assert.match(row.why, /Mind Map A/, 'and the row names the mind map still owed');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('MILESTONES GUARD: an empty past milestone says "no work attached" and is not late', async tc => {
+    // seedDb's own ms-1 ran in March 2026 and holds no block and no to-learn
+    const page = await openHere(tc, 'progress.html', { db: seedDb(), hash: '#milestones' });
+    const row = await page.waitFor(function () {
+      var r = document.querySelector('[data-ms-row="g-1|ms-1"]');
+      if (!r) return false;
+      var b = r.querySelector('[data-ms-badge]');
+      return { state: r.getAttribute('data-ms-state'), badge: b && b.textContent.trim(),
+        chips: document.querySelectorAll('[data-ms-chip-overrun]').length };
+    }, { message: 'the empty milestone row' });
+    assert.deepEqual(row, { state: 'empty', badge: 'no work attached', chips: 0 });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('MILESTONES GUARD: a milestone ending TODAY is not late yet', async tc => {
+    const page = await openMilestonesTab(tc, lateDb([lateGoal({
+      milestones: [F.milestone('ms-late', dayFromToday(-20), TODAY, { title: 'Chapter one' })] })]));
+    const row = await page.evaluate(function (k) {
+      var r = document.querySelector('[data-ms-row="' + k + '"]');
+      return { state: r.getAttribute('data-ms-state'), badge: !!r.querySelector('[data-ms-badge]'),
+        chips: document.querySelectorAll('[data-ms-chip-overrun]').length };
+    }, LATE_KEY);
+    assert.deepEqual(row, { state: 'active', badge: false, chips: 0 }, 'the end day is the last day, not a late one');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('MILESTONES CALENDAR: a late milestone\'s chip runs on to TODAY, dashed and flagged', async tc => {
+    const page = await openMilestonesTab(tc, lateDb());
+    const cal = await page.waitFor(function (k, t, end, next) {
+      var today = document.querySelector('[data-ms-day="' + t + '"] [data-ms-chip-overrun="' + k + '"]');
+      if (!today) return false;
+      var endChip = document.querySelector('[data-ms-day="' + end + '"] [data-ms-chip="' + k + '"]');
+      return { today: today.textContent.trim(), dashed: getComputedStyle(today).borderTopStyle,
+        endIsPeriod: !!endChip && !endChip.hasAttribute('data-ms-chip-overrun'),
+        tomorrow: !!document.querySelector('[data-ms-day="' + next + '"] [data-ms-chip="' + k + '"]') };
+    }, { args: [LATE_KEY, TODAY, dayFromToday(-5), dayFromToday(1)], message: "today's overrun chip" });
+    assert.match(cal.today, /^! Chapter one/, 'today\'s chip leads with "!"');
+    assert.equal(cal.dashed, 'dashed');
+    assert.equal(cal.endIsPeriod, true, 'the end day is still the period, not the tail');
+    assert.equal(cal.tomorrow, false, 'and nothing is drawn past today');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  // ── the slip record ──────────────────────────────────────────────────────
+
+  await t.test('SLIP: moving a late milestone\'s end later logs it and clears the warning', async tc => {
+    const page = await openMilestonesTab(tc, lateDb());
+    const to = dayFromToday(10);
+    await typeEnd(page, LATE_KEY, [to]);
+    const ms = await page.evaluate(READ_MS);
+    assert.deepEqual(ms.slips, [{ from: dayFromToday(-5), to, on: TODAY }], 'one slip, from the missed day to the new one');
+    const row = await page.waitFor(function (k) {
+      var r = document.querySelector('[data-ms-row="' + k + '"]');
+      var s = r && r.querySelector('[data-ms-slips]');
+      return s ? { state: r.getAttribute('data-ms-state'), slips: s.textContent.trim() } : false;
+    }, { args: [LATE_KEY], message: 'the slip line on the row' });
+    assert.equal(row.slips, 'slipped 1× · first due ' + shortDay(dayFromToday(-5)));
+    assert.equal(row.state, 'active', 'the warning cleared — the record did not');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SLIP GUARD: moving an on-time milestone records nothing', async tc => {
+    const page = await openMilestonesTab(tc, lateDb([lateGoal({
+      milestones: [F.milestone('ms-late', dayFromToday(-20), dayFromToday(3), { title: 'Chapter one' })] })]));
+    await typeEnd(page, LATE_KEY, [dayFromToday(10)]);
+    const ms = await page.evaluate(READ_MS);
+    assert.equal(ms.endDate, dayFromToday(10), 'the move landed');
+    assert.equal(Object.prototype.hasOwnProperty.call(ms, 'slips'), false, 'planning ahead is not a slip');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SLIP: one focus, typed through other days, logs ONE record from the missed day', async tc => {
+    const page = await openMilestonesTab(tc, lateDb());
+    await typeEnd(page, LATE_KEY, [dayFromToday(-8), dayFromToday(3), dayFromToday(7)]);
+    const ms = await page.evaluate(READ_MS);
+    assert.deepEqual(ms.slips, [{ from: dayFromToday(-5), to: dayFromToday(7), on: TODAY }],
+      'the net effect of the edit, measured from where it started');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SLIP GUARD: an on-time milestone typed through an earlier day records nothing', async tc => {
+    const page = await openMilestonesTab(tc, lateDb([lateGoal({
+      milestones: [F.milestone('ms-late', dayFromToday(-20), dayFromToday(3), { title: 'Chapter one' })] })]));
+    // -2 makes it late for a moment; that moment is not where the edit began
+    await typeEnd(page, LATE_KEY, [dayFromToday(-2), dayFromToday(10)]);
+    const ms = await page.evaluate(READ_MS);
+    assert.equal(ms.endDate, dayFromToday(10));
+    assert.equal(Object.prototype.hasOwnProperty.call(ms, 'slips'), false, 'it was on time when the edit began');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SLIP: Cancel on "clear" leaves track_db byte-identical', async tc => {
+    const page = await openMilestonesTab(tc, lateDb());
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    const asked = page.dialogs.length;
+    const msg = await answering(page, false, CLICK_SOON_SEL, ['[data-ms-row="' + LATE_KEY + '"] [data-ms-clear]']);
+    await sleep(400);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'Cancel writes nothing');
+    assert.equal(page.dialogs.length - asked, 1, 'one click, one question');
+    assert.match(msg, /5 days overdue, so clearing its dates is recorded as a slip/,
+      'and the question says what Accept will record');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SLIP: Accept on "clear" records the slip with no new day', async tc => {
+    const page = await openMilestonesTab(tc, lateDb());
+    await answering(page, true, CLICK_SOON_SEL, ['[data-ms-row="' + LATE_KEY + '"] [data-ms-clear]']);
+    const ms = await page.waitFor(function (readSrc) {
+      var m = new Function('return ' + readSrc)()();
+      return m && !m.endDate ? m : false;
+    }, { args: [READ_MS.toString()], message: 'the cleared dates landing' });
+    assert.deepEqual(ms.slips, [{ from: dayFromToday(-5), on: TODAY }]);
+    assert.equal(Object.prototype.hasOwnProperty.call(ms.slips[0], 'to'), false, '`to` is absent, never null');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('MILESTONES: a half-typed year leaves both dates alone', async tc => {
+    const page = await openMilestonesTab(tc, lateDb());
+    const before = await page.evaluate(READ_MS);
+    // the values Chrome's year segment passes through on the way to 2026
+    await typeEnd(page, LATE_KEY, ['0002-10-03', '0020-10-03', '0202-10-03'], { blur: false });
+    await sleep(400);
+    const mid = await page.evaluate(READ_MS);
+    assert.deepEqual([mid.startDate, mid.endDate], [before.startDate, before.endDate],
+      'no out-of-range day reaches storage');
+    await page.evaluate(function (k) {
+      document.querySelector('[data-ms-row="' + k + '"] [data-ms-date="end"]')
+        .dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      return true;
+    }, LATE_KEY);
+    const shown = await page.waitFor(function (k, end) {
+      var v = document.querySelector('[data-ms-row="' + k + '"] [data-ms-date="end"]').value;
+      return v === end ? v : false;
+    }, { args: [LATE_KEY, before.endDate], message: 'the field showing the stored day again after blur' });
+    assert.equal(shown, before.endDate);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  // ── the Schedule ─────────────────────────────────────────────────────────
+
+  await t.test('SCHEDULE: TODAY\'s day strip carries a ⚑ for the late milestone, and it opens the row', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: lateDb(), hash: '#schedule' });
+    await mountSchedule(page);
+    const flags = await page.waitFor(function () {
+      var f = Array.prototype.map.call(document.querySelectorAll('[data-day-strip] [data-ms-late-flag]'), function (e) {
+        return e.closest('[data-day-strip]').getAttribute('data-day-strip') + ':' + e.getAttribute('data-ms-late-flag');
+      });
+      return f.length ? f : false;
+    }, { message: 'a late-milestone flag in a day strip' });
+    assert.deepEqual(flags, [TODAY + ':' + LATE_KEY], 'on today, and on no other day');
+    await page.evaluate(CLICK_SEL, '[data-day-strip="' + TODAY + '"] [data-ms-late-flag]');
+    await page.waitFor(function (k) { return !!document.querySelector('[data-ms-row="' + k + '"][aria-current="true"]'); },
+      { args: [LATE_KEY], message: 'the MILESTONES tab with the late row selected' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('SCHEDULE: TODAY\'s month cell carries the ⚑', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: lateDb(), hash: '#schedule' });
+    await mountSchedule(page);
+    await page.evaluate(function () {
+      Array.prototype.find.call(document.querySelectorAll('#root button'),
+        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      return true;
+    });
+    const flags = await page.waitFor(function () {
+      var f = Array.prototype.map.call(document.querySelectorAll('[data-sched-month-day] [data-ms-late-flag]'), function (e) {
+        return e.closest('[data-sched-month-day]').getAttribute('data-sched-month-day') + ':' + e.textContent.trim();
+      });
+      return f.length ? f : false;
+    }, { message: 'a late-milestone flag in the month grid' });
+    assert.deepEqual(flags, [TODAY + ':⚑Chapter one'], 'today only');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PICKER: a late milestone\'s leftover tasks are pinned above the tree, and + schedules one today', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: lateDb(), hash: '#schedule' });
+    await mountSchedule(page);
+    await page.evaluate(CLICK_SEL, '[data-day-add-task="' + TODAY + '"]');
+    const pinned = await page.waitFor(function () {
+      var b = document.querySelector('[data-picker-late]');
+      return b ? Array.prototype.map.call(b.querySelectorAll('[data-picker-late-task]'),
+        function (e) { return e.getAttribute('data-picker-late-task'); }) : false;
+    }, { message: 'the OVERDUE block in the task picker' });
+    assert.deepEqual(pinned, ['t-open-1', 't-open-2'], 'the leftovers, and not the task already done');
+    await page.evaluate(CLICK_SEL, '[data-picker-late-task="t-open-1"] button');
+    const t1 = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var g = (((db.slots || [])[0] || {}).goals || [])[0];
+      var t = g && g.children[0].children.filter(function (x) { return x.id === 't-open-1'; })[0];
+      return t && t.scheduledDate ? t : false;
+    }, { message: 'the pinned task scheduled' });
+    assert.equal(t1.scheduledDate, TODAY);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PICKER GUARD: a past day pins nothing', async tc => {
+    const yesterday = dayFromToday(-1);
+    const page = await openHere(tc, 'progress.html', { db: lateDb(), hash: '?date=' + yesterday + '#schedule' });
+    await mountSchedule(page);
+    await page.waitFor(function (d) { return !!document.querySelector('[data-day-add-task="' + d + '"]'); },
+      { args: [yesterday], message: "yesterday's column" });
+    await page.evaluate(CLICK_SEL, '[data-day-add-task="' + yesterday + '"]');
+    // the goal row, not a task row: the tree opens collapsed
+    await page.waitFor(function () { return !!document.querySelector('[data-picker-node="g-late"]'); },
+      { message: 'the picker tree, which still lists the goal' });
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-picker-late]'); }), false,
+      'a past day is view-only; lateness is pinned for today and later');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('MM PICKER: a late milestone\'s unreached to-learn is pinned under OVERDUE, once', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: lateLearnDb(), hash: '#schedule' });
+    await mountSchedule(page);
+    await page.evaluate(CLICK_SEL, '[data-day-add-mm="' + TODAY + '"]');
+    const picks = await page.waitFor(function () {
+      if (!document.querySelector('[data-mm-picker-group="late"]')) return false;
+      return Array.prototype.map.call(document.querySelectorAll('[data-mm-pick]'), function (b) {
+        return b.getAttribute('data-mm-pick') + (b.hasAttribute('data-mm-pick-late') ? ':late' : '');
+      });
+    }, { message: 'the OVERDUE group in the MM picker' });
+    assert.equal(picks[0], '10:late', 'MM 10 heads the picker');
+    assert.equal(picks.filter(p => p.startsWith('10')).length, 1, 'and appears once — pinned, not repeated below');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  // ── Proposal 17, item 1: a Procedural MM has no SIR ───────────────────────
+  /* docs/CONCEPTS.md: a Procedural MM is built through S1–S4 and has no SIR.
+     The rule has one definition (milestone-core.js: stageOf, liveSessions) and
+     four pages read it:
+       - HOME and DOCUMENTATIONS through calendar-core.js — one shared door;
+       - PROGRESS through one filter where `sessions` enters the page. Its
+         timeline strip, month grid and day panel all read that one prop, so
+         they are ONE door, not three — asserted twice, never claimed disjoint;
+       - the KNOWLEDGE RECORD through its two drawing memos and stageOf.
+     Every surface is asserted separately, and each case's precondition is a
+     DECLARATIVE MM drawn on the same surface, so a surface that drew nothing at
+     all cannot pass. Seed: 10 Declarative in SIR; 11 Procedural STORED in SIR
+     (one that entered SIR before the rule); 12 Procedural stored FINISHED;
+     13 Declarative at S4; 14 Procedural at S4. Sessions sit on TODAY, which
+     every surface shows by default. Ids are numbers, as nid() mints them. */
+  const P17_MMS = () => [
+    F.mm(10, 'Declarative Alpha', { type: '1', ksStage: 'sir' }),
+    F.mm(11, 'Procedural Beta', { type: '2', ksStage: 'sir', rating: 3 }),
+    F.mm(12, 'Procedural Gamma', { type: '2', ksStage: 'finished' }),
+    F.mm(13, 'Declarative Delta', { type: '1', ksStage: '4' }),
+    F.mm(14, 'Procedural Epsilon', { type: '2', ksStage: '4' })
+  ];
+  const P17_SESSIONS = () => [
+    F.session(201, TODAY, 10),
+    F.session(211, TODAY, 11), F.session(212, dayFromToday(3), 11, { repIndex: 1 }),
+    F.session(221, dayFromToday(-30), 12, { done: true, finishDate: TODAY, repIndex: 4 })
+  ];
+  const p17Db = (over = {}) => seedDb(Object.assign({ mms: P17_MMS(), sessions: P17_SESSIONS() }, over));
+  const ATTRS = function (sel, attr) {
+    return Array.prototype.map.call(document.querySelectorAll(sel), function (e) { return e.getAttribute(attr); });
+  };
+  const uniq = a => Array.from(new Set(a)).sort();
+  const SIR_STRIP = function () {
+    var c = Array.prototype.map.call(document.querySelectorAll('.cal-sched-sir'), function (e) { return e.textContent; });
+    return c.some(function (x) { return x.indexOf('Declarative Alpha') === 0; }) ? c : false;
+  };
+  // Open an MM's panel on its KS03 mode, where the phase row and +Lin live.
+  const openMMPanel = async (tc, id, db) => {
+    const page = await openHere(tc, 'sir-ks02.html', { db: db || p17Db(), hash: withQuery('?mm=' + id, '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-mm-mode="ks03"]'); },
+      { message: 'MM ' + id + "'s panel" });
+    await page.evaluate(CLICK_SEL, '[data-mm-mode="ks03"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-mm-stage-pill]'); },
+      { message: 'the phase row' });
+    return page;
+  };
+  const openLinFor = async (tc, id, db) => {
+    const page = await openMMPanel(tc, id, db);
+    await page.evaluate(CLICK_SEL, '[data-mm-open-lin]');
+    await page.waitFor(function () { return !!document.querySelector('[data-lin-option]'); },
+      { message: "+LIN's options for MM " + id });
+    return page;
+  };
+
+  await t.test('P17 HOME: the day preview draws no SIR chip for a Procedural MM', async tc => {
+    const page = await openHere(tc, 'index.html', { db: p17Db() });
+    await page.waitFor(function (d) { return !!document.querySelector('#cal-grid [data-cal-day="' + d + '"]'); },
+      { args: [TODAY], message: "today's cell on the Home calendar" });
+    await page.evaluate(CLICK_SEL, '#cal-grid [data-cal-day="' + TODAY + '"]');
+    const chips = await page.waitFor(SIR_STRIP, { message: "the Declarative MM's SIR chip — the strip renders at all" });
+    assert.deepEqual(chips.filter(c => /Procedural/.test(c)), [],
+      'neither the due rep (Beta) nor the one finished today (Gamma) is drawn');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 DOCUMENTATIONS: a calendar block draws no SIR chip for a Procedural MM', async tc => {
+    const page = await openHere(tc, 'documentations.html', {
+      db: p17Db({ docPages: [F.docPage('p-1', { blocks: [{ id: 'b-cal', type: 'calendar', hidden: [], scope: 'page' }] })] }),
+      hash: '?page=p-1'
+    });
+    await page.waitFor(function (d) { return !!document.querySelector('[data-cal-day="' + d + '"]'); },
+      { args: [TODAY], message: "today's cell in the calendar block" });
+    await page.evaluate(CLICK_SEL, '[data-cal-day="' + TODAY + '"]');
+    const chips = await page.waitFor(SIR_STRIP, { message: "the Declarative MM's SIR chip — the strip renders at all" });
+    assert.deepEqual(chips.filter(c => /Procedural/.test(c)), []);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 PROGRESS: the Schedule timeline strip draws no SIR badge for a Procedural MM', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: p17Db(), hash: '#schedule' });
+    await mountSchedule(page);
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-sir-badge="10"]'); },
+      { message: "the Declarative MM's badge — the strip renders at all" });
+    assert.deepEqual(uniq(await page.evaluate(ATTRS, '[data-sched-sir-badge]', 'data-sched-sir-badge')), ['10'],
+      'no badge for Beta (today and in three days) or for Gamma (finished today)');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 PROGRESS: the Schedule month view and its day panel leave them out too', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: p17Db(), hash: '#schedule' });
+    await mountSchedule(page);
+    await page.evaluate(CLICK_SEL, '[data-sched-view="calendar"]');
+    await page.waitFor(function (d) {
+      return !!document.querySelector('[data-sched-month-day="' + d + '"] [data-sched-sir-dot="10"]');
+    }, { args: [TODAY], message: "the Declarative MM's dot on today" });
+    assert.deepEqual(uniq(await page.evaluate(ATTRS, '[data-sched-sir-dot]', 'data-sched-sir-dot')), ['10']);
+    await page.evaluate(CLICK_SEL, '[data-sched-month-day="' + TODAY + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-sir-row="10"]'); },
+      { message: "today's day panel" });
+    assert.deepEqual(uniq(await page.evaluate(ATTRS, '[data-sched-sir-row]', 'data-sched-sir-row')), ['10'],
+      'the day panel lists every session on the day, done ones included — still none for Gamma');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 PROGRESS: the Mind Maps tab reads a Procedural MM stored in SIR or FINISHED as S4', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: p17Db(), hash: '#mindmaps' });
+    const lbl = await page.waitFor(function () {
+      var get = function (id) { var e = document.querySelector('[data-mm-badge-stage="' + id + '"]'); return e ? e.textContent : null; };
+      return get(10) ? { 10: get(10), 11: get(11), 12: get(12), 13: get(13), 14: get(14) } : false;
+    }, { message: 'the Mind Maps tab badges' });
+    assert.deepEqual([lbl[11], lbl[12]], ['S4', 'S4'], 'Beta (stored SIR) and Gamma (stored FINISHED)');
+    assert.deepEqual([lbl[10], lbl[13], lbl[14]], ['SIR T1', 'S4', 'S4'], 'everyone else as before');
+    assert.deepEqual(await page.evaluate(ATTRS, '[data-mm-tree-sir]', 'data-mm-tree-sir'), ['10'],
+      'only the Declarative MM draws its SIR review row');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KNOWLEDGE RECORD: its calendar draws no session for a Procedural MM', async tc => {
+    const page = await openHere(tc, 'sir-ks02.html', { db: p17Db(), hash: '#calendar' });
+    await page.waitFor(function (d) { return !!document.querySelector('[data-ks02-cal-dot="10"][data-day="' + d + '"]'); },
+      { args: [TODAY], message: "the Declarative MM's dot on today" });
+    assert.deepEqual(uniq(await page.evaluate(ATTRS, '[data-ks02-cal-dot]', 'data-ks02-cal-dot')), ['10']);
+    await page.evaluate(CLICK_SEL, '[data-ks02-cal-day="' + TODAY + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-ks02-cal-session="10"]'); },
+      { message: "today's session list" });
+    assert.deepEqual(uniq(await page.evaluate(ATTRS, '[data-ks02-cal-session]', 'data-ks02-cal-session')), ['10']);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KNOWLEDGE RECORD: the KS02 wheel counts a Procedural MM stored in SIR or FINISHED at S4', async tc => {
+    const page = await openHere(tc, 'sir-ks02.html', { db: p17Db(), hash: '#ks02' });
+    const counts = await page.waitFor(function () {
+      var g = document.querySelectorAll('[data-ks02-stage]');
+      if (!g.length) return false;
+      var o = {};
+      Array.prototype.forEach.call(g, function (e) { o[e.getAttribute('data-ks02-stage')] = Number(e.getAttribute('data-count')); });
+      return o;
+    }, { message: 'the KS02 wheel' });
+    assert.equal(counts.sir, 1, 'only the Declarative MM is in SIR');
+    assert.equal(counts['4'], 4, 'Beta and Gamma join Delta and Epsilon at S4');
+    assert.deepEqual(await page.evaluate(ATTRS, '[data-ks02-finished-mm]', 'data-ks02-finished-mm'), [],
+      'the FINISHED list holds no Procedural MM');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KNOWLEDGE RECORD: a Procedural MM\'s phase row ends at S4, and its badge reads S4', async tc => {
+    const pills = function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-mm-stage-pill]'), function (e) {
+        return e.getAttribute('data-mm-stage-pill') + (e.hasAttribute('aria-current') ? '*' : '');
+      });
+    };
+    const badge = function () { var e = document.querySelector('[data-mm-stage-badge]'); return e ? e.textContent : null; };
+    const proc = await openMMPanel(tc, 11);
+    assert.deepEqual(await proc.evaluate(pills), ['1', '2', '3', '4*'], 'no SIR pill, and S4 is the current one');
+    assert.equal(await proc.evaluate(badge), 'S4');
+    // the guard: a Declarative MM's row still runs on to SIR
+    const decl = await openMMPanel(tc, 10);
+    assert.deepEqual(await decl.evaluate(pills), ['1', '2', '3', '4', 'sir*']);
+    assert.equal(await decl.evaluate(badge), 'SIR');
+    assert.deepEqual(realErrors(proc), []);
+    assert.deepEqual(realErrors(decl), []);
+  });
+
+  await t.test('P17 +LIN: a Procedural MM at S4 is offered no Advance → SIR; a Declarative one still is', async tc => {
+    const opts = function () { return Array.prototype.map.call(document.querySelectorAll('[data-lin-option]'), function (e) { return e.getAttribute('data-lin-option'); }); };
+    const decl = await openLinFor(tc, 13);
+    assert.ok((await decl.evaluate(opts)).includes('stageAdvance:sir'), 'the guard: Declarative Delta can still enter SIR');
+    const REVERTS = ['stageRevert:3', 'stageRevert:2', 'stageRevert:1'];
+    const eps = await openLinFor(tc, 14);
+    assert.deepEqual(await eps.evaluate(opts), REVERTS, 'Procedural Epsilon, stored at S4');
+    const beta = await openLinFor(tc, 11);
+    assert.deepEqual(await beta.evaluate(opts), REVERTS,
+      'Procedural Beta, stored in SIR, is offered what S4 offers — no SIR review, no Mark as FINISHED');
+    for (const pg of [decl, eps, beta]) assert.deepEqual(realErrors(pg), []);
+  });
+
+  // Pick a change in an open +LIN and reach its SAVE button.
+  const pickLin = async (page, option) => {
+    await page.evaluate(CLICK_SEL, '[data-lin-option="' + option + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-lin-save]'); }, { message: '+LIN step 3' });
+  };
+
+  await t.test('P17 +LIN: moving a Procedural MM stored in SIR asks first, and Cancel writes nothing', async tc => {
+    const page = await openLinFor(tc, 11);
+    await pickLin(page, 'stageRevert:3');
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    const dialogsBefore = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(CLICK_SEL, '[data-lin-save]');
+    await sleep(600);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogsBefore + 1, 'the save asked, once');
+    const msg = page.dialogs[page.dialogs.length - 1];
+    assert.match(msg, /"Procedural Beta"/, 'the prompt names the MM');
+    assert.match(msg, /2 SIR sessions/, 'and how many hidden sessions would go');
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'Cancel left track_db byte-identical');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-lin-save]'); }), true,
+      'and +LIN stayed open on its last step');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 +LIN: accepting deletes that MM\'s hidden sessions, and nobody else\'s', async tc => {
+    const page = await openLinFor(tc, 11);
+    await pickLin(page, 'stageRevert:3');
+    const dialogsBefore = page.dialogs.length;
+    await page.evaluate(CLICK_SEL, '[data-lin-save]');
+    const slot = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (db.slots || [])[0] || {};
+      var mm = (s.mms || []).filter(function (m) { return m.id === 11; })[0];
+      return mm && mm.ksStage !== 'sir' ? s : false;
+    }, { message: "the move landing in track_db" });
+    assert.equal(page.dialogs.length, dialogsBefore + 1, 'it asked first');
+    assert.equal(slot.mms.find(m => m.id === 11).ksStage, '3');
+    assert.deepEqual(slot.sessions.map(x => x.id).sort((a, b) => a - b), [201, 221],
+      "Beta's two sessions are gone; Alpha's and Gamma's are untouched");
+    const rec = slot.linChanges[slot.linChanges.length - 1];
+    assert.deepEqual(rec.items.map(i => i.change), [{ type: 'stageRevert', oldValue: '4', newValue: '3' }],
+      'the history reads S4 → S3, the phase the user saw');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 +LIN: a Procedural MM with no hidden SIR moves without a prompt', async tc => {
+    const page = await openLinFor(tc, 14);
+    await pickLin(page, 'stageRevert:3');
+    const dialogsBefore = page.dialogs.length;
+    await page.evaluate(CLICK_SEL, '[data-lin-save]');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var mm = (((db.slots || [])[0] || {}).mms || []).filter(function (m) { return m.id === 14; })[0];
+      return mm && mm.ksStage === '3';
+    }, { message: "Epsilon's move landing" });
+    assert.equal(page.dialogs.length, dialogsBefore, 'nothing hidden to delete, so nothing to ask');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 RESTORE: switching a Procedural MM back to Declarative brings SIR and its sessions back', async tc => {
+    const page = await openMMPanel(tc, 11);
+    await page.evaluate(CLICK_SEL, '[data-mm-type-to="1"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-mm-type-confirm]'); }, { message: 'the type-change confirm' });
+    await page.evaluate(CLICK_SEL, '[data-mm-type-confirm]');
+    const slot = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var s = (db.slots || [])[0] || {};
+      var mm = (s.mms || []).filter(function (m) { return m.id === 11; })[0];
+      return mm && mm.type === '1' ? s : false;
+    }, { message: 'the type change landing in track_db' });
+    assert.equal(slot.mms.find(m => m.id === 11).ksStage, 'sir', 'its stored stage was never rewritten');
+    assert.deepEqual(slot.sessions.filter(x => x.mmId === 11).map(x => x.id).sort(), [211, 212], 'nor were its sessions');
+    const cal = await openHere(tc, 'sir-ks02.html', { hash: '#calendar', fresh: false });
+    await cal.waitFor(function (d) { return !!document.querySelector('[data-ks02-cal-dot="11"][data-day="' + d + '"]'); },
+      { args: [TODAY], message: "Beta's session back on today" });
+    assert.deepEqual(realErrors(page), []);
+    assert.deepEqual(realErrors(cal), []);
+  });
+
+  // ── Proposal 17, item 3: a Procedural MM is judged by its level alone ─────
+  /* A Procedural MM's progress toward a goal is its MG level; a phase-only
+     target is NO target, and a stored phase target is kept, unread. One goal
+     learns three MMs, with string mmTargets keys as JSON stores them and NUMBER
+     toLearn ids as nid() mints them:
+       11 Procedural, S2, rating 3, target {S4, level 3}  — met by its level
+       15 Procedural, S1, target {S3} only                 — no target
+       10 Declarative, S2, target {S4}                    — half way
+     The goal also holds one DONE task, because the hero ring averages task
+     progress with MM progress and a goal with no tasks is its own undone leaf.
+     So: MM progress 75% (it was 52.8% with the phase read for all three), task
+     progress 100%, and the ring reads 88% — it read 76%. The case asserts the
+     number, never "looks changed". */
+  const p17LearnDb = () => seedDb({
+    mms: [F.mm(10, 'Declarative Alpha', { type: '1', ksStage: '2' }),
+      F.mm(11, 'Procedural Beta', { type: '2', ksStage: '2', rating: 3 }),
+      F.mm(15, 'Procedural Zeta', { type: '2', ksStage: '1', rating: 1 })],
+    sessions: [],
+    goals: [F.task('g-p17', { title: 'Learn three', toLearn: [11, 15, 10],
+      children: [F.task('t-p17-done', { completed: true })], questLearn: [11, 15, 10],
+      mmTargets: { '11': { stage: '4', level: 3 }, '15': { stage: '3' }, '10': { stage: '4' } } })]
+  });
+  const openLearnGoal = async tc => {
+    const page = await openHere(tc, 'progress.html', { db: p17LearnDb() });
+    await page.waitFor(function () {
+      return !!document.querySelector('[data-learn-row="10"]') && !!document.querySelector('[data-goal-hero-pct]');
+    }, { message: "the goal's to-learn rows and its hero ring" });
+    return page;
+  };
+  const LEARN_ROW = function (id) {
+    var r = document.querySelector('[data-learn-row="' + id + '"]');
+    if (!r) return null;
+    var ind = r.querySelector('[data-learn-indicator]');
+    return {
+      stageSelect: !!r.querySelector('[data-learn-stage]'),
+      bars: Array.prototype.map.call(r.querySelectorAll('[data-learn-bar]'), function (b) { return b.getAttribute('data-learn-bar'); }),
+      indicator: ind ? ind.getAttribute('data-learn-indicator') : null
+    };
+  };
+
+  await t.test('P17 ITEM 3: a goal\'s percentage reads a Procedural MM by its level, and drops a phase-only target', async tc => {
+    const page = await openLearnGoal(tc);
+    assert.equal(await page.evaluate(function () { return document.querySelector('[data-goal-hero-pct]').textContent; }), '88%',
+      'Beta counts as met (level 3 of 3), Zeta drops out, Alpha is half way: (100 + 75) / 2 — it read 76% with the phase counted');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 ITEM 3: a Procedural MM\'s to-learn row has only the MG bar and no phase target', async tc => {
+    const page = await openLearnGoal(tc);
+    assert.deepEqual(await page.evaluate(LEARN_ROW, 11), { stageSelect: false, bars: ['MG'], indicator: 'met' },
+      'Beta: no stage select, no KS02 bar, met by its level though S2 is short of S4');
+    assert.deepEqual(await page.evaluate(LEARN_ROW, 15), { stageSelect: false, bars: [], indicator: 'none' },
+      'Zeta: its phase-only target is no target');
+    assert.deepEqual(await page.evaluate(LEARN_ROW, 10), { stageSelect: true, bars: ['KS02'], indicator: 'open' },
+      'the guard: a Declarative row is as it was');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 ITEM 3: editing a Procedural MM\'s level keeps its stored phase target', async tc => {
+    const page = await openLearnGoal(tc);
+    await page.evaluate(function (setterSrc) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-learn-row="11"] input[placeholder="lvl"]'), '4');
+      return true;
+    }, SET_REACT_INPUT);
+    const tgt = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var g = (((db.slots || [])[0] || {}).goals || [])[0];
+      var t = g && (g.mmTargets || {})['11'];
+      return t && t.level === 4 ? t : false;
+    }, { message: 'the new level landing in track_db' });
+    assert.deepEqual(tgt, { stage: '4', level: 4 }, 'the phase target is still stored, unread');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  /* The same rule is read at FIVE more places on this page, each its own call
+     to targetOf — a forgotten one would hide behind a passing sibling, so each
+     is asserted, and each has a doctored baseline that fails on its own line:
+     the goal node's TO LEARN bar (whole MMs met), the goal panel's count and
+     its per-MM list, the header's overall percentage, the Quest tab's learn
+     rows, and a subgoal's "learned" count in the BY SUBGOAL view. */
+  await t.test('P17 ITEM 3: the goal node, goal panel and header all count the same targets', async tc => {
+    const page = await openLearnGoal(tc);
+    const read = await page.evaluate(function () {
+      var txt = function (sel) { var e = document.querySelector(sel); return e ? e.textContent.trim() : null; };
+      var list = {};
+      Array.prototype.forEach.call(document.querySelectorAll('[data-panel-learn]'), function (e) {
+        list[e.getAttribute('data-panel-learn')] = e.getAttribute('data-state');
+      });
+      var node = document.querySelector('[data-node-learn]');
+      return { node: node ? node.getAttribute('data-node-learn') : null, count: txt('[data-panel-learn-count]'),
+        list: list, header: txt('[data-app-pct]') };
+    });
+    assert.equal(read.node, '1/2', 'goal node TO LEARN: Beta met, Alpha not, Zeta not a target');
+    assert.equal(read.count, '1.5/2 targets met', 'goal panel count: Beta 1 + Alpha 0.5, of two');
+    assert.deepEqual(read.list, { 10: 'open', 11: 'met', 15: 'none' }, 'goal panel list');
+    assert.equal(read.header, '88%', 'header: one done task, and MM progress 75%');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 ITEM 3: the Quest tab\'s learn rows read the same targets', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: p17LearnDb(), hash: '#quest' });
+    const states = await page.waitFor(function () {
+      var rows = document.querySelectorAll('[data-quest-learn-row]');
+      if (rows.length < 3) return false;
+      var o = {};
+      Array.prototype.forEach.call(rows, function (r) {
+        var st = r.querySelector('[data-quest-learn-state]');
+        o[r.getAttribute('data-quest-learn-row')] = st ? st.getAttribute('data-quest-learn-state') : null;
+      });
+      return o;
+    }, { message: "the goal's three quest learn rows" });
+    assert.deepEqual(states, { 'g-p17:10': 'open', 'g-p17:11': 'met', 'g-p17:15': 'none' });
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 ITEM 3: a subgoal\'s "learned" count reads the same targets', async tc => {
+    const db = p17LearnDb();
+    const g = db.slots[0].goals[0];
+    db.slots[0].goals = [F.task('g-p17c', { title: 'Container', children: [Object.assign({}, g, { id: 'sg-p17', isSubGoal: true })] })];
+    const page = await openHere(tc, 'progress.html', { db });
+    const txt = await page.waitFor(function () {
+      var e = document.querySelector('[data-subgoal-learn="sg-p17"]');
+      return e ? e.textContent.trim() : false;
+    }, { message: "the subgoal's learned count in BY SUBGOAL" });
+    assert.equal(txt, '1.5/2 learned');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── Proposal 17, item 2: a new Kolb sends a Procedural MM back to S1 ──────
+  /* The user's rule: a reflection brings new information, which has to be built
+     into the MM again. Only SAVING a new Kolb resets; closing the form does not,
+     and an MM unassigned or already at S1 is left alone. The reset is a LIN
+     change of its own type, `kolbReset`, which the streak does not count. A
+     Procedural MM still STORED in SIR holds hidden sessions the reset would
+     delete, so that save asks first (item 1's rule), and Cancel writes nothing.
+     Seed: 11 Procedural stored in SIR with two sessions; 16 Procedural at S3;
+     17 Procedural at S1. */
+  const p17KolbDb = () => seedDb({
+    mms: [F.mm(11, 'Procedural Beta', { type: '2', ksStage: 'sir' }),
+      F.mm(16, 'Procedural Theta', { type: '2', ksStage: '3' }),
+      F.mm(17, 'Procedural Iota', { type: '2', ksStage: '1' })],
+    sessions: [F.session(211, TODAY, 11), F.session(212, dayFromToday(3), 11, { repIndex: 1 })]
+  });
+  // From an MM's panel: MG mode → + NEW KOLB → through to the last step.
+  const openKolbFor = async (tc, id) => {
+    const page = await openHere(tc, 'sir-ks02.html', { db: p17KolbDb(), hash: withQuery('?mm=' + id, '#ks03') });
+    await page.waitFor(function () { return !!document.querySelector('[data-mm-mode="mg"]'); }, { message: 'MM ' + id + "'s panel" });
+    await page.evaluate(CLICK_SEL, '[data-mm-mode="mg"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-mm-new-kolb]'); }, { message: 'the new-Kolb button' });
+    await page.evaluate(CLICK_SEL, '[data-mm-new-kolb]');
+    for (let i = 0; i < 3; i++) {
+      await page.waitFor(function () { return !!document.querySelector('[data-kolb-next]'); }, { message: 'Kolb step ' + (i + 1) });
+      await page.evaluate(CLICK_SEL, '[data-kolb-next]');
+    }
+    await page.waitFor(function () { return !!document.querySelector('[data-kolb-save]'); }, { message: 'the Kolb SAVE step' });
+    return page;
+  };
+  const READ_P17_SLOT = function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return (db.slots || [])[0] || {};
+  };
+
+  await t.test('P17 KOLB: saving a new Kolb sends a Procedural MM at S3 back to S1, logged as a reset', async tc => {
+    const page = await openKolbFor(tc, 16);
+    const before = await page.evaluate(READ_P17_SLOT);
+    await page.evaluate(CLICK_SEL, '[data-kolb-save]');
+    const slot = await page.waitFor(function () {
+      var s = JSON.parse(localStorage.getItem('track_db') || '{}').slots[0];
+      return (s.kolbs || []).length > 2 ? s : false;
+    }, { message: 'the Kolb landing in track_db' });
+    assert.equal(slot.mms.find(m => m.id === 16).ksStage, '1', 'Theta went back to S1');
+    const kolb = slot.kolbs[slot.kolbs.length - 1];
+    assert.equal(kolb.mmId, 16);
+    assert.equal(slot.linChanges.length, before.linChanges.length + 1, 'one LIN record');
+    assert.deepEqual(slot.linChanges[slot.linChanges.length - 1].items,
+      [{ mmId: 16, change: { type: 'kolbReset', oldValue: '3', newValue: '1', kolbId: kolb.id } }]);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KOLB: closing the Kolb form without saving resets nothing', async tc => {
+    const page = await openKolbFor(tc, 16);
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    await page.evaluate(CLICK_SEL, '[data-kolb-close]');
+    await page.waitFor(function () { return !document.querySelector('[data-kolb-save]'); }, { message: 'the form closing' });
+    await sleep(600);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'track_db is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KOLB: a Procedural MM already at S1 is left alone — no reset, no LIN record', async tc => {
+    const page = await openKolbFor(tc, 17);
+    const before = await page.evaluate(READ_P17_SLOT);
+    await page.evaluate(CLICK_SEL, '[data-kolb-save]');
+    const slot = await page.waitFor(function () {
+      var s = JSON.parse(localStorage.getItem('track_db') || '{}').slots[0];
+      return (s.kolbs || []).length > 2 ? s : false;
+    }, { message: 'the Kolb landing in track_db' });
+    assert.equal(slot.mms.find(m => m.id === 17).ksStage, '1');
+    assert.deepEqual(slot.linChanges, before.linChanges, 'nothing to reset, so nothing logged');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KOLB: a Procedural MM still stored in SIR asks first, and Cancel saves nothing', async tc => {
+    const page = await openKolbFor(tc, 11);
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    const dialogsBefore = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(CLICK_SEL, '[data-kolb-save]');
+    await sleep(600);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogsBefore + 1, 'the save asked, once');
+    assert.match(page.dialogs[page.dialogs.length - 1], /"Procedural Beta" back to S1[\s\S]*2 SIR sessions/);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'Cancel wrote nothing — not even the Kolb');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-kolb-save]'); }), true,
+      'and the form stayed open');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KOLB: accepting resets it, deletes its hidden sessions, and logs the S4 it showed', async tc => {
+    const page = await openKolbFor(tc, 11);
+    await page.evaluate(CLICK_SEL, '[data-kolb-save]');
+    const slot = await page.waitFor(function () {
+      var s = JSON.parse(localStorage.getItem('track_db') || '{}').slots[0];
+      return (s.kolbs || []).length > 2 ? s : false;
+    }, { message: 'the Kolb landing in track_db' });
+    assert.equal(slot.mms.find(m => m.id === 11).ksStage, '1');
+    assert.deepEqual(slot.sessions.filter(x => x.mmId === 11), [], "Beta's hidden sessions are gone");
+    const change = slot.linChanges[slot.linChanges.length - 1].items[0].change;
+    assert.equal(change.type, 'kolbReset');
+    assert.equal(change.oldValue, '4', 'the phase the user saw');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KOLB: the streak does not count a reset, and still counts an advance', async tc => {
+    /* LIN records carry KS02's today(), which is a UTC day — NOTES Proposal 3 —
+       and the streak reads the same UTC day, so the fixture uses one too. */
+    const utcToday = new Date().toISOString().split('T')[0];
+    const reset = { id: 901, date: utcToday, title: utcToday,
+      items: [{ mmId: 16, change: { type: 'kolbReset', oldValue: '3', newValue: '1', kolbId: 900 } }] };
+    const advance = { id: 902, date: utcToday, title: utcToday,
+      items: [{ mmId: 17, change: { type: 'stageAdvance', oldValue: '1', newValue: '2' } }] };
+    const streakOf = async lin => {
+      const db = p17KolbDb(); db.slots[0].linChanges = lin;
+      const page = await openHere(tc, 'progress.html', { db });
+      await page.waitFor(function () { var e = document.querySelector('#root'); return !!e && e.children.length > 0; },
+        { message: 'progress.html mounting' });
+      await page.waitFor(function () { return !!document.querySelector('[data-app-pct]'); }, { message: 'the header' });
+      const n = await page.evaluate(function () { var e = document.querySelector('.streak-fire-num'); return e ? e.textContent : null; });
+      assert.deepEqual(realErrors(page), []);
+      return n;
+    };
+    assert.equal(await streakOf([reset]), null, 'a day holding only a reset is no streak day');
+    assert.equal(await streakOf([advance]), '1', 'the guard: an advance on the same day still counts');
+  });
+
+  /* The user's answer of 2026-10-13: an OLD Kolb moved onto a Procedural MM
+     counts as a new one there. Moving it from another MM, or linking a free
+     one, is an arrival and resets exactly as saving a new Kolb does — the same
+     kolbResetPlan / applyKolbReset. Saving an edit that keeps the Kolb where it
+     was is not, and `dupe` still is not. */
+  const p17MoveDb = () => {
+    const db = p17KolbDb();
+    db.slots[0].kolbs = [F.kolb(301, '2026-10-01', { mmId: 17 }), F.kolb(302, '2026-10-01'),
+      F.kolb(303, '2026-10-01', { mmId: 16 }), F.kolb(304, '2026-10-01', { mmId: 17 })];
+    return db;
+  };
+  // KOLB tab → the Kolb → pick an MM link → SAVE CHANGES.
+  const editKolbLink = async (tc, kolbId, link) => {
+    const page = await openHere(tc, 'sir-ks02.html', { db: p17MoveDb(), hash: '#kolb' });
+    await page.waitFor(function (id) { return !!document.querySelector('[data-kolb-row="' + id + '"]'); },
+      { args: [kolbId], message: 'Kolb ' + kolbId + ' on the KOLB tab' });
+    await page.evaluate(CLICK_SEL, '[data-kolb-row="' + kolbId + '"]');
+    await page.waitFor(function (l) { return !!document.querySelector('[data-kolb-link="' + l + '"]'); },
+      { args: [String(link)], message: "the edit view's MM link list" });
+    await page.evaluate(CLICK_SEL, '[data-kolb-link="' + link + '"]');
+    return page;
+  };
+  const KOLB_ON = function (id) {
+    var s = JSON.parse(localStorage.getItem('track_db') || '{}').slots[0];
+    var k = (s.kolbs || []).filter(function (x) { return x.id === id; })[0];
+    return k ? k.mmId : 'missing';
+  };
+
+  await t.test('P17 KOLB MOVE: moving an old Kolb onto a Procedural MM at S3 sends it back to S1', async tc => {
+    const page = await editKolbLink(tc, 301, 16);
+    const linBefore = (await page.evaluate(READ_P17_SLOT)).linChanges.length;
+    await page.evaluate(CLICK_SEL, '[data-kolb-edit-save]');
+    await page.waitFor(function (f) { return new Function('return ' + f)()(301) === 16; },
+      { args: [KOLB_ON.toString()], message: 'the move landing in track_db' });
+    const slot = await page.evaluate(READ_P17_SLOT);
+    assert.equal(slot.mms.find(m => m.id === 16).ksStage, '1', 'Theta went back to S1');
+    assert.equal(slot.linChanges.length, linBefore + 1);
+    assert.deepEqual(slot.linChanges[slot.linChanges.length - 1].items,
+      [{ mmId: 16, change: { type: 'kolbReset', oldValue: '3', newValue: '1', kolbId: 301 } }],
+      'logged with the moved Kolb\'s own id');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KOLB MOVE: linking a free Kolb onto a Procedural MM counts too', async tc => {
+    const page = await editKolbLink(tc, 302, 16);
+    await page.evaluate(CLICK_SEL, '[data-kolb-edit-save]');
+    await page.waitFor(function (f) { return new Function('return ' + f)()(302) === 16; },
+      { args: [KOLB_ON.toString()], message: 'the link landing in track_db' });
+    const slot = await page.evaluate(READ_P17_SLOT);
+    assert.equal(slot.mms.find(m => m.id === 16).ksStage, '1');
+    assert.equal(slot.linChanges[slot.linChanges.length - 1].items[0].change.kolbId, 302);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KOLB MOVE: saving an edit that keeps the Kolb where it was resets nothing', async tc => {
+    const page = await editKolbLink(tc, 303, 16);   // Theta, already its MM
+    const before = await page.evaluate(READ_P17_SLOT);
+    await page.evaluate(CLICK_SEL, '[data-kolb-edit-save]');
+    await page.waitFor(function () { return !document.querySelector('[data-kolb-unsaved]'); },
+      { message: 'the save completing' });
+    await sleep(600);
+    const slot = await page.evaluate(READ_P17_SLOT);
+    assert.equal(slot.mms.find(m => m.id === 16).ksStage, '3', 'Theta stays at S3');
+    assert.deepEqual(slot.linChanges, before.linChanges, 'nothing logged');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('P17 KOLB MOVE: onto a Procedural MM stored in SIR it asks first; Cancel saves nothing, OK resets', async tc => {
+    const page = await editKolbLink(tc, 304, 11);
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    const dialogsBefore = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(CLICK_SEL, '[data-kolb-edit-save]');
+    await sleep(600);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogsBefore + 1, 'the save asked, once');
+    assert.match(page.dialogs[page.dialogs.length - 1], /^Moving this Kolb sends "Procedural Beta" back to S1[\s\S]*2 SIR sessions/);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'Cancel wrote nothing — the Kolb did not move');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-kolb-unsaved]'); }), true,
+      'and the edit is still marked unsaved');
+    // now accept
+    await page.evaluate(CLICK_SEL, '[data-kolb-edit-save]');
+    await page.waitFor(function (f) { return new Function('return ' + f)()(304) === 11; },
+      { args: [KOLB_ON.toString()], message: 'the move landing in track_db' });
+    const slot = await page.evaluate(READ_P17_SLOT);
+    assert.equal(slot.mms.find(m => m.id === 11).ksStage, '1');
+    assert.deepEqual(slot.sessions.filter(x => x.mmId === 11), [], "Beta's hidden sessions are gone");
+    assert.equal(slot.linChanges[slot.linChanges.length - 1].items[0].change.oldValue, '4');
+    assert.deepEqual(realErrors(page), []);
   });
 });

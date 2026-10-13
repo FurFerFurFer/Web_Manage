@@ -9,7 +9,8 @@
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
-  <script src="scripts/calendar-core.js?v=8"></script>
+  <script src="scripts/milestone-core.js?v=2"></script>
+  <script src="scripts/calendar-core.js?v=10"></script>
   <script src="scripts/doc-table-core.js?v=4"></script>
   <script src="scripts/schedule-paste-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -19,7 +20,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=17">
+  <link rel="stylesheet" href="styles/styles.css?v=18">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -375,12 +376,12 @@
             </div>
             {roots.length === 0 && (
               <div className="py-6 text-center text-xs text-gray-500">
-                No source dumps yet. Add them in KS02 → KS03 → SOURCE DUMP.
+                No source dumps yet. Add them in Knowledge Record → KS03 → SOURCE DUMP.
               </div>
             )}
             {roots.length > 0 && !anyLinks && (
               <div className="pb-2 text-[10px] text-gray-500 italic">
-                Dumps exist but no leaf entry has links yet — add label/url links in KS02 first.
+                Dumps exist but no leaf entry has links yet — add label/url links in Knowledge Record first.
               </div>
             )}
             {roots.map(d => renderEntry(d, 0))}
@@ -1486,7 +1487,11 @@
       const todayDs = TC.toDateStr(new Date());
 
       const buckets = useMemo(() => TC.buildBuckets(slot, cur.y, cur.m, opts), [slot, cur.y, cur.m, hiddenKey]);
-      const ms = useMemo(() => TC.buildMilestoneLanes(slot, cur.y, cur.m, opts), [slot, cur.y, cur.m, hiddenKey]);
+      // `today` opts in to the overrun tail, as on Home (index.html is the twin
+      // renderer): a late milestone is drawn on through today. todayDs is a
+      // dependency, or a block left open past midnight keeps yesterday's tail.
+      const ms = useMemo(() => TC.buildMilestoneLanes(slot, cur.y, cur.m, {hidden, today: todayDs}),
+        [slot, cur.y, cur.m, hiddenKey, todayDs]);
       const day = selDs ? TC.buildDaySchedule(slot, selDs, opts) : null;
 
       // ── "Coming up" ────────────────────────────────────────────────────────
@@ -2029,7 +2034,7 @@
               const overflow = dayLanes.filter(seg => seg.lane >= TC.MS_MAX_LANES);
               const col = (firstCol + d - 1) % 7;
               return (
-                <div key={ds} title={cats.map(c => c.label+': '+bucket[c.key].length).join('\n')}
+                <div key={ds} data-cal-day={ds} title={cats.map(c => c.label+': '+bucket[c.key].length).join('\n')}
                   className={"cal-cell"+(ds===todayDs?' today':'')+(dayLanes.length?' milestone':'')
                     +(ds===selDs?' selected':'')
                     +(ownedDates.due.has(ds)?' cal-doc-own-day'
@@ -2044,21 +2049,39 @@
                           <div key={l} className="cal-ms-lane">
                             {seg && (
                               /* bridge into the neighbouring cell so a period reads as
-                                 one line; never bridge across a week wrap */
+                                 one line; never bridge across a week wrap. A late
+                                 milestone's tail is dashed in the danger colour by
+                                 styles.css, so it gets no inline background — one
+                                 would beat that rule. */
                               <span className={"cal-ms-line"
                                   +(seg.isStart ? ' cap-start' : (col !== 0 ? ' bridge-left' : ''))
-                                  +(seg.isEnd ? ' cap-end' : (col !== 6 ? ' bridge-right' : ''))}
-                                style={{background: seg.color}}
-                                title={`${seg.title}${seg.owner ? ' — '+seg.owner : ''} · ${seg.startDate} → ${seg.endDate}`} />
+                                  +(seg.isEnd ? ' cap-end' : (col !== 6 ? ' bridge-right' : ''))
+                                  +(seg.overrun ? ' ms-overrun' : '')}
+                                style={seg.overrun ? undefined : {background: seg.color}}
+                                data-ms-late={seg.overdue ? seg.id : undefined}
+                                title={`${seg.title}${seg.owner ? ' — '+seg.owner : ''} · ${seg.startDate} → ${seg.endDate}`
+                                  + (seg.overdue ? ' · ' + seg.label : '')} />
                             )}
                           </div>
                         );
                       })}
                       {overflow.length > 0 && (
-                        <span className="cal-ms-more" title={overflow.map(s=>s.title).join('\n')}>+{overflow.length}</span>
+                        <span className={'cal-ms-more' + (overflow.some(s => s.overdue) ? ' ms-late' : '')}
+                          title={overflow.map(s => s.title + (s.overdue ? ' — ' + s.label : '')).join('\n')}>+{overflow.length}</span>
                       )}
                     </div>
                   )}
+                  {/* one `!` on the day the late bars end, which is today —
+                      the same flag Home draws */}
+                  {(() => {
+                    const lateEnds = dayLanes.filter(seg => seg.overdue && seg.isEnd);
+                    return lateEnds.length > 0 && (
+                      <span className="cal-ms-late-flag" role="img"
+                        data-cal-late-flag={String(lateEnds.length)}
+                        aria-label={lateEnds.length + ' overdue milestone' + (lateEnds.length === 1 ? '' : 's')}
+                        title={lateEnds.map(seg => seg.title + ' — ' + seg.label).join('\n')}>!</span>
+                    );
+                  })()}
                   {cats.length > 0 && (
                     <div className="cal-dots">
                       {cats.map(c => <span key={c.key} className="cal-dot" style={{background: c.color}} />)}
@@ -2835,7 +2858,7 @@
                 <p className="text-xs leading-relaxed">
                   Older Track data was found that has not been migrated. Open
                   <a href="progress.html" className="mx-1 text-cyan-300 underline">Progress</a>or
-                  <a href="sir-ks02.html" className="mx-1 text-cyan-300 underline">KS02</a>
+                  <a href="sir-ks02.html" className="mx-1 text-cyan-300 underline">Knowledge Record</a>
                   once to migrate it, or create a workspace on the
                   <a href="index.html" className="mx-1 text-cyan-300 underline">Home</a>page.
                 </p>
@@ -3095,6 +3118,6 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
   <script src="scripts/notes-core.js?v=3"></script>
-  <script src="scripts/notes-widget.js?v=5"></script>
+  <script src="scripts/notes-widget.js?v=6"></script>
 </body>
 </html>

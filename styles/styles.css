@@ -2763,6 +2763,34 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
   line-height: 1.2;
 }
 
+/* ── a late milestone's overrun ──────────────────────────── */
+/* A milestone whose end has passed with its work unfinished is drawn on
+   through TODAY — milestone-core.js decides which, calendar-core.js lays the
+   tail out, index.html and documentations.html draw it. The tail is dashed in
+   the danger token rather than the bar's palette colour, so it cannot read as
+   a longer period. The bar is far too thin for a glyph, so the `!` sits on the
+   day cell instead, absolutely positioned so it never reflows the grid. */
+.cal-ms-line.ms-overrun {
+  background: repeating-linear-gradient(90deg, var(--color-danger) 0 0.3rem, transparent 0.3rem 0.5rem);
+  opacity: 1;
+}
+
+.cal-ms-more.ms-late {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.cal-ms-late-flag {
+  position: absolute;
+  top: 0.2rem;
+  right: var(--cal-cell-pad-x);
+  z-index: 3;
+  color: var(--color-danger);
+  font-size: clamp(0.6875rem, 1.5vmin, 1rem);
+  font-weight: 800;
+  line-height: 1;
+}
+
 .cal-legend-bar {
   width: 1.1rem;
   height: 0.25rem;

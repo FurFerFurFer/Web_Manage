@@ -32,6 +32,7 @@ The code is operational. Verification is syntax checking, the committed suite, a
 | `README.md` | Current product behavior, architecture, data layout, project progress, and active workflow |
 | `NOTES.md` | Ideas, risks to address, possible changes, target architecture, and roadmap |
 | `AGENTS.md` | Mandatory project rules and verification procedure for coding agents |
+| [`docs/CONCEPTS.md`](docs/CONCEPTS.md) | The ideas Track is built on, in the user's terms — Marginal Gains, declarative and procedural mind maps, phases, Kolb → MG, sources — and the words not to mix up |
 | [`docs/TABLE-PASTE.md`](docs/TABLE-PASTE.md) | The user-facing spec for `::: track-table` — what to ask an AI shown a picture of a table |
 | [`docs/SCHEDULE-PASTE.md`](docs/SCHEDULE-PASTE.md) | The user-facing spec for `::: track-schedule` — what to ask an AI shown a picture of a timetable |
 | [`docs/VERIFICATION-LOG.md`](docs/VERIFICATION-LOG.md) | The evidence record for completed work — what was run, what failed first, and what is not covered |
@@ -53,7 +54,7 @@ When a proposed change is implemented:
 
 `index.html` is the project hub. It currently provides:
 
-- Navigation to KS02, Progress, Documentations, and True Storage.
+- Navigation to Knowledge Record, Progress, Documentations, and True Storage.
 - Creation of named workspace slots.
 - Active-slot selection.
 - Slot renaming and deletion.
@@ -78,7 +79,7 @@ The Universal calendar is a month grid with a clickable legend that filters it, 
 
 **The calendar always fills the screen.** It is the last section of Home, but breaks out of the page's `46rem` column to span the full viewport width and is pinned to exactly one viewport height (`100dvh`), so scrolling down to it gives the month the whole device screen on phone, tablet, and desktop. Grid rows share the remaining height (`1fr`), so cells grow with the display instead of sitting at a fixed pixel height, and day numbers, dots, and milestone bars scale with them. On viewports under 600px tall (landscape phones) the panel keeps a `min-height` and grows past one screen rather than crushing the cells, with a `2rem` row floor. Cell padding and the grid gap come from `--cal-cell-pad-x` and `--cal-gap` on `.cal-panel`, which the milestone bridge margins are derived from — change padding through those variables so the bars stay aligned.
 
-**Milestone periods** render as thin horizontal bars rather than repeated dots. Milestones are deduplicated by id (definitions are cloned across linked goal nodes), packed greedily into lanes so each keeps one row for its whole `startDate`–`endDate` span, and coloured from the same palette the Progress Milestones tab uses. A bar bridges the gap into the next day cell so a period reads as one continuous line, with rounded caps on its real start and end days and no bridge across a week wrap. Hovering a bar shows its title, owning goal, and dates. Days carrying more than three concurrent milestones show a `+N` badge.
+**Milestone periods** render as thin horizontal bars rather than repeated dots. Milestones are deduplicated by id (definitions are cloned across linked goal nodes), packed greedily into lanes so each keeps one row for its whole `startDate`–`endDate` span, and coloured from the same palette the Progress Milestones tab uses. A bar bridges the gap into the next day cell so a period reads as one continuous line, with rounded caps on its real start and end days and no bridge across a week wrap. Hovering a bar shows its title, owning goal, and dates. Days carrying more than three concurrent milestones show a `+N` badge. A milestone whose end has passed with its work unfinished keeps going as a dashed red tail up to today, with a `!` on today's cell — see "Milestone accountability".
 
 **Clicking a day** opens a read-only preview of that day's schedule, mirroring the Progress Schedule day view: a 00:00–24:00 timeline at 28px/hour with blocks positioned by time and duration, overlapping blocks split side by side using the same connected-component algorithm as `SchedulePanel`, plus a strip above it for MG focus (with the same 30-day carry-forward and `↑ carried` hint as Progress), SIR sessions due that day (shown on `finishDate` when done, skipped sessions excluded), calendar notes, and deadlines. The preview has no handlers or inputs and never writes to `track_db`. A `→` button beside the date opens `progress.html?date=YYYY-MM-DD#schedule`, which loads the Schedule tab in day mode focused on that date; the date rides in the query string so the existing `#hash` tab routing is untouched. A `×` button beside it closes the day again.
 
@@ -205,9 +206,18 @@ breakpoints so the two cannot drift apart silently.
 
 ### Mind maps and knowledge structure
 
-`sir-ks02.html` currently supports:
+`sir-ks02.html` is the **Knowledge Record** — the name Home, the browser tab and every link
+into it show; it was the *KS02 Tracker*. It holds each mind map and everything on it: its
+structure, Kolb cycles, marginal gains, SIR and sources. Only the displayed name changed: the
+file name, the `ks02` legacy storage keys, the `.ks02-page` class and `data-tabbar="ks02"`
+keep the old spelling, and the page's own **KS02** tab (the encoding wheel) is a different
+thing from the page and keeps its name. It currently supports:
 
-- Anchor, type-1, and type-2 mind maps.
+- Anchor, declarative and procedural mind maps. They are stored as types `1` and `2` and
+  were shown as T1 and T2 until 2026-10-08, which collided with SIR's review numbers. The
+  words are spelled once per page: `mmTypeLabel` in `sir-ks02.html` and its twin in
+  `true-storage.html`, and `typeLabel` in `progress.html`. What the two kinds mean is in
+  [docs/CONCEPTS.md](docs/CONCEPTS.md).
 - Parent/child mind-map relationships.
 - `+MM` takes its parent from where you are. Pressed from inside an MM — its detail open, in
   KS02, MG, KS03 or SRCH — that MM is pre-chosen as the new MM's one parent; pressed from
@@ -233,7 +243,7 @@ breakpoints so the two cannot drift apart silently.
 
 ### Kolb learning records
 
-The KS02 page currently supports:
+The Knowledge Record page currently supports:
 
 - Kolb entries connected to mind maps.
 - Kolb-stage selection.
@@ -242,6 +252,21 @@ The KS02 page currently supports:
 - Level information.
 - Linked references and source material.
 - Ordered Kolb records.
+
+**A Kolb arriving on a Procedural mind map sends it back to S1.** A reflection brings new
+information, and new information has to be built into the mind map again
+([docs/CONCEPTS.md](docs/CONCEPTS.md)). A Kolb arrives in two ways, and both reset a Procedural
+mind map that is past S1: saving a **new** Kolb on it — with SAVE, or when the Kolb timer runs
+out — and **moving an old one onto it** on the KOLB tab, from another mind map or from none
+(the user's answer of 2026-10-13: an old Kolb counts as new information for the mind map it
+moves to). The move is logged in its `+LIN` history as `S3 → S1 (new Kolb)` (change type
+`kolbReset`, carrying the Kolb's id). Like a manual revert, that record does **not** count
+toward the day streak. Nothing else resets: closing the Kolb form, `dupe` (which re-logs an old
+Kolb on the same mind map), saving an edit that leaves the Kolb on the mind map it was on, and a
+mind map that is unassigned or already at S1. A Procedural mind map still **stored** in SIR (it
+shows as S4) holds hidden review sessions that going back to S1 deletes, so either save asks
+first, exactly as `+LIN` does (see "Spaced Interval Review"). Cancel writes nothing, the Kolb
+included: a new Kolb's form stays open, and an edit stays marked unsaved.
 
 ### Spaced Interval Review
 
@@ -255,6 +280,30 @@ The current SIR implementation includes:
 - SIR completion information used by goal progress.
 - Schedule-session details distinguish the current stage derived from completed repetitions from the stage of the selected scheduled session (for example, D7 is `SIR T3`).
 - Timeline day badges show each session's stage (`T1`–`T5`). Scheduled and postponed sessions are green on their current scheduled date; completed sessions move to their actual finish date, turn yellow, and show `DONE` in their details. SIR badge state refreshes when the database changes in another tab or when Progress becomes visible again.
+
+**Only a Declarative mind map has SIR.** A Procedural one is built through S1–S4 and stops
+there, because spaced review does not fit knowledge that grows in Kolb cycles
+([docs/CONCEPTS.md](docs/CONCEPTS.md)). At S4, `+LIN` offers it no `Advance → SIR`, its
+phase row in the KS03 panel has no SIR pill, and copying it never creates sessions.
+
+A Procedural mind map that is **stored** in SIR or FINISHED — one that entered SIR before
+this rule, or a Declarative one switched to Procedural — **reads as S4** everywhere a phase is
+drawn: the KS02 wheel and its lists, the KS03 panel, `+LIN`, the canvas ring, and Progress's
+Mind Maps tab, Schedule and pickers. Its sessions are **not drawn** on any calendar: the
+Knowledge Record's own, the Progress Schedule (timeline strip, month view, day panel), the
+Home calendar, and a Documentations calendar block. **Nothing stored changes**: switch it back
+to Declarative and it is in SIR again, with every session where it was.
+
+The one thing that does delete them is moving such a mind map to another phase with `+LIN`.
+Leaving SIR has always ended the run and deleted its sessions, and here they would otherwise
+come back, stale, on an S1–S3 mind map the day it became Declarative again. Because those
+sessions cannot be seen, the save **asks first**, naming the mind map and how many sessions
+would go; Cancel writes nothing and leaves `+LIN` open. The history records the move from the
+phase you saw (`S4 → S3 (revert)`). A Procedural mind map with no hidden sessions moves without
+a prompt.
+
+The rule has one definition, `TrackMilestone.stageOf` and `TrackMilestone.liveSessions` in
+`scripts/milestone-core.js`, which all four pages read.
 
 ### Marginal Gains
 
@@ -284,6 +333,73 @@ Current MG behavior includes:
 - Routine task dates.
 - Task scheduling and duration.
 - Quests and starred quests, curated from the goal tree and its `toLearn` mind maps.
+- Overdue milestones and the slip record — see below.
+
+**A Procedural mind map is judged by its MG level alone.** Its progress toward a goal is its
+level, never its phase: every new Kolb sends it back to S1, so a phase target would be lost and
+won again with each reflection ([docs/CONCEPTS.md](docs/CONCEPTS.md)). Its to-learn row has no
+stage selector and no `KS02` bar — only the `MG` bar and the level box — and it counts as met
+when its level is reached, whatever phase it is in. A target, or a milestone waypoint, that
+names only a phase is **no target** for a Procedural mind map: it drops out of the goal's
+progress until it is given a level, and a milestone whose only work is such a waypoint is empty,
+never overdue. A Declarative mind map is judged by phase and level as before.
+
+**Nothing stored changes.** A phase target already set on a Procedural mind map stays in
+`mmTargets`, unread; setting its level keeps it; switching the mind map back to Declarative
+reads it again. One consequence is said here rather than discovered: a goal's percentages
+changed on 2026-10-11 wherever it learns a Procedural mind map whose phase target was unmet —
+it now counts as met if its level is — or whose target named only a phase, which no longer
+counts at all. The goal ring, the goal panel's TO LEARN count and list, the goal node's TO LEARN
+bar, the header percentage, a subgoal's "learned" count, the Quest tab's learn rows and the
+milestone overdue rule all read it the same way, through `TrackMilestone.targetFor`.
+
+### Milestone accountability
+
+A milestone is **overdue** when its end date has passed and the work attached to it is not all
+done. That work is:
+
+- its **tasks** — everything under its milestone blocks, linked tasks resolved, counted exactly as
+  the Milestones tab's `done/total`. A routine counts only through its tree checkbox, so an
+  unticked routine keeps a milestone open;
+- its **to-learn** — each mind map in the owning goal's `toLearn` that has a waypoint for this
+  milestone, reached when the mind map meets *that* waypoint's stage and level.
+
+The end day itself is not late; lateness starts the day after. A milestone with **no tasks and no
+to-learn** is never overdue — there is nothing to chase — and its row says *no work attached*. A
+milestone with missing or malformed dates is never overdue either.
+
+`scripts/milestone-core.js` (`window.TrackMilestone`) is the one definition of all of this, read by
+`progress.html`, `index.html` and `documentations.html`. It holds no date code: each page passes in
+its own local "today". It also holds the phase a mind map is in (see "Spaced Interval Review"),
+which is why `sir-ks02.html` loads it too.
+
+| Surface | What a late milestone looks like |
+| --- | --- |
+| Progress → MILESTONES, the row | outlined red, reading `OVERDUE · 5 days · 3 tasks, 1 to-learn left`. A `◎ met/total to-learn` count names the unreached mind maps on hover; a finished milestone reads `✓ done` |
+| Progress → MILESTONES, the calendar | its chip runs on past the end day to today, dashed red, with `!` on today |
+| Home Universal calendar, Documentations calendar blocks | its bar runs on past the end day as a dashed red tail to today, with one `!` on today's cell. The hover says how late it is and what is left; a late lane pushed past the third shows a red `+N` |
+| Progress → Schedule | today's day column and today's month cell carry a `⚑` per late milestone, which opens it in the MILESTONES tab |
+| Progress → Schedule pickers | for today and later, the add-task picker pins the leftover tasks in an OVERDUE block above the Directory tree and lists late milestones first in its Milestone tab; the MM picker pins the unreached to-learn mind maps above SIR DUE TODAY |
+
+The tail grows by a day every day the milestone stays late, and moves to the new today when a Home
+tab is shown again. Switching "Milestone period" off in the Home legend hides tails along with the
+bars; the Schedule and the MILESTONES tab still warn.
+
+**The slip record.** Moving the end date of a milestone that is *already late* to a later day —
+or clearing its dates — is recorded on the milestone as a slip, and the row shows
+`slipped 2× · first due Oct 1`. The warning clears once the new end is today or later; the record
+stays. Moving the dates of a milestone that is not late is planning and records nothing. One date
+edit — from focusing a date field to leaving it — is one record however many days it passes
+through on the way, and if that edit ends back on or before the missed day, it records nothing.
+When the milestone is late, the `clear` confirm says that clearing will be recorded.
+
+The milestone date fields save only a complete day inside the calendar's range (2026–2033). Typing
+a year no longer writes the intermediate years Chrome passes through on the way, and emptying a
+field by keyboard no longer collapses the period: the `clear` button is how dates are removed, and
+it asks first.
+
+The record is `slips: [{from, to?, on}]` on the milestone definition, inside `goals` — absent when
+there are none. No slot field was added and nothing was migrated.
 
 ### Quests
 
@@ -325,7 +441,9 @@ The Progress page currently calculates:
 - Completed and total actionable work.
 - Mind-map learning progress.
 - Combined goal percentages.
-- Streaks based on LIN activity.
+- Streaks based on LIN activity. A day counts when it holds a LIN change other than a manual
+  revert or a new Kolb's reset to S1 — both are logged, neither is progress. LIN days are the
+  UTC day KS02's `today()` stamps (NOTES Proposal 3).
 - Milestone and goal visualizations.
 
 ### Schedule and supporting actions
@@ -637,8 +755,11 @@ draft freely under the day, then sort what survives into a note of its own.
 
 - **Sorted** notes, the `notes` list: the user's own notes, added with `+ Add note`,
   each with a topic and content, deleted with a confirmation.
-- **Date** notes, the `dateNotes` map: exactly **one draft per local calendar day**,
-  fixed by its date. Nothing is created ahead of time. The **Date** tab always shows
+- The **Journal**, the `dateNotes` map: exactly **one draft per local calendar day**,
+  fixed by its date. Its tab was called **Date** until 2026-10-08 and was renamed so it
+  is never mistaken for a calendar **day note** (`calendarNotes`, on the Schedule and
+  the calendars), which is a different thing. Only the visible word changed. Nothing is
+  created ahead of time. The **Journal** tab always shows
   **Today** first, then `Go to day`, which opens the calendar pop-up, then every other
   day holding text, newest first, each with its tag. A day is written on its first
   non-blank text, and its key is **deleted** when the text is emptied, so an empty day
@@ -652,7 +773,7 @@ draft freely under the day, then sort what survives into a note of its own.
   the first character is typed. Emptying an unclear day's text deletes the day;
   written again, it starts over at unclear. Changing a tag asks nothing. It is a
   choice between three, undone by pressing the previous one. The same row sits on
-  every Date pane side by side, and the picker's filter also matches tag words.
+  every Journal pane side by side, and the picker's filter also matches tag words.
 - **Cleared and Eternal lock the text.** A green or purple day is **read-only**: its
   words can still be highlighted and copied, sent from with `Send`, and opened beside
   another note with `⧉`, but they cannot be typed into or cleared, and a line under
@@ -660,7 +781,7 @@ draft freely under the day, then sort what survives into a note of its own.
   **unclear** unlocks the day; choosing cleared or Eternal again locks it. `🗑` is
   unavailable on a locked day and asks nothing. Side by side, `Send` never writes into
   a locked pane, and with every other open note locked it says so instead.
-- **The calendar pop-up.** `Go to day`, in the Date tab and in the picker's Date tab,
+- **The calendar pop-up.** `Go to day`, in the Journal tab and in the picker's Journal tab,
   opens a month calendar over the page, Sunday first like the Home and Documentations
   calendars. Every written day is **filled with its tag's colour**, with a small `?`,
   `✓` or `∞` so red and green can be told apart without colour vision; an unwritten
@@ -668,8 +789,8 @@ draft freely under the day, then sort what survives into a note of its own.
   the arrow keys and PageUp/PageDown; Escape, `✕` or a click outside closes it.
   Choosing a day opens it. In the picker, a day already open beside another is
   disabled. The pop-up itself writes nothing.
-- **Side by side.** `⧉` on any note opens a picker (tabs `Sorted | Date`, a filter,
-  `+ New sorted note`). A Date note opens it on Sorted and a Sorted note on Date.
+- **Side by side.** `⧉` on any note opens a picker (tabs `Sorted | Journal`, a filter,
+  `+ New sorted note`). A Journal day opens it on Sorted and a Sorted note on Journal.
   Picking a note turns the widget into a **full-screen view** of both, left and right
   above 720px and stacked below it. Every pane is editable unless its day is locked;
   `＋ Open another` adds
@@ -745,7 +866,7 @@ Pages are stored in the per-slot `docPages` field, and day notes and deadlines a
 
 **🗓 Calendar** in the add-block menu drops a calendar into the page body. It behaves like any other block: several can coexist on a page, and the hover chrome moves and deletes them.
 
-A calendar shows the same aggregation as the Universal calendar on Home — month grid, today highlight, milestone period bars, category dots, and a click-to-open day detail with the read-only day timeline — plus the two things a documentation page can author itself: **day notes** and **deadlines**. Both are written into the shared slot arrays, so they appear on the Progress Schedule and the Home calendar like any others.
+A calendar shows the same aggregation as the Universal calendar on Home — month grid, today highlight, milestone period bars (a late milestone's dashed red tail included), category dots, and a click-to-open day detail with the read-only day timeline — plus the two things a documentation page can author itself: **day notes** and **deadlines**. Both are written into the shared slot arrays, so they appear on the Progress Schedule and the Home calendar like any others.
 
 **Authoring.** `+ note` and `+ deadline` on the selected day's panel open an inline composer. Both deadline forms — the composer and `✎` — carry a `Due on` date, seeded to the selected cell while composing and to the stored record while editing, so a deadline can be filed for or moved to any day from any page; either way the calendar follows it to that day. Save is gated on `TrackCalendar.dlDraftValid` in both modes, and a blank date is refused with the reason shown rather than repaired.
 
@@ -982,7 +1103,7 @@ Three views, switched from the header (and from the phone bar), each reachable b
 - **MULTIVERSE** — the same canvas as KS03: drag a node to place it, scroll or pinch to zoom,
   drag the background to pan, `+` / `−` / `↺` to zoom and reset, `⊞` to rearrange, a fill-colour
   picker (single click opens the palette, double click toggles it on and off), right-click for
-  Duplicate, and arrows from parent to child. Storages have no Anchor/T1/T2 types, so every node
+  Duplicate, and arrows from parent to child. Storages have no Anchor/declarative/procedural types, so every node
   is drawn the same way; a faint outer ring means the storage carries at least one source-dump
   tag. Manual positions persist in `trueStoragePos`, exactly as MM positions persist in `pos`.
 - **SOURCE DUMP** — KS02's KS03 → SOURCE DUMP page, here as well. It sits second so the first two
@@ -1146,6 +1267,14 @@ at one. Where a call-site prompt is genuinely required, it is because a handler-
 wrong: `toggleMGDay` both adds and removes, `onUpdateDate` also *sets* dates, and `deleteNode` and
 `removeDissectChild` are pure tree functions that must stay pure.
 
+One handler asks only on some of its paths, and that is deliberate too. `+LIN`'s save
+(`saveLinSession`) asks before moving a **Procedural** mind map that is still stored in SIR,
+because that move deletes review sessions nobody can see (see "Spaced Interval Review"); every
+other `+LIN` change saves at once. The prompt sits in the handler, before anything is written, and
+Cancel leaves `+LIN` open. Moving a **Declarative** mind map out of SIR also deletes its sessions
+and does **not** ask — the reviews are on screen in that case, and that behaviour predates the
+rule (NOTES lists it).
+
 Deliberately **not** confirmed, and pinned by a test so a later "make it uniform" change has to
 re-decide it on purpose rather than ship friction:
 
@@ -1260,7 +1389,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | --- | --- |
 | `index.html` | Home page, slot management, slot import/export, navigation, Universal calendar |
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule, calendar notes |
-| `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
+| `sir-ks02.html` | The Knowledge Record: mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, timetable blocks, PDF export |
 | `true-storage.html` | Storages: KS03-style multiverse canvas, a SOURCE DUMP tab that is a documented copy of KS02's page and edits the same data, SRCH-style nested tree, one link, explanation, and source-dump tags |
@@ -1270,13 +1399,14 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
 | `scripts/storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
 | `scripts/firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
-| `scripts/notes-widget.js` | Floating per-slot notes widget — the Sorted and Date tabs, the picker, the full-screen side-by-side view and Send |
+| `scripts/notes-widget.js` | Floating per-slot notes widget — the Sorted and Journal tabs, the picker, the full-screen side-by-side view and Send |
 | `scripts/notes-core.js` | The one definition of what a note is (`window.TrackNotes`): the total `dateNotes` reader, the delete-on-empty writer, the Date-note tags (`TAGS`, the `dateNoteTag` reader, the `dateNoteLocked` test and the `withDateTag` writer), the Sorted patch writer that never recreates a deleted note, `appendSent`, the local-day labels, and the month grid the calendar pop-up draws |
 | `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `scripts/source-dump-core.js` | The one definition of how a source dump is read and edited (`window.TrackSourceDump`) — the breadcrumb path, the legacy text-block fallback, which MMs a dump may link, and every writer KS02's page and True Storage's SOURCE DUMP tab share. Holds no date code; a new title's day is a parameter |
 | `scripts/graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
 | `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`) — membership, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Read by `progress.html` and `index.html`, so neither can drift. Holds no date code; the day is a parameter |
+| `scripts/milestone-core.js` | The one definition of where a milestone stands — membership, leaf counting, mind-map targets, the overdue rule, the drawn span, and the `slips` writer — and of the phase a mind map is in: `stageOf` (a Procedural MM stored in SIR or FINISHED reads as S4), `liveSessions` (its SIR sessions are not drawn) and `targetFor` (its target is its level alone) (`window.TrackMilestone`). Read by `progress.html`, `index.html`, `documentations.html` and `sir-ks02.html`. Holds no date code; "today" is a parameter |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
 | `styles/styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling (including the whole phone layout and `--phone-tabbar-h`), and component states |
 | `docs/` | User-facing paste specifications, and the verification evidence log |
@@ -1699,10 +1829,11 @@ It runs three layers:
 | Offline source-dump tests | `tests/source-dump-core.test.js` | Every source-dump writer both Source Dump pages share, in `source-dump-core.js`: KS02's record shapes, a new title taking over its parent's MM sections, a parent that no longer exists refused, a duplicated parent id losing no section, the descendant delete and the breadcrumb path across a parentId cycle, transfers into an existing and a new section with a self-transfer refused, the legacy `text` block, which MMs a dump may link, identity when nothing changes, spreading so unknown keys survive, totality over damaged input — all with numeric and string ids mixed, as KS02 and True Storage mint them |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
 | Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, column widths normalising to a conserved total and following a row or column change, band geometry and the row/column move that permutes `rows`, `merges` and `colWidths` together, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
+| Offline milestone tests | `tests/milestone-core.test.js` | Where a milestone stands, in `milestone-core.js`: parity with verbatim copies of the `progress.html` functions it replaced (`countProgress`, `isMMTargetMet`, `buildSirDoneMap`, `collectMilestoneOwners`, `collectMilestoneBlocks`) on acyclic data, and the two deliberate differences — link cycles terminate, a block reached twice counts once. The lateness rule: the end day is not late, an empty milestone never is, to-learn alone keeps one late, malformed or inverted dates are undated, and `dayDiff` across month, year and leap boundaries without a `Date`. To-learn read through `toLearn` with **numeric** mind-map ids, never `mmTargets` keys. The report, `lateById`'s first holder, the wording, and the slip writer: recorded only for an already-late milestone, one record per day's edit from one due day, removed on a move back, never `[]`. A mind map's kind: `isProcedural` accepting `'2'` and `2` but not a junk type, `stageOf` reading a Procedural MM stored in SIR or FINISHED as S4 and nothing else, and never writing, and `liveSessions` leaving out exactly a Procedural MM's sessions — numeric ids, its input returned itself when nothing is left out, junk entries passed through. A Procedural MM's target: `targetFor` stripping the phase from the target and every waypoint and dropping a waypoint left with no level, returning anything else itself; `targetMet` judging it by level alone; and a phase-only waypoint being no work for the overdue rule |
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Date tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Date list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone |
 
 The first three offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
@@ -1712,13 +1843,14 @@ into *local* calendar days, `schema.js` stamps a new slot with one and
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
 machine running in UTC. `true-storage-core.test.js`, `source-dump-core.test.js`,
 `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`,
-`quest-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` run **once**: none of those
-modules holds any date code, so a sweep would cost five runs and prove the same thing. Three of
-them have to *earn* that rather than merely claim it — `schedule-paste-core.js` reads days,
-`quest-core.js` expires a tick at the end of one, and `source-dump-core.js` stamps a new title
-with one — so each suite carries a structural case that greps its module, with comments
-stripped first, and fails if a `Date` ever appears. All three take the day as a parameter
-instead.
+`quest-core.test.js`, `milestone-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` run
+**once**: none of those modules holds any date code, so a sweep would cost five runs and prove the
+same thing. Four of them have to *earn* that rather than merely claim it —
+`schedule-paste-core.js` reads days, `quest-core.js` expires a tick at the end of one,
+`source-dump-core.js` stamps a new title with one, and `milestone-core.js` decides whether a
+milestone is late — so each suite carries a structural case that greps its module, with comments
+stripped first, and fails if a `Date` ever appears. All four take the day as a parameter instead;
+`milestone-core.js` counts the days between two of them with integer arithmetic.
 
 A run **cleans up after itself, including when it is interrupted.** `close()`
 cannot throw, so a profile directory that refuses to delete prints a warning and

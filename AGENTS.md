@@ -31,6 +31,7 @@ Read these files before substantial work:
 | `NOTES.md` | Unfinished tasks, open decisions or risks, possible ideas, and the future roadmap only |
 | `AGENTS.md` | Mandatory agent procedure and project safety rules |
 | `docs/VERIFICATION-LOG.md` | The evidence record for completed work: what was run, what failed first, what is not covered |
+| `docs/CONCEPTS.md` | The user's concept model: what each idea means and why, and which words must not be mixed up. Read it before design work. A concept the user confirms goes here; the app changes it implies go in NOTES |
 
 Keep their responsibilities separate:
 
@@ -67,7 +68,7 @@ Active files:
 | --- | --- |
 | `index.html` | Home, workspace slots, import/export, navigation |
 | `progress.html` | Goals, milestones, progress, supporting actions, schedule |
-| `sir-ks02.html` | Mind maps, Kolb, SIR, MG, LIN records, source dumps |
+| `sir-ks02.html` | The **Knowledge Record** (shown to the user by that name; it was the "KS02 Tracker", and "KS02" in this file still means this page): mind maps, Kolb, SIR, MG, LIN records, source dumps. Only the DISPLAYED name changed. Never rename the file, the `ks02` / `ks02_slots` / `ks02_activeSlotId` legacy keys, `.ks02-page`, `data-tabbar="ks02"` or the `ks02` view key: the keys are a data contract, and a renamed file breaks every bookmark and `?mm=` / `?dump=` link into it. The page's inner KS02 tab (the encoding wheel) is a different thing from the page |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, print/PDF export |
 | `true-storage.html` | Storages: KS03-style multiverse canvas, a SOURCE DUMP tab that is a documented twin of KS02's page and edits the same `sourceDumps`, SRCH-style nested tree, one link, an explanation, and source-dump tags |
 | `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data (`window.TrackCalendar`), used by the Home universal calendar and the Documentations calendar blocks |
@@ -82,13 +83,14 @@ Active files:
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format (`window.TrackSchedulePaste`): `parseScheduleText`, `formatScheduleText`, and the day/time cell readers. Holds NO date code, which is why its suite runs once rather than swept |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape (`window.TrackDocTable`): `mergeMap`, the pure merge writers, and the `::: track-table` paste format in both directions |
 | `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`): the membership readers, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Holds NO date code — the day is a parameter — which is why its suite runs once rather than swept |
-| `scripts/notes-widget.js` | Per-slot floating notes: the Sorted and Date tabs, the picker, the full-screen side-by-side view (up to four panes) and Send |
+| `scripts/milestone-core.js` | The one definition of where a milestone stands (`window.TrackMilestone`): milestone membership (owners, blocks), leaf counting, mind-map targets, the status and lateness rule, the drawn span (`drawEnd`), the wording, and the `slips` writer — plus the phase a mind map is in and what it is judged by, `stageOf`, `liveSessions` and `targetFor` (a Procedural MM has no SIR, and its target is its level), which is why `sir-ks02.html` loads it too. `progress.html`'s `countProgress`, `isMMTargetMet`, `buildSirDoneMap`, `STAGE_ORDER`, `collectMilestoneOwners` and `collectMilestoneBlocks` are delegates to it. Holds NO date code — "today" is a parameter and day differences are integer arithmetic — which is why its suite runs once rather than swept |
+| `scripts/notes-widget.js` | Per-slot floating notes: the Sorted and Journal tabs, the picker, the full-screen side-by-side view (up to four panes) and Send |
 | `scripts/notes-core.js` | The one definition of what a note is (`window.TrackNotes`): the total `dateNotes` reader, the delete-on-empty writer, the Date-note tags (`TAGS`, `dateNoteTag`, `dateNoteLocked`, `withDateTag`) and the lock that cleared and Eternal put on a day's text, the Sorted patch writer, `appendSent`, the local-day labels and the calendar pop-up's month grid. Pure — the widget passes `now` and `today` in |
 | `styles/styles.css` | Shared design tokens, themes, responsive styling, and component states |
 | `docs/` | User-facing paste specifications for the Track application |
 | `World/` | The Track World game project — concept draft, its reference imagery, and its own `AGENTS.md`, which governs every change inside that directory. Nothing there is part of the Track runtime, and nothing there may write Track data |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `notes-core.test.js`, `true-storage-core.test.js`, `source-dump-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `notes-core.test.js`, `true-storage-core.test.js`, `source-dump-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`, `milestone-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -102,7 +104,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=17`, `scripts/schema.js?v=9`, `scripts/calendar-core.js?v=8`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-core.js?v=3`, `scripts/notes-widget.js?v=5`, `scripts/true-storage-core.js?v=3`, `scripts/source-dump-core.js?v=1`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
+Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=18`, `scripts/schema.js?v=9`, `scripts/calendar-core.js?v=10`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-core.js?v=3`, `scripts/notes-widget.js?v=6`, `scripts/true-storage-core.js?v=3`, `scripts/source-dump-core.js?v=1`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/milestone-core.js?v=2`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent.
 
 The phone layout lives at **`max-width: 720px`**, and `--phone-tabbar-h` is the **one
 definition** of the bottom tab bar's height. It is `0px` on `:root` and set only inside
@@ -446,9 +448,29 @@ A routine quest's tick is **not slot data**. It lives in `track_quest_routine_ti
 - **Expiry is STRUCTURAL, not scheduled.** One stored `day` covers the whole set, so a day that is not today reads as empty — no timer, no cleanup job, no midnight edge case. A `slotId` mismatch reads as empty too, so switching workspaces cannot show another slot's ticks.
 - **The day is a PARAMETER**, computed by the page with its local-day helper and passed in. That is what keeps `quest-core.js` free of date code and its suite in the unswept list, and a structural case greps the module (comments stripped first) to prove it.
 
-`dateNotes` is a **map** from a local `YYYY-MM-DD` day to `{content, createdAt, updatedAt}` — one draft per day, owned by `notes-widget.js` alone, with its rules in `notes-core.js`. Four rules follow, and the first two are the load-bearing ones:
+A milestone is **overdue** when its end has passed and its work — the tasks under its blocks, and each `toLearn` mind map's waypoint for it — is not all done. `scripts/milestone-core.js` (`window.TrackMilestone`) is the one definition, and four surfaces draw it: the Milestones tab (row and calendar), the Home and Documentations month tails through `calendar-core.js`, and the Schedule's ⚑ rows and pickers. Seven rules follow, and the first two are the load-bearing ones:
 
-- **Absence is an empty day, and emptying DELETES the key.** Never store `''`: no fallback sits behind it, so this is the `time` / `link` rule and deliberately not `cautionDates: []`. Opening the Date tab or a day writes nothing. `withDateNote` is the one writer; it spreads the record (an unknown key survives) and returns its input **unchanged** when nothing would change, which is how the widget skips a no-op write.
+- **One definition, and the six `progress.html` names are DELEGATES.** `countProgress`, `isMMTargetMet`, `buildSirDoneMap`, `STAGE_ORDER`, `collectMilestoneOwners` and `collectMilestoneBlocks` stay in the page only so their call sites do not move. Never re-inline one: Home cannot read `progress.html`, so a page-local copy is how the Milestones tab and the calendar tails would come to disagree about "done" — the deadline-caution shape again. `tests/milestone-core.test.js` pins the module against **verbatim copies** of the pre-extraction functions; the two deliberate differences (a link cycle terminates, a block reached twice counts once) have cases of their own.
+- **Iterate `toLearn`, never `Object.entries(mmTargets)`.** Those keys are strings and mind-map ids are NUMBERS, so a key-driven loop compares `'10'` with `10` and silently finds nothing — `computeMMAutoComplete` already does exactly that (NOTES). A waypoint is judged ALONE: `targetMet(mm, waypoint, sirDone)`, the call the MM bar makes.
+- **The end day is not late, and an EMPTY milestone never is.** Lateness starts the day after `endDate`; no tasks and no waypoints is `empty`, not overdue, at any date (the user's rule: nothing to chase). Missing, malformed or inverted dates are `undated`. The first two each have browser guards and doctored baselines in both suites; `undated` is pinned offline.
+- **"Today" is a PARAMETER, and `opts.today` is opt-in.** The module holds no `Date` (day differences are integer days-from-civil), so its suite is unswept. `TrackCalendar.buildMilestoneLanes` draws a tail only when a caller passes `opts.today` AND the module is loaded; without either its output is byte-identical, and an on-time segment never gains a key. `drawEnd` is the one definition of the drawn span — today while late — and both `calendar-core.js` and the Milestones tab's calendar draw `[startDate, drawEnd]`.
+- **Every walker in the module is cycle-guarded.** The "link existing task" picker offers a task's ancestors, so a link cycle is reachable through ordinary use, and Home and Documentations now follow links through this module. A per-path guard where a diamond must still count twice (`countLeaves`), visited-at-enqueue elsewhere.
+- **`slips` has ONE writer, `TrackMilestone.withSlip`, called only from `updateMilestonePeriod`.** A milestone definition may carry `slips: [{from, to?, on}]`, all local days: absent when there are none, `[]` never written, `to` absent when the dates were cleared. It records only a move that pushes an ALREADY-LATE milestone's end later or clears it — the baseline is the state the edit STARTED from (captured on a date input's focus, else read from the tree before the write) — and it is the net effect of one day's edits from one due day: same `(on, from)` updates `to`, a move back removes the record and the key. It rides every writer that touches a definition by spread or move, and goes only with the definition itself. Not validated in `schema.js`; `slipsOf` is the total reader.
+- **Milestone date inputs commit only a COMPLETE day inside `[MILESTONE_CAL_START, MILESTONE_CAL_END]`, never `''`** (`MilestoneDateInput`). Chrome's year segment passes through `0002`, `0020` and `0202`; committing those collapsed the period on every keystroke and would now write slips no UI can delete. Emptying a field by keyboard is therefore not a way to clear dates — the confirm-gated `clear` button is, and its message names the slip when the milestone is late.
+
+**A Procedural mind map (stored type `'2'`) has no SIR** (docs/CONCEPTS.md). `TrackMilestone.stageOf`, `liveSessions` and `targetFor` are the one definition, and four pages read them: `sir-ks02.html`, `progress.html`, and `index.html` / `documentations.html` through `calendar-core.js`. Seven rules follow, and the first two are the load-bearing ones:
+
+- **DRAW a phase through `stageOf`, never from `mm.ksStage`.** A Procedural MM stored in SIR or FINISHED reads as S4; only writers read the stored value. `sir-ks02.html` and `progress.html` each hold a one-line `stageOf` delegate. A raw `ksStage` read at one surface is the deadline-caution failure shape again.
+- **Filter what is DRAWN, never the `sessions` STATE.** `liveSessions` feeds KS02's `sessionsByDate` / `sirSessionsMap` memos and Progress's `sessions` prop; KS02's autosave writes the raw `sessions` state back, so filtering it there would delete the very sessions switching back to Declarative must restore. Progress never writes `sessions` at all, which is why it can filter at its root.
+- **Nothing stored changes on read.** Switching a Procedural MM back to Declarative restores SIR and every session; the type switch rewrites no `ksStage`.
+- **The one path that deletes hidden sessions asks first.** `saveLinSession` moving a Procedural MM out of a STORED SIR/FINISHED state deletes its sessions (leaving SIR always has), so it `window.confirm`s before any write and returns `false` on Cancel; the writer decides deletion by the STORED stage (`fromStage`), not by the option's `oldValue`, which is the phase the user saw. A move with nothing hidden does not ask.
+- **Every SIR entry point refuses a Procedural MM** — the `+LIN` option, `saveLinSession` (at the writer too), `duplicateMM` and `addMM`.
+- **A Procedural MM's target is its level alone, read through `TrackMilestone.targetFor`** — the phase stripped from the target and every waypoint, and a waypoint left with no level dropped, so a phase-only target is NO target rather than a met one. `targetMet` and `statusOf` apply it; `progress.html` has eight "does this MM have a target?" readers and each calls its `targetOf` delegate, with a browser case and a doctored baseline per site. **Never hand `targetOf`'s result to a writer**: `setTarget`, `addMilestoneEntry`, `updateMilestoneEntry` and `removeMilestoneEntry` re-read the raw `mmTargets`, which is what keeps a stored phase target, unread, for the day the MM is switched back.
+- **A Kolb ARRIVING on a Procedural MM resets it to S1, through `kolbResetPlan` / `applyKolbReset` and nowhere else.** It arrives two ways: `saveKolb` (SAVE and the timer) and the KOLB tab's edit `onSave` when the Kolb's `mmId` changes to a different MM, from none included. Both call the plan BEFORE any write and return `false` on Cancel; the edit view keeps itself marked unsaved on `false`. The reset logs a `kolbReset` LIN change (`oldValue` the phase SHOWN, plus `kolbId`) that `computeLinActiveDays` must keep excluding, exactly like `stageRevert` — a new LIN change type is counted toward the streak unless it is excluded there. `duplicateKolb`, and an edit that leaves the Kolb on its MM, must not reset: both were the user's decisions.
+
+`dateNotes` is a **map** from a local `YYYY-MM-DD` day to `{content, createdAt, updatedAt}` — one draft per day, owned by `notes-widget.js` alone, with its rules in `notes-core.js`. The user sees it as the **Journal**; its tab was "Date" until 2026-10-08, renamed so it is never mistaken for a calendar day note (`calendarNotes`). Only the visible word changed: the key, the `DATE` constant and the `data-nw-tab="date"` hooks keep theirs, and "Date note" below means a Journal day. Four rules follow, and the first two are the load-bearing ones:
+
+- **Absence is an empty day, and emptying DELETES the key.** Never store `''`: no fallback sits behind it, so this is the `time` / `link` rule and deliberately not `cautionDates: []`. Opening the Journal tab or a day writes nothing. `withDateNote` is the one writer; it spreads the record (an unknown key survives) and returns its input **unchanged** when nothing would change, which is how the widget skips a no-op write.
 - **A save lands in the note AND the slot it was opened on, and lands before the next view reads.** Each editor's saver captures `{kind, key, slotId}`; `render()` flushes every saver it is about to discard. These are two separate rules with separate doctored baselines — the capture is what keeps a closing pane out of the note still active in the panel, the flush is what keeps a note reopened within 300ms from showing stale text and then saving it over the new. Reading `state` at fire time was the original bug and cost text in three ways.
 - **The reader is total and listing never deletes.** `dateNoteText` accepts any value (a bare string reads as content), and `datedDays` SKIPS a key that is not a real day without removing it.
 - A Sorted note deleted in another tab is **never recreated** by a pending save: `withSortedPatch` reports `found: false` and the pane says so. A hidden panel keeps no DOM — stale picker rows under `display: none` stayed live and a selector-driven case clicked one.
@@ -653,6 +675,7 @@ graph-layout.js
 doc-table-core.js
 schedule-paste-core.js
 quest-core.js
+milestone-core.js
 ```
 
 Inspect every applicable:
@@ -926,6 +949,7 @@ node --check scripts/graph-layout.js
 node --check scripts/doc-table-core.js
 node --check scripts/schedule-paste-core.js
 node --check scripts/quest-core.js
+node --check scripts/milestone-core.js
 node --check scripts/viewport.js
 ```
 
@@ -935,7 +959,7 @@ Then run the committed suite — it is the only automated check that sees the in
 node tests/run.js
 ```
 
-It runs `tests/calendar-core.test.js`, `tests/schema.test.js` and `tests/notes-core.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/source-dump-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js`, `tests/quest-core.test.js`, `tests/viewport.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+It runs `tests/calendar-core.test.js`, `tests/schema.test.js` and `tests/notes-core.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/source-dump-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js`, `tests/quest-core.test.js`, `tests/milestone-core.test.js`, `tests/viewport.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
 
 - Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
 - A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.
@@ -1136,14 +1160,14 @@ it describes. **Read it when you need it**: to audit what was verified and when,
 work in an area whose entry records a defect or a known gap, or to check whether something
 is covered by a test or only by code reading. A new entry is appended there, not here.
 
-What a passing run looks like, as of the 2026-10-05 entry — `node tests/run.js`, **24
-suites**: `calendar-core` (107), `schema` (68) and `notes-core` (33) swept under five
-timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) with identical results,
-then `true-storage-core` (24), `source-dump-core` (33), `graph-layout` (21), `doc-table-core`
-(103), `schedule-paste-core` (35), `quest-core` (54), `viewport` (10) and `cdp-cleanup` (13)
-once each — they hold no date code — then **318 browser subtests** in headless Chrome. At
-load ~1.5–3 the whole run took 21–27 minutes. Treat that range as a load measurement, not a
-property of the suite.
+What a passing run looks like, as of the 2026-10-13 Kolb-move entry —
+`node tests/run.js`, **25 suites**: `calendar-core` (118), `schema` (68) and `notes-core` (33)
+swept under five timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) with
+identical results, then `true-storage-core` (24), `source-dump-core` (33), `graph-layout` (21),
+`doc-table-core` (103), `schedule-paste-core` (35), `quest-core` (54), `milestone-core` (54),
+`viewport` (10) and `cdp-cleanup` (13) once each — they hold no date code — then **373 browser
+subtests** in headless Chrome. At load ~1.5–3 the whole run took 21–27 minutes, and 29.5–30 at
+load ~2–4.5. Treat that range as a load measurement, not a property of the suite.
 
 Still unverified, across everything: real touch hardware, the live Firebase project, real
 multi-device behaviour, and print output. Those gaps are permanent features of this

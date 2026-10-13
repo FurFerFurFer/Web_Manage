@@ -2960,3 +2960,490 @@ polling a state that can expire under load.
   is not scrolled to. Collapse is `SrchMMNode`'s own local state, and this change does not
   touch it.
 - Real touch hardware. ADD is a plain `onClick`.
+
+### Knowledge Record: the KS02 Tracker's displayed name (2026-10-08)
+
+The user renamed `sir-ks02.html` from "KS02 Tracker" to **Knowledge Record**, because the page
+holds each mind map and everything on it: Kolb, MG, SIR and sources. Only the displayed name
+changed. Nothing stored changed shape, and no script or stylesheet changed, so no `?v=` bump.
+
+**Changed**: 16 places that name the page, plus the Home subtitle.
+- `index.html`: the Home button. Its subtitle now reads "Each mind map with its Kolb cycles,
+  marginal gains, SIR and sources".
+- `sir-ks02.html`: `<title>` was `SIR × KS02 × MG`. It now matches the Home button, as the other
+  four pages' titles already did.
+- `progress.html`, four: the Mind Maps empty state and header, the MG empty state, and the SIR
+  popover's `Open … →` button.
+- `documentations.html`, three: the source-dump picker's two empty states and the no-workspace
+  notice's link.
+- `true-storage.html`, seven: the tag picker's two empty states, the tag row's *source removed*
+  and *read-only* lines, the no-workspace notice (prose and link), and the header link.
+- README (Home nav, the page section, the file table) and the AGENTS.md architecture row record
+  the name and what keeps the old spelling.
+
+**Kept, on purpose:**
+- The file name, every `href` and `?mm=` / `?dump=` link, `ks02`, `ks02_slots`,
+  `ks02_activeSlotId`, `.ks02-page`, `data-tabbar="ks02"`, the `ks02` view key, and comments.
+- The inner KS02 tab ("KS02 — ENCODING WHEEL"), the `KS02 STAGE` label and Progress's `KS02`
+  milestone bar. They name the encoding stage, not the page.
+
+**Evidence:**
+- `rg` for `KS02 Tracker|SIR × KS02|in KS02|>KS02<|KS02 →|Progress/KS02` over the five pages,
+  comments excluded: no match.
+- A scratch CDP script (scratchpad, not committed) seeded `populatedSlot` and read
+  `document.body.innerText`. Five of the sixteen were seen rendered: Home, the
+  `Knowledge Record` title, `progress.html#mindmaps`'s header, `progress.html#mg`'s empty
+  state with no MMs, and True Storage's header link. The inner `KS02` tab was still present,
+  no page showed `KS02 Tracker`, and `realErrors` was empty on all six loads, including
+  `documentations.html`.
+- Measured, not assumed. At 390px, True Storage's header was already `scrollWidth` 511 in a
+  390px box. The old `KS02 →` sat at 374–418 and `+Storage` at 426–499, both already behind
+  the header's horizontal scroll. After: 598, with `Knowledge Record →` at 374–504 and
+  `+Storage` at 512–586. Nothing visible at load moved off-screen. The header was and is a
+  scroller, so the PHONE/TRUE-STORAGE `NOT_CROPPED` sweep counts it as reachable.
+
+**Full run: `node tests/run.js`, all 24 suites passed, browser 322/322.**
+- Plan `1..322`; exit 0 read from the log.
+- It ran from 09:11:18 to 09:33:27: 1,329s of wall time against 1,325.5s measured. The
+  journal is readable for that window (148 lines) and shows no lid close or suspend.
+- `md5sum` over every tracked file was identical at both ends, and HEAD (`bed1d20`) was
+  unchanged.
+
+**No fail-first case.** This is a label change, not a fix in a covered area, and no case
+asserts the page's name. The AGENTS.md row is the only guard against a later edit calling the
+page "KS02" in visible text again.
+
+**Not covered:**
+- The other eleven strings render only in empty, dangling, popover or no-workspace states.
+  They were checked by `rg`, and by the suite mounting every page, which proves the JSX still
+  parses. They were not seen rendered.
+- Real phones.
+
+### Declarative / Procedural, the Journal, and docs/CONCEPTS.md (2026-10-08)
+
+The user explained the Knowledge Record's model and answered five questions about it. The
+confirmed model is in the new `docs/CONCEPTS.md`. The behaviour it implies but that is not
+built yet is NOTES Proposal 17. The two renames the user decided were built, and both change
+visible words only.
+
+**Changed:**
+- **MM types** show as **Declarative** / **Procedural** instead of T1 / T2. The stored `type`
+  stays `"1"` / `"2"`.
+  - There is one helper per page: `mmTypeLabel` in `sir-ks02.html` and its twin in
+    `true-storage.html` (the Source Dump copy's three labels), and `typeLabel` in
+    `progress.html`.
+  - The other strings: the multiverse legend, the `+MM` type buttons, the type-change buttons
+    and their confirm line, the Kolb form's link label and both "Search … MMs" placeholders,
+    "Declarative — no MG.", and the MG empty state on the Knowledge Record page.
+  - Progress: its two MG empty states and the MG tab header.
+  - SIR's T1–T5 review numbers are unchanged and no longer collide with the type names.
+- The MM detail's header row gained `flex-wrap`. Without it the longer words push its buttons
+  off a phone.
+- **The notes widget's `Date` tab and chip read Journal**, so a `dateNotes` day is never
+  mistaken for a calendar day note (`calendarNotes`). The `DATE` constant, the `dateNotes` key
+  and the `data-nw-tab="date"` hooks are unchanged. `notes-widget.js` went from `?v=5` to
+  `?v=6` on all five pages and in AGENTS.md.
+- **Docs:** the new `docs/CONCEPTS.md`, listed in README's Documentation Map and in AGENTS'
+  documentation table; NOTES Proposal 17; README and AGENTS wording for both renames.
+
+**A shared working tree.** Another session (`track-website-95`, the overdue-milestones
+feature) edited `index.html`, `progress.html` and `documentations.html` in the same tree
+throughout, so this change was verified on a **scratch snapshot**, never on the shared tree:
+- The snapshot is `git archive HEAD` plus `sir-ks02.html`, `true-storage.html` and
+  `notes-widget.js` copied from the tree. Only this session had touched those three files.
+- For the three shared pages, a script applied this session's 14 replacements to HEAD's text.
+  It refuses any replacement that does not match exactly once.
+- Cross-check: on those three pages, the snapshot differed from the shared tree only by the
+  other session's `data-*` hook lines.
+
+**Evidence:**
+- `node --check scripts/notes-widget.js` and `git diff --check` on this session's files:
+  clean.
+- A scratch CDP check on the snapshot, at 1280 and at 390×844 with touch. `realErrors` was
+  empty on every load.
+  - Both MM detail headers (`?mm=10`, `?mm=11`) read `Declarative → Anchor → Procedural` and
+    `Procedural → Anchor → Declarative`. They wrap, and end at 374px of 390.
+  - The KS03 legend reads `Anchor Declarative Procedural` and sits inside the canvas's
+    `overflow: hidden`.
+  - The `+MM` type buttons end at 353px.
+  - The widget's `[data-nw-tab="date"]` reads `Journal`, loaded as `?v=6`.
+  - Progress `#mindmaps` shows both words and no `T1` / `T2` type label. `#mg` shows
+    `MG — MARGINAL GAINS · PROCEDURAL MIND MAPS`, and with no MMs it shows
+    `No procedural mind maps yet. Add MGs in Knowledge Record.`
+- **The first full run is void.** It ran 15:26:56–16:01:18 (2,016s of wall time). Three
+  malformed-`track_db` cases failed on `CDP connection closed`, `firebase overlay removal` and
+  `progress.html mounting`, which is the contention signature. The journal shows the machine
+  suspended from 15:35:36 to 15:46:06, inside the window, so the run was discarded rather than
+  read.
+- **Full run: `node tests/run.js` on the snapshot, all 24 suites passed, browser 322/322.**
+  - Plan `1..322`; exit 0 read from the log.
+  - It ran from 19:31:15 to 19:56:31: 1,516s. The window's 81 journal lines show no suspend
+    or lid close, and the snapshot's md5 was identical at both ends.
+  - The other session's narrowed runs overlapped the first ~3 minutes, then it paused on
+    request. Contention only produces false failures, and there were none.
+
+**No fail-first case.** These are label changes, not a fix in a covered area, and no case
+asserts these words. The hooks such a case would use (`data-nw-tab`) are deliberately
+unchanged.
+
+**Not covered:**
+- The Source Dump copy's three type labels in `true-storage.html` were not seen rendered. The
+  suite's PARITY case mounts both copies.
+- The suite ran against HEAD plus this session's changes, not against the shared tree with
+  the other session's feature in it. That combination is the other session's run to make.
+- Real phones.
+
+### Overdue milestones: the calendar tail, the Schedule's ⚑ and pickers, and the slip record (2026-10-08)
+
+The user said they had been ignoring the milestone feature and asked Track to hold them to it:
+when a milestone's end has passed while its tasks or to-learn are not all done, warn them and
+make it visible in the calendar or the schedule. They chose from a menu: the Milestones-tab row
+(always), the calendar overrun tail, the Schedule's today ⚑ and picker pin, a slip record, and
+"an empty milestone never warns". They declined a Home alert card, a tab count and an early
+"behind pace" warning. README "Milestone accountability" describes the behaviour.
+
+**The rule, and where it lives.** `scripts/milestone-core.js` (`window.TrackMilestone`) is new,
+pure, and holds no `Date`: "today" is a parameter and day differences are days-from-civil
+integer arithmetic. It owns membership, leaf counting and mind-map targets, so
+`progress.html`'s `countProgress`, `isMMTargetMet`, `buildSirDoneMap`, `STAGE_ORDER`,
+`collectMilestoneOwners` and `collectMilestoneBlocks` became one-line delegates — Home cannot
+read the page. `ToLearnRow`'s inline waypoint test now calls `isMMTargetMet` with one waypoint.
+`TrackCalendar.buildMilestoneLanes` gained an opt-in `opts.today`. No slot field was added and
+nothing was migrated; `slips` is an item-level key on a milestone definition.
+
+**Two hazards found and designed around**, both by reading the code before writing any:
+- A link cycle is reachable through ordinary use (the "link existing task" picker offers a
+  task's ancestors), and the new status walk follows links on Home and Documentations, which
+  never followed them before. Every walker in the module is cycle-guarded; `countProgress`
+  gained the guard by delegating. The Progress walkers still unguarded are listed in NOTES.
+- The milestone date inputs wrote every value Chrome's year segment passes through (`0002`,
+  `0020`, `0202`), collapsing the period on each keystroke. With slips, that would have written
+  permanent false records. `MilestoneDateInput` commits only a complete in-range day, the slip
+  baseline is captured on focus, and `withSlip` keeps one record per `(on, from)`.
+
+**Hooks**, landed first as their own step: `data-ms-row`/`aria-current`/`data-ms-date`/
+`data-ms-clear`/`data-ms-day`/`data-ms-chip`, `data-sched-month-day`, `data-day-add-mm`,
+`data-picker-tab`/`-node`/`-ms`/`-ms-task`, `data-mm-pick`, `data-mm-picker-group="due"`, and
+`data-cal-day` on Home and Documentations cells. The feature added `data-ms-state`,
+`data-ms-badge`, `data-ms-learn`, `data-ms-slips`, `data-ms-chip-overrun`, `data-ms-late`,
+`data-cal-late-flag`, `data-ms-late-flag`, `data-picker-late`/`-late-ms`/`-late-task`,
+`data-picker-node-late`, `data-picker-ms-late`, `data-mm-picker-group="late"` and
+`data-mm-pick-late`. The full run meant to prove the hooks alone changed nothing (13:12) spanned
+a two-hour lid-close suspend and another session's mid-run edits; it was stopped and is void.
+
+**Offline.**
+- `tests/milestone-core.test.js` (new, unswept): 44 cases. The parity baseline is a set of
+  verbatim copies of the five pre-extraction functions kept inside the test; the two
+  deliberate differences (a link cycle terminates, a block reached twice counts once) have
+  cases of their own. Same 44/44 under UTC, UTC+14 and UTC-11 as a spot check.
+- `tests/calendar-core.test.js`: 9 overrun cases, 116 in all, identical under all five swept
+  zones. The file now loads `schema.js` and `milestone-core.js` into its realm.
+- The 9 new calendar-core cases against the ORIGINAL `calendar-core.js`: the four tail cases
+  fail; the five guards pass, which is their job.
+
+| Doctored module (offline) | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL | none | nothing — 44/44 |
+| B1 | empty milestones not exempt | the empty case only |
+| B2 | `end <= today` is late | the end-day case only |
+| B3 | to-learn ignored | the four to-learn cases |
+| B11 | upsert → always append | the one-day-edits case only |
+| B12 | no cycle guard in `countLeaves` | the three cycle cases |
+| B13 | a not-late baseline still slips | the planning case only |
+
+| Doctored core (offline) | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL | none | nothing — 116/116 |
+| D1 | tails take a palette slot | on-time bars keep keys and colours |
+| D2 | `id` on every segment | the same case, on its keys assertion |
+| D3 | lanes pack on `endDate` | the tail-holds-its-lane case |
+| D4 | the tail is not drawn | the four tail cases |
+
+**Browser** — 22 new cases in section 18, plus `slips` in the export → import round trip.
+Every date is relative to today and every calendar assertion is on today's cell, which the
+tail always reaches (the `51968a0` trap). A first narrowed run passed 23/23 (19:30–19:33; it
+overlapped the first 2½ minutes of another session's full run, which can only cause false
+failures, and there were none).
+
+**Doctored browser baselines**, one rule per tree, one at a time, narrowed to the 23 cases
+(`1..23` each): the repo symlinked except dot-entries, with `tests/`, `scripts/` and `styles/`
+copied for real; a builder that refuses a swap matching other than exactly once or a tree
+byte-identical to the repository; a task-owned `--require` preload declaring only the matching
+children.
+
+The FIRST full set taught something: B-badge, B-panel, B1, B2, B3 and B11 each also failed a
+SLIP case their rule cannot reach. Every such failure came after an earlier failed Milestones
+case in the same run, and the values were stale (`to` stuck at an intermediate day). It was the
+documented live-writer hazard: a case failing before its `page.close()` leaves its tab open, and
+that tab adopts the next seed and races the next case's writes. Every case in section 18 now
+opens through `openHere(tc, …)`, which closes the page in the case's own `after` hook. The set
+was re-run in full:
+
+| Baseline | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL (before and after) | none | nothing — 23/23 |
+| B-cc-today-ignored | `calendar-core.js` ignores `opts.today` | Home tail, Home cycle guard, Home visibility, Docs tail |
+| B-panel-raw-end | the Milestones calendar draws to the raw end | Milestones calendar only |
+| B-home-no-overrun-class | Home draws a tail day as period | Home tail only |
+| B-docs-no-today | Documentations passes no `today` | Docs tail only |
+| B-home-no-visibility | no `visibilitychange` redraw | Home visibility only |
+| B-badge-omitted | no badge on the row | late row, to-learn row, empty guard |
+| B-strip-flag-removed | no ⚑ on today's strip | the strip case only |
+| B-month-flag-removed | no ⚑ in today's month cell | the month case only |
+| B-picker-pin-removed | no OVERDUE block in the task picker | the pin case only |
+| B-picker-gate-dropped | late work pinned on past days too | the past-day guard only |
+| B-mm-pin-removed | no OVERDUE group in the MM picker | the MM picker case only |
+| B-gesture-dropped | no baseline captured on focus | one-focus, typed-through guard |
+| B-baseline-ignored | every baseline treated as late | on-time guard, typed-through guard |
+| B-draft-removed | the date input commits any value | the half-typed-year case only |
+| B-confirm-ignored | the clear confirm's answer ignored | the Cancel case only |
+| B1-empty-not-exempt | (module) empty is late | Home empty guard, Milestones empty guard |
+| B2-end-day-late | (module) the end day is late | the ending-today guard only |
+| B3-learn-ignored | (module) to-learn not counted | to-learn row, MM picker |
+| B11-always-append | (module) no upsert | one-focus only |
+
+- The twin pairs are disjoint: core vs the Milestones calendar, and the Home renderer vs the
+  Documentations renderer.
+- Three containments are inherent, not accidental: the visibility case observes a tail, so it
+  sits inside B-cc's set; the MM pin depends on to-learn being counted, so it sits inside B3's;
+  and the one-focus case guards the gesture and the upsert together (the offline suite pins the
+  upsert alone). B-gesture and B-baseline share only the typed-through guard.
+- The re-run took 20:48:46–21:37:40 (2,934s). The journal shows no lid close or suspend in that
+  window; `md5sum` of `scripts/`, `styles/`, `tests/` and the five pages was identical at both
+  ends; HEAD (`bed1d20`) was unchanged.
+
+**Phone, measured.** At 390×844 a late row carrying the badge, the to-learn count and two slips
+fits: row 33–357px, badge 70–345, the count and the slip line wrapped to a second line (to 336);
+`scrollWidth` 390, `realErrors` empty.
+
+**Full run: `node tests/run.js`, all 25 suites passed, browser 344/344.**
+- The plan was `1..344`: the 322 of the 2026-10-07 entry plus the 22 new cases. Exit 0 was
+  read from the log.
+- Offline: `calendar-core` 116, `schema` 68 and `notes-core` 33 in all five zones; then
+  `true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+  `schedule-paste-core` 35, `quest-core` 54, `milestone-core` 44, `viewport` 10 and
+  `cdp-cleanup` 13.
+- It ran from 21:38:22 to 22:04:18: 1,556s of wall time against 1,552.5s measured for the
+  browser suite. The journal shows no lid close or suspend in that window.
+- `md5sum` of `scripts/`, `styles/`, `tests/` and the five pages was identical at both ends
+  and to the baseline re-run's, and HEAD (`bed1d20`) was unchanged. Nothing in the repository
+  was edited during the run.
+
+**Not covered:**
+- Midnight rollover: the suite fakes no clock. The Home listener is tested; the Schedule's
+  minute timer and the Milestones tab's lack of one are by reading.
+- Real keyboard typing into the date segments. The cases set values through the native setter
+  and dispatch `focusin`/`focusout`, which is what React listens to; a real device was not used.
+- Real touch hardware and phones; print output of a tail.
+- The other session's features (Journal, Declarative/Procedural) are in the shared tree this
+  full run used — so that run is also the combination their entry left open.
+
+### A Procedural mind map has no SIR — Proposal 17, item 1 (2026-10-11)
+
+The user asked to start Proposal 17 and settled its open decisions from a menu: a Procedural MM
+already stored in SIR or FINISHED **reads as S4** with nothing stored changed; the Kolb reset
+(item 2) is logged as its own LIN change that does not count toward the streak, and only `+Kolb`
+triggers it; a Procedural MM's phase-only target counts as **no target** (item 3). Item 1 was
+built first. README "Spaced Interval Review" describes the behaviour.
+
+**The rule, and where it lives.** `TrackMilestone.isProcedural`, `stageOf` and `liveSessions`
+were added to `scripts/milestone-core.js` (now `?v=2`; `calendar-core.js` `?v=10`), beside
+`STAGE_ORDER` and `targetMet`, which already held the phase rules. `sir-ks02.html` now loads it.
+Four pages read it: KS02 (two drawing memos and a `stageOf` delegate), Progress (one filter where
+`sessions` enters the page, and a `stageOf` delegate), Home and Documentations through
+`calendar-core.js`. No slot field was added and nothing was migrated.
+
+**A design point the decisions implied.** Leaving SIR has always deleted an MM's sessions. A
+Procedural MM drawn as S4 but stored in SIR, moved with `+LIN`, would otherwise keep sessions that
+come back stale on an S1–S3 MM the day it is switched to Declarative. So that one move deletes
+them — and because they cannot be seen, `saveLinSession` asks first, deciding by the **stored**
+stage. The pre-existing silent delete for a Declarative MM leaving SIR is listed in NOTES, not
+changed.
+
+**Hooks**, added with the change (the doctored baselines below are the current tree with one rule
+reversed, so the hooks exist on both sides): `data-mm-stage-pill`/`aria-current`,
+`data-mm-stage-badge`, `data-mm-mode`, `data-mm-open-lin`, `data-mm-type-to`,
+`data-mm-type-confirm`, `data-lin-option`, `data-lin-save`, `data-ks02-stage`/`data-count`,
+`data-ks02-finished-mm`, `data-ks02-cal-day`/`-dot`/`-session` (KS02); `data-mm-badge-stage`,
+`data-mm-tree-sir`, `data-sched-sir-badge`/`-dot`/`-row`, `data-sched-view` (Progress).
+
+**Offline.** `tests/milestone-core.test.js` 50 (6 new `KIND:` cases; the exports case updated);
+`tests/calendar-core.test.js` 118 (2 new `SIR:` cases). The first run caught a real defect:
+`String(['2']) === '2'`, so a junk array type read as Procedural — `isProcedural` now accepts
+exactly `'2'` or `2`.
+
+**Browser.** 13 new `P17` cases; all 13 passed on the first run, and the 7 smoke cases passed
+before them. Narrowed through the task-owned `--require` preload; plan count `1..13` read each time.
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL (×2) | none | nothing — 13/13, offline 50 + 118 |
+| cc-live | `calendar-core.js` draws `slot.sessions` | HOME, DOCUMENTATIONS; offline `SIR: … not on its day` |
+| pg-live | Progress passes raw `sessions` down | PROGRESS timeline strip, PROGRESS month view |
+| pg-stage | Progress `stageOf` returns `mm.ksStage` | PROGRESS Mind Maps tab |
+| ks-live2 | KS02 drawing memos use raw `sessions` | KNOWLEDGE RECORD calendar |
+| ks-stage2 | KS02 `stageOf` returns `mm.ksStage` | KS02 wheel, phase row, `+LIN` options, accept-path (history reads `sir`, not `4`) |
+| ks-option | `Advance → SIR` offered to Procedural | `+LIN` options (Epsilon offered `stageAdvance:sir`) |
+| ks-prompt | the confirm skipped | Cancel case (`0 !== 1` prompts), accept case |
+| ks-from | writer keys deletion on `change.oldValue` | accept case (Beta's sessions survive) |
+| mc-stage (offline) | `stageOf` returns `s` | the two `stageOf` cases |
+| mc-live (offline) | `liveSessions` returns its input | the two filtering cases; calendar-core `SIR: … not on its day` |
+
+The four calendar-family failure sets are pairwise disjoint: Home/Documentations share one door
+(`calendar-core.js`), and Progress's three session surfaces share another (one prop) — the
+month-view case fails on its dot assertion first, so its day-panel half is not independently
+proven. Every failure was read: each fired on its named assertion.
+
+**A run that spanned a suspend, voided and re-run.** The machine suspended 17:37:57–18:37:48
+(`journalctl`), inside the first `ks-live` run. That run lost RESTORE to `CDP connection closed`,
+and `ks-stage`, started the second it woke, lost HOME and DOCUMENTATIONS to
+`net::ERR_INTERNET_DISCONNECTED`. Both were re-run behind a fresh CONTROL with no suspend and gave
+the rows above. `md5sum` of the seven code and test files matched before and after.
+
+**Not covered.** `duplicateMM` and `addMM` refusing sessions for a Procedural MM, and
+`saveLinSession` refusing a Procedural `stageAdvance` at the writer, are by code reading only: the
+UI cannot reach the first (needs the canvas context menu) or produce the last two. The full
+`node tests/run.js` is recorded with item 3 below.
+
+### A Procedural mind map is judged by its level alone — Proposal 17, item 3 (2026-10-11)
+
+Built straight after item 1, on the decision recorded there: a Procedural MM's phase-only target
+is **no target**, and a stored phase target is kept, unread. README "Goals, tasks, and
+milestones" describes the behaviour, including that goal percentages changed.
+
+**The rule, and where it lives.** `TrackMilestone.targetFor(mm, target)` in
+`scripts/milestone-core.js` strips the phase from a Procedural MM's target and every waypoint and
+drops a waypoint left with no level; anything else comes back itself. `targetMet` and `statusOf`
+apply it, and `targetMet` now reads the phase through `stageOf`. `progress.html` gained a
+`targetOf` delegate, called at its eight "does this MM have a target?" readers. The to-learn row
+keeps its raw `tgt` for the four writers and reads `readTgt` for display; its stage selector and
+`KS02` bar are gated off for a Procedural MM, and `addMilestoneAtDefault` no longer writes a phase
+into a Procedural waypoint.
+
+**Hooks**: `data-learn-row`, `data-learn-stage`, `data-learn-bar`, `data-learn-indicator`,
+`data-goal-hero-pct`, `data-node-learn`, `data-panel-learn-count`, `data-panel-learn`/`data-state`,
+`data-app-pct`, `data-quest-learn-state`, `data-subgoal-learn`.
+
+**Offline.** `tests/milestone-core.test.js` 54 (4 new `TARGET:` cases; the exports case updated).
+The parity cases against the verbatim pre-extraction copies still pass, which is the evidence
+that Declarative behaviour did not move.
+
+**Browser.** 6 new `P17 ITEM 3` cases on one synthetic goal learning three MMs (numeric `toLearn`,
+string `mmTargets` keys): Procedural Beta S2 / rating 3 / target `{S4, level 3}`, Procedural Zeta
+target `{S3}` only, Declarative Alpha S2 / target `{S4}`, plus one done task. The hero ring reads
+**88%**; with the phase counted it read 76%. The first version of the case expected 75% and was
+wrong — the ring averages task progress with MM progress, and a goal with no tasks is its own
+undone leaf, so it read 38%. The done task was added to make the task half exact rather than to
+assert around that.
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL (×2) | none | nothing — 6/6, offline 54 |
+| target | `targetFor` returns its input | hero `'76%'`, row, the node/panel/header case, Quest, subgoal; offline the three non-guard `TARGET:` cases |
+| ui | `KS02` bar not gated | the row case (`bars: ['KS02','MG']`) |
+| writer | `setTarget` spreads the read target | the writer case (`stage` lost) |
+| gate | panel `mmProg` reads raw | hero `'76%'`; node/panel/header case on its **panel count** line |
+| node | goal node TO LEARN reads raw | node/panel/header case on its **node** line (`'2/3'`) |
+| list | panel list reads raw | node/panel/header case on its **list** line |
+| header | header totals read raw | node/panel/header case on its **header** line (`'76%'`) |
+| quest | Quest learn row reads raw | Quest case (`'g-p17:15': 'met'`) |
+| sub | `subGoalMmProg` reads raw | subgoal case (`'1.6/3 learned'`) |
+
+The node/panel/header case asserts four sites in a fixed order; each of its doctored trees failed
+on that site's own line with the others passing, which is what makes one case evidence for four.
+
+**A redundant door, found by a baseline and removed.** `mmProgressFraction` first applied
+`targetFor` itself as well. A tree with that line reversed failed **nothing**: every caller
+already passes a stripped target, because each needs it for its own presence gate. An
+unobservable second copy is how a rule drifts, so it was removed; the `gate` tree is the proof the
+call site is load-bearing.
+
+**Not covered.** `computeMMAutoComplete` and the goal-node ring read targets by `mmTargets` keys,
+which are strings, against numeric mind-map ids, so they never find the mind map (NOTES). They
+call `targetOf` too, but the read is inert there and no case covers them. No machine suspend
+during these runs; `md5sum` of the code and test files matched before and after each set.
+
+### A new Kolb sends a Procedural mind map back to S1 — Proposal 17, item 2 (2026-10-11)
+
+Built last, on the decisions recorded with item 1: logged as its own LIN change that the streak
+does not count; only saving a new Kolb resets. README "Kolb learning records" describes it.
+
+**Where it lives.** `saveKolb` in `sir-ks02.html` — the one handler both Kolb save paths reach
+(SAVE, and the timer running out). For a Procedural MM whose phase (`stageOf`) is set and past
+S1, it writes `ksStage: '1'` and appends a LIN record whose one item is
+`{type: 'kolbReset', oldValue: <the phase shown>, newValue: '1', kolbId}`. A Procedural MM still
+stored in SIR holds hidden sessions (item 1), so for that MM the handler `window.confirm`s
+**before any write** and returns `false` on Cancel, which leaves the form open; on OK it deletes
+them. `changeLabel` reads it as `S3 → S1 (new Kolb)`; `progress.html`'s `computeLinActiveDays`
+excludes it beside `stageRevert`. Home's calendar draws LIN records by count and still lists a
+reset day, as history.
+
+**A wrong claim caught before it shipped.** NOTES (written while settling the decisions) said
+there was no Kolb edit path. There is one — `KolbEditView` on the KOLB tab, which can re-link a
+Kolb to another MM. Editing does not reset, per the 2026-10-08 rule, and the re-link case is now
+an open question in NOTES rather than a silent assumption.
+
+**Hooks**: `data-mm-new-kolb`, `data-kolb-next`, `data-kolb-save`, `data-kolb-close`.
+
+**Browser.** 6 new `P17 KOLB` cases; all passed on the first run (plan `1..6`).
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL | none | nothing — 6/6 |
+| reset | `resets` always false | reset case (`'3' !== '1'`), Cancel case (no prompt), accept case |
+| s1 | the "already at S1" guard dropped | the S1 guard case (a LIN record written) |
+| prompt | the confirm skipped | Cancel case (`0 !== 1` prompts) |
+| sessions | hidden sessions not deleted | accept case |
+| old | `oldValue` from the stored stage | accept case (`'sir' !== '4'`) |
+| streak | streak counts `kolbReset` | streak case (`'1' !== null`) |
+
+"Closing the form resets nothing" passes on every tree: it is a guard, and nothing on its path
+reaches `saveKolb`. The streak case builds its LIN day with `toISOString()`, matching the UTC day
+KS02's `today()` stamps and `calcStreak` reads — the known Proposal 3 defect, not a choice made
+here. No suspend; `md5sum` of the code and test files matched before and after.
+
+**The full suite, after all three items.** `node tests/run.js` at 19:12–19:42: **all 25 suites
+passed**, exit 0. `calendar-core` 118, `schema` 68 and `notes-core` 33 under all five zones;
+`true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+`schedule-paste-core` 35, `quest-core` 54, `milestone-core` 54, `viewport` 10, `cdp-cleanup` 13;
+browser plan `1..369` (344 before, plus 13 + 6 + 6), 29.5 minutes at load ~4.5. `md5sum` of every
+page, script, stylesheet and test file matched before and after, `git log -1` was `bed1d20` at
+both ends, and `journalctl` shows no suspend in the window. Not exercised, as everywhere: real
+touch hardware, the live Firebase project, and multi-device sync.
+
+### An old Kolb moved onto a Procedural mind map counts as new — Proposal 17, item 2 (2026-10-13)
+
+The user answered the open question: "Yes makes the old kolbs count". README "Kolb learning
+records" describes the result. Naming and level criteria were put off ("later").
+
+**Where it lives.** The reset rule moved out of `saveKolb` into `kolbResetPlan(mmId, lead)` —
+decide, and ask for a Procedural MM still stored in SIR, returning `null` on Cancel — and
+`applyKolbReset(plan, kid)`. `saveKolb` and the KOLB tab's edit `onSave` both call them; the edit
+handler only when `updated.mmId` is set and differs from the Kolb's current MM, and it asks
+**before** its first write. `KolbEditView`'s SAVE CHANGES now keeps the view marked unsaved when
+`onSave` returns `false`. `dupe` and an edit that keeps the Kolb's MM still do not reset.
+
+**Hooks**: `data-kolb-row`, `data-kolb-link`, `data-kolb-edit-save`, `data-kolb-unsaved`.
+
+**Browser.** 4 new `P17 KOLB MOVE` cases (a move from another MM; a free Kolb linked; an edit
+that keeps its MM, as a guard; the hidden-session prompt, Cancel then OK in one case). All 10
+`P17 KOLB` cases passed after the refactor, the 6 from 2026-10-11 included.
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL | none | nothing — 4/4 |
+| arrive | a move is never an arrival | move, free-link (`'3' !== '1'`), prompt case (`0` prompts) |
+| apply | the edit path never applies the plan | move, free-link, prompt case on its accept half (`'sir' !== '1'`) |
+| samemm | any save with an MM is an arrival | the keep-its-MM guard (`'1' !== '3'`) |
+| early | no early return on Cancel | prompt case: Cancel moved the Kolb |
+| dirty | SAVE CHANGES clears "unsaved" regardless | prompt case: `false !== true` |
+
+**A run voided by a lid close, then re-run.** The first full run started 11:59:13; the lid
+closed at 11:59:45 and the machine slept until 13:14:09 (`journalctl`). It reported 3 of 373
+browser failures — case 7 on `CDP connection closed`, case 8 on a `KS02 kolb list` timeout, and
+case 85's source-dump read-modify-write assertion, the leftover-KS02-tab shape AGENTS records.
+Those three, run alone twice on the same tree, passed 3/3 both times. The run was void
+regardless, and was repeated: `node tests/run.js` 13:44–14:14, **all 25 suites passed**,
+`calendar-core` 118 and `milestone-core` 54, browser plan `1..373`, no suspend in the window,
+`md5sum` of every page, script, stylesheet and test file matched before and after, `git log -1`
+`bed1d20` at both ends.

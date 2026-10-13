@@ -19,7 +19,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=17">
+  <link rel="stylesheet" href="styles/styles.css?v=18">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -35,6 +35,9 @@
     const TS = window.TrackTrueStorage;
     // The one definition of how a source dump is edited, shared with KS02.
     const SD = window.TrackSourceDump;
+    // The twin of sir-ks02.html's mmTypeLabel: what an MM's stored `type` is called
+    // on screen. Stored values stay "anchor" / "1" / "2" (once shown as "T1" / "T2").
+    const mmTypeLabel = t => t==="anchor"?"Anchor":t==="1"?"Declarative":t==="2"?"Procedural":String(t??"");
 
     // Same palettes as KS03, so a storage node and an MM node read as the same
     // kind of object on screen.
@@ -621,7 +624,7 @@
                 className="flex items-center gap-2 px-2 py-1 rounded mb-0.5 cursor-pointer hover:bg-gray-700">
                 <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id)}}/>
                 <span className="text-xs text-gray-200">{m.name}</span>
-                <span className="text-xs text-gray-600 ml-auto">{m.type==="anchor"?"Anchor":`T${m.type}`}</span>
+                <span className="text-xs text-gray-600 ml-auto">{mmTypeLabel(m.type)}</span>
               </div>
             ))}
           </div>
@@ -774,7 +777,7 @@
                         <a data-dump-mm-name={link.mmId} href={mm?ks02MMHref(mm.id):undefined}
                           onClick={()=>mm&&onLeaveForMM&&onLeaveForMM(currentEntry.id,mm.id)}
                           className="text-xs font-bold text-gray-200 cursor-pointer hover:text-white underline decoration-dotted">{mm?.name||"unknown MM"}</a>
-                        <span className="text-xs text-gray-600">{mm?.type==="anchor"?"Anchor":mm?`T${mm.type}`:""}</span>
+                        <span className="text-xs text-gray-600">{mm?mmTypeLabel(mm.type):""}</span>
                       </div>
                       <button onClick={()=>requestConfirmDelete(
                         "Remove MM link?",
@@ -864,7 +867,7 @@
                           className={`flex items-center gap-2 px-2 py-1.5 rounded mb-0.5 ${already?"opacity-40 cursor-not-allowed":"cursor-pointer hover:bg-gray-800"}`}>
                           <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id)}}/>
                           <span className="text-xs text-gray-200">{m.name}</span>
-                          <span className="text-xs text-gray-600 ml-auto">{m.type==="anchor"?"Anchor":`T${m.type}`}</span>
+                          <span className="text-xs text-gray-600 ml-auto">{mmTypeLabel(m.type)}</span>
                           {already&&<span className="text-xs text-gray-600">linked</span>}
                         </div>
                       );
@@ -1169,12 +1172,12 @@
             </div>
             {roots.length === 0 && (
               <div className="py-6 text-center text-xs text-gray-500">
-                No source dumps yet. Add them in KS02 → KS03 → SOURCE DUMP.
+                No source dumps yet. Add them in Knowledge Record → KS03 → SOURCE DUMP.
               </div>
             )}
             {roots.length > 0 && !anyLinks && (
               <div className="pb-2 text-[10px] text-gray-500 italic">
-                Dumps exist but no leaf entry has an MM linked yet — link one in KS02 first.
+                Dumps exist but no leaf entry has an MM linked yet — link one in Knowledge Record first.
               </div>
             )}
             {roots.map(d => renderEntry(d, 0, new Set()))}
@@ -1219,7 +1222,7 @@
             <div className="border-t border-gray-800 px-3 py-2">
               {gone?(
                 <div className="text-xs text-gray-600 italic">
-                  The source dump or its MM link no longer exists in KS02. Remove this tag with ✕, or restore the dump.
+                  The source dump or its MM link no longer exists in Knowledge Record. Remove this tag with ✕, or restore the dump.
                 </div>
               ):(
                 <>
@@ -1243,7 +1246,7 @@
                         className="text-xs text-indigo-300 hover:text-indigo-100 truncate flex-1 min-w-0">{u.label||u.url}</a>
                     </div>
                   ))}
-                  <div className="text-[10px] text-gray-600 mt-2">Read-only here — edit this on the SOURCE DUMP tab, or in KS02.</div>
+                  <div className="text-[10px] text-gray-600 mt-2">Read-only here — edit this on the SOURCE DUMP tab, or in Knowledge Record.</div>
                 </>
               )}
             </div>
@@ -1708,9 +1711,9 @@
             <div className="max-w-md text-center">
               <div className="text-sm font-bold text-amber-300 mb-2">No workspace available yet</div>
               <div className="text-xs text-gray-400 mb-4">
-                Either this browser's stored data could not be read, or older Progress/KS02 data is
-                waiting to be migrated. Open <a href="progress.html" className="text-cyan-300 underline">Progress</a> or
-                <a href="sir-ks02.html" className="text-cyan-300 underline mx-1">KS02</a>
+                Either this browser's stored data could not be read, or older Progress or Knowledge Record
+                data is waiting to be migrated. Open <a href="progress.html" className="text-cyan-300 underline">Progress</a> or
+                <a href="sir-ks02.html" className="text-cyan-300 underline mx-1">Knowledge Record</a>
                 first, or start from the <a href="index.html" className="text-cyan-300 underline">Home</a> page.
               </div>
               <a href="index.html" className="text-xs text-gray-600 hover:text-gray-300">← TRACK</a>
@@ -1735,7 +1738,7 @@
             </div>
             <div className="theme-toggle-host" data-theme-toggle-host></div>
             <div className="flex items-center gap-2">
-              <a href="sir-ks02.html#ks03" className="text-gray-600 hover:text-gray-300 text-xs">KS02 →</a>
+              <a href="sir-ks02.html#ks03" className="text-gray-600 hover:text-gray-300 text-xs">Knowledge Record →</a>
               <button onClick={()=>setAdding(true)} className="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs font-bold">+Storage</button>
             </div>
           </div>
@@ -1820,6 +1823,6 @@
     root.render(<App/>);
   </script>
   <script src="scripts/notes-core.js?v=3"></script>
-  <script src="scripts/notes-widget.js?v=5"></script>
+  <script src="scripts/notes-widget.js?v=6"></script>
 </body>
 </html>

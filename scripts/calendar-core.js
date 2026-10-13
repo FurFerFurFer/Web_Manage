@@ -288,9 +288,26 @@
   // Milestones are periods, so they render as thin bars spanning their days
   // rather than as a repeated dot. Lane index is stable across the month so a
   // bar stays on the same row from its start day to its end day.
+  //
+  // opts.today — a local YYYY-MM-DD the CALLER computed — opts in to the
+  // overrun tail: a milestone whose end has passed with its work unfinished is
+  // drawn on through today, so it is on the current month and grows every day
+  // it stays late. Which milestones are late is milestone-core.js's to decide
+  // (TrackMilestone.lateById, read at call time), never re-spelled here; its
+  // `drawEnd` is the one definition of the drawn span. Without opts.today, or
+  // with milestone-core.js not loaded, the output is exactly what it always
+  // was — each surface opts IN, the refBlocks rule.
+  function lateMilestones(slot, opts) {
+    const today = (opts || {}).today;
+    const M = global.TrackMilestone;
+    if (!today || !M) return new Map();
+    return M.lateById(M.report(slot.goals || [], slot.mms || [], M.sirDoneMap(slot.sessions || []), today));
+  }
+
   function buildMilestoneLanes(slot, y, m, opts) {
     if (!shownFn(opts)('milestone')) return { lanesByDate: {}, laneCount: 0 };
     const first = dStr(y, m, 1), last = dStr(y, m, dim(y, m));
+    const late = lateMilestones(slot, opts);
 
     // milestone definitions are cloned across linked goal nodes — dedupe by id
     const seenMs = new Set();
@@ -298,20 +315,31 @@
     flattenGoals(slot.goals || []).forEach(g => (g.milestones || []).forEach(mst => {
       if (seenMs.has(mst.id)) return;
       seenMs.add(mst.id);
-      if (!mst.startDate || !mst.endDate) return;
-      if (mst.endDate < first || mst.startDate > last) return;
-      items.push({ id: mst.id, title: mst.title || 'Milestone', owner: g.title || '', startDate: mst.startDate, endDate: mst.endDate });
+      const st = late.get(mst.id) || null;
+      const startDate = st ? st.startDate : mst.startDate;
+      const endDate = st ? st.endDate : mst.endDate;
+      if (!startDate || !endDate) return;
+      const drawEnd = st ? st.drawEnd : endDate;
+      if (drawEnd < first || startDate > last) return;
+      items.push({ id: mst.id, title: mst.title || 'Milestone', owner: g.title || '', startDate, endDate,
+        drawEnd, late: st, label: st ? global.TrackMilestone.label(st) : '' });
     }));
 
     items.sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate));
 
-    // greedy lane packing: lowest lane whose intervals do not overlap
+    // greedy lane packing: lowest lane whose intervals do not overlap. A late
+    // milestone holds its lane through today, so no bar is drawn over its tail.
+    // The colour counter advances only for a milestone whose PERIOD touches the
+    // month: a tail alone is drawn in the danger colour, never its own, so it
+    // must not shift the colour of every bar after it.
     const laneEnds = [];
-    items.forEach((it, idx) => {
-      it.color = MS_PALETTE[idx % MS_PALETTE.length];
+    let colour = 0;
+    items.forEach(it => {
+      it.color = MS_PALETTE[colour % MS_PALETTE.length];
+      if (it.endDate >= first) colour++;
       let lane = 0;
       while (lane < laneEnds.length && laneEnds[lane] >= it.startDate) lane++;
-      laneEnds[lane] = it.endDate;
+      laneEnds[lane] = it.drawEnd;
       it.lane = lane;
     });
 
@@ -319,12 +347,21 @@
     items.forEach(it => {
       for (let d = 1; d <= dim(y, m); d++) {
         const ds = dStr(y, m, d);
-        if (ds < it.startDate || ds > it.endDate) continue;
-        (lanesByDate[ds] = lanesByDate[ds] || []).push({
+        if (ds < it.startDate || ds > it.drawEnd) continue;
+        const seg = {
           lane: it.lane, color: it.color, title: it.title, owner: it.owner,
           startDate: it.startDate, endDate: it.endDate,
-          isStart: ds === it.startDate, isEnd: ds === it.endDate
-        });
+          isStart: ds === it.startDate, isEnd: ds === it.drawEnd
+        };
+        // only a late milestone's segments carry more, so an on-time bar is
+        // byte-identical with or without opts.today
+        if (it.late) {
+          seg.id = it.id;
+          seg.overdue = true;
+          seg.overrun = ds > it.endDate;
+          seg.label = it.label;
+        }
+        (lanesByDate[ds] = lanesByDate[ds] || []).push(seg);
       }
     });
 
@@ -644,8 +681,13 @@
       });
     });
 
+    // A Procedural MM has no SIR, so its sessions are not drawn. Which sessions
+    // are live is milestone-core.js's to decide (TrackMilestone.liveSessions,
+    // read at call time), never re-spelled here. Both pages that call this load
+    // it, and each has a browser case that fails if one stops doing so.
+    const M = global.TrackMilestone;
     const sir = show('sir')
-      ? (slot.sessions || [])
+      ? (M ? M.liveSessions(slot.sessions, mms) : (slot.sessions || []))
         .filter(s => !s.skipped && (s.done && s.finishDate ? s.finishDate : s.date) === ds)
         .map(s => ({ label: mmName(s.mmId) + ' · rep ' + ((s.repIndex || 0) + 1), done: !!s.done }))
       : [];

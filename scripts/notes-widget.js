@@ -242,7 +242,10 @@
   function tabs(current, onChange, hook) {
     var wrap = el('div', 'nw-tabs');
     wrap.setAttribute('role', 'tablist');
-    [[SORTED, 'Sorted'], [DATE, 'Date']].forEach(function (t) {
+    // DATE is shown as "Journal" so it can never be mistaken for a calendar day
+    // note (`calendarNotes`). The stored map is still `dateNotes` and the test
+    // hooks still say "date"; only the visible word changed.
+    [[SORTED, 'Sorted'], [DATE, 'Journal']].forEach(function (t) {
       var b = el('button', 'nw-tab', t[1]);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -255,7 +258,7 @@
   }
 
   function chip(kind) {
-    var c = el('span', 'nw-chip nw-chip-' + kind, kind === DATE ? 'Date' : 'Sorted');
+    var c = el('span', 'nw-chip nw-chip-' + kind, kind === DATE ? 'Journal' : 'Sorted');
     c.setAttribute('aria-hidden', 'true');
     return c;
   }
