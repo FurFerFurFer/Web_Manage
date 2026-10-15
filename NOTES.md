@@ -993,8 +993,9 @@ environment can never verify — so it wants a real device in hand, not a test.
 **Per-page phone polish beyond the shell.** Not yet looked at on a phone in any depth: the
 KS03 and True Storage pan/zoom canvases (they handle
 touch already, but nothing has measured whether a node is reachable at 390px), the MG levels
-accordion, the Kolb editor, and the several `w-[528px]`-class popups in `progress.html`
-that carry no `max-w-[…vw]` cap the way the Documentations modals do.
+accordion, the Kolb editor, and the `w-[528px]`-class popups in `progress.html` that still
+carry no `max-w-[…vw]` cap the way the Documentations modals do — the timeline note modal
+among them. The Schedule's four add panels are capped and measured at 390px.
 
 **The arm model is only on the Documentations rows.** If it turns out to be the right idiom
 for hover-revealed controls generally, the other candidates are the Progress day-header
@@ -1156,33 +1157,10 @@ edges it does not reach, each a choice rather than an oversight:
   persist, it is a browser key like `track_home_cal_hidden`, not a block key, because it is a
   view preference rather than content.
 
-### `buildToLearnTree` has no cycle guard
-
-Found while building Quest, and **not** fixed there — it is outside that scope, and
-`quest-core.js` sidesteps it entirely by hanging to-learn rows flat off their goal node
-rather than walking mind-map parents.
-
-`progress.html`'s `buildToLearnTree` recurses through `mm.parentIds` with no `seen` set,
-while its neighbour `getMMDescendants` has one. `parentIds` is plural and the connections
-picker on both canvas pages lets a user pick a descendant as a parent, so a cycle is
-reachable through ordinary use — and can also arrive from stored, synced or hand-edited
-data. A cyclic set of linked mind maps would recurse until the stack gives out, inside a
-React render, which empties the goal detail panel.
-
-AGENTS.md states the rule without exception: *every traversal of a parent/child graph
-carries a cycle guard*. This is the one known place that does not. The fix is a per-path
-`seen` copied per branch, matching `TrackTrueStorage.buildTree`'s contract — a repeated node
-is drawn once and its branch ends there — plus a cyclic-mm case seen timing out first.
-
 ### Knowledge Record: found while building "a Procedural MM has no SIR"
 
 Found while building Proposal 17 item 1 and **not** changed there — each is outside that scope:
 
-- **Moving a Declarative MM out of SIR deletes its sessions without asking.** `+LIN`'s
-  `Revert → S4` (or lower) from SIR or FINISHED drops every session of that MM, and nothing
-  says so; AGENTS.md wants every delete confirmed. The three-step `+LIN` flow is a deliberate
-  act, but its last step never mentions the sessions. The Procedural case now asks; this one
-  predates it. Asking here would reuse the same prompt in `saveLinSession`.
 - **An Anchor keeps its SIR sessions, and they are still drawn.** Switching an MM to Anchor
   stashes its phase and sets `ksStage: null`, but leaves its sessions in `sessions`, so they
   stay on every calendar for an MM that has no phases (docs/CONCEPTS.md). `liveSessions` is
@@ -1195,27 +1173,12 @@ Found while building Proposal 17 item 1 and **not** changed there — each is ou
 Found while building the overdue-milestone warnings (README "Milestone accountability") and
 **not** fixed there — each is outside that scope:
 
-- **`computeMMAutoComplete` probably never finds a mind map.** It loops over
-  `Object.entries(node.mmTargets)`, whose keys are strings, and looks each up with
-  `m.id === mmId` against the NUMERIC ids `nid()` mints. The goal ring's "met" count in
-  `GoalNode` does the same. If so, a countable leaf with mind-map targets never auto-completes
-  and the header's done count under-reports. Found by reading the code, **not reproduced**. The
-  fix is to iterate `toLearn` as `milestone-core.js` does, with a numeric-id case seen failing
-  first. Both sites now read their targets through `targetOf` (Proposal 17, item 3), but since
-  they never find the mind map that read is inert there, and no browser case covers either —
-  fixing the id lookup is what will switch the Procedural rule on at these two sites.
-- **A link cycle can still white-screen Progress.** The "link existing task" picker offers a
-  task's own ancestors. `countProgress` is now guarded (it delegates to
-  `TrackMilestone.countLeaves`), but `getLeaves`, `isComplete` following a link to a link, the
-  `GoalNode` link render and `renderMilestoneTask` are not — so `buildToLearnTree` above is not
-  the only unguarded walk. Repro: link a task under one of its own descendants. Guard each
-  walker, and consider refusing ancestors in the picker as well; stored or synced data can still
-  carry a cycle, so the picker alone is not a fix.
-- **The Milestones tab lists a linked owner twice.** A sub-goal linked under a second goal is
-  reached from both, so its rows, their React keys and the panel's totals are duplicated.
-  `TrackMilestone.report` counts the owner once, so the duplicate rows at least agree.
-- **Picker modals are a fixed 528px.** On a 390px phone the add-task and MM pickers — the new
-  OVERDUE rows included — are wider than the screen. Pre-existing and not measured here.
+- **A waypoint-only target counts in one place and not the others.** A goal's `auto` ring and
+  its done state (`mmTargetEntries`) count a target that carries only milestone waypoints, as
+  `computeMMAutoComplete` always did. The goal node's TO LEARN bar, the goal panel's count and
+  the header's MM fraction gate on `stage || level` and leave it out. Found while fixing the
+  auto-complete lookup on 2026-10-14 and left alone: choosing one rule changes percentages the
+  user already sees, so it wants a decision rather than a tidy-up.
 - **Other date inputs still commit on every change.** The milestone fields now commit only a
   complete in-range day; the deadline, day-note and part date inputs still write whatever
   Chrome's year segment passes through. Harmless where nothing is derived from the
@@ -1226,6 +1189,28 @@ Found while building the overdue-milestone warnings (README "Milestone accountab
 - **Declined by the user on 2026-10-08, not forgotten:** a Home alert card, a count on the
   MILESTONES tab, and an early "behind pace" warning before the end date. Offer them again only
   if asked.
+
+### The four add buttons: found along the way, and left out
+
+Found while building ★ Forced / ● Learn / ▲ Chosen / ■ Core Routine (README "Schedule and
+supporting actions") and **not** changed there:
+
+- **An action filed under a vanished root action is unreachable.** ■ Core Routine's create bar
+  stores the chosen `parentId` without checking it is still there. A root action deleted in
+  another tab between opening the bar and pressing Create leaves a step whose parent names nothing,
+  shown by neither the ACTIONS tab nor Core Routine. ▲ Chosen refuses the same case for a task. The
+  action path behaved this way before it moved; the fix is the task path's refusal, with a case
+  seen failing first.
+- **▲ Chosen's "from today on" gate is still its own.** `activeMilestoneSchedules` spells
+  `ds >= todayStr` for a late milestone's tasks, while ● Learn and the MG tab get theirs from
+  `TrackMilestone.unreachedOn`. They agree today; a change to one has to be made to both, or Chosen's
+  gate moved onto the module.
+- **`activePickerDs` still includes ● Learn's day.** It recomputes `activeMilestoneSchedules`, which
+  only Chosen reads, when Learn opens. Harmless; inherited from the `◎` picker.
+- **Chosen by the user on 2026-10-14, not forgotten:** the below-milestone-level highlight is in ●
+  Learn and the Progress → MG tab only, **not** in the MG lines under each day's buttons. Offer
+  that surface again only if asked. It is also not the "behind pace" warning declined on
+  2026-10-08: it orders and highlights MGs where they are chosen, and raises no alarm.
 
 ### Finish routing the canvas pages' hard-coded UI accents through the theme
 

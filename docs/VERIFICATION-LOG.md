@@ -3447,3 +3447,189 @@ regardless, and was repeated: `node tests/run.js` 13:44–14:14, **all 25 suites
 `calendar-core` 118 and `milestone-core` 54, browser plan `1..373`, no suspend in the window,
 `md5sum` of every page, script, stylesheet and test file matched before and after, `git log -1`
 `bed1d20` at both ends.
+
+### The four add buttons: ★ Forced, ● Learn, ▲ Chosen, ■ Core Routine (2026-10-14 / 15)
+
+The user replaced the Schedule's `+ ◎ ⊕ ☰` with one button per kind of work, and asked Learn to
+put a Procedural mind map's MG on top while its level is below its milestone's. Decided with the
+user before building:
+
+- ■ is Core Routine's glyph (both were "circle").
+- Forced browses only, as `☰` did.
+- The milestone is the one covering the day, worked through an example (Oct 14 → Chapter one's 5).
+- The strip also pins unreached Declarative mind maps and due SIR.
+- The highlight shows in Learn and on the MG tab, not under each day's buttons.
+
+README "Schedule and supporting actions" and "Marginal Gains" describe the result, and
+docs/CONCEPTS.md records the four kinds.
+
+**Where it lives.**
+- `TrackMilestone.unreachedOn(rep, mms, day, today)` in `milestone-core.js` (`?v=3` on four
+  pages), read by the Learn strip and `MGPanel`.
+- One opener, `openAddPanel`, for the four buttons; the action create branch moved to
+  `createActionAndSchedule`.
+- Learn's SIR DUE now goes through `liveSessions`. The `◎` picker read storage raw, so a
+  Procedural mind map's hidden session was listed as due. Folded in because the group was rebuilt,
+  with its own case.
+
+**Hooks**: `data-day-add-learn`, `data-day-add-core`, `data-learn-panel`, `data-learn-pin`,
+`data-learn-pin-mg|mm|sir`, `data-learn-tab`, `data-mg-pick`, `data-core-panel`,
+`data-core-action`, `data-core-add`, `data-core-add-all`, `data-core-create-*`,
+`data-picker-panel`, `data-mg-card`, `data-mg-below`, `data-mg-date`. `data-dln-open` and
+`data-day-add-task` kept their buttons (★ and ▲).
+
+**Offline.** `milestone-core` 54 → 63: nine `UNREACHED` cases.
+
+**Browser.**
+- Updated: the three day-header cases (new glyphs, four separate `hit === 'self'` assertions,
+  each at least 24px), the late-pin case (opened from Learn), and the action create case (now
+  `CORE ROUTINE`).
+- New: 11 cases — `PROGRESS: a past day keeps all four`, four `LEARN`, two `MG TAB`,
+  `CHOSEN GUARD`, two `CORE ROUTINE` list cases, `PHONE: all four add panels fit a 390px screen`.
+
+**Baselines.** A frozen snapshot of `progress.html`, `milestone-core.js` and `tests/`. Each tree
+symlinks the repository, with real copies of those three. The builder refused a swap that matched
+other than once, or a doctored tree identical to the snapshot. Runs went through a task-owned
+`--require` preload declaring only the 22 cases, and the plan count was `1..22` every time. The
+trees and logs were under `/tmp` and were lost when the machine restarted; the results below were
+read from them at the time, failure message by failure message.
+
+| Tree | Rule reversed | Failed (of 22 browser; offline of 63) |
+| --- | --- | --- |
+| CONTROL (before) | none | nothing — 22/22, offline 63/63 |
+| B1 core | the covering bound dropped (any dated milestone counts on any day) | offline: the covering, first/last-day and overdue cases; browser: LEARN MG pin (`['21','23']` — Piano, short only of next month's milestone) and MG TAB (`23:below` highlighted too). One door, two surfaces: said so, not claimed disjoint |
+| B2 core | the from-today gate dropped | offline: the past-day case; browser: LEARN GUARD (`['21']` pinned on yesterday) and MG TAB GUARD (`21:below` on yesterday) |
+| B3 page | every record pinned as a mind map | LEARN MG pin (`[]`) and LEARN Declarative pin (`['21','31']`) — nothing else |
+| B4 page | SIR DUE read from storage raw, as `◎` did | LEARN SIR alone (`['40','41']`: Swimming's hidden session listed as due — the old bug, reproduced) |
+| B5 page | the MG tab not sorting below-level first | MG TAB alone (`23 21:below 24 22 41` — highlighted, but second) |
+| B6 page | a step's `+` adds the whole routine | CORE ROUTINE step case alone (two entries where one was asked for) |
+| B7 page | root actions listed in Chosen again | CHOSEN GUARD alone, on its first claim (`['Cold shower','Morning routine']`) |
+| B7b page | the Action kind offered in Chosen again | CHOSEN GUARD alone, on its second claim (`['task','routine','action']`) |
+| B8 page | ● Learn left off a past day, as `⊕` was | PROGRESS past day (`●` missing) on its claim; LEARN GUARD failed too, but only by timing out on the missing button — blocked, not evidence for its own claim |
+| B9 page | the Learn panel without its `max-w-[94vw]` | PHONE alone, at the Learn panel (`left -69, right 459` on a 390px screen) after Forced had passed |
+| CONTROL (after) | none | nothing — 22/22, offline 63/63 |
+
+**Concurrency.** Another session (fixing four NOTES bugs) edited `progress.html`, README, NOTES,
+AGENTS and `tests/browser.test.js` in the same working tree throughout. The regions were agreed
+by message, both sessions gated every browser run on no other suite running, and the full run
+waited for that session's narrowed CONTROL. After the restart, the 22 cases were re-run on the
+combined tree: `1..22`, all passed, tree unchanged during the run.
+
+**Full run.** `node tests/run.js` 2026-10-15 16:30:56–17:06:48: **all 25 suites passed**.
+`calendar-core` 118, `schema` 68 and `notes-core` 33 identical under all five timezones;
+`milestone-core` 63; browser plan `1..404` (373, plus these 11, plus the other session's 20), 0
+failed. `git log -1` `6f54caa` at both ends, the `md5sum` of every page, script, stylesheet and
+test file identical before and after, and no suspend in the window. Load ~5.5–6.4, which is why it
+took 36 minutes.
+
+**Not covered.** Real touch hardware (the four buttons and panels were only measured at an iPad
+and a phone viewport in headless Chrome) and print. The day column's MG lines were deliberately
+left unchanged (the user's choice).
+
+### Four found bugs: MM auto-complete, link loops, leaving SIR, a linked owner listed twice (2026-10-14 / 15)
+
+The user asked what was left and chose to fix the bugs NOTES listed as "found along the way, and
+left out". Three decisions were theirs, settled from a menu:
+- a goal with mind-map targets is done only when its tasks are done too;
+- loops are prevented at both link pickers as well as tolerated;
+- a subgoal linked under two goals is listed under each — it is the same subgoal, so its
+  milestones belong in both — and counted once.
+
+README "Spaced Interval Review", "Goals, tasks, and milestones", "Milestone accountability" and
+"Parent cycles" describe the results.
+
+**What changed.** All inline, in `progress.html` and `sir-ks02.html`. No slot field, no
+migration, no shared script, no `?v` bump.
+
+- `mmTargetEntries` is the one reading of a goal's targets. It walks `toLearn`, never the string
+  keys of `mmTargets`, and `computeMMAutoComplete` and the GoalNode ring both read it. The ring
+  now passes `sirDoneMap`, and done requires `tasksDone`.
+- `linkWouldLoop` is the one loop test. Both pickers filter through it (a `parentId` prop), and
+  `addLinkedTask` / `addLinkedSubGoal` refuse through it.
+- Per-path guards on `getLeaves`, `isComplete`, `GoalProgressViz`'s `collectLeaves`,
+  `GoalProgressPanel`'s `collectUniqueLeaves`, `buildToLearnTree` and `buildMMTree`. The last two
+  also draw a rootless cycle from its first member.
+- GoalNode draws `LinkLoopRow` through an `ancestry` prop at its three link sites, and
+  `renderMilestoneTask` does the same through a `path` parameter.
+- MilestonesPanel marks a later listing `linkedFrom`, builds items, calendar and totals from first
+  listings only, and selects by `goalId`.
+- `sir-ks02.html`: `endingSirSessions`, so every +LIN move out of SIR that deletes sessions asks.
+- `buildMMTree` was not in the plan. It turned up while writing the cycle case: the Progress →
+  Mind Maps tab had the same unguarded walk of mind-map parents.
+
+**Hooks**: `data-mm-auto`, `data-goal-done`, `data-link-loop`, `data-link-task-open`,
+`data-link-goal-open`, `data-link-pick`, `data-ms-totals`, `data-ms-linked-from`,
+`data-ms-row-linked-from`.
+
+**Browser.** 20 new cases, section 19: AUTO 4, LOOP 10, SIR EXIT 3, LINKED OWNER 3. They were run
+narrowed through a task-owned preload against real copies of the tree under the scratchpad, with
+`tests/` copied rather than symlinked and the served root printed.
+
+The first CONTROL failed one case, a test defect. `LOOP MIND MAPS` waited on
+`data-mm-badge-stage`, which the Mind Maps tab draws only for a mind map that has a phase, and the
+fixture gave its mind maps none. The no-error assertion passed and the element was simply absent.
+The fixture now sets `ksStage: '1'`.
+
+Each doctored tree is that fixed tree with one rule reversed in one file:
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL (×3: before, after the resume, last) | none | nothing — 26/26 (6 smoke + 20) |
+| a-keys | both auto-complete readers back to the original `Object.entries(mmTargets)` code | all four AUTO: `sg-met` `{done:'0', ring:'0/1'}`; the open-task case on its second claim; the SIR case; header `'50%'` |
+| a-tasks | done ignores open tasks | AUTO open tasks alone (`sg-open` done `'1'`) |
+| a-ringsir | ring without `sirDoneMap` | AUTO SIR alone (ring `'0/1'` beside done `'1'`) |
+| b-site-sub | GoalNode's subgoal link site unguarded | LOOP GOALS subgoal alone — tab hung |
+| b-site-task | GoalNode's nested-task link site unguarded | the two LOOP GOALS task cases — tab hung |
+| b-hero | `collectUniqueLeaves` unguarded | all three LOOP GOALS cases — RangeError |
+| b-getleaves | `getLeaves` unguarded | LOOP SCHEDULE alone — RangeError |
+| b-renderms | `renderMilestoneTask` unguarded | LOOP MILESTONES alone — RangeError |
+| b-tolearn | `buildToLearnTree`'s per-path filter dropped | both LOOP TO LEARN — RangeError (the rootless one too: its fallback root recurses through the same walk) |
+| b-rootless | the rootless fallback dropped | LOOP TO LEARN rootless alone — rows `[]`, not `['30','31']` |
+| b-mmtree | `buildMMTree`'s per-path filter dropped | LOOP MIND MAPS alone — RangeError |
+| b-pick-task | task picker's filter dropped | LOOP PICKER task alone (`pk-a` offered) |
+| b-pick-goal | goal picker's filter dropped | LOOP PICKER subgoal alone (`g-pks` offered) |
+| c-prompt | prompt condition back to the original `hiddenSirSessions` | both SIR EXIT prompt cases (`0 !== 1` prompts) |
+| c-noop | asks even with no sessions | SIR EXIT no-sessions alone (`1 !== 0`) |
+| d-totals | totals over every listing | LINKED OWNER counted-once alone (`'3 milestones · 3 leaf subgoals'`) |
+| d-items | items from every listing | LINKED OWNER calendar alone (2 chips) |
+| d-select | selection by key only | LINKED OWNER one-click alone |
+
+Every failure was read and fired on its own claim.
+
+**Two failure modes, measured.** The plain recursive walkers throw `RangeError: Maximum call stack
+size exceeded`, which blanks the page. GoalNode's recursion does not throw: React builds a
+component tree in a loop, so the nesting never overflows, and the tab **hangs**. Those cases died
+because `Runtime.evaluate` timed out after 20s inside `open()`'s Firebase-skip wait. That finding
+corrected `LinkLoopRow`'s comment and one README sentence, which had both said "blank".
+
+`b-renderms`' stack tops out in `milestone-core.js`'s guarded `countLeaves`. That is only where the
+stack ran out: `renderMilestoneTask`'s own recursion calls `countLeaves` at every level.
+
+**Doors shared, said rather than hidden.**
+- The Goals tab mounts the tree and the goal panel together, so `b-hero` fails all three Goals-tab
+  loop cases. Its door is still told apart by its RangeError against the GoalNode trees' hang.
+- The unlink case needs the loop row, so it fails with the task site.
+- `a-keys` fails all four AUTO cases because the one lookup feeds all four.
+
+**A run voided by a lid close.** The first `c-prompt` run started at 17:46:31. The lid closed at
+17:48:33 and the machine slept until 19:16:32 (`journalctl`). The run took 5,445s and failed both
+LOOP PICKER cases on `CDP connection closed`, so it is void. It was re-run at 19:30:19 with no
+suspend, behind and before a passing CONTROL, and gave the row above. Every run before it finished
+before the lid closed; every run after it ran behind the post-resume CONTROL.
+
+**Full suite.** The other session ran it on the combined tree, 2026-10-15 16:30:56–17:06:48 (the
+entry above): all 25 suites passed, browser plan `1..404`, 0 failed — 373, that work's 11 and
+these 20. The only change since is `LinkLoopRow`'s comment, and a `diff` against the snapshot that
+run saw shows comment lines only. Every other page, script and test is byte-identical; the other
+session also re-ran smoke `progress.html` and two Schedule cases on the edited file, `1..3`, all
+passed.
+
+**Not covered**, by code reading only:
+- `GoalProgressViz` — only `GoalTree` renders it, and `GoalTree` is mounted nowhere.
+- GoalNode's first link site (a link directly in a goal's TO ACTION) and `isComplete` following a
+  link to a link — both reachable only through hand-edited data.
+- The two writers' refusals — the pickers no longer offer a looping target, so the UI cannot reach
+  them.
+- `buildMMTree`'s rootless fallback, which has no case of its own.
+- The Schedule's `⚑` opening the first listing of a linked owner.
+- As everywhere: real touch hardware, the live Firebase project, multi-device sync, and print.

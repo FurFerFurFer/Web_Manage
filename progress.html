@@ -10,7 +10,7 @@
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
   <script src="scripts/quest-core.js?v=2"></script>
-  <script src="scripts/milestone-core.js?v=2"></script>
+  <script src="scripts/milestone-core.js?v=3"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -619,11 +619,15 @@
       return !node?.isLink && !isMilestoneNode(node) && (node.children || []).length === 0;
     }
 
-    function isComplete(node, allGoals) {
-      if (!node) return false;
+    // `_path` guards a link that resolves to a link that resolves back — only
+    // hand-edited or synced data can build one, but a stack overflow here is a
+    // white screen. Anything with children is counted by countProgress, which
+    // carries its own guard.
+    function isComplete(node, allGoals, _path = []) {
+      if (!node || _path.includes(node)) return false;
       if (node.isLink) {
         const orig = resolveLinkedTask(node, allGoals);
-        return orig ? isComplete(orig, allGoals) : false;
+        return orig ? isComplete(orig, allGoals, [..._path, node]) : false;
       }
       if (isMilestoneNode(node) && (node.children || []).length === 0) return true;
       if ((node.children || []).length === 0) return !!node.completed;
@@ -770,15 +774,22 @@
 
     function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
-    function getLeaves(node, allGoals = null) {
-      if (!node) return [];
+    // A PER-PATH cycle guard, as TrackMilestone.countLeaves has: the "link
+    // existing task" picker used to offer a task's own ancestors, so a link
+    // back up the tree can be in stored data, and following it recursed until
+    // the stack gave out. A node already on the current path ends its branch;
+    // a diamond (one task linked from two places) still yields its leaves
+    // twice, because callers read `.length` and always have.
+    function getLeaves(node, allGoals = null, _path = []) {
+      if (!node || _path.includes(node)) return [];
+      const path = [..._path, node];
       if (node.isLink) {
         const orig = resolveLinkedTask(node, allGoals);
-        return orig ? getLeaves(orig, allGoals) : [];
+        return orig ? getLeaves(orig, allGoals, path) : [];
       }
       if (isMilestoneNode(node) && (node.children || []).length === 0) return [];
       if ((node.children || []).length === 0) return [node];
-      return (node.children || []).flatMap(c => getLeaves(c, allGoals));
+      return (node.children || []).flatMap(c => getLeaves(c, allGoals, path));
     }
 
     function parentHasMilestoneChild(parent, milestoneId, excludeId = null, allGoals = null) {
@@ -1140,6 +1151,31 @@
       return allGoals ? findNode(allGoals, node.linkedTaskId) : null;
     }
 
+    // Would putting a link to `targetId` under `parentId` make a loop? True
+    // when the parent is the target, or can be reached from it through its
+    // children and the links among them: the new link would then lead back to
+    // itself, and every walker following it would go round forever. This is
+    // the ONE test — both link pickers leave such targets out, and both link
+    // writers refuse them. It prevents a new loop only; one already stored, or
+    // arriving through sync, is still drawn once by the guarded walkers.
+    function linkWouldLoop(goals, parentId, targetId) {
+      if (parentId == null || targetId == null) return false;
+      if (parentId === targetId) return true;
+      const start = findNode(goals || [], targetId);
+      if (!start) return false;
+      const visited = new Set([start]);
+      const queue = [start];
+      while (queue.length) {
+        const n = queue.shift();
+        if (n.id === parentId) return true;
+        const next = n.isLink ? [findNode(goals || [], n.linkedTaskId)] : (n.children || []);
+        for (const c of next) {
+          if (c && !visited.has(c)) { visited.add(c); queue.push(c); }
+        }
+      }
+      return false;
+    }
+
     function getSelectableTasks(goals) {
       const out = [];
       function walk(nodes, isTop) {
@@ -1154,12 +1190,18 @@
       return out;
     }
 
+    // `goals` is the whole tree: the loop test needs all of it, so the walk
+    // below is an inner function rather than this one recursing on a subtree.
     function addLinkedTask(goals, parentId, linkedTaskId) {
-      return goals.map(g =>
-        g.id === parentId
-          ? { ...g, children: [...(g.children || []), { id: uid(), linkedTaskId, isLink: true }] }
-          : { ...g, children: addLinkedTask(g.children || [], parentId, linkedTaskId) }
-      );
+      if (linkWouldLoop(goals, parentId, linkedTaskId)) return goals;
+      function walk(nodes) {
+        return nodes.map(g =>
+          g.id === parentId
+            ? { ...g, children: [...(g.children || []), { id: uid(), linkedTaskId, isLink: true }] }
+            : { ...g, children: walk(g.children || []) }
+        );
+      }
+      return walk(goals);
     }
 
     function unlinkTask(goals, linkRefId) {
@@ -1350,12 +1392,17 @@
       return nodes.map(n => ({ ...n, children: reorderSibling(n.children || [], draggedId, targetId, insertBefore) }));
     }
 
+    // As addLinkedTask: a goal linked under its own sub-goal would loop.
     function addLinkedSubGoal(goals, parentId, linkedGoalId) {
-      return goals.map(g =>
-        g.id === parentId
-          ? { ...g, children: [...(g.children||[]), { id: uid(), linkedTaskId: linkedGoalId, isLink: true, isSubGoal: true }] }
-          : { ...g, children: addLinkedSubGoal(g.children||[], parentId, linkedGoalId) }
-      );
+      if (linkWouldLoop(goals, parentId, linkedGoalId)) return goals;
+      function walk(nodes) {
+        return nodes.map(g =>
+          g.id === parentId
+            ? { ...g, children: [...(g.children||[]), { id: uid(), linkedTaskId: linkedGoalId, isLink: true, isSubGoal: true }] }
+            : { ...g, children: walk(g.children||[]) }
+        );
+      }
+      return walk(goals);
     }
 
     function formatTime12(t) {
@@ -1446,14 +1493,21 @@
       return TrackMilestone.sirDoneMap(sessions);
     }
 
+    // The Mind Maps tab's tree, with buildToLearnTree's guard: a mind map is
+    // not drawn again under itself on one branch, and a parent cycle with no
+    // root above it is drawn from its first member rather than vanishing.
     function buildMMTree(mms) {
       const byId = Object.fromEntries(mms.map(m => [m.id, m]));
-      const roots = mms.filter(m => !(m.parentIds || []).some(pid => byId[pid]));
-      function buildNode(mm) {
-        const children = mms.filter(m => (m.parentIds || []).includes(mm.id));
-        return { mm, children: children.map(buildNode) };
+      const placed = new Set();
+      function buildNode(mm, seen) {
+        placed.add(mm.id);
+        const next = new Set([...seen, mm.id]);
+        const children = mms.filter(m => !next.has(m.id) && (m.parentIds || []).includes(mm.id));
+        return { mm, children: children.map(c => buildNode(c, next)) };
       }
-      return roots.map(buildNode);
+      const roots = mms.filter(m => !(m.parentIds || []).some(pid => byId[pid])).map(m => buildNode(m, new Set()));
+      mms.forEach(m => { if (!placed.has(m.id)) roots.push(buildNode(m, new Set())); });
+      return roots;
     }
 
     function getMMDescendants(mmId, mms, _visited = new Set()) {
@@ -1465,18 +1519,37 @@
       });
     }
 
+    // `parentIds` is plural and the canvas pickers let a mind map take its own
+    // descendant as a parent, so a cycle is reachable through ordinary use.
+    // The guard is per path, as TrackTrueStorage.buildTree's: a mind map
+    // already on the branch is not drawn again under itself, while one with
+    // two parents is still drawn under both. And a cycle with no root above it
+    // is reached from no root at all, so it would vanish from the list — its
+    // first member in toLearn order is drawn as a root instead, which keeps
+    // every linked mind map on screen.
     function buildToLearnTree(toLearnIds, mms) {
       const set = new Set(toLearnIds);
-      function buildChildren(parentId) {
+      const placed = new Set();
+      function entry(mm, seen) {
+        placed.add(mm.id);
+        return { mm, children: buildChildren(mm.id, new Set([...seen, mm.id])) };
+      }
+      function buildChildren(parentId, seen) {
         return toLearnIds
           .map(id => mms.find(m => m.id === id))
-          .filter(mm => mm && (mm.parentIds || []).includes(parentId))
-          .map(mm => ({ mm, children: buildChildren(mm.id) }));
+          .filter(mm => mm && !seen.has(mm.id) && (mm.parentIds || []).includes(parentId))
+          .map(mm => entry(mm, seen));
       }
-      return toLearnIds
+      const roots = toLearnIds
         .map(id => mms.find(m => m.id === id))
         .filter(mm => mm && !(mm.parentIds || []).some(pid => set.has(pid)))
-        .map(mm => ({ mm, children: buildChildren(mm.id) }));
+        .map(mm => entry(mm, new Set()));
+      toLearnIds.forEach(id => {
+        if (placed.has(id)) return;
+        const mm = mms.find(m => m.id === id);
+        if (mm) roots.push(entry(mm, new Set()));
+      });
+      return roots;
     }
 
     // The ONE writer of toLearn, which is why the quest flags are re-scoped
@@ -1564,15 +1637,32 @@
       return TrackMilestone.targetFor(mm, target);
     }
 
+    // A goal's mind-map targets as [mm, target] pairs — the one reading that
+    // the auto-complete test and its ring both use, so the two cannot disagree.
+    // It iterates `toLearn`, NEVER Object.entries(mmTargets): those keys are
+    // strings and a mind map's id is a NUMBER from nid(), so a key-driven loop
+    // compared '10' with 10, found no mind map, and left every such goal
+    // undone with its ring at 0/N. A mind map that no longer exists is skipped,
+    // as TrackMilestone.statusOf does.
+    function mmTargetEntries(goal, mms) {
+      const out = [];
+      const seen = new Set();
+      (goal.toLearn || []).forEach(mmId => {
+        if (seen.has(mmId)) return;
+        seen.add(mmId);
+        const mm = (mms || []).find(m => m.id === mmId);
+        if (!mm) return;
+        const t = targetOf(mm, (goal.mmTargets || {})[mmId]);
+        if (t && (t.stage || t.level || (t.milestones || []).length > 0)) out.push([mm, t]);
+      });
+      return out;
+    }
+
     // Returns null (no active targets), true (all met), or false (some unmet)
     function computeMMAutoComplete(goal, mms, sirDoneMap) {
-      const entries = Object.entries(goal.mmTargets || {}).map(([mmId, t]) => {
-        const mm = mms.find(m => m.id === mmId);
-        return [mm, targetOf(mm, t)];
-      });
-      const active = entries.filter(([, t]) => t && (t.stage || t.level || (t.milestones || []).length > 0));
+      const active = mmTargetEntries(goal, mms);
       if (active.length === 0) return null;
-      return active.every(([mm, target]) => mm && isMMTargetMet(mm, target, sirDoneMap));
+      return active.every(([mm, target]) => isMMTargetMet(mm, target, sirDoneMap));
     }
 
     // Returns 0.0–1.0 for a single MM's fractional progress toward its target
@@ -1871,15 +1961,18 @@
       const full = done === total && total > 0;
       const displayColor = full ? ACCENT.done : goalColor;
 
-      function collectLeaves(n) {
+      // Per-path cycle guard, as getLeaves: a link back up the tree ends its
+      // branch instead of recursing until the stack gives out.
+      function collectLeaves(n, path) {
+        if (!n || path.includes(n)) return [];
         const resolved = resolveLinkedTask(n, goals);
         if (!resolved) return [];
-        if (resolved !== n) return collectLeaves(resolved);
+        if (resolved !== n) return collectLeaves(resolved, [...path, n]);
         if (isMilestoneNode(n) && (n.children || []).length === 0) return [];
         if ((n.children || []).length === 0) return [{ id: n.id, done: n.completed }];
-        return (n.children || []).flatMap(c => collectLeaves(c));
+        return (n.children || []).flatMap(c => collectLeaves(c, [...path, n]));
       }
-      const leaves = (node.children || []).flatMap(c => collectLeaves(c));
+      const leaves = (node.children || []).flatMap(c => collectLeaves(c, [node]));
 
       if (total === 0) {
         return (
@@ -2506,13 +2599,17 @@
 
     // ── GoalPickerModal ───────────────────────────────────────────────────────
 
-    function GoalPickerModal({ goals, excludeId, excludeLinkedIds, onSelect, onClose }) {
+    // `parentId` is the node the link would go under: a goal that would loop
+    // back to it (linkWouldLoop) is not offered.
+    function GoalPickerModal({ goals, excludeId, excludeLinkedIds, parentId, onSelect, onClose }) {
       const [search, setSearch] = useState('');
       const ref = useRef(null);
       useEffect(() => { ref.current?.focus(); }, []);
       const selectable = useMemo(
-        () => getSelectableGoals(goals, excludeId).filter(g => !(excludeLinkedIds||[]).includes(g.id)),
-        [goals, excludeId, excludeLinkedIds]
+        () => getSelectableGoals(goals, excludeId)
+          .filter(g => !(excludeLinkedIds||[]).includes(g.id))
+          .filter(g => parentId == null || !linkWouldLoop(goals, parentId, g.id)),
+        [goals, excludeId, excludeLinkedIds, parentId]
       );
       const filtered = search ? selectable.filter(g => g.title.toLowerCase().includes(search.toLowerCase())) : selectable;
       return (
@@ -2525,7 +2622,7 @@
             <div className="overflow-y-auto flex flex-col gap-0.5 flex-1">
               {filtered.length === 0 && <div className="text-xs text-gray-600 italic text-center py-4">No goals found.</div>}
               {filtered.map(goal => (
-                <button key={goal.id} onClick={() => onSelect(goal.id)}
+                <button key={goal.id} data-link-pick={goal.id} onClick={() => onSelect(goal.id)}
                   className="text-left flex items-center gap-2 rounded hover:bg-gray-800 group"
                   style={{ paddingLeft: (goal._depth||0)*12+8, paddingRight: 8, paddingTop: 6, paddingBottom: 6 }}>
                   <span className="w-1.5 h-1.5 rounded-full bg-violet-500 flex-shrink-0" />
@@ -2542,13 +2639,17 @@
 
     // ── TaskPickerModal ───────────────────────────────────────────────────────
 
-    function TaskPickerModal({ goals, excludeIds, onSelect, onClose }) {
+    // `parentId`, as GoalPickerModal's: a task that would loop back to the
+    // node the link goes under — one of its ancestors — is not offered.
+    function TaskPickerModal({ goals, excludeIds, parentId, onSelect, onClose }) {
       const [search, setSearch] = useState('');
       const ref = useRef(null);
       useEffect(() => { ref.current?.focus(); }, []);
       const selectable = useMemo(
-        () => getSelectableTasks(goals).filter(t => !excludeIds.includes(t.id)),
-        [goals, excludeIds]
+        () => getSelectableTasks(goals)
+          .filter(t => !excludeIds.includes(t.id))
+          .filter(t => parentId == null || !linkWouldLoop(goals, parentId, t.id)),
+        [goals, excludeIds, parentId]
       );
       const filtered = search
         ? selectable.filter(t => t.title.toLowerCase().includes(search.toLowerCase()))
@@ -2563,7 +2664,7 @@
             <div className="overflow-y-auto flex flex-col gap-0.5 flex-1">
               {filtered.length === 0 && <div className="text-xs text-gray-600 italic text-center py-4">No tasks found.</div>}
               {filtered.map(task => (
-                <button key={task.id} onClick={() => onSelect(task.id)}
+                <button key={task.id} data-link-pick={task.id} onClick={() => onSelect(task.id)}
                   className="text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-800 group">
                   <span className="text-gray-400 group-hover:text-white text-xs flex-1 truncate">{task.title}</span>
                   {(task.children || []).filter(c => !c.isLink).length > 0 &&
@@ -2577,10 +2678,34 @@
       );
     }
 
+    // A link whose target is already drawn above it on the same branch. It is
+    // drawn ONCE, as this row: rendering the target again nests the same
+    // GoalNodes without end. React builds a component tree in a loop, not by
+    // recursion, so that never overflows the stack — the tab HANGS instead
+    // (measured 2026-10-15: it stopped answering the test driver at all). The
+    // plain recursive walkers beside it fail differently, with a RangeError
+    // that blanks the page. The pickers no longer offer such a link
+    // (linkWouldLoop), but one can already be stored or arrive through sync.
+    // The × is the ordinary unlink, which asks first.
+    function LinkLoopRow({ linkId, title, onUnlink, style, className }) {
+      return (
+        <div data-link-loop={linkId} style={style}
+          title="This link leads back to an item above it, so it is not drawn again here."
+          className={`flex items-center gap-2 py-0.5 text-xs text-gray-600 italic ${className || ''}`}>
+          <span className="not-italic flex-shrink-0">↻</span>
+          <span className="truncate">“{title || 'Untitled'}” is already above — this link loops back</span>
+          {onUnlink && <button onClick={() => onUnlink(linkId)} className="hover:text-red-400 not-italic">×</button>}
+        </div>
+      );
+    }
+
     // ── GoalNode ──────────────────────────────────────────────────────────────
 
-    function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId, milestoneOwner, insideMilestone = false, insideActiveMilestone = false }) {
+    // `ancestry` is the ids of the nodes drawn above this one on its branch;
+    // a link to any of them is drawn as a LinkLoopRow.
+    function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId, milestoneOwner, insideMilestone = false, insideActiveMilestone = false, ancestry = [] }) {
       const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, onArrangeTask, onAddMilestoneType, onRenameMilestoneType, onDeleteMilestoneType, onReorderMilestoneType, allGoals, mms, sirDoneMap } = handlers;
+      const path = [...ancestry, node.id];
       const [hov, setHov]             = useState(false);
       const [showMMPicker, setShowMMPicker] = useState(false);
       const [editing, setEditing]     = useState(false);
@@ -2635,8 +2760,13 @@
         .filter(m => !parentHasMilestoneChild(node, m.id, null, allGoals));
       const mmAutoComplete = isGoalLike ? computeMMAutoComplete(node, mms || [], sirDoneMap) : null;
       const resolveLink = allGoals ? id => findNode(allGoals, id) : null;
-      const done = mmAutoComplete !== null ? mmAutoComplete : isComplete(node, allGoals);
       const prog = isParent ? countProgress(node, resolveLink) : null;
+      // A goal with mind-map targets is done when every target is met AND its
+      // tasks are done (the user's rule) — met targets alone never finish a
+      // goal with work still open. Read from `prog`, not isComplete: that
+      // calls a goal whose only children are empty milestone blocks undone.
+      const tasksDone = !prog || prog.total === 0 || prog.done >= prog.total;
+      const done = mmAutoComplete !== null ? (mmAutoComplete && tasksDone) : isComplete(node, allGoals);
 
       useEffect(() => {
         if (kidType === 'milestone' && !availableMilestones.some(m => m.id === kidMilestoneId)) {
@@ -2739,7 +2869,7 @@
             title={isGoalType ? "Add sub-goal" : "Add sub-task"}
             className={`text-gray-600 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60 font-bold ${isGoalType ? 'hover:text-violet-400' : 'hover:text-emerald-400'}`}>+</button>
           {!isGoalContainer && (
-            <button onClick={() => setPickingLink(v => !v)} title="Link existing task"
+            <button data-link-task-open={node.id} onClick={() => setPickingLink(v => !v)} title="Link existing task"
               className="text-gray-600 hover:text-sky-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60">^</button>
           )}
           {linkedRefId
@@ -2884,6 +3014,7 @@
         return (<>
           <div
             data-goal-node={node.id}
+            data-goal-done={done ? '1' : '0'}
             className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`} ${subGoalDragOver ? 'ring-2 ring-violet-500' : taskDragOver ? 'ring-2 ring-indigo-500' : ''} ${arrangeDragOver === 'before' ? 'border-t-2 border-green-500' : arrangeDragOver === 'after' ? 'border-b-2 border-green-500' : ''}`}
             style={!inDetailView && depth === 0 && goalColor ? { borderTopColor: goalColor, borderTopWidth: 3 } : undefined}
             onDragOver={e => { const types = e.dataTransfer.types; if (types.includes('application/arrange-id')) { e.preventDefault(); e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); setArrangeDragOver(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'); } else if (node.isSubGoal && types.includes('application/subgoal-id')) { e.preventDefault(); e.stopPropagation(); setSubGoalDragOver(true); } else if (types.includes('application/task-id')) { e.preventDefault(); e.stopPropagation(); setTaskDragOver(true); } }}
@@ -2897,13 +3028,13 @@
             >
               {mmAutoComplete !== null
                 ? (() => {
-                    const targets = Object.entries(node.mmTargets || {})
-                      .map(([mmId, t]) => { const mm = (mms||[]).find(m => m.id === mmId); return [mm, targetOf(mm, t)]; })
-                      .filter(([, t]) => t && (t.stage || t.level));
-                    const metCount = targets.filter(([mm, target]) => mm && isMMTargetMet(mm, target)).length;
+                    // the same pairs, and the same sirDoneMap, as computeMMAutoComplete
+                    const targets = mmTargetEntries(node, mms);
+                    const metCount = targets.filter(([mm, target]) => isMMTargetMet(mm, target, sirDoneMap)).length;
                     const allMet = metCount === targets.length;
                     return (
-                      <div className="flex-shrink-0 flex flex-col items-center mt-0.5" title="Auto-completes when MM targets are met">
+                      <div data-mm-auto={`${metCount}/${targets.length}`}
+                        className="flex-shrink-0 flex flex-col items-center mt-0.5" title="Auto-completes when MM targets are met and every task is done">
                         <svg width={36} height={36} viewBox="0 0 36 36">
                           <circle cx={18} cy={18} r={14} fill="none" strokeWidth={4} style={{stroke: ACCENT.track}}/>
                           <circle cx={18} cy={18} r={14} fill="none"
@@ -2975,7 +3106,7 @@
                 <div className="flex items-center gap-2">
                   <button onClick={() => setAddingSubGoal(v => !v)} data-add-subgoal={node.id}
                     className="text-[10px] text-gray-600 hover:text-violet-400 transition-colors">+ sub-goal</button>
-                  <button onClick={() => setPickingGoalLink(v => !v)}
+                  <button data-link-goal-open={node.id} onClick={() => setPickingGoalLink(v => !v)}
                     className="text-[10px] text-gray-600 hover:text-violet-400 transition-colors">^ link</button>
                 </div>
               </div>
@@ -2993,7 +3124,7 @@
                     className="text-[10px] text-gray-600 hover:text-emerald-400 transition-colors">
                     + add task
                   </button>
-                  <button onClick={() => setPickingLink(v => !v)}
+                  <button data-link-task-open={node.id} onClick={() => setPickingLink(v => !v)}
                     className="text-[10px] text-gray-600 hover:text-sky-400 transition-colors">
                     ^ link
                   </button>
@@ -3011,9 +3142,12 @@
                           <button onClick={() => onUnlinkTask(child.id)} className="hover:text-red-400 not-italic">×</button>
                         </div>
                       );
-                      return <GoalNode key={child.id} node={original} depth={1} handlers={handlers} linkedRefId={child.id} milestoneOwner={node} />;
+                      if (path.includes(original.id)) return (
+                        <LinkLoopRow key={child.id} linkId={child.id} title={original.title} onUnlink={onUnlinkTask} className="px-1" />
+                      );
+                      return <GoalNode key={child.id} node={original} depth={1} handlers={handlers} linkedRefId={child.id} milestoneOwner={node} ancestry={path} />;
                     }
-                    return <GoalNode key={child.id} node={child} depth={1} handlers={handlers} milestoneOwner={node} />;
+                    return <GoalNode key={child.id} node={child} depth={1} handlers={handlers} milestoneOwner={node} ancestry={path} />;
                   })}
                 </div>
               )}
@@ -3097,6 +3231,7 @@
           {pickingLink && (
             <TaskPickerModal
               goals={allGoals || []}
+              parentId={node.id}
               excludeIds={[node.id, ...(node.children || []).filter(c => c.isLink).map(c => c.linkedTaskId)]}
               onSelect={taskId => { onAddLinkedTask(node.id, taskId); setPickingLink(false); }}
               onClose={() => setPickingLink(false)}
@@ -3105,6 +3240,7 @@
           {pickingGoalLink && (
             <GoalPickerModal
               goals={allGoals || []}
+              parentId={node.id}
               excludeId={node.id}
               excludeLinkedIds={(node.children||[]).filter(c => c.isSubGoal && c.isLink).map(c => c.linkedTaskId)}
               onSelect={goalId => { onAddLinkedSubGoal(node.id, goalId); setPickingGoalLink(false); }}
@@ -3119,6 +3255,7 @@
         return (<>
           <div
             data-goal-node={node.id}
+            data-goal-done={done ? '1' : '0'}
             className={`overflow-hidden transition-colors ${inDetailView ? '' : `rounded-xl border ${done ? 'border-emerald-800/60 bg-emerald-950/10' : depth > 0 ? 'border-violet-900/50 bg-gray-900/50' : 'border-gray-800 bg-gray-900/70'} ${depth > 0 ? 'mb-2' : 'mb-5'}`} ${subGoalDragOver && node.isSubGoal ? 'ring-2 ring-violet-500' : ''}`}
             style={!inDetailView && depth === 0 && goalColor ? { borderTopColor: goalColor, borderTopWidth: 3 } : undefined}
             onDragOver={e => { if (node.isSubGoal && e.dataTransfer.types.includes('application/subgoal-id')) { e.preventDefault(); e.stopPropagation(); setSubGoalDragOver(true); } }}
@@ -3181,7 +3318,7 @@
                 <div className="flex items-center gap-2">
                   <button onClick={() => setAddingSubGoal(v => !v)} data-add-subgoal={node.id}
                     className="text-[10px] text-gray-600 hover:text-violet-400 transition-colors">+ sub-goal</button>
-                  <button onClick={() => setPickingGoalLink(v => !v)}
+                  <button data-link-goal-open={node.id} onClick={() => setPickingGoalLink(v => !v)}
                     className="text-[10px] text-gray-600 hover:text-violet-400 transition-colors">^ link</button>
                 </div>
               </div>
@@ -3197,9 +3334,12 @@
                           <button onClick={() => onUnlinkTask(child.id)} className="hover:text-red-400 not-italic">×</button>
                         </div>
                       );
-                      return <GoalNode key={child.id} node={original} depth={depth + 1} handlers={handlers} linkedRefId={child.id} />;
+                      if (path.includes(original.id)) return (
+                        <LinkLoopRow key={child.id} linkId={child.id} title={original.title} onUnlink={onUnlinkTask} className="px-1" />
+                      );
+                      return <GoalNode key={child.id} node={original} depth={depth + 1} handlers={handlers} linkedRefId={child.id} ancestry={path} />;
                     }
-                    return <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers} />;
+                    return <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers} ancestry={path} />;
                   })}
                 </div>
               )}
@@ -3213,6 +3353,7 @@
           {pickingLink && (
             <TaskPickerModal
               goals={allGoals || []}
+              parentId={node.id}
               excludeIds={[node.id, ...(node.children || []).filter(c => c.isLink).map(c => c.linkedTaskId)]}
               onSelect={taskId => { onAddLinkedTask(node.id, taskId); setPickingLink(false); }}
               onClose={() => setPickingLink(false)}
@@ -3221,6 +3362,7 @@
           {pickingGoalLink && (
             <GoalPickerModal
               goals={allGoals || []}
+              parentId={node.id}
               excludeId={node.id}
               excludeLinkedIds={(node.children||[]).filter(c => c.isSubGoal && c.isLink).map(c => c.linkedTaskId)}
               onSelect={goalId => { onAddLinkedSubGoal(node.id, goalId); setPickingGoalLink(false); }}
@@ -3391,10 +3533,14 @@
                       <button onClick={() => onUnlinkTask(child.id)} className="hover:text-red-400 not-italic">×</button>
                     </div>
                   );
-                  return <GoalNode key={child.id} node={original} depth={depth + 1} handlers={handlers}
+                  if (path.includes(original.id)) return (
+                    <LinkLoopRow key={child.id} linkId={child.id} title={original.title} onUnlink={onUnlinkTask}
+                      style={{ paddingLeft: indent + 18 }} />
+                  );
+                  return <GoalNode key={child.id} node={original} depth={depth + 1} handlers={handlers} ancestry={path}
                     linkedRefId={child.id} milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} insideActiveMilestone={nextInsideActiveMilestone} />;
                 }
-                return <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers}
+                return <GoalNode key={child.id} node={child} depth={depth + 1} handlers={handlers} ancestry={path}
                   milestoneOwner={currentMilestoneOwner} insideMilestone={blockedMilestoneBranch} insideActiveMilestone={nextInsideActiveMilestone} />;
               })}
             </div>
@@ -3403,6 +3549,7 @@
         {pickingLink && (
           <TaskPickerModal
             goals={allGoals || []}
+            parentId={node.id}
             excludeIds={[node.id, ...(node.children || []).filter(c => c.isLink).map(c => c.linkedTaskId)]}
             onSelect={taskId => { onAddLinkedTask(node.id, taskId); setPickingLink(false); }}
             onClose={() => setPickingLink(false)}
@@ -3568,16 +3715,18 @@
         : (node.mmTargets || {});
 
       // Collect unique leaves — resolve links to originals, deduplicate by canonical ID
+      // with getLeaves' per-path cycle guard
       function collectUniqueLeaves() {
-        function walk(n) {
+        function walk(n, path) {
+          if (!n || path.includes(n)) return [];
           const resolved = resolveLinkedTask(n, goals);
           if (!resolved) return [];
-          if (resolved !== n) return walk(resolved);
+          if (resolved !== n) return walk(resolved, [...path, n]);
           if (isMilestoneNode(n) && (n.children || []).length === 0) return [];
           if ((n.children || []).length === 0) return [n];
-          return (n.children || []).flatMap(c => walk(c));
+          return (n.children || []).flatMap(c => walk(c, [...path, n]));
         }
-        const all = walk(node);
+        const all = walk(node, []);
         const seen = new Set();
         return all.filter(leaf => {
           if (seen.has(leaf.id)) return false;
@@ -3864,10 +4013,25 @@
         [goals, mms, sirDoneMap, todayStr]
       );
 
-      const groups = useMemo(() => (goals || []).map((goal, idx) => {
-        const owners = collectMilestoneOwners(goal, goals || []);
-        return { goal, color: PALETTE[idx % PALETTE.length], owners };
-      }).filter(g => g.owners.length > 0), [goals]);
+      // A sub-goal linked under a second goal is reached from both, and is
+      // LISTED under each: a link shows the same sub-goal in two places, so its
+      // milestones belong in both (the user's choice). The first group to list
+      // an owner — goal order, as TrackMilestone.report counts it — holds it;
+      // a later group's copy is marked `linkedFrom` that goal. Everything that
+      // must count or draw a milestone ONCE — the totals, the calendar, the
+      // item map — reads first occurrences only, which is what used to double.
+      const groups = useMemo(() => {
+        const firstGoal = new Map();
+        return (goals || []).map((goal, idx) => {
+          const owners = collectMilestoneOwners(goal, goals || []);
+          const linkedFrom = {};
+          owners.forEach(o => {
+            if (firstGoal.has(o.id)) linkedFrom[o.id] = firstGoal.get(o.id);
+            else firstGoal.set(o.id, goal);
+          });
+          return { goal, color: PALETTE[idx % PALETTE.length], owners, linkedFrom };
+        }).filter(g => g.owners.length > 0);
+      }, [goals]);
 
       const milestoneMonths = useMemo(() => {
         const months = [];
@@ -3877,8 +4041,9 @@
         return months;
       }, []);
 
+      // first occurrences only — a linked copy's row reads this same item
       const milestoneItems = useMemo(() => groups.flatMap((group, groupIdx) =>
-        group.owners.flatMap((owner, ownerIdx) =>
+        group.owners.flatMap((owner, ownerIdx) => group.linkedFrom[owner.id] ? [] :
           (owner.milestones || []).map((m, idx) => {
             const key = `${owner.id}|${m.id}`;
             // The report lists each id once per owner; a second definition with
@@ -3919,9 +4084,9 @@
       const selectedKey = selectedMilestone ? `${selectedMilestone.ownerId}|${selectedMilestone.milestoneId}` : null;
       const selectedItem = selectedKey ? milestoneItemMap[selectedKey] : null;
 
-      const totalOwners = groups.reduce((sum, g) => sum + g.owners.length, 0);
-      const totalMilestones = groups.reduce((sum, g) =>
-        sum + g.owners.reduce((s, owner) => s + (owner.milestones || []).length, 0), 0);
+      const firstOwners = groups.flatMap(g => g.owners.filter(owner => !g.linkedFrom[owner.id]));
+      const totalOwners = firstOwners.length;
+      const totalMilestones = firstOwners.reduce((s, owner) => s + (owner.milestones || []).length, 0);
 
       useEffect(() => {
         if (selectedKey && !milestoneItemMap[selectedKey]) {
@@ -3948,8 +4113,17 @@
         return () => cancelAnimationFrame(id);
       }, []);
 
-      function chooseMilestone(ownerId, milestoneId) {
-        setSelectedMilestone({ ownerId, milestoneId });
+      // `goalId` says WHICH listing of a linked owner was chosen, so one click
+      // selects one row. Without it — the Schedule's ⚑, a calendar chip — the
+      // first listing is selected.
+      function chooseMilestone(ownerId, milestoneId, goalId) {
+        setSelectedMilestone(goalId ? { ownerId, milestoneId, goalId } : { ownerId, milestoneId });
+      }
+      function isSelectedRow(group, owner, key) {
+        if (key !== selectedKey) return false;
+        return selectedMilestone.goalId
+          ? selectedMilestone.goalId === group.goal.id
+          : !group.linkedFrom[owner.id];
       }
 
       // `today` is read here, in the handler, so the updater stays a pure
@@ -3968,8 +4142,8 @@
         slipGestureRef.current = null;
       }
 
-      function handleDateInput(ownerId, milestone, field, value) {
-        chooseMilestone(ownerId, milestone.id);
+      function handleDateInput(ownerId, milestone, field, value, goalId) {
+        chooseMilestone(ownerId, milestone.id, goalId);
         let startDate = field === 'start' ? value || null : milestone.startDate || null;
         let endDate = field === 'end' ? value || null : milestone.endDate || null;
         if (field === 'start' && value && endDate && value > endDate) endDate = value;
@@ -3979,12 +4153,12 @@
         setMilestonePeriod(ownerId, milestone.id, startDate, endDate, baseline);
       }
 
-      function clearMilestonePeriod(ownerId, milestoneId) {
+      function clearMilestonePeriod(ownerId, milestoneId, goalId) {
         // a late milestone's confirm says that clearing is recorded as a slip;
         // for any other it is byte-identical to what it always was
         const notice = TrackMilestone.slipNotice(report[`${ownerId}|${milestoneId}`]);
         if (!window.confirm('Clear this milestone’s start and end dates?' + (notice ? '\n\n' + notice : ''))) return;
-        chooseMilestone(ownerId, milestoneId);
+        chooseMilestone(ownerId, milestoneId, goalId);
         setMilestonePeriod(ownerId, milestoneId, null, null, null);
       }
 
@@ -4005,7 +4179,11 @@
         return milestoneItems.filter(item => coversDay(item, dateStr));
       }
 
-      function renderMilestoneTask(task, depth = 0, keyPrefix = '', isActive = false) {
+      // `path` is the ids of the tasks drawn above this one on its branch; a
+      // link back to one of them is drawn once, as GoalNode's LinkLoopRow,
+      // rather than followed round again. There is no unlink here — this tab
+      // does not edit the tree — so the row only says what it is.
+      function renderMilestoneTask(task, depth = 0, keyPrefix = '', isActive = false, path = []) {
         if (task.isLink) {
           const original = resolveLinkedTask(task, goals);
           if (!original) {
@@ -4017,7 +4195,11 @@
               </div>
             );
           }
-          return renderMilestoneTask(original, depth, `${keyPrefix}-${task.id}`, isActive);
+          if (path.includes(original.id)) {
+            return <LinkLoopRow key={`${keyPrefix}-${task.id}`} linkId={task.id} title={original.title}
+              style={{ paddingLeft: depth * 16 }} className="text-[11px]" />;
+          }
+          return renderMilestoneTask(original, depth, `${keyPrefix}-${task.id}`, isActive, path);
         }
 
         const children = (task.children || []).filter(c => !isMilestoneNode(c));
@@ -4049,7 +4231,7 @@
                 </span>
               )}
             </div>
-            {children.map(child => renderMilestoneTask(child, depth + 1, `${keyPrefix}-${task.id}`, isActive))}
+            {children.map(child => renderMilestoneTask(child, depth + 1, `${keyPrefix}-${task.id}`, isActive, [...path, task.id]))}
           </React.Fragment>
         );
       }
@@ -4154,7 +4336,7 @@
               <div className="text-gray-700 tracking-widest text-xs">
                 MILESTONES
               </div>
-              <div className="text-[10px] text-gray-600 font-mono">
+              <div data-ms-totals className="text-[10px] text-gray-600 font-mono">
                 {totalMilestones} milestone{totalMilestones !== 1 ? 's' : ''} · {totalOwners} leaf subgoal{totalOwners !== 1 ? 's' : ''}
               </div>
             </div>
@@ -4177,10 +4359,21 @@
                       <span className="ml-auto text-[10px] text-gray-600 font-mono">{group.owners.length} leaf</span>
                     </div>
                     <div className="flex flex-col divide-y divide-gray-800/70">
-                      {group.owners.map(owner => (
+                      {group.owners.map(owner => {
+                        const linkedFrom = group.linkedFrom[owner.id];
+                        return (
                         <div key={owner.id} className="px-4 py-3">
                           <div className="flex items-center justify-between gap-2 mb-2">
-                            <span className="text-xs font-semibold text-gray-300 truncate">{owner.title}</span>
+                            <span className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-semibold text-gray-300 truncate">{owner.title}</span>
+                              {linkedFrom && (
+                                <span data-ms-linked-from={linkedFrom.id}
+                                  title={`The same sub-goal as under ${linkedFrom.title || 'Untitled'}: a change here changes it there too.`}
+                                  className="text-[10px] text-gray-600 truncate flex-shrink-0">
+                                  ↗ linked from {linkedFrom.title || 'Untitled'}
+                                </span>
+                              )}
+                            </span>
                             <span className="text-[10px] text-gray-600 font-mono">{(owner.milestones || []).length}</span>
                           </div>
                           {(owner.milestones || []).length === 0 ? (
@@ -4189,7 +4382,7 @@
                             <div className="flex flex-col gap-1.5">
                               {(owner.milestones || []).map(m => {
                                 const item = milestoneItemMap[`${owner.id}|${m.id}`];
-                                const isSelected = item?.key === selectedKey;
+                                const isSelected = !!item && isSelectedRow(group, owner, item.key);
                                 const isActive = !!(m.startDate && m.endDate && todayStr >= m.startDate && todayStr <= m.endDate);
                                 const dateLabel = m.startDate && m.endDate
                                   ? m.startDate === m.endDate ? m.startDate : `${m.startDate} to ${m.endDate}`
@@ -4205,9 +4398,10 @@
                                   <div key={m.id}
                                     ref={isSelected ? selectedRowRef : null}
                                     data-ms-row={`${owner.id}|${m.id}`}
+                                    data-ms-row-linked-from={linkedFrom ? linkedFrom.id : undefined}
                                     data-ms-state={status ? status.state : undefined}
                                     aria-current={isSelected ? 'true' : undefined}
-                                    onClick={() => chooseMilestone(owner.id, m.id)}
+                                    onClick={() => chooseMilestone(owner.id, m.id, group.goal.id)}
                                     className={`rounded border cursor-pointer transition-colors ${
                                       isSelected
                                         ? 'border-cyan-500/80 bg-cyan-950/20'
@@ -4263,19 +4457,19 @@
                                         <MilestoneDateInput field="start" value={m.startDate}
                                           onFocus={() => beginDateGesture(`${owner.id}|${m.id}`)}
                                           onBlur={endDateGesture}
-                                          onCommit={v => handleDateInput(owner.id, m, 'start', v)} />
+                                          onCommit={v => handleDateInput(owner.id, m, 'start', v, group.goal.id)} />
                                       </label>
                                       <label className="flex items-center gap-1 text-[10px] text-gray-600">
                                         <span>end</span>
                                         <MilestoneDateInput field="end" value={m.endDate}
                                           onFocus={() => beginDateGesture(`${owner.id}|${m.id}`)}
                                           onBlur={endDateGesture}
-                                          onCommit={v => handleDateInput(owner.id, m, 'end', v)} />
+                                          onCommit={v => handleDateInput(owner.id, m, 'end', v, group.goal.id)} />
                                       </label>
                                       {(m.startDate || m.endDate) && (
                                         <button
                                           data-ms-clear
-                                          onClick={e => { e.stopPropagation(); clearMilestonePeriod(owner.id, m.id); }}
+                                          onClick={e => { e.stopPropagation(); clearMilestonePeriod(owner.id, m.id, group.goal.id); }}
                                           className="text-[10px] text-gray-600 hover:text-red-400 transition-colors">
                                           clear
                                         </button>
@@ -4296,7 +4490,8 @@
                             </div>
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
@@ -4694,7 +4889,7 @@
       function renderScheduledDates(action) {
         const entries = saEntries.filter(e => e.actionId === action.id).sort((a, b) => a.date.localeCompare(b.date));
         if (entries.length === 0) return (
-          <span className="text-[10px] text-gray-700 italic">no days yet — add from schedule</span>
+          <span className="text-[10px] text-gray-700 italic">no days yet — add with ■ Core Routine in the Schedule</span>
         );
         return (
           <div className="flex flex-wrap gap-1">
@@ -4719,7 +4914,7 @@
             <div className="text-center py-16 text-gray-700">
               <div className="text-3xl mb-3">◈</div>
               <div className="text-sm">No supporting actions yet.</div>
-              <div className="text-xs mt-1 text-gray-600">Define an action, add sub-actions, then add to any day from the schedule.</div>
+              <div className="text-xs mt-1 text-gray-600">Define an action, add sub-actions, then put them on any day with ■ Core Routine in the Schedule.</div>
             </div>
           )}
 
@@ -5110,11 +5305,22 @@
 
     // ── MGPanel ───────────────────────────────────────────────────────────────
 
-    function MGPanel({ mms, mgChanges, mgSchedule, setMgSchedule, kolbs }) {
+    function MGPanel({ mms, mgChanges, mgSchedule, setMgSchedule, kolbs, goals, sirDoneMap }) {
       const t2mms = (mms || []).filter(m => String(m.type) === '2');
       const today = toDateStr(new Date());
       const [selDate, setSelDate] = useState(today);
       const isPast = selDate < today;
+
+      // An MG whose mind map is still below the level the chosen date's
+      // milestone asks for is highlighted and listed first — the same pins the
+      // Schedule's ● Learn panel shows, from the same one rule
+      // (TrackMilestone.unreachedOn: the milestone covering the date, or one
+      // already overdue, from today on; a past date highlights nothing).
+      const below = useMemo(() => {
+        const rep = TrackMilestone.report(goals || [], mms || [], sirDoneMap || {}, today);
+        return TrackMilestone.unreachedOn(rep, mms || [], selDate, today).filter(r => r.procedural);
+      }, [goals, mms, sirDoneMap, selDate, today]);
+      const belowAt = new Map(below.map((r, i) => [r.mmId, { r, i }]));
 
       const latestChange = Object.fromEntries(
         t2mms.map(mm => {
@@ -5129,6 +5335,10 @@
       const isCarried = !Object.prototype.hasOwnProperty.call(mgSchedule, selDate) && activeMGs.length > 0;
 
       const sortedMMs = [...t2mms].sort((a, b) => {
+        // below its milestone's level first, in unreachedOn's order
+        const aBelow = belowAt.has(a.id) ? belowAt.get(a.id).i : Infinity;
+        const bBelow = belowAt.has(b.id) ? belowAt.get(b.id).i : Infinity;
+        if (aBelow !== bBelow) return aBelow < bBelow ? -1 : 1;
         const aActive = activeMGs.includes(a.id) ? 0 : 1;
         const bActive = activeMGs.includes(b.id) ? 0 : 1;
         if (aActive !== bActive) return aActive - bActive;
@@ -5157,6 +5367,7 @@
             <span className="text-gray-600 text-xs">SCHEDULE FOR</span>
             <input
               type="date"
+              data-mg-date
               value={selDate}
               onChange={e => setSelDate(e.target.value)}
               className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-emerald-600"
@@ -5172,8 +5383,14 @@
                 : (mm.currentMG || latestChange[mm.id]?.newMG || '');
               const active = activeMGs.includes(mm.id);
               const sessionCount = (kolbs||[]).filter(k => k.mmId === mm.id).length;
+              // below the level its milestone asks for: amber, red when overdue
+              const below = belowAt.has(mm.id) ? belowAt.get(mm.id).r : null;
+              const tone = below ? (below.late ? ACCENT.danger : ACCENT.pending) : null;
+              const msName = below ? (below.st.title || below.st.ownerTitle || 'its milestone') : '';
               return (
-                <div key={mm.id} className={`border rounded-lg p-4 transition-colors ${active ? 'border-emerald-700 bg-emerald-950/30' : 'border-gray-800 bg-gray-900/50'}`}>
+                <div key={mm.id} data-mg-card={mm.id} data-mg-below={below ? below.st.key : undefined}
+                  className={`border rounded-lg p-4 transition-colors ${active ? 'border-emerald-700 bg-emerald-950/30' : 'border-gray-800 bg-gray-900/50'}`}
+                  style={tone ? { borderColor: tone, boxShadow: `inset 3px 0 0 ${tone}` } : undefined}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
@@ -5184,6 +5401,11 @@
                         ? <div className="text-sm text-emerald-200 leading-snug">{mgText}</div>
                         : <div className="text-xs text-gray-600 italic">No MG yet</div>
                       }
+                      {below && (
+                        <div className="text-[10px] mt-1" style={{ color: tone }}>
+                          {below.late ? `${msName} · OVERDUE` : `Below ${msName}'s level`} · Lv {mm.rating || 0} → {below.waypoint.level}
+                        </div>
+                      )}
                       {(() => {
                         const relevantChange = isPast
                           ? (mgChanges || []).filter(c => c.mmId === mm.id && c.date <= selDate).sort((a,b) => b.date.localeCompare(a.date))[0]
@@ -5273,25 +5495,36 @@
       if (linkedDay) linkedDay.setHours(0, 0, 0, 0);
 
       const [anchor, setAnchor]   = useState(() => new Date(linkedDay || today));
+      // The day header's four add panels, one open at a time — see
+      // openAddPanel. ▲ Chosen is the task picker (`pickerDay`), ● Learn holds
+      // every mind map and every MG, ■ Core Routine every supporting action,
+      // and ★ Forced is the day-note / deadline browser (`dlnPickerDay`).
       const [pickerDay, setPickerDay] = useState(null);
-      const [mmPickerDay, setMmPickerDay] = useState(null);
-      const [mgPickerDay, setMgPickerDay] = useState(null);
+      const [learnPickerDay, setLearnPickerDay] = useState(null);
+      const [learnTab, setLearnTab] = useState('mm');      // 'mm' | 'mg'
+      const [corePickerDay, setCorePickerDay] = useState(null);
+      // Directories the user folded in ■ Core Routine. Everything starts open:
+      // the panel is "all of the actions", so none is hidden until asked.
+      const [coreCollapsed, setCoreCollapsed] = useState(() => new Set());
+      const [coreCreateOpen, setCoreCreateOpen] = useState(false);
+      const [coreDraft, setCoreDraft] = useState({ title: '', parentId: '', time: '' });
       const [search, setSearch]   = useState('');
       const [pickerView, setPickerView] = useState('tree');
-      // The picker's create bar. Every other path out of this modal —
+      // ▲ Chosen's create bar. Every other path out of the add panels —
       // assignToDate, assignSAToDate, assignDirectoryToDate — only ever DATES a
       // record that already exists, which is why a slot with nothing schedulable
-      // renders `nothing to add` and leaves the day a dead end. This is the one
-      // path that brings a record into being from a calendar day, and it creates
-      // and schedules in a single write so a half-made task can never be left
-      // behind. `parentId` is required for a task or a routine: a top-level node
-      // in `goals` is a GOAL, not a task, so there is nowhere for an unparented
-      // one to go and we refuse rather than inventing a goal to hold it.
+      // renders `nothing to add` and leaves the day a dead end. This bar and ■
+      // Core Routine's (`coreDraft`, for an action) are the two paths that bring
+      // a record into being from a calendar day, and each creates and schedules
+      // in a single write so a half-made task can never be left behind.
+      // `parentId` is required for a task or a routine: a top-level node in
+      // `goals` is a GOAL, not a task, so there is nowhere for an unparented one
+      // to go and we refuse rather than inventing a goal to hold it.
       const [createOpen,  setCreateOpen]  = useState(false);
       const [createDraft, setCreateDraft] = useState({ title: '', kind: 'task', parentId: '', time: '' });
-      // The day-note / deadline browser behind the fourth add button. It lists
-      // every note and deadline in the slot, not only this day's, so the day it
-      // was opened on is only used to decide which group starts expanded.
+      // ★ Forced: the day-note / deadline browser. It lists every note and
+      // deadline dated on or after the day it was opened on, so that day is
+      // only used for the cutoff, the tint and the first scroll.
       const [dlnPickerDay, setDlnPickerDay] = useState(null);
       const [dlnTab, setDlnTab] = useState('all');        // 'all' | 'notes' | 'deadlines'
       const [dlnDissect, setDlnDissect] = useState(null); // null | 'dayNote:<id>' | 'deadline:<id>'
@@ -5860,12 +6093,57 @@
         setCreateDraft({ title: '', kind: 'task', parentId: '', time: '' });
       }, [pickerDay]);
 
+      // ■ Core Routine's bar follows the same rule as ▲ Chosen's: closed and
+      // empty on every opening.
+      useEffect(() => {
+        setCoreCreateOpen(false);
+        setCoreDraft({ title: '', parentId: '', time: '' });
+      }, [corePickerDay]);
+
+      /* The ONE opener behind the four day-header buttons. Pressing a button
+         toggles its own panel and closes the other three, so two add panels are
+         never stacked — each inline handler used to name the others itself, and
+         `+` never closed `☰`. `search` is shared by all four and starts empty;
+         each panel's own resets run only when it opens. */
+      function openAddPanel(kind, ds) {
+        const current = { forced: dlnPickerDay, learn: learnPickerDay, chosen: pickerDay, core: corePickerDay }[kind];
+        const next = current === ds ? null : ds;
+        setDlnPickerDay(kind === 'forced' ? next : null);
+        setLearnPickerDay(kind === 'learn' ? next : null);
+        setPickerDay(kind === 'chosen' ? next : null);
+        setCorePickerDay(kind === 'core' ? next : null);
+        setSearch('');
+        if (kind === 'forced') {
+          setDlnDissect(null); setDlnPartDraft({ title: '', date: '', time: '' });
+          if (next) { setDlnTab('all'); dlnScrollRef.current = null; }
+        }
+        if (kind === 'chosen') setPickerView('tree');
+        if (kind === 'learn') setLearnTab('mm');
+      }
+
+      // The slim header every add panel opens with: the same glyph as the
+      // button that opened it, its name, and the day it adds to. T12:00:00
+      // keeps the parse on the local calendar day.
+      function addPanelHeader(glyph, name, sub, ds, onClose) {
+        const day = new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        return (
+          <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex-shrink-0 flex items-center justify-between gap-2">
+            <span className="truncate">{glyph} {name} · {sub}</span>
+            <span className="flex items-center gap-2 flex-shrink-0">
+              <span className="tracking-normal text-gray-500">{day}</span>
+              <button type="button" aria-label="Close" onClick={onClose}
+                className="text-gray-500 hover:text-white text-base leading-none px-1">×</button>
+            </span>
+          </div>
+        );
+      }
+
       const allTasks   = flattenAll(goals).filter(t => !t.isLink);
       const inProgress = allTasks.filter(t => !isMilestoneNode(t) && getLeaves(t, goals).length > 0 && !isComplete(t, goals));
       const filtered   = search.trim()
         ? inProgress.filter(t => (t.title || '').toLowerCase().includes(search.toLowerCase()))
         : inProgress;
-      const activePickerDs = pickerDay || mmPickerDay;
+      const activePickerDs = pickerDay || learnPickerDay;
       // The unfinished, schedulable tasks of milestone `m` on `owner` — the ONE
       // collector the late and the active picker lists both use.
       function milestoneOpenTasks(owner, m) {
@@ -6238,10 +6516,12 @@
           time: action.time || '09:00', duration: action.duration || 60, done: false,
         }]);
         setOpenComments(prev => new Set(prev).add(newEntryId));
-        setPickerDay(null);
+        setCorePickerDay(null);
         setSearch('');
       }
 
+      // `+ all` on a ■ Core Routine directory: one entry per sub-action, each at
+      // its own time — the whole routine in one click.
       function assignDirectoryToDate(parentAction, dateStr) {
         const children = saActions.filter(a => a.parentId === parentAction.id);
         setSaEntries(prev => {
@@ -6254,7 +6534,7 @@
           });
           return next;
         });
-        setPickerDay(null);
+        setCorePickerDay(null);
         setSearch('');
       }
 
@@ -6293,38 +6573,22 @@
       // `dateStr` is the day the picker was opened from. It is already a local
       // calendar day string, so nothing here constructs a Date and the UTC-day
       // hazard is not in play.
+      //
+      // ▲ Chosen creates a task or a routine only. An action is ■ Core
+      // Routine's, through createActionAndSchedule below.
       function createAndSchedule(dateStr) {
         const draft = createDraft;
         const title = (draft.title || '').trim();
-        const parentOpts = draft.kind === 'action' ? [] : taskParentOptions(goals, goals);
-        if (createDraftError(draft, parentOpts)) return;
+        if (draft.kind !== 'task' && draft.kind !== 'routine') return;
+        if (createDraftError(draft, taskParentOptions(goals, goals))) return;
         const time = draft.time || '09:00';
-
-        if (draft.kind === 'action') {
-          // Mirrors `assignSAToDate`: an action is only ever visible on the
-          // calendar through an entry, so both writes belong to one click.
-          // Neither half alone is a usable record.
-          const action = {
-            id: uid(), title, emoji: '◆', color: SA_COLORS[0], description: '',
-            parentId: draft.parentId || null, createdAt: Date.now(),
-            ...(draft.parentId ? { time, duration: 60 } : {}),
-          };
-          const entryId = uid();
-          setSaActions(prev => [...prev, action]);
-          setSaEntries(prev => [...prev, {
-            id: entryId, actionId: action.id, date: dateStr,
-            time, duration: 60, done: false,
-          }]);
-          setOpenComments(prev => new Set(prev).add(entryId));
-        } else {
-          const child = {
-            id: uid(), title, children: [], completed: false,
-            createdAt: Date.now(), scheduledDate: null, taskType: draft.kind,
-          };
-          setGoals(prev => updateSchedule(
-            addChildAndTransferNotes(prev, draft.parentId, child), child.id, dateStr, time));
-          setOpenComments(prev => new Set(prev).add(child.id));
-        }
+        const child = {
+          id: uid(), title, children: [], completed: false,
+          createdAt: Date.now(), scheduledDate: null, taskType: draft.kind,
+        };
+        setGoals(prev => updateSchedule(
+          addChildAndTransferNotes(prev, draft.parentId, child), child.id, dateStr, time));
+        setOpenComments(prev => new Set(prev).add(child.id));
 
         setCreateOpen(false);
         setCreateDraft({ title: '', kind: 'task', parentId: '', time: '' });
@@ -6332,9 +6596,38 @@
         setSearch('');
       }
 
+      // ■ Core Routine's create bar. Mirrors `assignSAToDate`: an action is
+      // only ever visible on the calendar through an entry, so both writes
+      // belong to one click — neither half alone is a usable record. Top level
+      // is a real home for an action; a parent, when chosen, makes it a
+      // sub-action of that root action.
+      function createActionAndSchedule(dateStr) {
+        const draft = { ...coreDraft, kind: 'action' };
+        if (createDraftError(draft, [])) return;
+        const title = draft.title.trim();
+        const time = draft.time || '09:00';
+        const action = {
+          id: uid(), title, emoji: '◆', color: SA_COLORS[0], description: '',
+          parentId: draft.parentId || null, createdAt: Date.now(),
+          ...(draft.parentId ? { time, duration: 60 } : {}),
+        };
+        const entryId = uid();
+        setSaActions(prev => [...prev, action]);
+        setSaEntries(prev => [...prev, {
+          id: entryId, actionId: action.id, date: dateStr,
+          time, duration: 60, done: false,
+        }]);
+        setOpenComments(prev => new Set(prev).add(entryId));
+
+        setCoreCreateOpen(false);
+        setCoreDraft({ title: '', parentId: '', time: '' });
+        setCorePickerDay(null);
+        setSearch('');
+      }
+
       function assignMMToDate(mm, dateStr) {
         setMmEntries(prev => [...prev, { id: uid(), mmId: mm.id, date: dateStr, time: '09:00', duration: 60, done: false }]);
-        setPickerDay(null);
+        setLearnPickerDay(null);
         setSearch('');
       }
 
@@ -7126,35 +7419,41 @@
                         unreachable rather than merely paid for: a long note
                         title stretches the strip beside the DATE now, not
                         beside the buttons, and there is no width at which they
-                        compete. `grid-cols-2` is what puts MG add and the
-                        day-notes browser on a second row under task add and MM
-                        add; `w-max mx-auto` keeps the block its own size and
-                        centred rather than stretching the buttons. */}
+                        compete. `w-max mx-auto` keeps the block its own size
+                        and centred rather than stretching the buttons.
+
+                        The four are the four KINDS of work a day holds, in the
+                        user's order: ★ Forced (day notes and deadlines) and
+                        ● Learn (mind maps and MGs) on the first row, ▲ Chosen
+                        (the to-do) and ■ Core Routine (supporting actions) on
+                        the second. All four render on EVERY day — Learn too,
+                        though the `⊕` it absorbed used to vanish from a past
+                        day; a past day's Learn simply has no MG tab. */}
                     <div className="w-max mx-auto grid grid-cols-2 gap-1.5 px-1 pb-1">
                       <button
-                        data-day-add-task={ds}
-                        onClick={() => { setPickerDay(pickerDay === ds ? null : ds); setMmPickerDay(null); setMgPickerDay(null); setPickerView('tree'); }}
-                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">+</button>
-                      <button
-                        data-day-add-mm={ds}
-                        onClick={() => { setMmPickerDay(mmPickerDay === ds ? null : ds); setPickerDay(null); setMgPickerDay(null); setSearch(''); }}
-                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">◎</button>
-                      {!isPast && <button
-                        onClick={() => { setMgPickerDay(mgPickerDay === ds ? null : ds); setPickerDay(null); setMmPickerDay(null); setSearch(''); }}
-                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">⊕</button>}
-                      {/* Day notes and deadlines: browse every one of them,
-                          dissect them, and put them on the schedule. */}
-                      <button
-                        onClick={() => {
-                          const opening = dlnPickerDay !== ds;
-                          setDlnPickerDay(opening ? ds : null);
-                          setPickerDay(null); setMmPickerDay(null); setMgPickerDay(null); setSearch('');
-                          setDlnDissect(null); setDlnPartDraft({ title: '', date: '', time: '' });
-                          if (opening) { setDlnTab('all'); dlnScrollRef.current = null; }
-                        }}
-                        title="Day notes & deadlines"
                         data-dln-open={ds}
-                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-fuchsia-400 transition-colors rounded">☰</button>
+                        onClick={() => openAddPanel('forced', ds)}
+                        title="Forced — day notes & deadlines"
+                        aria-label="Forced — day notes & deadlines"
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-fuchsia-400 transition-colors rounded">★</button>
+                      <button
+                        data-day-add-learn={ds}
+                        onClick={() => openAddPanel('learn', ds)}
+                        title="Learn — mind maps & MGs"
+                        aria-label="Learn — mind maps & MGs"
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-emerald-400 transition-colors rounded">●</button>
+                      <button
+                        data-day-add-task={ds}
+                        onClick={() => openAddPanel('chosen', ds)}
+                        title="Chosen — to do"
+                        aria-label="Chosen — to do"
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-indigo-400 transition-colors rounded">▲</button>
+                      <button
+                        data-day-add-core={ds}
+                        onClick={() => openAddPanel('core', ds)}
+                        title="Core Routine — actions"
+                        aria-label="Core Routine — actions"
+                        className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-violet-400 transition-colors rounded">■</button>
                     </div>
 
                     {/* MG list — full width */}
@@ -8516,8 +8815,8 @@
           {/* Day-view overlays — rendered here, outside the timeline scroller, so they
                are not clipped to it and their z-50 is not trapped under the sticky header */}
 
-          {/* Day notes & deadlines browser — the fourth add button. ONE FLAT
-              LIST of every note and deadline in the slot, in chronological
+          {/* ★ FORCED — the day notes & deadlines browser (it was `☰`). ONE
+              FLAT LIST of every note and deadline in the slot, in chronological
               order, with each row carrying its own date. The date is a
               read-out, not a control and not a group toggle: an item's own day
               is changed from the item, and nowhere else.
@@ -8568,10 +8867,7 @@
               <>
                 <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
                 <div data-dln-panel className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[560px] max-w-[94vw] max-h-[82vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-                  <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex-shrink-0 flex items-center justify-between">
-                    <span>DAY NOTES &amp; DEADLINES</span>
-                    <button className="text-gray-500 hover:text-white text-base leading-none px-1" onClick={close}>×</button>
-                  </div>
+                  {addPanelHeader('★', 'FORCED', 'DAY NOTES & DEADLINES', openedOn, close)}
                   <div className="p-3 border-b border-gray-800 flex-shrink-0 flex items-center gap-2">
                     <div className="flex gap-1">
                       {[['all', 'All'], ['notes', 'Notes'], ['deadlines', 'Deadlines']].map(([k, lbl]) => (
@@ -8786,44 +9082,146 @@
             );
           })()}
 
-          {/* MG picker modal */}
-          {mgPickerDay && mgPickerDay >= todayStr && (() => {
-            const ds = mgPickerDay;
-            const t2mms = (mms || []).filter(m => String(m.type) === '2');
-            const dayMGs = getMGsForDay(ds, mgSchedule);
-            const visibleMGs = t2mms.filter(mm =>
-              !search.trim() || mm.name.toLowerCase().includes(search.toLowerCase()) ||
-              (mm.currentMG && mm.currentMG.toLowerCase().includes(search.toLowerCase()))
-            );
+          {/* ■ CORE ROUTINE — every supporting action, pulled out of the task
+              picker that used to end in an ACTIONS list. A directory (a root
+              action with sub-actions) still puts its whole routine on the day
+              in one `+ all`, exactly as that list did; each sub-action now has
+              its own `+` as well, so one step can go on a day alone. Nothing
+              here edits or deletes an action — that is the ACTIONS tab's. */}
+          {corePickerDay && (() => {
+            const ds = corePickerDay;
+            const q = search.trim().toLowerCase();
+            const hit = a => !q || String(a.title || '').toLowerCase().includes(q);
+            const roots = saActions.filter(a => !a.parentId);
+            const close = () => { setCorePickerDay(null); setSearch(''); };
+            const createErr = createDraftError({ ...coreDraft, kind: 'action' }, []);
+            // A directory whose own title matches keeps every step; otherwise
+            // only the matching steps, under it, so a step is never shown
+            // without the routine it belongs to.
+            const rows = roots.map(root => {
+              const subs = saActions.filter(a => a.parentId === root.id);
+              const shownSubs = hit(root) ? subs : subs.filter(hit);
+              return (hit(root) || shownSubs.length) ? { root, subs, shownSubs } : null;
+            }).filter(Boolean);
+            const toggleDir = id => setCoreCollapsed(prev => {
+              const n = new Set(prev);
+              if (n.has(id)) n.delete(id); else n.add(id);
+              return n;
+            });
             return (
               <>
-                <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setMgPickerDay(null); setSearch(''); }} />
-                <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-                  <div className="px-3 py-1.5 text-[9px] text-gray-600 tracking-widest border-b border-gray-800 flex-shrink-0">MG — MARGINAL GAINS</div>
+                <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
+                <div data-core-panel className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-w-[94vw] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                  {addPanelHeader('■', 'CORE ROUTINE', 'ACTIONS', ds, close)}
                   <div className="p-3 border-b border-gray-800 flex-shrink-0">
                     <input value={search} onChange={e => setSearch(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Escape') { setMgPickerDay(null); setSearch(''); } }}
-                      placeholder="filter MGs..."
-                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-emerald-600" />
+                      onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                      placeholder="filter actions..."
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-violet-600" />
+                  </div>
+                  {/* Create bar — outside the scroll area, as ▲ Chosen's is, so
+                      a long list can never push it out of reach. */}
+                  <div data-core-create className="border-b border-gray-800 flex-shrink-0">
+                    {!coreCreateOpen ? (
+                      <button data-core-create-open onClick={() => setCoreCreateOpen(true)}
+                        className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:text-violet-400 hover:bg-gray-800/60 transition-colors">
+                        ＋ New action on this day
+                      </button>
+                    ) : (
+                      <div className="p-3 flex flex-col gap-2">
+                        <input autoFocus data-core-create-title value={coreDraft.title}
+                          onChange={e => setCoreDraft(d => ({ ...d, title: e.target.value }))}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !createErr) createActionAndSchedule(ds);
+                            if (e.key === 'Escape') { e.stopPropagation(); setCoreCreateOpen(false); }
+                          }}
+                          placeholder="what do you do..."
+                          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-violet-600" />
+                        <div className="flex gap-2">
+                          <select data-core-create-parent value={coreDraft.parentId}
+                            onChange={e => setCoreDraft(d => ({ ...d, parentId: e.target.value }))}
+                            className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 outline-none focus:border-violet-600">
+                            <option value="">— top level —</option>
+                            {roots.map(a => (
+                              <option key={a.id} value={a.id}>{a.title || 'Untitled'}</option>
+                            ))}
+                          </select>
+                          <input type="time" data-core-create-time value={coreDraft.time}
+                            onChange={e => setCoreDraft(d => ({ ...d, time: e.target.value }))}
+                            title="Start time — 09:00 if left blank"
+                            className="w-[92px] flex-shrink-0 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 outline-none focus:border-violet-600" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button data-core-create-save disabled={!!createErr}
+                            onClick={() => createActionAndSchedule(ds)}
+                            className={`px-3 py-1 rounded text-xs transition-colors ${createErr
+                              ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                              : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}>
+                            Create
+                          </button>
+                          <button onClick={() => setCoreCreateOpen(false)}
+                            className="px-2 py-1 text-xs text-gray-500 hover:text-gray-300 transition-colors">
+                            Cancel
+                          </button>
+                          {createErr && (
+                            <span data-core-create-error className="text-[10px] text-amber-400 flex-1 min-w-0 truncate">
+                              {createErr}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="overflow-y-auto flex-1">
-                    {t2mms.length === 0 && (
-                      <div className="px-3 py-3 text-[10px] text-gray-600">No procedural MGs yet.</div>
+                    {roots.length === 0 && (
+                      <div className="px-3 py-4 text-xs text-gray-600 text-center">no actions yet — use ＋ above, or the ACTIONS tab</div>
                     )}
-                    {visibleMGs.map(mm => {
-                      const active = dayMGs.includes(mm.id);
+                    {roots.length > 0 && rows.length === 0 && (
+                      <div className="px-3 py-4 text-xs text-gray-600 text-center">no actions match</div>
+                    )}
+                    {rows.map(({ root, subs, shownSubs }) => {
+                      const isDir = subs.length > 0;
+                      // a search always shows the steps it found
+                      const open = isDir && (q ? true : !coreCollapsed.has(root.id));
                       return (
-                        <button key={mm.id}
-                          onClick={() => toggleMGDay(ds, mm.id, mgSchedule, setMgSchedule)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-gray-800 flex items-start gap-2 transition-colors">
-                          <span className={`flex-shrink-0 mt-px ${active ? 'text-emerald-400' : 'text-gray-600'}`}>
-                            {active ? '✓' : '○'}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-gray-500 text-[9px] truncate">{mm.name}</div>
-                            {mm.currentMG && <div className="text-emerald-300 text-[10px] leading-snug line-clamp-2">{mm.currentMG}</div>}
+                        <React.Fragment key={root.id}>
+                          <div data-core-action={root.id} className="flex items-center hover:bg-gray-800 transition-colors">
+                            <div onClick={isDir ? () => toggleDir(root.id) : undefined}
+                              className={`flex-1 flex items-center gap-2 pl-3 pr-1 py-1.5 text-xs min-w-0 ${isDir ? 'cursor-pointer' : ''}`}>
+                              {isDir && <span className="text-gray-600 w-3 text-center flex-shrink-0">{open ? '▾' : '▸'}</span>}
+                              <span className="flex-shrink-0 leading-none">{root.emoji}</span>
+                              <span className="flex-1 truncate" style={{ color: root.color }}>{root.title}</span>
+                              {!isDir && <span className="text-gray-600 flex-shrink-0 font-mono text-[10px]">{formatTime12(root.time)}</span>}
+                            </div>
+                            {isDir ? (
+                              <button data-core-add-all={root.id}
+                                onClick={e => { e.stopPropagation(); assignDirectoryToDate(root, ds); }}
+                                title="Put every step of this routine on the day"
+                                className="flex-shrink-0 px-2 h-7 flex items-center text-[10px] text-gray-500 hover:text-violet-400 transition-colors mr-1 whitespace-nowrap">
+                                + all {subs.length}
+                              </button>
+                            ) : (
+                              <button data-core-add={root.id}
+                                onClick={e => { e.stopPropagation(); assignSAToDate(root, ds); }}
+                                title="Put this action on the day"
+                                className="flex-shrink-0 w-7 h-7 flex items-center justify-center text-gray-600 hover:text-violet-400 transition-colors text-base mr-1">+</button>
+                            )}
                           </div>
-                        </button>
+                          {open && shownSubs.map(sub => (
+                            <div key={sub.id} data-core-action={sub.id}
+                              className="flex items-center hover:bg-gray-800 transition-colors">
+                              <div className="flex-1 flex items-center gap-2 pl-9 pr-1 py-1.5 text-xs min-w-0">
+                                <span className="flex-shrink-0 leading-none">{sub.emoji}</span>
+                                <span className="flex-1 truncate" style={{ color: sub.color || root.color }}>{sub.title}</span>
+                                <span className="text-gray-600 flex-shrink-0 font-mono text-[10px]">{formatTime12(sub.time)}</span>
+                              </div>
+                              <button data-core-add={sub.id}
+                                onClick={() => assignSAToDate(sub, ds)}
+                                title="Put this step on the day alone"
+                                className="flex-shrink-0 w-7 h-7 flex items-center justify-center text-gray-600 hover:text-violet-400 transition-colors text-base mr-1">+</button>
+                            </div>
+                          ))}
+                        </React.Fragment>
                       );
                     })}
                   </div>
@@ -8832,26 +9230,27 @@
             );
           })()}
 
-          {/* Task picker modal */}
+          {/* ▲ CHOSEN — the task picker: the to-do the user picked, in the
+              goal tree, its routines and its milestones. Supporting actions
+              are ■ Core Routine's now, so this panel lists none and creates
+              none. */}
           {pickerDay && (() => {
             const ds = pickerDay;
             const { activeTasks, normalTasks } = getPickerTaskGroups(ds);
-            const rootActions = saActions.filter(a => !a.parentId);
             const hasGoalTasks = activeTasks.length > 0 || normalTasks.length > 0;
             const routineTasks = allTasks.filter(t => t.taskType === 'routine' && !isComplete(t, goals) && taskMatchesSearch(t));
             const taskParents = taskParentOptions(goals, goals);
-            const createErr = createDraftError(createDraft, createDraft.kind === 'action' ? [] : taskParents);
-            const createParentOpts = createDraft.kind === 'action'
-              ? rootActions.map(a => ({ id: a.id, title: a.title || 'Untitled', depth: 0, isMilestone: false }))
-              : taskParents;
+            const createErr = createDraftError(createDraft, taskParents);
+            const close = () => { setPickerDay(null); setSearch(''); };
             return (
               <>
-                <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setPickerDay(null); setMmPickerDay(null); setSearch(''); }} />
-                <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
+                <div data-picker-panel className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-w-[94vw] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                  {addPanelHeader('▲', 'CHOSEN', 'TO DO', ds, close)}
                   {/* Search */}
                   <div className="p-3 border-b border-gray-800 flex-shrink-0">
                     <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Escape') { setPickerDay(null); setSearch(''); } }}
+                      onKeyDown={e => { if (e.key === 'Escape') close(); }}
                       placeholder="filter tasks..."
                       className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-indigo-600" />
                   </div>
@@ -8880,7 +9279,8 @@
                       purpose — a long goal tree would otherwise push it out of
                       reach, and the case it exists for most is the slot with
                       nothing to scroll at all. Only under Directory, which is
-                      where goal tasks and the ACTIONS section already live. */}
+                      where goal tasks live. A task or a routine only: an
+                      action is created from ■ Core Routine. */}
                   {pickerView === 'tree' && (
                     <div data-picker-create className="border-b border-gray-800 flex-shrink-0">
                       {!createOpen ? (
@@ -8899,7 +9299,7 @@
                             placeholder="what needs doing..."
                             className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-indigo-600" />
                           <div className="flex gap-1">
-                            {[['task', 'Task'], ['routine', 'Routine'], ['action', 'Action']].map(([k, label]) => (
+                            {[['task', 'Task'], ['routine', 'Routine']].map(([k, label]) => (
                               <button key={k} data-picker-create-kind={k}
                                 onClick={() => setCreateDraft(d => ({ ...d, kind: k, parentId: '' }))}
                                 className={`flex-1 py-1 rounded text-[10px] tracking-wide transition-colors border ${
@@ -8914,8 +9314,8 @@
                             <select data-picker-create-parent value={createDraft.parentId}
                               onChange={e => setCreateDraft(d => ({ ...d, parentId: e.target.value }))}
                               className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 outline-none focus:border-indigo-600">
-                              <option value="">{createDraft.kind === 'action' ? '— top level —' : 'under…'}</option>
-                              {createParentOpts.map(o => (
+                              <option value="">under…</option>
+                              {taskParents.map(o => (
                                 <option key={o.id} value={o.id}>
                                   {'  '.repeat(o.depth) + (o.isMilestone ? '◈ ' : '') + o.title}
                                 </option>
@@ -8969,7 +9369,7 @@
                                   </div>
                                   {lateTasks.length === 0
                                     ? <div className="px-3 py-1.5 text-[10px] text-gray-600 italic">
-                                        {s.tasks.length ? 'no tasks match' : 'no tasks left — what remains is to-learn (◎)'}
+                                        {s.tasks.length ? 'no tasks match' : 'no tasks left — what remains is to-learn (● Learn)'}
                                       </div>
                                     : lateTasks.map(t => (
                                         <div key={t.id} data-picker-late-task={t.id} className="flex items-center hover:bg-gray-800 transition-colors">
@@ -8991,30 +9391,7 @@
                         )}
                         {/* Goals tree */}
                         {(goals || []).map(g => renderPickerTreeNode(g, 0, ds))}
-                        {/* Actions */}
-                        {rootActions.length > 0 && (
-                          <>
-                            <div className="border-t border-gray-800/50 mt-1" />
-                            <div className="px-3 py-1 text-[9px] text-gray-600 tracking-widest border-b border-gray-800/50">ACTIONS</div>
-                            {rootActions.map(action => {
-                              const hasChildren = saActions.some(a => a.parentId === action.id);
-                              const childCount  = saActions.filter(a => a.parentId === action.id).length;
-                              return (
-                                <button key={action.id}
-                                  onClick={() => hasChildren ? assignDirectoryToDate(action, ds) : assignSAToDate(action, ds)}
-                                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors">
-                                  <span className="flex-shrink-0 leading-none">{action.emoji}</span>
-                                  <span className="flex-1 truncate" style={{ color: action.color }}>{action.title}</span>
-                                  {hasChildren
-                                    ? <span className="text-gray-600 flex-shrink-0 text-[10px]">+{childCount} all</span>
-                                    : <span className="text-gray-600 flex-shrink-0 font-mono text-[10px]">{formatTime12(action.time)}</span>
-                                  }
-                                </button>
-                              );
-                            })}
-                          </>
-                        )}
-                        {!hasGoalTasks && rootActions.length === 0 && (goals || []).every(g => renderPickerTreeNode(g, 0, ds) === null) && (
+                        {!hasGoalTasks && (goals || []).every(g => renderPickerTreeNode(g, 0, ds) === null) && (
                           <div className="px-3 py-4 text-xs text-gray-600 text-center">nothing to schedule yet — use ＋ above</div>
                         )}
                       </>
@@ -9082,99 +9459,186 @@
             );
           })()}
 
-          {/* Mind map picker modal */}
-          {mmPickerDay && (() => {
-            const ds = mmPickerDay;
-            const dueMMIds = new Set(
-              _readSessions()
-                .filter(s => s.date === ds && !s.done && !s.skipped)
-                .map(s => s.mmId)
-            );
-            const hasDue = dueMMIds.size > 0;
-            const visibleMMs = (mms || []).filter(m =>
-              !search.trim() || m.name.toLowerCase().includes(search.toLowerCase())
-            );
+          {/* ● LEARN — every mind map and every MG, which used to be two
+              buttons (`◎` and `⊕`). Two different actions live here: a mind
+              map is ADDED as a study block (the panel closes, as `◎` did), an
+              MG is TOGGLED as the day's focus (it stays open, as `⊕` did).
+
+              The pinned strip is what the day still owes, and it sits above
+              the tabs so it is never a click away:
+                - an MG whose Procedural mind map is below the level the day's
+                  milestone asks for (its progress IS its MG level);
+                - a Declarative mind map short of that milestone's waypoint;
+                - the SIR reviews due on the day.
+              The first two come from TrackMilestone.unreachedOn — the
+              milestone whose dates cover the day, or one already overdue,
+              from today on — and nothing here re-spells that rule. Strip and
+              tabs are a PARTITION: a pinned mind map or MG is not listed again
+              below, and the sets are taken BEFORE the filter, so typing never
+              moves a row between the two.
+
+              A past day has no MG tab and no milestone pins, exactly as `⊕`
+              was absent there; it is the old `◎` picker. */}
+          {learnPickerDay && (() => {
+            const ds = learnPickerDay;
+            const isPastDay = ds < todayStr;
+            const q = search.trim().toLowerCase();
+            const nameHit = m => !q || String(m.name || '').toLowerCase().includes(q);
+            const mgHit = m => nameHit(m) || String(m.currentMG || '').toLowerCase().includes(q);
+            const close = () => { setLearnPickerDay(null); setSearch(''); };
             const _mmSortW = { '4':6, '3':7, '2':8, '1':9, finished:11 };
             const _mmW = mm => { const stg = stageOf(mm); if (stg==='sir') { const d=sirDoneMap[mm.id]||0; return d>=5?1:d>=4?2:d>=3?3:d>=2?4:5; } return stg==null?10:(_mmSortW[stg]??10); };
-            // The to-learn a late milestone is still waiting on, pinned first —
-            // for today and later, as the task picker pins leftover tasks. The
-            // groups are a PARTITION: a pinned mind map leaves the two below.
-            const lateMM = new Map();
-            if (ds >= todayStr) lateMilestones.forEach(st => st.learn.open.forEach(id => { if (!lateMM.has(id)) lateMM.set(id, st); }));
-            const lateMMs  = visibleMMs.filter(m => lateMM.has(m.id));
-            const dueMMs   = visibleMMs.filter(m => !lateMM.has(m.id) && dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
-            const otherMMs = visibleMMs.filter(m => !lateMM.has(m.id) && !dueMMIds.has(m.id)).sort((a,b) => _mmW(a) - _mmW(b));
+            const byW = (a, b) => _mmW(a) - _mmW(b);
+            const unreached = TrackMilestone.unreachedOn(lateReport, mms || [], ds, todayStr);
+            const mgPinIds = new Set(unreached.filter(r => r.procedural).map(r => r.mmId));
+            const mmPinIds = new Set(unreached.filter(r => !r.procedural).map(r => r.mmId));
+            // Through liveSessions, as every other surface draws sessions: a
+            // Procedural mind map has no SIR, and its stored sessions are not
+            // due anywhere — this group read storage raw until it was rebuilt.
+            const dueIds = new Set(TrackMilestone.liveSessions(_readSessions(), mms || [])
+              .filter(s => s && s.date === ds && !s.done && !s.skipped)
+              .map(s => s.mmId));
+            const sirPinIds = new Set([...dueIds].filter(id => !mmPinIds.has(id)));
+            const pinMG = unreached.filter(r => r.procedural && mgHit(r.mm));
+            const pinMM = unreached.filter(r => !r.procedural && nameHit(r.mm));
+            const pinSIR = (mms || []).filter(m => sirPinIds.has(m.id) && nameHit(m)).sort(byW);
+            const tabMMs = (mms || []).filter(m => !mmPinIds.has(m.id) && !sirPinIds.has(m.id) && nameHit(m)).sort(byW);
+            const allMGs = (mms || []).filter(m => TrackMilestone.isProcedural(m));
+            const tabMGs = allMGs.filter(m => !mgPinIds.has(m.id) && mgHit(m));
+            const dayMGs = getMGsForDay(ds, mgSchedule);
+            const showMG = !isPastDay;
+            const tab = showMG ? learnTab : 'mm';
+            // "S1 → S3" for a phase, "Lv 3 → 5" for a level; a Procedural
+            // waypoint carries its level alone (targetFor).
+            const gapOf = r => {
+              const parts = [];
+              if (r.waypoint.stage) parts.push(`${sirStageLabel(r.mm) || '—'} → ${stageLabel(r.waypoint.stage) || r.waypoint.stage}`);
+              if (r.waypoint.level) parts.push(`Lv ${r.mm.rating || 0} → ${r.waypoint.level}`);
+              return parts.join(' · ');
+            };
+            const msName = r => r.st.title || r.st.ownerTitle || 'milestone';
+            const pinTitle = r => r.late
+              ? `${msName(r)} · ${TrackMilestone.label(r.st)}`
+              : `${msName(r)}, until ${r.st.endDate}: ${gapOf(r)}`;
+            const mmRow = (mm, extra, cls, dot, nameCls) => {
+              const stg = sirStageLabel(mm);
+              const { title: msTitle, isActive } = findActiveMsForMM(mm.id, ds);
+              return (
+                <button key={mm.id} data-mm-pick={mm.id} {...extra}
+                  onClick={() => assignMMToDate(mm, ds)}
+                  className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? 'bg-cyan-950/50 hover:bg-cyan-900/50' : cls}`}>
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot || ''}`}
+                    style={dot ? undefined : { backgroundColor: isActive ? ACCENT.live : ACCENT.muted }} />
+                  <span className={`flex-1 truncate ${nameCls || (isActive ? 'text-cyan-300' : 'text-gray-500')}`}>{mm.name}</span>
+                  {msTitle && <span className="text-[9px] text-cyan-400 flex-shrink-0 truncate" style={{maxWidth:80}}>{msTitle}</span>}
+                  {stg && <span className={`text-[9px] flex-shrink-0 ${isActive ? 'text-cyan-500' : 'text-gray-600'}`}>{stg}</span>}
+                </button>
+              );
+            };
+            const mgRow = (mm, on, extra, tone, sub) => (
+              <button key={'mg-' + mm.id} {...extra} aria-pressed={on}
+                onClick={() => toggleMGDay(ds, mm.id, mgSchedule, setMgSchedule)}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800 flex items-start gap-2 transition-colors"
+                style={tone ? { boxShadow: `inset 2px 0 0 ${tone}` } : undefined}>
+                <span className={`flex-shrink-0 mt-px ${on ? 'text-emerald-400' : 'text-gray-600'}`}>{on ? '✓' : '○'}</span>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-[11px] leading-snug line-clamp-2 ${mm.currentMG ? (tone ? '' : 'text-emerald-300') : 'text-gray-600 italic'}`}
+                    style={tone && mm.currentMG ? { color: tone } : undefined}>
+                    {mm.currentMG || 'No MG yet'}
+                  </div>
+                  <div className="text-[9px] text-gray-500 truncate">{mm.name}{sub}</div>
+                </div>
+              </button>
+            );
+            const stripCount = pinMG.length + pinMM.length + pinSIR.length;
             return (
               <>
-                <div className="fixed inset-0 z-40 bg-black/50" onClick={() => { setMmPickerDay(null); setSearch(''); }} />
-                <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
+                <div data-learn-panel className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[528px] max-w-[94vw] max-h-[78vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+                  {addPanelHeader('●', 'LEARN', 'MIND MAPS & MGs', ds, close)}
                   <div className="p-3 border-b border-gray-800 flex-shrink-0">
                     <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Escape') { setMmPickerDay(null); setSearch(''); } }}
-                      placeholder="filter mind maps..."
+                      onKeyDown={e => { if (e.key === 'Escape') close(); }}
+                      placeholder={showMG ? 'filter mind maps and MGs...' : 'filter mind maps...'}
                       className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-emerald-600" />
                   </div>
+                  {/* The pinned strip — its own scroll, capped, so however much
+                      a day owes the tabs below stay on the panel. */}
+                  {stripCount > 0 && (
+                    <div data-learn-pin className="flex-shrink-0 max-h-[35vh] overflow-y-auto border-b border-gray-800">
+                      {(pinMG.length > 0 || pinMM.length > 0) && (
+                        <div data-learn-pin-group="milestone" className="px-3 py-1 text-[9px] font-bold tracking-widest border-b border-gray-800/50"
+                          style={{ color: ACCENT.pending }}>MILESTONE NOT REACHED YET</div>
+                      )}
+                      {pinMG.map(r => {
+                        const tone = r.late ? ACCENT.danger : ACCENT.pending;
+                        return (
+                          <div key={'mg-' + r.mmId} title={pinTitle(r)}>
+                            {mgRow(r.mm, dayMGs.includes(r.mmId),
+                              { 'data-learn-pin-mg': r.mmId, 'data-learn-pin-late': r.late ? r.st.key : undefined },
+                              tone,
+                              <> · <span style={{ color: tone }}>{gapOf(r)}</span> · <span style={{ color: r.late ? ACCENT.danger : undefined }} className={r.late ? '' : 'text-cyan-400'}>{msName(r)}</span></>)}
+                          </div>
+                        );
+                      })}
+                      {pinMM.map(r => {
+                        const tone = r.late ? ACCENT.danger : ACCENT.pending;
+                        return (
+                          <button key={'mm-' + r.mmId} data-mm-pick={r.mmId} data-learn-pin-mm={r.mmId}
+                            data-mm-pick-late={r.late ? r.st.key : undefined}
+                            onClick={() => assignMMToDate(r.mm, ds)}
+                            title={pinTitle(r)}
+                            className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors hover:bg-gray-800"
+                            style={{ boxShadow: `inset 2px 0 0 ${tone}` }}>
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: tone }} />
+                            <span className="flex-1 truncate text-gray-200">{r.mm.name}</span>
+                            <span className="text-[9px] flex-shrink-0" style={{ color: tone }}>{gapOf(r)}</span>
+                            <span className={`text-[9px] flex-shrink-0 truncate ${r.late ? '' : 'text-cyan-400'}`}
+                              style={{ maxWidth: 80, color: r.late ? ACCENT.danger : undefined }}>{msName(r)}</span>
+                          </button>
+                        );
+                      })}
+                      {pinSIR.length > 0 && (
+                        <div data-learn-pin-group="sir" className="px-3 py-1 text-[9px] text-emerald-600 tracking-widest border-b border-gray-800/50">SIR DUE</div>
+                      )}
+                      {pinSIR.map(mm => mmRow(mm, { 'data-learn-pin-sir': mm.id }, 'hover:bg-emerald-950/40', 'bg-emerald-500', 'text-emerald-400'))}
+                    </div>
+                  )}
+                  {showMG && (
+                    <div className="flex border-b border-gray-800 flex-shrink-0">
+                      <button data-learn-tab="mm" onClick={() => setLearnTab('mm')}
+                        className={`flex-1 py-2 text-xs font-medium tracking-wide transition-colors ${tab === 'mm' ? 'text-emerald-400 border-b-2 border-emerald-500 bg-emerald-950/30' : 'text-gray-600 hover:text-gray-400'}`}>
+                        Mind maps
+                      </button>
+                      <button data-learn-tab="mg" onClick={() => setLearnTab('mg')}
+                        className={`flex-1 py-2 text-xs font-medium tracking-wide transition-colors ${tab === 'mg' ? 'text-emerald-400 border-b-2 border-emerald-500 bg-emerald-950/30' : 'text-gray-600 hover:text-gray-400'}`}>
+                        Marginal gains
+                      </button>
+                    </div>
+                  )}
                   <div className="overflow-y-auto flex-1">
-                    {lateMMs.length > 0 && (
+                    {tab === 'mm' && (
                       <>
-                        <div data-mm-picker-group="late" className="px-3 py-1 text-[9px] font-bold tracking-widest border-b border-gray-800/50"
-                          style={{ color: ACCENT.danger }}>OVERDUE MILESTONE</div>
-                        {lateMMs.map(mm => {
-                          const st = lateMM.get(mm.id);
-                          const stg = sirStageLabel(mm);
-                          return (
-                            <button key={mm.id} data-mm-pick={mm.id} data-mm-pick-late={st.key}
-                              onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
-                              title={`${st.title} · ${TrackMilestone.label(st)}`}
-                              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors hover:bg-gray-800">
-                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: ACCENT.danger }} />
-                              <span className="flex-1 truncate text-gray-200">{mm.name}</span>
-                              <span className="text-[9px] flex-shrink-0 truncate" style={{ maxWidth: 80, color: ACCENT.danger }}>{st.title}</span>
-                              {stg && <span className="text-[9px] text-gray-600 flex-shrink-0">{stg}</span>}
-                            </button>
-                          );
-                        })}
+                        {tabMMs.map(mm => mmRow(mm, {}, 'hover:bg-gray-800'))}
+                        {tabMMs.length === 0 && (
+                          <div className="px-3 py-3 text-xs text-gray-600 text-center">
+                            {(mms || []).length ? (q ? 'no mind maps match' : 'every mind map is pinned above') : 'no mind maps'}
+                          </div>
+                        )}
                       </>
                     )}
-                    {lateMMs.length > 0 && ((hasDue && dueMMs.length > 0) || otherMMs.length > 0) && (
-                      <div className="border-t border-gray-800/50 my-0.5" />
-                    )}
-                    {hasDue && dueMMs.length > 0 && (
+                    {tab === 'mg' && (
                       <>
-                        <div data-mm-picker-group="due" className="px-3 py-1 text-[9px] text-emerald-600 tracking-widest border-b border-gray-800/50">SIR DUE TODAY</div>
-                        {dueMMs.map(mm => {
-                          const stg = sirStageLabel(mm);
-                          const { title: msTitle, isActive } = findActiveMsForMM(mm.id, ds);
-                          return (
-                            <button key={mm.id} data-mm-pick={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
-                              className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? 'bg-cyan-950/50 hover:bg-cyan-900/50' : 'hover:bg-emerald-950/40'}`}>
-                              <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-500" />
-                              <span className="flex-1 truncate text-emerald-400">{mm.name}</span>
-                              {msTitle && <span className="text-[9px] text-cyan-400 flex-shrink-0 truncate" style={{maxWidth:80}}>{msTitle}</span>}
-                              {stg && <span className="text-[9px] text-emerald-600 flex-shrink-0">{stg}</span>}
-                            </button>
-                          );
-                        })}
+                        {tabMGs.map(mm => mgRow(mm, dayMGs.includes(mm.id), { 'data-mg-pick': mm.id }, null, null))}
+                        {tabMGs.length === 0 && (
+                          <div className="px-3 py-3 text-xs text-gray-600 text-center">
+                            {allMGs.length ? (q ? 'no MGs match' : 'every MG is pinned above') : 'No Procedural mind maps yet — an MG comes from a Kolb.'}
+                          </div>
+                        )}
                       </>
                     )}
-                    {hasDue && dueMMs.length > 0 && otherMMs.length > 0 && (
-                      <div className="border-t border-gray-800/50 my-0.5" />
-                    )}
-                    {otherMMs.map(mm => {
-                      const stg = sirStageLabel(mm);
-                      const { title: msTitle, isActive } = findActiveMsForMM(mm.id, ds);
-                      return (
-                        <button key={mm.id} data-mm-pick={mm.id} onClick={() => { assignMMToDate(mm, ds); setMmPickerDay(null); setSearch(''); }}
-                          className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${isActive ? 'bg-cyan-950/50 hover:bg-cyan-900/50' : 'hover:bg-gray-800'}`}>
-                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: isActive ? ACCENT.live : ACCENT.muted }} />
-                          <span className={`flex-1 truncate ${isActive ? 'text-cyan-300' : 'text-gray-500'}`}>{mm.name}</span>
-                          {msTitle && <span className="text-[9px] text-cyan-400 flex-shrink-0 truncate" style={{maxWidth:80}}>{msTitle}</span>}
-                          {stg && <span className={`text-[9px] flex-shrink-0 ${isActive ? 'text-cyan-500' : 'text-gray-600'}`}>{stg}</span>}
-                        </button>
-                      );
-                    })}
-                    {visibleMMs.length === 0 && (
-                      <div className="px-3 py-3 text-xs text-gray-600 text-center">no mind maps</div>
+                    {!showMG && (
+                      <div className="px-3 py-2 text-[10px] text-gray-600 italic border-t border-gray-800/50">MGs are set from today on — a past day is view-only.</div>
                     )}
                   </div>
                 </div>
@@ -10655,7 +11119,7 @@
           {tab === 'actions' && (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <div className="text-gray-700 tracking-widest mb-6 text-xs">
-                SUPPORTING ACTIONS — define a time slot · add to any day from the schedule
+                SUPPORTING ACTIONS — define a time slot · add to any day with ■ Core Routine in the Schedule
               </div>
               <SupportingActionsPanel
                 saActions={saActions} setSaActions={setSaActions}
@@ -10680,6 +11144,8 @@
                 mgSchedule={mgSchedule}
                 setMgSchedule={setMgSchedule}
                 kolbs={kolbs}
+                goals={goals}
+                sirDoneMap={sirDoneMap}
               />
             </div>
           )}

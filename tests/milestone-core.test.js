@@ -229,7 +229,8 @@ test('exports exactly the documented surface', () => {
   assert.deepEqual(Object.keys(M).sort(), [
     'STAGE_ORDER', 'baselineOf', 'blocksOf', 'countLeaves', 'dayDiff', 'isProcedural', 'keyOf',
     'label', 'lateById', 'lateList', 'liveSessions', 'ownersOf', 'report', 'sirDoneMap',
-    'slipLabel', 'slipNotice', 'slipsOf', 'stageOf', 'statusOf', 'targetFor', 'targetMet', 'withSlip'
+    'slipLabel', 'slipNotice', 'slipsOf', 'stageOf', 'statusOf', 'targetFor', 'targetMet',
+    'unreachedOn', 'withSlip'
   ]);
 });
 
@@ -792,4 +793,158 @@ test('TARGET: a Procedural MM\'s phase-only waypoint is not work, so it cannot m
   assert.equal(decl.state, 'overdue', 'the same waypoint on a Declarative MM is late, as before');
   const lvl = status(learn(PROC({ ksStage: '1', rating: 2 }), { stage: '1', level: 3 }), { mms: [PROC({ ksStage: '1', rating: 2 })] });
   assert.equal(lvl.state, 'overdue', 'a Procedural waypoint with a level is still work, judged by the level');
+});
+
+// ── the to-learn a day still owes (unreachedOn) ─────────────────────────────
+// What the Schedule's ● Learn panel pins on top and Progress → MG lists first.
+// The user's rule (2026-10-14): a mind map is judged against the milestone
+// whose dates COVER the day — Oct 14 is inside Chapter one, so Guitar at
+// level 3 is short of Chapter one's 5 — plus any milestone already overdue,
+// and only from today on. Ids are NUMBERS, as nid() mints them.
+
+const P = (id, rating, over) => F.mm(id, 'P' + id, Object.assign({ type: '2', ksStage: '1', rating }, over || {}));
+const D = (id, ksStage, over) => F.mm(id, 'D' + id, Object.assign({ type: '1', ksStage, rating: null }, over || {}));
+// One owner holding milestones `ms` ([id, start, end]) and the to-learn in
+// `learn` ({mmId: [[milestoneId, waypoint], …]}), so `report` is exactly the
+// page's own input.
+function learnGoals(ms, learn) {
+  const mmTargets = {};
+  Object.keys(learn).forEach(k => {
+    mmTargets[k] = { milestones: learn[k].map(([milestoneId, w]) => Object.assign({ milestoneId }, w)) };
+  });
+  return [node('own', {
+    milestones: ms.map(([id, s, e]) => def(id, s, e)),
+    toLearn: Object.keys(learn).map(Number),
+    mmTargets
+  })];
+}
+const pinned = (goals, mms, day, today = TODAY) =>
+  M.unreachedOn(M.report(goals, mms, {}, today), mms, day, today);
+const ids = list => list.map(r => r.mmId);
+
+test('UNREACHED: the milestone covering the day pins its unreached to-learn; one not covering it does not', () => {
+  // Chapter one is October, Chapter two November. TODAY is Oct 8.
+  const goals = learnGoals([['ch1', '2026-10-01', '2026-10-31'], ['ch2', '2026-11-01', '2026-11-30']], {
+    21: [['ch1', { level: 5 }], ['ch2', { level: 7 }]],
+    23: [['ch2', { level: 4 }]]
+  });
+  const mms = [P(21, 3), P(23, 2)];
+  const oct = pinned(goals, mms, '2026-10-14');
+  assert.deepEqual(ids(oct), [21], 'October: Chapter one — and 23 owes it nothing');
+  assert.equal(oct[0].st.milestoneId, 'ch1');
+  assert.deepEqual(oct[0].waypoint, { milestoneId: 'ch1', level: 5 });
+  assert.equal(oct[0].procedural, true);
+  assert.equal(oct[0].late, false);
+  const nov = pinned(goals, mms, '2026-11-03');
+  assert.deepEqual(ids(nov), [21, 23], 'November: both short of Chapter two');
+  assert.equal(nov[0].st.milestoneId, 'ch2', "judged against the DAY's milestone, not the first one");
+  assert.deepEqual(nov[0].waypoint, { milestoneId: 'ch2', level: 7 });
+});
+
+test('UNREACHED: a period includes its first and last day', () => {
+  const goals = learnGoals([['ch1', '2026-10-10', '2026-10-20']], { 21: [['ch1', { level: 5 }]] });
+  const mms = [P(21, 3)];
+  assert.deepEqual(ids(pinned(goals, mms, '2026-10-09')), [], 'the day before it starts');
+  assert.deepEqual(ids(pinned(goals, mms, '2026-10-10')), [21], 'its first day');
+  assert.deepEqual(ids(pinned(goals, mms, '2026-10-20')), [21], 'its last day');
+  assert.deepEqual(ids(pinned(goals, mms, '2026-10-21')), [], 'the day after — and it is not late, TODAY is Oct 8');
+});
+
+test('UNREACHED: an overdue milestone pins from today on, and a past day pins nothing at all', () => {
+  // Chapter one ended Oct 3, five days before TODAY; Chapter two covers TODAY.
+  const goals = learnGoals([['ch1', '2026-09-20', '2026-10-03'], ['ch2', '2026-10-04', '2026-10-31']], {
+    21: [['ch1', { level: 5 }]],
+    31: [['ch2', { stage: '3' }]]
+  });
+  const mms = [P(21, 3), D(31, '1')];
+  const now = pinned(goals, mms, TODAY);
+  assert.deepEqual(ids(now), [21, 31], 'the late milestone first, then the one the day belongs to');
+  assert.equal(now[0].late, true);
+  assert.equal(now[0].st.daysLate, 5);
+  assert.deepEqual(ids(pinned(goals, mms, '2026-12-25')), [21],
+    'still pinned on a later day, which Chapter two no longer covers');
+  assert.deepEqual(pinned(goals, mms, '2026-10-07'), [], 'yesterday is view-only, though Chapter two covers it');
+  assert.deepEqual(pinned(goals, mms, '2026-09-25'), [], 'and so is a day inside the late milestone itself');
+});
+
+test('UNREACHED: a level EQUAL to the waypoint is reached — the MG bar\'s own rule', () => {
+  const goals = learnGoals([['ch1', '2026-10-01', '2026-10-31']], {
+    21: [['ch1', { level: 5 }]], 22: [['ch1', { level: 5 }]], 25: [['ch1', { level: 5 }]]
+  });
+  assert.deepEqual(ids(pinned(goals, [P(21, 4), P(22, 5), P(25, null)], TODAY)), [21, 25],
+    'level 4 and an unrated MM are short of 5; level 5 has reached it');
+});
+
+test('UNREACHED: a Procedural phase-only waypoint is no work; a Declarative MM is pinned to be studied', () => {
+  const goals = learnGoals([['ch1', '2026-10-01', '2026-10-31']], {
+    21: [['ch1', { stage: '4' }]],
+    31: [['ch1', { stage: '3' }]],
+    32: [['ch1', { stage: '3' }]],
+    33: [['ch1', { stage: '2', level: 4 }]]
+  });
+  const mms = [P(21, 1), D(31, '1'), D(32, '3'), D(33, '2', { rating: 2 })];
+  const out = pinned(goals, mms, TODAY);
+  assert.deepEqual(ids(out), [31, 33], 'S1 is short of S3 and level 2 of 4; S3 has reached S3');
+  assert.deepEqual(out.map(r => r.procedural), [false, false]);
+  assert.deepEqual(out[1].waypoint, { milestoneId: 'ch1', stage: '2', level: 4 }, 'a Declarative waypoint keeps its phase');
+});
+
+test('UNREACHED: one record per mind map — late first, most days late, then the soonest end', () => {
+  const g1 = node('g1', {
+    milestones: [def('a', '2026-10-01', '2026-10-31'), def('late2', '2026-09-01', '2026-10-06')],
+    toLearn: [21, 22, 24],
+    mmTargets: {
+      21: { milestones: [{ milestoneId: 'a', level: 5 }, { milestoneId: 'late2', level: 4 }] },
+      22: { milestones: [{ milestoneId: 'a', level: 5 }] },
+      24: { milestones: [{ milestoneId: 'a', level: 5 }] }
+    }
+  });
+  const g2 = node('g2', {
+    milestones: [def('b', '2026-10-05', '2026-10-15'), def('late7', '2026-09-01', '2026-10-01')],
+    toLearn: [21, 23, 24],
+    mmTargets: {
+      21: { milestones: [{ milestoneId: 'b', level: 6 }] },
+      23: { milestones: [{ milestoneId: 'b', level: 6 }, { milestoneId: 'late7', level: 2 }] },
+      24: { milestones: [{ milestoneId: 'b', level: 6 }] }
+    }
+  });
+  const out = pinned([g1, g2], [P(21, 3), P(22, 3), P(23, 1), P(24, 1)], TODAY);
+  assert.deepEqual(out.map(r => r.mmId + '@' + r.st.milestoneId), ['23@late7', '21@late2', '24@b', '22@a'],
+    '7 days late before 2; 21 once, under its late milestone; 24 under b, which ends first');
+});
+
+test('UNREACHED: a mind-map id keeps its NUMBER type, whatever the mmTargets key spelling', () => {
+  const goals = [node('own', { milestones: [def('ch1', '2026-10-01', '2026-10-31')], toLearn: [21],
+    mmTargets: JSON.parse('{"21":{"milestones":[{"milestoneId":"ch1","level":5}]}}') })];
+  const out = pinned(goals, [P(21, 3)], TODAY);
+  assert.deepEqual(ids(out), [21]);
+  assert.equal(typeof out[0].mmId, 'number');
+  assert.equal(out[0].mm.name, 'P21', 'the record carries the mind map itself');
+});
+
+test('UNREACHED: an undated milestone pins nothing, and malformed input reads as nothing', () => {
+  const undated = learnGoals([['ch1', undefined, undefined], ['ch2', '2026-10-31', '2026-10-01']], {
+    21: [['ch1', { level: 5 }], ['ch2', { level: 5 }]] });
+  assert.deepEqual(pinned(undated, [P(21, 3)], TODAY), [], 'missing and inverted dates belong to no day');
+  const mms = [P(21, 3)];
+  const rep = M.report(learnGoals([['ch1', '2026-10-01', '2026-10-31']], { 21: [['ch1', { level: 5 }]] }), mms, {}, TODAY);
+  assert.deepEqual(ids(M.unreachedOn(rep, mms, TODAY, TODAY)), [21], 'precondition: this report pins 21');
+  for (const [r, m, day, today] of [
+    [null, mms, TODAY, TODAY], ['junk', mms, TODAY, TODAY], [[], mms, TODAY, TODAY], [rep, null, TODAY, TODAY],
+    [rep, mms, 'not-a-day', TODAY], [rep, mms, '2026-02-30', TODAY], [rep, mms, TODAY, undefined]
+  ]) {
+    assert.deepEqual(M.unreachedOn(r, m, day, today), []);
+  }
+  assert.deepEqual(M.unreachedOn({ x: null, y: 'junk', z: { state: 'overdue' } }, mms, TODAY, TODAY), [],
+    'a status with no learn record is skipped, not thrown on');
+});
+
+test('UNREACHED: never mutates the report, the goals or the mind maps', () => {
+  const goals = learnGoals([['late', '2026-09-01', '2026-10-01'], ['ch1', '2026-10-01', '2026-10-31']], {
+    21: [['late', { level: 5 }]], 22: [['ch1', { level: 5 }]] });
+  const mms = [P(21, 3), P(22, 3)];
+  const rep = M.report(goals, mms, {}, TODAY);
+  const before = [JSON.stringify(rep), JSON.stringify(goals), JSON.stringify(mms)];
+  assert.equal(M.unreachedOn(rep, mms, TODAY, TODAY).length, 2);
+  assert.deepEqual([JSON.stringify(rep), JSON.stringify(goals), JSON.stringify(mms)], before);
 });

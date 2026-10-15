@@ -302,6 +302,14 @@ would go; Cancel writes nothing and leaves `+LIN` open. The history records the 
 phase you saw (`S4 → S3 (revert)`). A Procedural mind map with no hidden sessions moves without
 a prompt.
 
+**Every move out of SIR that deletes sessions asks first.** A Declarative mind map in SIR or
+FINISHED that `+LIN` moves back to a phase loses its sessions the same way: leaving SIR ends the
+run, and moving it into SIR again later starts a new run from the first review. That save asks
+too, naming the mind map and how many sessions it holds and how many are done; Cancel writes
+nothing and leaves `+LIN` open. A mind map in SIR with no sessions moves without a prompt. The
+prompt and the delete read one condition (`endingSirSessions` in `sir-ks02.html`), so they
+cannot disagree.
+
 The rule has one definition, `TrackMilestone.stageOf` and `TrackMilestone.liveSessions` in
 `scripts/milestone-core.js`, which all four pages read.
 
@@ -314,6 +322,16 @@ Current MG behavior includes:
 - Day-specific MG scheduling.
 - MG visibility inside Progress and Schedule.
 - Current-MG updates based on Kolb entries.
+
+**An MG below its milestone's level comes first.** A Procedural mind map's progress is its MG
+level, and a goal's milestones carry a level for it (the `MG` bar's waypoints). While its level is
+still below the level the milestone asks for, its MG is the one to practise, so two surfaces put it
+on top: the Schedule's ● Learn panel pins it in its strip for the day it was opened on, and the
+Progress → MG tab lists its card first — outlined amber, reading `Below Chapter one's level ·
+Lv 3 → 5`, or red with `OVERDUE` when that milestone has ended. The milestone is the one whose dates
+cover the day (the MG tab's chosen date), or one already overdue; only today and later count, so a
+past date highlights nothing. A level equal to the waypoint is reached. Both read
+`TrackMilestone.unreachedOn`; see "Schedule and supporting actions".
 
 ### Goals, tasks, and milestones
 
@@ -353,6 +371,24 @@ counts at all. The goal ring, the goal panel's TO LEARN count and list, the goal
 bar, the header percentage, a subgoal's "learned" count, the Quest tab's learn rows and the
 milestone overdue rule all read it the same way, through `TrackMilestone.targetFor`.
 
+**Auto-completion from mind-map targets.** A goal or subgoal whose `toLearn` mind maps carry
+targets shows an `auto` ring (`met/total`) in place of its checkbox or donut. It is **done when
+every target is met and every task under it is done**; a goal with no tasks is judged by its
+targets alone. The ring and the done state read one list, `mmTargetEntries`, which walks
+`toLearn` — mind-map ids are numbers, `mmTargets` keys are strings — and the ring counts SIR
+reviews exactly as the done state does. Until 2026-10-14 the lookup compared the two kinds of
+id and found nothing, so every such ring read `0/N`, no such goal ever completed, and the header
+percentage counted each one as undone; it rose that day wherever a met target had been hidden.
+
+**Links cannot loop.** Both `^ link` pickers — link an existing task, link a goal as a subgoal —
+leave out any target that would make the new link lead back to itself: a task's own ancestors,
+a subgoal's own goal. The two link writers refuse one as well (`linkWouldLoop`, the one test). A
+loop already stored — older data, another device, a hand-edited file — is drawn **once**: where
+the goal tree or the Milestones tab would follow the link round again, it shows
+`↻ "<title>" is already above — this link loops back`, and in the goal tree that row's `×`
+unlinks it, asking first. Every walk over the goal tree ends a branch at a node already on it,
+so a loop no longer freezes the Goals tab or blanks the Goals, Milestones or Schedule views.
+
 ### Milestone accountability
 
 A milestone is **overdue** when its end date has passed and the work attached to it is not all
@@ -379,7 +415,12 @@ which is why `sir-ks02.html` loads it too.
 | Progress → MILESTONES, the calendar | its chip runs on past the end day to today, dashed red, with `!` on today |
 | Home Universal calendar, Documentations calendar blocks | its bar runs on past the end day as a dashed red tail to today, with one `!` on today's cell. The hover says how late it is and what is left; a late lane pushed past the third shows a red `+N` |
 | Progress → Schedule | today's day column and today's month cell carry a `⚑` per late milestone, which opens it in the MILESTONES tab |
-| Progress → Schedule pickers | for today and later, the add-task picker pins the leftover tasks in an OVERDUE block above the Directory tree and lists late milestones first in its Milestone tab; the MM picker pins the unreached to-learn mind maps above SIR DUE TODAY |
+| Progress → Schedule add panels | for today and later, ▲ Chosen pins the leftover tasks in an OVERDUE block above the Directory tree and lists late milestones first in its Milestone tab; ● Learn pins the unreached to-learn at the top of its strip, drawn late — a Declarative mind map to study, a Procedural one by its MG |
+
+**A subgoal linked under a second goal** is listed in the MILESTONES tab under each goal it
+appears in, the later listing marked `↗ linked from <goal>`. It is the same subgoal, not a copy,
+so editing either row edits both. It is counted once in the tab's totals, drawn once on its
+calendar, and one click selects one row; the Schedule's `⚑` opens the first listing.
 
 The tail grows by a day every day the milestone stays late, and moves to the new today when a Home
 tab is shown again. Switching "Milestone period" off in the Home legend hides tails along with the
@@ -450,6 +491,8 @@ The Progress page currently calculates:
 
 Current scheduling behavior includes:
 
+- Four add buttons on every timeline day, one per kind of work: ★ Forced, ● Learn, ▲ Chosen and
+  ■ Core Routine (see "The four add buttons" below).
 - Day-oriented calendar and timeline views.
 - Scheduled goals and tasks.
 - Routine tasks.
@@ -467,14 +510,29 @@ zooms between 32px and 256px). Dragging or top-edge resizing snaps to five minut
 start to the `00:00`–`23:55` range, so every hour of the day is a valid drop target. Hour labels read
 `12am` through `11pm`.
 
-**The day header's four buttons are a 2×2 block on their own full-width row**, below the header's
-three-part strip row rather than inside it: `+` task add and `◎` MM add on the first line, `⊕` MG
-add and `☰` day notes & deadlines on the second. That placement is what keeps a **week column
-never narrower than 140px**, so the week view scrolls horizontally only below
-`56 + 7 × 140 = 1036px` and a 1280px laptop shows the whole week without scrolling. Day mode is
-unaffected — its single column is never at the minimum.
+**The four add buttons.** Each timeline day header has one button per kind of work a day holds
+(docs/CONCEPTS.md, "The Schedule's four kinds of work"). All four are on **every** day, past days
+included:
 
-The buttons used to sit in the header's centre section, between the 36px SIR-session strip and the
+| Button | Opens | Holds |
+| --- | --- | --- |
+| ★ **Forced** | the day notes & deadlines browser (it was `☰`) | the day notes and deadlines dated on or after that day |
+| ● **Learn** | every mind map and every MG (it was `◎` and `⊕`) | a pinned strip of what the day's milestone still needs, then `Mind maps` / `Marginal gains` tabs |
+| ▲ **Chosen** | the task picker (it was `+`) | the to-do: the goal tree, its routines and its milestones — no supporting actions |
+| ■ **Core Routine** | every supporting action (it was the end of the `+` picker) | each action, each routine and each of its steps |
+
+Every panel opens with a slim header naming its button, its contents and the day it adds to, and
+caps its width at the screen on a phone. Pressing a button again closes its panel, and opening
+one closes any other.
+
+**The day header's four buttons are a 2×2 block on their own full-width row**, below the header's
+three-part strip row rather than inside it: ★ Forced and ● Learn on the first line, ▲ Chosen and
+■ Core Routine on the second. That placement is what keeps a **week column never narrower than
+140px**, so the week view scrolls horizontally only below `56 + 7 × 140 = 1036px` and a 1280px
+laptop shows the whole week without scrolling. Day mode is unaffected — its single column is never
+at the minimum.
+
+The buttons — then `+ ◎ ⊕ ☰` — used to sit in the header's centre section, between the 36px SIR-session strip and the
 notes-and-caution strip that starts at 60px and stretches to 110px for a long title. As one line
 they needed `4 × 28 + 3 × 6 = 130px` and the centre had 43px, so the row overflowed — and because a
 flex item paints as an atomic unit in document order, that overflow went **underneath** the notes
@@ -495,36 +553,83 @@ the centre at 28px and settles the strip at 75px rather than collapsing the cent
 Measured at a pinned 140px column: bare day `centre 43 / strip 60`, long title `centre 28 /
 strip 75`, both with all four buttons hit-testing to themselves on two lines of two.
 
-**Creating work from a day.** The `+` button opens the task picker for that day. Every route out of
-it — the goal tree, the ACTIONS list, the Routines and Milestone tabs — only ever **dates a record
-that already exists**, so a workspace with nothing schedulable used to leave the day a dead end: the
-user had to go to Goals or Supporting Actions, create the thing, come back, and schedule it.
+**Creating work from a day.** ▲ Chosen opens the task picker for that day. Every route out of it —
+the goal tree, the Routines and Milestone tabs — only ever **dates a record that already exists**,
+and so does every row of ■ Core Routine, so a workspace with nothing schedulable used to leave the
+day a dead end: the user had to go to Goals or Supporting Actions, create the thing, come back, and
+schedule it.
 
-A **`＋ New task on this day`** bar at the top of the Directory tab closes that. Expanded it takes a
-title, a kind — **Task**, **Routine** or **Action** — the thing it sits under, and an optional start
-time (`09:00` if left blank). Create makes the record **and** puts it on the day the picker was
-opened from, in one action.
+A **`＋ New task on this day`** bar at the top of Chosen's Directory tab closes that. Expanded it
+takes a title, a kind — **Task** or **Routine** — the thing it sits under, and an optional start time
+(`09:00` if left blank). Create makes the record **and** puts it on the day the picker was opened
+from, in one action. ■ Core Routine has the same bar for an action, **`＋ New action on this day`**:
+a title, an optional root action to file it under as a step, and a start time.
 
-The bar sits outside the tab's scroll area, so a long goal tree cannot push it out of reach — the
-case it exists for most is the workspace with nothing to scroll at all. Nothing here is a new stored
+Both bars sit outside their panel's scroll area, so a long list cannot push them out of reach — the
+case they exist for most is the workspace with nothing to scroll at all. Nothing here is a new stored
 field: a Task or Routine is an ordinary node in `goals`, filed with the same
 `addChildAndTransferNotes` the Goals panel uses (so the first-child note transfer behaves
 identically) and dated through `updateSchedule`, which already writes `routineDates[day]` for a
-routine and `scheduledDate`/`scheduledTime` for a task. An Action creates an `saActions` record and
+routine and `scheduledDate`/`scheduledTime` for a task. An action creates an `saActions` record and
 the `saEntries` row that puts it on the day, exactly as `assignSAToDate` does — neither half is
 useful alone, so both are one click.
 
 **A Task or Routine must be told what it sits under, and the refusal is not repaired.** A top-level
 node in `goals` is a *goal*, not a task, so there is nowhere for an unparented one to go: Create is
-disabled and the bar names the reason. No "Unfiled" goal is invented to hold it. An Action needs no
+disabled and the bar names the reason. No "Unfiled" goal is invented to hold it. An action needs no
 parent — top level is a real place for one — and may optionally be filed under an existing root
-action as a sub-action. Nothing here deletes or clears, so nothing asks for confirmation.
+action as a step. Nothing here deletes or clears, so nothing asks for confirmation.
 
 The same refusal covers a parent that has **stopped existing**. `addChildAndTransferNotes` and
 `updateSchedule` both walk for an id and return the tree untouched when they do not find one, so a
 goal deleted in another tab between this modal opening and Create being pressed would have closed
 the modal having written nothing at all — the typed task simply gone, with no error anywhere. The
 chosen parent is therefore checked against the live list, and Create refuses and says so.
+
+**● Learn: every mind map and every MG, with what the day still owes on top.** Learn replaces the
+two buttons `◎` (add a mind map's study block) and `⊕` (set the day's MG focus), and keeps both
+actions as they were: clicking a mind map adds a 60-minute study block and closes the panel;
+clicking an MG turns it on or off as that day's focus — the line under the day's buttons, carried
+to the following days until changed — and the panel stays open. Turning an MG off asks nothing; it
+is an ordinary scheduling toggle (see "Destructive controls").
+
+A **pinned strip** sits above the tabs, in its own capped scroll so it can never push them off the
+panel, and lists what the day still owes:
+
+- **MILESTONE NOT REACHED YET** — for each mind map short of its waypoint on the milestone the day
+  belongs to:
+  - a **Procedural** mind map is pinned by its **MG**, because its progress is its MG level: the MG
+    text in amber with `Guitar · Lv 3 → 5 · Chapter one` under it;
+  - a **Declarative** mind map is pinned as a mind map to study, with its gap (`S1 → S3`, and/or a
+    level).
+- **SIR DUE** — the reviews due that day.
+
+An overdue milestone's work is pinned first and drawn in the danger colour.
+
+The milestone a day belongs to is the one whose dates **cover** it — the Schedule's own rule — plus
+any milestone already overdue. A level **equal** to the waypoint is reached, exactly as the MG bar
+fills. Example: Guitar at level 3 against Chapter one's 5 is pinned on any day of Chapter one; once
+a Kolb records level 5 it is not; on a day in Chapter two it is judged against Chapter two's level.
+Below the strip, `Mind maps` and `Marginal gains` tabs list everything else. Strip and tabs are a
+**partition** — nothing pinned is listed again — and the filter searches both, by mind-map name and
+by MG text.
+
+Milestone pins appear **from today on**. A past day is view-only, as the pickers have always treated
+it: it pins no milestone work and has no MG tab — exactly what `◎` was there, since `⊕` had no button
+on a past day. SIR DUE is read through `TrackMilestone.liveSessions`, as every other surface draws
+sessions; the `◎` picker read storage raw, so a Procedural mind map stored in SIR used to appear
+there although it has no SIR.
+
+The rule has one definition, `TrackMilestone.unreachedOn` in `scripts/milestone-core.js`, built on the
+same milestone report as the overdue warnings, and it is read in two places: this strip and the
+Progress → MG tab (see "Marginal Gains").
+
+**■ Core Routine: every supporting action.** It lists every action from the ACTIONS tab, and under a
+routine (a root action with steps) each of its steps, open by default and foldable. `+ all N` on a
+routine puts every step on the day in one click, each at its own time — what the old ACTIONS list in
+the task picker did. A step's own `+` puts that step on the day alone, which nothing could do
+before. A plain action has a `+` of its own. The panel creates actions as well (see above), and
+edits or deletes nothing: that stays the ACTIONS tab's.
 
 **Deadlines** are a separate slot field from calendar notes. A deadline is due on one date at a
 required time, and carries a title, an optional description, and the list of days it warns on:
@@ -718,7 +823,8 @@ prep. A run-up that
 would begin before `00:00` is clipped at the top of the grid and shortened, so it still ends on its
 due time rather than being pushed past it.
 
-**The `☰` button** sits beside `+ ◎ ⊕` in each timeline day header and opens a browser over every
+**★ Forced** (it was the `☰` button) is the first of the four in each timeline day header — what
+the day imposes — and opens a browser over every
 day note and deadline in the slot **dated on or after the day it was opened from** — not only that
 day's, but never an earlier one — as **one flat list in chronological order** by each item's own date
 and time. The panel is opened from a day in order to put work on it, so it **looks forward from that
@@ -1184,6 +1290,12 @@ cannot separate exactly coincident nodes — identical coordinates give the push
 This is deliberately tolerance, not prevention. The picker still allows a cycle; the code survives
 one. Prevention alone would not help the cycles that already exist in stored data.
 
+Progress reads mind-map parents in two places, a goal's TO LEARN tree and the Mind Maps tab, and
+both follow the same contract. A cycle with no root above it would be reached from no root at all,
+so its first member is drawn as a root instead: no linked mind map can drop out of either list.
+(Goal-tree *links* are a different graph and are prevented as well as tolerated — see "Goals,
+tasks, and milestones".)
+
 Source dumps are a separate graph with a *singular* `parentId`, which changes what is reachable: a
 dump inside a cycle has its one parent inside that cycle, so it is nobody's descendant and no root
 leads to it. Downward walks from a root — the tag picker, deleting a title — therefore cannot meet one.
@@ -1280,7 +1392,8 @@ re-decide it on purpose rather than ship friction:
 
 - The four detach `⊗` chips. They sever one graph edge, and the connections picker puts it back in
   seconds.
-- The two Marginal Gain schedule `✓` toggle-offs, which are ordinary scheduling toggles.
+- The two Marginal Gain schedule `✓` toggle-offs — in the Schedule's ● Learn panel and on the
+  Progress → MG tab — which are ordinary scheduling toggles.
 - The emoji icon `Clear` in Documentations, which only resets a picker.
 
 Pure-dismiss `×` and `cancel` buttons — closing a modal, abandoning a form — are not destructive and
@@ -1406,7 +1519,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format — a pasted timetable in both directions (`window.TrackSchedulePaste`). Holds no date code at all; every weekday-to-calendar-day question belongs to `calendar-core.js` |
 | `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`) — membership, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Read by `progress.html` and `index.html`, so neither can drift. Holds no date code; the day is a parameter |
-| `scripts/milestone-core.js` | The one definition of where a milestone stands — membership, leaf counting, mind-map targets, the overdue rule, the drawn span, and the `slips` writer — and of the phase a mind map is in: `stageOf` (a Procedural MM stored in SIR or FINISHED reads as S4), `liveSessions` (its SIR sessions are not drawn) and `targetFor` (its target is its level alone) (`window.TrackMilestone`). Read by `progress.html`, `index.html`, `documentations.html` and `sir-ks02.html`. Holds no date code; "today" is a parameter |
+| `scripts/milestone-core.js` | The one definition of where a milestone stands — membership, leaf counting, mind-map targets, the overdue rule, the drawn span, the `slips` writer, and `unreachedOn` (the to-learn a day still owes its milestone, which the Schedule's ● Learn strip pins and the MG tab lists first) — and of the phase a mind map is in: `stageOf` (a Procedural MM stored in SIR or FINISHED reads as S4), `liveSessions` (its SIR sessions are not drawn) and `targetFor` (its target is its level alone) (`window.TrackMilestone`). Read by `progress.html`, `index.html`, `documentations.html` and `sir-ks02.html`. Holds no date code; "today" is a parameter |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape — `mergeMap` (which cells render and how far they span), `lineBands` / `moveLine` (what a row or column move is a permutation of), the pure merge writers, and the `::: track-table` paste format in both directions (`window.TrackDocTable`) |
 | `styles/styles.css` | Shared design tokens, the Grit and Night palettes, the Tailwind utility remap layer, responsive styling (including the whole phone layout and `--phone-tabbar-h`), and component states |
 | `docs/` | User-facing paste specifications, and the verification evidence log |
@@ -1829,7 +1942,7 @@ It runs three layers:
 | Offline source-dump tests | `tests/source-dump-core.test.js` | Every source-dump writer both Source Dump pages share, in `source-dump-core.js`: KS02's record shapes, a new title taking over its parent's MM sections, a parent that no longer exists refused, a duplicated parent id losing no section, the descendant delete and the breadcrumb path across a parentId cycle, transfers into an existing and a new section with a self-transfer refused, the legacy `text` block, which MMs a dump may link, identity when nothing changes, spreading so unknown keys survive, totality over damaged input — all with numeric and string ids mixed, as KS02 and True Storage mint them |
 | Offline layout tests | `tests/graph-layout.test.js` | The radial canvas layout in `graph-layout.js`: single roots, trees, diamonds, disconnected components, dangling parent ids, custom and damaged radii — and above all **parent cycles**, which used to blow the stack and render both canvas pages blank |
 | Offline table tests | `tests/doc-table-core.test.js` | A documentation table's shape in `doc-table-core.js`: `mergeMap` geometry, merge normalization and clamping, `merges` being absent rather than empty, covered text surviving a merge, column widths normalising to a conserved total and following a row or column change, band geometry and the row/column move that permutes `rows`, `merges` and `colWidths` together, and the `::: track-table` paste format in both directions including a wrong-cell-count refusal against its line number |
-| Offline milestone tests | `tests/milestone-core.test.js` | Where a milestone stands, in `milestone-core.js`: parity with verbatim copies of the `progress.html` functions it replaced (`countProgress`, `isMMTargetMet`, `buildSirDoneMap`, `collectMilestoneOwners`, `collectMilestoneBlocks`) on acyclic data, and the two deliberate differences — link cycles terminate, a block reached twice counts once. The lateness rule: the end day is not late, an empty milestone never is, to-learn alone keeps one late, malformed or inverted dates are undated, and `dayDiff` across month, year and leap boundaries without a `Date`. To-learn read through `toLearn` with **numeric** mind-map ids, never `mmTargets` keys. The report, `lateById`'s first holder, the wording, and the slip writer: recorded only for an already-late milestone, one record per day's edit from one due day, removed on a move back, never `[]`. A mind map's kind: `isProcedural` accepting `'2'` and `2` but not a junk type, `stageOf` reading a Procedural MM stored in SIR or FINISHED as S4 and nothing else, and never writing, and `liveSessions` leaving out exactly a Procedural MM's sessions — numeric ids, its input returned itself when nothing is left out, junk entries passed through. A Procedural MM's target: `targetFor` stripping the phase from the target and every waypoint and dropping a waypoint left with no level, returning anything else itself; `targetMet` judging it by level alone; and a phase-only waypoint being no work for the overdue rule |
+| Offline milestone tests | `tests/milestone-core.test.js` | Where a milestone stands, in `milestone-core.js`: parity with verbatim copies of the `progress.html` functions it replaced (`countProgress`, `isMMTargetMet`, `buildSirDoneMap`, `collectMilestoneOwners`, `collectMilestoneBlocks`) on acyclic data, and the two deliberate differences — link cycles terminate, a block reached twice counts once. The lateness rule: the end day is not late, an empty milestone never is, to-learn alone keeps one late, malformed or inverted dates are undated, and `dayDiff` across month, year and leap boundaries without a `Date`. To-learn read through `toLearn` with **numeric** mind-map ids, never `mmTargets` keys. The report, `lateById`'s first holder, the wording, and the slip writer: recorded only for an already-late milestone, one record per day's edit from one due day, removed on a move back, never `[]`. A mind map's kind: `isProcedural` accepting `'2'` and `2` but not a junk type, `stageOf` reading a Procedural MM stored in SIR or FINISHED as S4 and nothing else, and never writing, and `liveSessions` leaving out exactly a Procedural MM's sessions — numeric ids, its input returned itself when nothing is left out, junk entries passed through. A Procedural MM's target: `targetFor` stripping the phase from the target and every waypoint and dropping a waypoint left with no level, returning anything else itself; `targetMet` judging it by level alone; and a phase-only waypoint being no work for the overdue rule. `unreachedOn`: the milestone covering the day or an overdue one, first and last day inclusive, from today on only, a level equal to the waypoint reached, one record per mind map with late before active and the soonest end first, numeric ids, and total on malformed input |
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |

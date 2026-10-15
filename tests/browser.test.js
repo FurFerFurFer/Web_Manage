@@ -8091,6 +8091,10 @@ test('browser suites', skipUnlessChrome, async t => {
      visible, because that strip has no background, and completely dead to a
      tap. Only the fourth button, `☰`, was lost.
 
+     The four are now ★ Forced, ● Learn, ▲ Chosen and ■ Core Routine (2026-10-14);
+     `★` is the old `☰` panel under its new name, and still the button
+     HEADER_BUTTONS finds the row through.
+
      These cases outlived two different fixes, which is the point of keeping
      them: the first bought room by widening the column to 228px, the second
      moved the block onto its own full-width row and took the column back to
@@ -8103,9 +8107,9 @@ test('browser suites', skipUnlessChrome, async t => {
      hide behind three passing siblings, which is this repository's recurring
      bug. */
   const HEADER_BUTTONS = function (ds) {
-    var last = document.querySelector('[data-dln-open="' + ds + '"]');
-    if (!last) return null;
-    var row  = last.parentElement;
+    var forced = document.querySelector('[data-dln-open="' + ds + '"]');
+    if (!forced) return null;
+    var row  = forced.parentElement;
     var cell = row.closest('.relative');
     var scroller = row.closest('.overflow-auto');
     // The notes-and-caution strip, by its own hook rather than by a structural
@@ -8157,23 +8161,26 @@ test('browser suites', skipUnlessChrome, async t => {
 
     assert.equal(m.pinned, true,
       'the week columns are at their minimum width — the precondition this case is about');
-    assert.deepEqual(m.buttons.map(b => b.label), ['+', '◎', '⊕', '☰'],
-      'all four buttons render on a day that is not past');
+    assert.deepEqual(m.buttons.map(b => b.label), ['★', '●', '▲', '■'],
+      'all four buttons render, in the user\'s order');
 
     // separately, one per button: the whole point is that three of them pass
-    assert.equal(byLabel['+'].hit, 'self', 'the + task picker takes its own tap');
-    assert.equal(byLabel['◎'].hit, 'self', 'the ◎ MM picker takes its own tap');
-    assert.equal(byLabel['⊕'].hit, 'self', 'the ⊕ MG picker takes its own tap');
-    assert.equal(byLabel['☰'].hit, 'self',
-      'the ☰ day-notes browser takes its own tap (hit ' + byLabel['☰'].hit + ')');
+    assert.equal(byLabel['★'].hit, 'self',
+      'the ★ Forced browser takes its own tap (hit ' + byLabel['★'].hit + ')');
+    assert.equal(byLabel['●'].hit, 'self', 'the ● Learn panel takes its own tap (hit ' + byLabel['●'].hit + ')');
+    assert.equal(byLabel['▲'].hit, 'self', 'the ▲ Chosen picker takes its own tap (hit ' + byLabel['▲'].hit + ')');
+    assert.equal(byLabel['■'].hit, 'self',
+      'the ■ Core Routine panel takes its own tap (hit ' + byLabel['■'].hit + ')');
 
-    assert.ok(byLabel['☰'].width >= 24,
-      'and is not squashed down to its glyph (' + byLabel['☰'].width + 'px)');
+    for (const label of ['★', '●', '▲', '■']) {
+      assert.ok(byLabel[label].width >= 24,
+        label + ' is not squashed down to its glyph (' + byLabel[label].width + 'px)');
+    }
     assert.ok(m.row.left >= m.cell.left && m.row.right <= m.cell.right,
       'the button row stays inside its own day column (row ' + m.row.left + '–' + m.row.right +
       ', column ' + m.cell.left + '–' + m.cell.right + ')');
 
-    // and the user's actual action: tap where the ☰ is drawn, not the element
+    // and the user's actual action: tap where the ★ is drawn, not the element
     await page.evaluate(function (ds) {
       var b = document.querySelector('[data-dln-open="' + ds + '"]');
       var r = b.getBoundingClientRect();
@@ -8183,7 +8190,7 @@ test('browser suites', skipUnlessChrome, async t => {
       return true;
     }, TODAY);
     await page.waitFor(function () { return !!document.querySelector('[data-dln-panel]'); },
-      { message: 'the day-notes panel opening from a tap at the ☰ position' });
+      { message: 'the Forced panel opening from a tap at the ★ position' });
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -8211,11 +8218,12 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.ok(m.strip.width > 60,
       'the long title really did stretch the notes strip past its 60px minimum (' +
       m.strip.width + 'px) — without that this case is not testing the squeeze it names');
-    assert.equal(byLabel['+'].hit, 'self', 'the + task picker still takes its own tap');
-    assert.equal(byLabel['◎'].hit, 'self', 'the ◎ MM picker still takes its own tap');
-    assert.equal(byLabel['⊕'].hit, 'self', 'the ⊕ MG picker still takes its own tap');
-    assert.equal(byLabel['☰'].hit, 'self',
-      'the ☰ day-notes browser still takes its own tap (hit ' + byLabel['☰'].hit + ')');
+    assert.equal(byLabel['★'].hit, 'self',
+      'the ★ Forced browser still takes its own tap (hit ' + byLabel['★'].hit + ')');
+    assert.equal(byLabel['●'].hit, 'self', 'the ● Learn panel still takes its own tap (hit ' + byLabel['●'].hit + ')');
+    assert.equal(byLabel['▲'].hit, 'self', 'the ▲ Chosen picker still takes its own tap (hit ' + byLabel['▲'].hit + ')');
+    assert.equal(byLabel['■'].hit, 'self',
+      'the ■ Core Routine panel still takes its own tap (hit ' + byLabel['■'].hit + ')');
     assert.ok(m.row.right <= m.cell.right,
       'the row wrapped inside the column instead of spilling under the strip (row right ' +
       m.row.right + ', column right ' + m.cell.right + ')');
@@ -8250,29 +8258,45 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(rows.length, 2,
       'the four buttons are drawn on TWO lines, not one (' +
       rows.map(r => r.labels.join('')).join(' / ') + ')');
-    assert.deepEqual(rows[0].labels, ['+', '◎'], 'task add and MM add share the first row');
-    assert.deepEqual(rows[1].labels, ['⊕', '☰'], 'MG add and the day-notes browser are the second row');
+    assert.deepEqual(rows[0].labels, ['★', '●'], '★ Forced and ● Learn share the first row');
+    assert.deepEqual(rows[1].labels, ['▲', '■'], '▲ Chosen and ■ Core Routine are the second row');
 
     assert.ok(m.cell.width <= 145,
       'the day column is back at its 140px minimum (' + m.cell.width + 'px)');
 
     // stacking REPLACES the widening; it must not trade one dead button for another
-    assert.equal(byLabel['+'].hit, 'self', 'the + task picker takes its own tap');
-    assert.equal(byLabel['◎'].hit, 'self', 'the ◎ MM picker takes its own tap');
-    assert.equal(byLabel['⊕'].hit, 'self', 'the ⊕ MG picker takes its own tap');
-    assert.equal(byLabel['☰'].hit, 'self',
-      'the ☰ day-notes browser takes its own tap (hit ' + byLabel['☰'].hit + ')');
+    assert.equal(byLabel['★'].hit, 'self', 'the ★ Forced browser takes its own tap (hit ' + byLabel['★'].hit + ')');
+    assert.equal(byLabel['●'].hit, 'self', 'the ● Learn panel takes its own tap (hit ' + byLabel['●'].hit + ')');
+    assert.equal(byLabel['▲'].hit, 'self', 'the ▲ Chosen picker takes its own tap (hit ' + byLabel['▲'].hit + ')');
+    assert.equal(byLabel['■'].hit, 'self',
+      'the ■ Core Routine panel takes its own tap (hit ' + byLabel['■'].hit + ')');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
+  await t.test('PROGRESS: a past day keeps all four add buttons', async () => {
+    /* The `⊕` that ● Learn absorbed was left out of a past day's header, so
+       the block there had three buttons. Learn is on EVERY day — a past day's
+       Learn simply has no MG tab — so the 2×2 block is always whole. */
+    const yesterday = dayFromToday(-1);
+    const page = await open('progress.html', { db: seedDb(), hash: '?date=' + yesterday + '#schedule' });
+    await page.setViewport(820, 1180);
+    await mountSchedule(page);
+    const m = await page.waitFor(HEADER_BUTTONS, { args: [yesterday], message: "yesterday's day-header buttons" });
+    assert.deepEqual(m.buttons.map(b => b.label), ['★', '●', '▲', '■'],
+      'a past day draws the same four buttons, Learn included');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   // ── 13b. Creating work FROM a calendar day ───────────────────────────────
-  /* Every other path out of the task picker only ever DATES a record that
+  /* Every other path out of the add panels only ever DATES a record that
      already exists — assignToDate, assignSAToDate, assignDirectoryToDate. A
      slot with nothing schedulable therefore left the day a dead end. The create
-     bar is the one path that brings a record into being from a day, and it
-     creates and schedules in a single write.
+     bars are the paths that bring a record into being from a day — ▲ Chosen's
+     for a task or a routine, ■ Core Routine's for an action — and each creates
+     and schedules in a single write.
 
      The three kinds are asserted SEPARATELY, and not for symmetry: the goal
      branch and the action branch are different writes to different owned keys,
@@ -8374,13 +8398,34 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('PICKER: a supporting action typed on a day creates BOTH the action and its entry', async () => {
+  // ■ Core Routine's create bar. The Action kind moved here from ▲ Chosen's,
+  // with the same one-click write of the action AND its entry.
+  const openCoreCreateBar = async page => {
+    await mountSchedule(page);
+    await page.evaluate(CLICK_SEL, '[data-day-add-core="' + TODAY + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-core-create-open]'); },
+      { message: 'the Core Routine create bar' });
+    await page.evaluate(CLICK_SEL, '[data-core-create-open]');
+    await page.waitFor(function () { return !!document.querySelector('[data-core-create-title]'); },
+      { message: 'the Core Routine create bar expanded' });
+  };
+
+  await t.test('CORE ROUTINE: an action typed on a day creates BOTH the action and its entry', async () => {
     /* Either half alone is useless: an action with no entry is invisible on
        every calendar surface, and an entry with no action points at nothing. */
     const page = await open('progress.html', { db: CREATE_SEED(), hash: '#schedule' });
-    await openCreateBar(page);
-    await fillCreate(page, { kind: 'action', title: 'Read for twenty minutes', time: '20:00' });
-    await page.evaluate(CLICK_SEL, '[data-picker-create-save]');
+    await openCoreCreateBar(page);
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-core-create-title]'), value);
+      return true;
+    }, SET_REACT_INPUT, 'Read for twenty minutes');
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-core-create-time]'), value);
+      return true;
+    }, SET_REACT_INPUT, '20:00');
+    await page.evaluate(CLICK_SEL, '[data-core-create-save]');
     /* Wait for the write to LAND, then assert — never wait for the right
        answer to appear. A waitFor on both halves times out when either is
        missing and reports only that the control is unreachable, which is the
@@ -8396,12 +8441,104 @@ test('browser suites', skipUnlessChrome, async t => {
     });
 
     assert.equal(sa.entries.length, 1, 'the entry is what puts the action on the day');
-    assert.equal(sa.entries[0].date, TODAY, 'and it is on the day the picker was opened from');
+    assert.equal(sa.entries[0].date, TODAY, 'and it is on the day the panel was opened from');
     assert.equal(sa.entries[0].time, '20:00');
     assert.equal(sa.actions.length, 1, 'the action itself was created too');
     assert.equal(sa.actions[0].title, 'Read for twenty minutes');
     assert.equal(sa.actions[0].parentId, null, 'top level, since none was chosen');
     assert.equal(sa.entries[0].actionId, sa.actions[0].id, 'and the entry points at it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* A directory and its two steps, and one plain action. `time` sits on the
+     steps and on the plain action, as SupportingActionsPanel writes them. */
+  const CORE_SEED = () => seedDb({
+    goals: [F.task('g-root', { title: 'Root goal', children: [F.task('t-1', { title: 'A task' })] })],
+    saEntries: [],
+    saActions: [
+      F.saAction('sa-plain', { title: 'Cold shower', emoji: '🚿', parentId: null, time: '07:00', duration: 10 }),
+      F.saAction('sa-dir', { title: 'Morning routine', emoji: '☀', parentId: null }),
+      F.saAction('sa-step1', { title: 'Stretch', emoji: '◆', parentId: 'sa-dir', time: '06:30', duration: 15 }),
+      F.saAction('sa-step2', { title: 'Write three lines', emoji: '◆', parentId: 'sa-dir', time: '06:45', duration: 20 })
+    ]
+  });
+  const openCore = async page => {
+    await mountSchedule(page);
+    await page.evaluate(CLICK_SEL, '[data-day-add-core="' + TODAY + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-core-panel] [data-core-action]'); },
+      { message: 'the Core Routine panel and its actions' });
+  };
+  const SA_ENTRIES = function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return (((db.slots || [])[0] || {}).saEntries || []).map(function (e) {
+      return { actionId: e.actionId, date: e.date, time: e.time };
+    });
+  };
+
+  await t.test('CHOSEN GUARD: the task picker lists no actions and offers no Action kind', async () => {
+    /* Supporting actions are ■ Core Routine's now. The task picker used to end
+       in an ACTIONS list and offer an Action kind on its create bar; either one
+       left behind would put the same action behind two buttons. */
+    const page = await open('progress.html', { db: CORE_SEED(), hash: '#schedule' });
+    await openCreateBar(page);
+    const seen = await page.evaluate(function () {
+      var p = document.querySelector('[data-picker-panel]');
+      return {
+        text: p ? p.textContent : null,
+        kinds: Array.prototype.map.call(document.querySelectorAll('[data-picker-create-kind]'),
+          function (b) { return b.getAttribute('data-picker-create-kind'); })
+      };
+    });
+    assert.notEqual(seen.text, null, 'precondition: the Chosen panel is open');
+    assert.ok(seen.text.indexOf('A task') >= 0, 'precondition: it lists the goal tree');
+    // the claim this case is named for, first
+    assert.deepEqual(['Cold shower', 'Morning routine', 'Stretch', 'ACTIONS'].filter(w => seen.text.indexOf(w) >= 0), [],
+      'no action, and no ACTIONS heading, anywhere in the Chosen panel');
+    assert.deepEqual(seen.kinds, ['task', 'routine'], 'its create bar offers Task and Routine only');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('CORE ROUTINE: every action is listed, and + on a step schedules that step alone', async () => {
+    const page = await open('progress.html', { db: CORE_SEED(), hash: '#schedule' });
+    await openCore(page);
+    const rows = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-core-panel] [data-core-action]'),
+        function (r) { return r.getAttribute('data-core-action'); });
+    });
+    assert.deepEqual(rows, ['sa-plain', 'sa-dir', 'sa-step1', 'sa-step2'],
+      'every action, the steps under their routine, open by default');
+    await page.evaluate(CLICK_SEL, '[data-core-add="sa-step1"]');
+    const entries = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var e = ((db.slots || [])[0] || {}).saEntries || [];
+      return e.length ? e : false;
+    }, { message: 'the entry reaching track_db' });
+    // the write has landed; now read exactly what it was
+    assert.deepEqual(await page.evaluate(SA_ENTRIES), [{ actionId: 'sa-step1', date: TODAY, time: '06:30' }],
+      'one entry, for that step alone, at its own time — not the whole routine');
+    assert.equal(entries.length, 1);
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-core-panel]'); }), false,
+      'and the panel closes, as every other add does');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('CORE ROUTINE: + all on a routine schedules each of its steps', async () => {
+    /* The old ACTIONS list's one-click "whole routine", kept. */
+    const page = await open('progress.html', { db: CORE_SEED(), hash: '#schedule' });
+    await openCore(page);
+    await page.evaluate(CLICK_SEL, '[data-core-add-all="sa-dir"]');
+    await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      return ((((db.slots || [])[0] || {}).saEntries) || []).length > 0;
+    }, { message: 'the entries reaching track_db' });
+    const got = (await page.evaluate(SA_ENTRIES)).sort((a, b) => a.actionId.localeCompare(b.actionId));
+    assert.deepEqual(got, [
+      { actionId: 'sa-step1', date: TODAY, time: '06:30' },
+      { actionId: 'sa-step2', date: TODAY, time: '06:45' }
+    ], 'one entry per step, each at its own time, and none for the routine itself');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -12740,18 +12877,254 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('MM PICKER: a late milestone\'s unreached to-learn is pinned under OVERDUE, once', async tc => {
+  await t.test('LEARN: a late milestone\'s unreached to-learn heads the pinned strip, once', async tc => {
+    // The `◎` picker's OVERDUE group, now the top of ● Learn's pinned strip.
     const page = await openHere(tc, 'progress.html', { db: lateLearnDb(), hash: '#schedule' });
     await mountSchedule(page);
-    await page.evaluate(CLICK_SEL, '[data-day-add-mm="' + TODAY + '"]');
+    await page.evaluate(CLICK_SEL, '[data-day-add-learn="' + TODAY + '"]');
     const picks = await page.waitFor(function () {
-      if (!document.querySelector('[data-mm-picker-group="late"]')) return false;
+      if (!document.querySelector('[data-learn-pin]')) return false;
       return Array.prototype.map.call(document.querySelectorAll('[data-mm-pick]'), function (b) {
         return b.getAttribute('data-mm-pick') + (b.hasAttribute('data-mm-pick-late') ? ':late' : '');
       });
-    }, { message: 'the OVERDUE group in the MM picker' });
-    assert.equal(picks[0], '10:late', 'MM 10 heads the picker');
+    }, { message: 'the pinned strip in the Learn panel' });
+    assert.equal(picks[0], '10:late', 'MM 10 heads the panel');
     assert.equal(picks.filter(p => p.startsWith('10')).length, 1, 'and appears once — pinned, not repeated below');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* ── ● Learn and the MG tab: what the day's milestone still needs ────────
+     The user's rule (2026-10-14): a mind map is judged against the milestone
+     whose dates COVER the day, plus any milestone already overdue, from today
+     on. A Procedural mind map is pinned by its MG — its progress is its MG
+     level — and a Declarative one as a mind map to study; the SIR reviews due
+     that day are pinned beside them. milestone-core.js decides (unreachedOn,
+     pinned offline); these cases pin where it SHOWS, one claim per case, on
+     the two surfaces that read it: the Learn panel and Progress → MG.
+
+     Chapter one covers today; Chapter two starts in 40 days. Ids are NUMBERS,
+     as nid() mints them:
+       21 Guitar   Procedural, level 3, wants 5 by Chapter one   → pinned MG
+       22 Singing  Procedural, level 5, wants 5                  → reached
+       23 Piano    Procedural, level 1, wants 4 by Chapter TWO   → not today
+       24 Running  Procedural, in no goal                        → no milestone
+       31 Theory   Declarative at S1, wants S3                   → pinned mind map
+       40 Cell bio Declarative in SIR, a review due today        → pinned SIR
+       41 Swim     Procedural STORED in SIR, a session today     → no SIR at all */
+  const learnGoal = () => F.task('g-learn', {
+    title: 'Play in a band',
+    milestones: [
+      F.milestone('ms-now', dayFromToday(-3), dayFromToday(10), { title: 'Chapter one' }),
+      F.milestone('ms-next', dayFromToday(40), dayFromToday(70), { title: 'Chapter two' })
+    ],
+    toLearn: [21, 22, 23, 31],
+    mmTargets: {
+      21: { milestones: [{ milestoneId: 'ms-now', level: 5 }] },
+      22: { milestones: [{ milestoneId: 'ms-now', level: 5 }] },
+      23: { milestones: [{ milestoneId: 'ms-next', level: 4 }] },
+      31: { milestones: [{ milestoneId: 'ms-now', stage: '3' }] }
+    },
+    children: []
+  });
+  const learnDb = (over = {}) => seedDb(Object.assign({
+    goals: [learnGoal()],
+    mms: [
+      F.mm(21, 'Guitar', { type: '2', ksStage: '1', rating: 3, currentMG: 'Keep the wrist loose on downstrokes' }),
+      F.mm(22, 'Singing', { type: '2', ksStage: '2', rating: 5, currentMG: 'Breathe from the belly' }),
+      F.mm(23, 'Piano', { type: '2', ksStage: '1', rating: 1, currentMG: 'Count out loud' }),
+      F.mm(24, 'Running', { type: '2', ksStage: '1', rating: 4, currentMG: 'Land under the hip' }),
+      F.mm(31, 'Music theory', { type: '1', ksStage: '1' }),
+      F.mm(40, 'Cell biology', { type: '1', ksStage: 'sir' }),
+      F.mm(41, 'Swimming', { type: '2', ksStage: 'sir', rating: 6, currentMG: 'Exhale under water' })
+    ],
+    sessions: [F.session(500, TODAY, 40), F.session(501, TODAY, 41)],
+    mgSchedule: {}, mmEntries: [], calendarNotes: [], deadlines: [], saEntries: []
+  }, over));
+  const openLearn = async (page, ds) => {
+    await mountSchedule(page);
+    await page.waitFor(function (d) { return !!document.querySelector('[data-day-add-learn="' + d + '"]'); },
+      { args: [ds], message: "the day's ● Learn button" });
+    await page.evaluate(CLICK_SEL, '[data-day-add-learn="' + ds + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-learn-panel] [data-mm-pick]'); },
+      { message: 'the Learn panel and its mind maps' });
+  };
+  const LEARN_STATE = function () {
+    var ids = function (sel, attr) {
+      return Array.prototype.map.call(document.querySelectorAll(sel), function (e) { return e.getAttribute(attr); });
+    };
+    return {
+      mgPins: ids('[data-learn-pin] [data-learn-pin-mg]', 'data-learn-pin-mg'),
+      mmPins: ids('[data-learn-pin] [data-learn-pin-mm]', 'data-learn-pin-mm'),
+      sirPins: ids('[data-learn-pin] [data-learn-pin-sir]', 'data-learn-pin-sir'),
+      tabs: ids('[data-learn-tab]', 'data-learn-tab'),
+      mmTab: ids('[data-learn-panel] [data-mm-pick]:not([data-learn-pin-mm]):not([data-learn-pin-sir])', 'data-mm-pick')
+    };
+  };
+  const MG_DAY = function (d) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var m = (((db.slots || [])[0] || {}).mgSchedule) || {};
+    return Object.prototype.hasOwnProperty.call(m, d) ? m[d] : null;
+  };
+
+  await t.test('LEARN: an MG below the day\'s milestone level is pinned first, and turns on that day\'s focus', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: learnDb(), hash: '#schedule' });
+    await openLearn(page, TODAY);
+    const st = await page.evaluate(LEARN_STATE);
+    // the claim this case is named for, first
+    assert.deepEqual(st.mgPins, ['21'],
+      "Guitar alone: Singing has reached 5, Piano is short only of NEXT month's milestone, Running has none");
+    assert.equal(await page.evaluate(function () {
+      var pin = document.querySelector('[data-learn-pin]'), tab = document.querySelector('[data-learn-tab]');
+      return !!(pin && tab && (pin.compareDocumentPosition(tab) & Node.DOCUMENT_POSITION_FOLLOWING));
+    }), true, 'the pinned strip sits above the tabs');
+
+    await page.evaluate(CLICK_SEL, '[data-learn-tab="mg"]');
+    const mgTab = await page.waitFor(function () {
+      var r = Array.prototype.map.call(document.querySelectorAll('[data-mg-pick]'),
+        function (e) { return e.getAttribute('data-mg-pick'); });
+      return r.length ? r : false;
+    }, { message: 'the Marginal gains tab' });
+    assert.deepEqual(mgTab.slice().sort(), ['22', '23', '24', '41'],
+      'every other Procedural mind map, and Guitar not listed again');
+
+    await page.evaluate(CLICK_SEL, '[data-learn-pin-mg="21"]');
+    const on = await page.waitFor(MG_DAY, { args: [TODAY], message: 'the MG focus reaching track_db' });
+    assert.deepEqual(on, [21], "Guitar's MG is the day's focus, under its NUMBER id");
+
+    // Turning it off is a scheduling toggle — the destructive-control rule's
+    // documented exemption — so it asks nothing.
+    const dialogs = page.dialogs.length;
+    await page.evaluate(CLICK_SEL, '[data-learn-pin-mg="21"]');
+    const off = await page.waitFor(function (d) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var m = (((db.slots || [])[0] || {}).mgSchedule) || {};
+      return JSON.stringify(m[d]) !== '[21]' ? (m[d] || null) : false;
+    }, { args: [TODAY], message: 'the MG focus changing again' });
+    assert.deepEqual(off, [], 'turned off');
+    assert.equal(page.dialogs.length, dialogs, 'and turning an MG off asks nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('LEARN: a Declarative mind map short of the day\'s milestone is pinned to study; a Procedural one only by its MG', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: learnDb(), hash: '#schedule' });
+    await openLearn(page, TODAY);
+    const st = await page.evaluate(LEARN_STATE);
+    assert.deepEqual(st.mmPins, ['31'], 'Music theory (S1, wants S3) — and not Guitar, which is pinned by its MG');
+    assert.equal(st.mmTab.indexOf('31'), -1, 'it is not listed again under Mind maps');
+    assert.ok(st.mmTab.indexOf('21') >= 0, 'Guitar can still be studied, from the Mind maps tab');
+    await page.evaluate(CLICK_SEL, '[data-learn-pin-mm="31"]');
+    const added = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var m = (((db.slots || [])[0] || {}).mmEntries) || [];
+      return m.length ? m : false;
+    }, { message: 'the study block reaching track_db' });
+    assert.deepEqual(added.map(e => [e.mmId, e.date]), [[31, TODAY]], 'one study block, for Music theory, today');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('LEARN: a due SIR review is pinned, and a Procedural mind map\'s hidden session is not', async tc => {
+    /* The `◎` picker read sessions straight from storage, so a Procedural
+       mind map stored in SIR showed under SIR DUE TODAY while every other
+       surface hid its sessions. The strip reads them through liveSessions. */
+    const page = await openHere(tc, 'progress.html', { db: learnDb(), hash: '#schedule' });
+    await openLearn(page, TODAY);
+    const st = await page.evaluate(LEARN_STATE);
+    assert.deepEqual(st.sirPins, ['40'],
+      'Cell biology is due; Swimming is Procedural — it has no SIR, so its stored session is due nowhere');
+    assert.equal(st.mmTab.indexOf('40'), -1, 'the due review is not listed again under Mind maps');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('LEARN GUARD: a past day pins no milestone work and has no MG tab', async tc => {
+    // Yesterday is inside Chapter one, so only the past-day gate keeps it clear.
+    const yesterday = dayFromToday(-1);
+    const page = await openHere(tc, 'progress.html', { db: learnDb({ sessions: [] }), hash: '?date=' + yesterday + '#schedule' });
+    await openLearn(page, yesterday);
+    const st = await page.evaluate(LEARN_STATE);
+    assert.deepEqual([st.mgPins, st.mmPins], [[], []], 'a past day is view-only: nothing is pinned');
+    assert.deepEqual(st.tabs, [], 'no tab bar — a past day has no MG tab, as ⊕ had no button there');
+    assert.ok(st.mmTab.indexOf('21') >= 0 && st.mmTab.indexOf('31') >= 0, 'every mind map is still listed to study');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  const openMGTab = async (tc, db) => {
+    const page = await openHere(tc, 'progress.html', { db, hash: '#mg' });
+    await page.waitFor(function () { return !!document.querySelector('[data-mg-card]'); }, { message: 'the MG tab cards' });
+    return page;
+  };
+  const MG_CARDS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-mg-card]'), function (c) {
+      return c.getAttribute('data-mg-card') + (c.hasAttribute('data-mg-below') ? ':below' : '');
+    });
+  };
+
+  await t.test('MG TAB: a Procedural mind map below its milestone level is highlighted and listed first', async tc => {
+    const page = await openMGTab(tc, learnDb());
+    const cards = await page.evaluate(MG_CARDS);
+    // the claim this case is named for, first
+    assert.equal(cards[0], '21:below', 'Guitar heads the MG tab, highlighted: ' + cards.join(' '));
+    assert.deepEqual(cards.filter(c => c.endsWith(':below')), ['21:below'], 'and nothing else is highlighted');
+
+    // The tab's own ✓ toggle-off is the other half of the documented exemption.
+    const btn = '[data-mg-card="21"] button';
+    await page.evaluate(CLICK_SEL, btn);
+    const on = await page.waitFor(MG_DAY, { args: [TODAY], message: 'Guitar scheduled from the MG tab' });
+    assert.deepEqual(on, [21]);
+    const dialogs = page.dialogs.length;
+    await page.evaluate(CLICK_SEL, btn);
+    const off = await page.waitFor(function (d) {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var m = (((db.slots || [])[0] || {}).mgSchedule) || {};
+      return JSON.stringify(m[d]) !== '[21]' ? (m[d] || null) : false;
+    }, { args: [TODAY], message: 'the MG tab toggle changing again' });
+    assert.deepEqual(off, []);
+    assert.equal(page.dialogs.length, dialogs, 'turning it off asks nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('MG TAB GUARD: a past date highlights nothing', async tc => {
+    const page = await openMGTab(tc, learnDb());
+    assert.ok((await page.evaluate(MG_CARDS)).indexOf('21:below') >= 0, 'precondition: today, Guitar is highlighted');
+    await page.evaluate(function (setterSrc, value) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-mg-date]'), value);
+      return true;
+    }, SET_REACT_INPUT, dayFromToday(-1));
+    // wait on what renders with the date, then assert
+    await page.waitFor(function () { return document.body.textContent.indexOf('past · view only') >= 0; },
+      { message: 'the MG tab on a past date' });
+    assert.deepEqual((await page.evaluate(MG_CARDS)).filter(c => c.endsWith(':below')), [],
+      'yesterday is inside Chapter one, but a past date is view-only: nothing is highlighted');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PHONE: all four add panels fit a 390px screen', async tc => {
+    /* They were a fixed 528px — wider than the phone (NOTES). Each panel is
+       measured on its own, since a cap forgotten on one would hide behind
+       three that fit. */
+    const page = await openHere(tc, 'progress.html', { db: learnDb(), hash: '#schedule', viewport: PHONE });
+    await mountSchedule(page);
+    const FITS = function (sel) {
+      var el = document.querySelector(sel);
+      if (!el) return null;
+      var r = el.getBoundingClientRect(), vw = document.documentElement.clientWidth;
+      return { left: Math.round(r.left), right: Math.round(r.right), vw: vw, fits: r.left >= 0 && r.right <= vw };
+    };
+    for (const [button, panel] of [['data-dln-open', '[data-dln-panel]'], ['data-day-add-learn', '[data-learn-panel]'],
+      ['data-day-add-task', '[data-picker-panel]'], ['data-day-add-core', '[data-core-panel]']]) {
+      await page.evaluate(CLICK_SEL, '[' + button + '="' + TODAY + '"]');
+      const m = await page.waitFor(FITS, { args: [panel], message: panel + ' on a phone' });
+      assert.equal(m.fits, true, panel + ' stays on screen: ' + JSON.stringify(m));
+      await page.evaluate(CLICK_SEL, '[' + button + '="' + TODAY + '"]');   // the same button closes it
+      await page.waitFor(function (sel) { return !document.querySelector(sel); }, { args: [panel], message: panel + ' closing' });
+    }
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -13360,6 +13733,377 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(slot.mms.find(m => m.id === 11).ksStage, '1');
     assert.deepEqual(slot.sessions.filter(x => x.mmId === 11), [], "Beta's hidden sessions are gone");
     assert.equal(slot.linChanges[slot.linChanges.length - 1].items[0].change.oldValue, '4');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  /* ── 19. Found along the way, fixed 2026-10-14 ───────────────────────────
+     Four bugs NOTES listed as found and left out, fixed together. One door per
+     case wherever the design has one; the doctored baselines, and the cases
+     that share a door, are in docs/VERIFICATION-LOG.md. Mind-map ids are
+     NUMBERS and mmTargets keys are STRINGS, exactly as stored. */
+
+  // Waits for `sel` OR an uncaught error, whichever comes first, then asserts
+  // there was no error — so a dead render reports its RangeError instead of a
+  // timeout that reads like a missing selector.
+  const renderedOrError = async (page, sel, what) => {
+    const until = Date.now() + 30000;
+    while (Date.now() < until) {
+      if (realErrors(page).length) break;
+      if (await page.evaluate(function (s) { return !!document.querySelector(s); }, sel)) break;
+      await sleep(100);
+    }
+    assert.deepEqual(realErrors(page), [], what + ': no uncaught error');
+    assert.equal(await page.evaluate(function (s) { return !!document.querySelector(s); }, sel), true, what);
+  };
+  const GOAL_STATE = function (id) {
+    var n = document.querySelector('[data-goal-node="' + id + '"]');
+    if (!n) return null;
+    var ring = n.querySelector('[data-mm-auto]');
+    return { done: n.getAttribute('data-goal-done'), ring: ring ? ring.getAttribute('data-mm-auto') : null };
+  };
+
+  // ── bug 2: a goal's mind-map targets are found, and done needs its tasks ──
+  /* Five sub-goals of one container, each learning one MM: 20 Declarative at
+     S4, 21 at S2, 22 in SIR with two reviews done. The old code looked each
+     target up by its STRING key against NUMERIC ids, found nothing, and read
+     every one of these as 0/1 and undone. */
+  const AUTO_MMS = () => [
+    F.mm(20, 'Auto Alpha', { type: '1', ksStage: '4' }),
+    F.mm(21, 'Auto Beta', { type: '1', ksStage: '2' }),
+    F.mm(22, 'Auto Gamma', { type: '1', ksStage: 'sir' })
+  ];
+  const AUTO_SESSIONS = () => [
+    F.session(401, dayFromToday(-10), 22, { done: true, repIndex: 0 }),
+    F.session(402, dayFromToday(-5), 22, { done: true, repIndex: 1 }),
+    F.session(403, dayFromToday(5), 22, { repIndex: 2 })
+  ];
+  const autoSub = (id, mmId, target, children) => F.task(id, {
+    title: 'Sub ' + id, isSubGoal: true, toLearn: [mmId],
+    mmTargets: { [String(mmId)]: target }, children: children || []
+  });
+  const autoDb = () => seedDb({
+    mms: AUTO_MMS(), sessions: AUTO_SESSIONS(),
+    goals: [F.task('g-auto', { title: 'Auto container', children: [
+      autoSub('sg-met', 20, { stage: '4' }),
+      autoSub('sg-open', 20, { stage: '4' }, [F.task('t-auto-open', { title: 'Still open' })]),
+      autoSub('sg-shut', 20, { stage: '4' }, [F.task('t-auto-done', { title: 'Finished', completed: true })]),
+      autoSub('sg-sir', 22, { stage: 'sir2' }),
+      autoSub('sg-short', 21, { stage: '4' })
+    ] })]
+  });
+  const openAuto = async tc => {
+    const page = await openHere(tc, 'progress.html', { db: autoDb() });
+    await renderedOrError(page, '[data-goal-node="sg-short"]', 'the five sub-goals');
+    return page;
+  };
+
+  await t.test('AUTO: a goal finds its numeric-id mind map, and with no tasks is done by its target', async tc => {
+    const page = await openAuto(tc);
+    assert.deepEqual(await page.evaluate(GOAL_STATE, 'sg-met'), { done: '1', ring: '1/1' },
+      'Alpha is at S4, its target — the ring read 0/1 and the goal stayed undone');
+    assert.deepEqual(await page.evaluate(GOAL_STATE, 'sg-short'), { done: '0', ring: '0/1' },
+      'the guard: Beta at S2 is short of S4');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('AUTO: met targets do not finish a goal whose tasks are still open', async tc => {
+    const page = await openAuto(tc);
+    assert.deepEqual(await page.evaluate(GOAL_STATE, 'sg-open'), { done: '0', ring: '1/1' },
+      'the target is met, but "Still open" is not — the user\'s rule: tasks too');
+    assert.deepEqual(await page.evaluate(GOAL_STATE, 'sg-shut'), { done: '1', ring: '1/1' },
+      'the same target with its one task finished is done');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('AUTO: the ring counts SIR reviews exactly as done does', async tc => {
+    const page = await openAuto(tc);
+    assert.deepEqual(await page.evaluate(GOAL_STATE, 'sg-sir'), { done: '1', ring: '1/1' },
+      'two reviews done meets a SIR 2 target — the ring used to ignore the reviews and read 0/1 beside a done goal');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('AUTO: the header counts a task-less goal whose target is met', async tc => {
+    const db = seedDb({ mms: AUTO_MMS(), sessions: [],
+      goals: [F.task('g-leaf', { title: 'Leaf goal', toLearn: [20], mmTargets: { '20': { stage: '4' } } })] });
+    const page = await openHere(tc, 'progress.html', { db });
+    await renderedOrError(page, '[data-app-pct]', 'the header');
+    assert.equal(await page.evaluate(function () { return document.querySelector('[data-app-pct]').textContent.trim(); }), '100%',
+      'the goal is its own leaf and it is done: (100 + 100) / 2 — it read 50%');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── bug 3: a link back up the tree is drawn once, never followed round ────
+  /* G > A > B > (link → A): what the old "link existing task" picker let a user
+     build by linking a task under its own descendant. Every surface that walked
+     it recursed until the stack gave out and the page went blank. */
+  const LOOP_TASKS = () => [F.task('lp-a', { title: 'Loop A', children: [
+    F.task('lp-b', { title: 'Loop B', children: [{ id: 'lp-link', linkedTaskId: 'lp-a', isLink: true }] })
+  ] })];
+  const loopDb = () => seedDb({ goals: [F.task('g-loop', { title: 'Loop goal', children: LOOP_TASKS() })] });
+  const READ_GOALS = function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return ((db.slots || [])[0] || {}).goals || [];
+  };
+
+  await t.test('LOOP GOALS: a task linked under its own descendant is drawn once, as a loop row', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: loopDb() });
+    await renderedOrError(page, '[data-link-loop="lp-link"]', 'the loop row in the goal tree');
+    assert.match(await page.evaluate(function () { return document.querySelector('[data-link-loop="lp-link"]').textContent; }),
+      /Loop A/, 'it names the task it leads back to');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LOOP GOALS: the loop row unlinks — Cancel writes nothing, OK removes only the link', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: loopDb() });
+    await renderedOrError(page, '[data-link-loop="lp-link"] button', "the loop row's unlink");
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    const dialogsBefore = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(CLICK_SEL, '[data-link-loop="lp-link"] button');
+    await sleep(600);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogsBefore + 1, 'the unlink asked, once');
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'Cancel left track_db byte-identical');
+    await page.evaluate(CLICK_SEL, '[data-link-loop="lp-link"] button');
+    const goals = await page.waitFor(function (f) {
+      var g = new Function('return ' + f)()();
+      var b = g[0] && g[0].children[0] && g[0].children[0].children[0];
+      return b && b.children.length === 0 ? g : false;
+    }, { args: [READ_GOALS.toString()], message: 'the unlink landing in track_db' });
+    assert.deepEqual(goals[0].children[0].children.map(c => c.id), ['lp-b'], 'Loop B itself is kept');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-link-loop]'); }), false);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LOOP GOALS: a goal linked under its own sub-goal is drawn once, as a loop row', async tc => {
+    const db = seedDb({ goals: [F.task('g-top', { title: 'Top goal', children: [
+      F.task('sg-x', { title: 'Sub X', isSubGoal: true,
+        children: [{ id: 'sg-link', linkedTaskId: 'g-top', isLink: true, isSubGoal: true }] })
+    ] })] });
+    const page = await openHere(tc, 'progress.html', { db });
+    await renderedOrError(page, '[data-link-loop="sg-link"]', 'the loop row under the sub-goal');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LOOP MILESTONES: a loop under a milestone block is drawn once in the Milestones tab', async tc => {
+    const db = seedDb({ goals: [F.task('g-loopm', { title: 'Loop milestone goal',
+      milestones: [F.milestone('ms-loop', TODAY, dayFromToday(7), { title: 'Loop milestone' })],
+      children: [msBlock('blk-loop', 'ms-loop', LOOP_TASKS())] })] });
+    const page = await openHere(tc, 'progress.html', { db, hash: '#milestones' });
+    await renderedOrError(page, '[data-ms-row="g-loopm|ms-loop"] [data-link-loop="lp-link"]',
+      "the loop row in the milestone's task list");
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LOOP SCHEDULE: the Schedule mounts over a loop', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: loopDb(), hash: '#schedule' });
+    await renderedOrError(page, '[data-dln-open]', 'the schedule timeline day headers');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  /* Two mind maps that are each other's parent. With a root above them the
+     to-learn tree recursed forever; with no root at all, neither was reached
+     and both silently vanished from the list. Each has a phase, because the
+     Mind Maps tab draws its `data-mm-badge-stage` hook only for one that does. */
+  const mmLoopDb = rootless => seedDb({
+    mms: [F.mm(30, 'Cycle One', { ksStage: '1', parentIds: rootless ? [31] : [32, 31] }),
+      F.mm(31, 'Cycle Two', { ksStage: '1', parentIds: [30] }), F.mm(32, 'Cycle Root', { ksStage: '1' })],
+    sessions: [],
+    goals: [F.task('g-mmloop', { title: 'Learn a cycle', toLearn: rootless ? [30, 31] : [32, 30, 31] })]
+  });
+  const LEARN_ROWS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-learn-row]'), function (e) {
+      return e.getAttribute('data-learn-row');
+    }).sort();
+  };
+
+  await t.test('LOOP TO LEARN: a parent cycle under a root mind map is drawn once', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: mmLoopDb(false) });
+    await renderedOrError(page, '[data-learn-row="31"]', "the cycle's second mind map");
+    assert.deepEqual(await page.evaluate(LEARN_ROWS), ['30', '31', '32'], 'Root > One > Two, and Two is not drawn round again');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LOOP TO LEARN: a parent cycle with no root still shows every mind map', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: mmLoopDb(true) });
+    await renderedOrError(page, '[data-goal-node="g-mmloop"]', 'the goal');
+    assert.deepEqual(await page.evaluate(LEARN_ROWS), ['30', '31'], 'both rows — they used to vanish');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LOOP MIND MAPS: the Mind Maps tab draws a parent cycle once', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: mmLoopDb(false), hash: '#mindmaps' });
+    await renderedOrError(page, '[data-mm-badge-stage="31"]', "the cycle's second mind map in the tree");
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  /* The pickers stop offering a link that would loop. One sub-goal, Y, under
+     goal S, holding A > B and C; a second goal elsewhere holds D. */
+  const pickDb = () => seedDb({ goals: [
+    F.task('g-pks', { title: 'Pick goal S', children: [
+      F.task('sg-y', { title: 'Sub Y', isSubGoal: true, children: [
+        F.task('pk-a', { title: 'Pick A', children: [F.task('pk-b', { title: 'Pick B' })] }),
+        F.task('pk-c', { title: 'Pick C' })
+      ] })
+    ] }),
+    F.task('g-pko', { title: 'Pick goal O', children: [F.task('pk-d', { title: 'Pick D' })] })
+  ] });
+  const PICKS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-link-pick]'), function (e) {
+      return e.getAttribute('data-link-pick');
+    }).sort();
+  };
+
+  await t.test('LOOP PICKER: "link existing task" leaves out a task\'s own ancestors', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: pickDb() });
+    await renderedOrError(page, '[data-link-task-open="pk-b"]', "Pick B's link button");
+    await page.evaluate(CLICK_SEL, '[data-link-task-open="pk-b"]');
+    const picks = await page.waitFor(function (f) {
+      var p = new Function('return ' + f)()();
+      return p.length ? p : false;
+    }, { args: [PICKS.toString()], message: 'the task picker' });
+    assert.deepEqual(picks, ['pk-c', 'pk-d'], 'Pick A holds Pick B, so linking it under B would loop');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LOOP PICKER: "link sub-goal" leaves out the goal a sub-goal sits in', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: pickDb() });
+    await renderedOrError(page, '[data-link-goal-open="sg-y"]', "Sub Y's link button");
+    await page.evaluate(CLICK_SEL, '[data-link-goal-open="sg-y"]');
+    const picks = await page.waitFor(function (f) {
+      var p = new Function('return ' + f)()();
+      return p.length ? p : false;
+    }, { args: [PICKS.toString()], message: 'the goal picker' });
+    assert.deepEqual(picks, ['g-pko'], 'goal S holds Sub Y, so linking it under Y would loop');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── bug 4: every move out of SIR that deletes sessions asks first ─────────
+  /* p17Db's 10 is Declarative in SIR with one session today; 18 is in SIR with
+     none. A Declarative MM leaving SIR always deleted its sessions; only the
+     Procedural case used to ask. */
+  const leaveSirDb = () => p17Db({ mms: P17_MMS().concat([F.mm(18, 'Declarative Eta', { type: '1', ksStage: 'sir' })]) });
+  const MM_STAGE = function (id) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var mm = (((db.slots || [])[0] || {}).mms || []).filter(function (m) { return m.id === id; })[0];
+    return mm ? mm.ksStage : null;
+  };
+
+  await t.test('SIR EXIT: moving a Declarative MM out of SIR asks first, and Cancel writes nothing', async tc => {
+    const page = await openLinFor(tc, 10, leaveSirDb());
+    await pickLin(page, 'stageRevert:4');
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    const dialogsBefore = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(CLICK_SEL, '[data-lin-save]');
+    await sleep(600);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogsBefore + 1, 'the save asked, once');
+    const msg = page.dialogs[page.dialogs.length - 1];
+    assert.match(msg, /"Declarative Alpha" is in SIR, with 1 SIR session \(0 done\)/, 'it names the MM and counts its sessions');
+    assert.match(msg, /Moving it to S4 ends its SIR run/);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+      'Cancel left track_db byte-identical');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-lin-save]'); }), true,
+      'and +LIN stayed open on its last step');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('SIR EXIT: accepting deletes that MM\'s sessions, and nobody else\'s', async tc => {
+    const page = await openLinFor(tc, 10, leaveSirDb());
+    await pickLin(page, 'stageRevert:4');
+    const dialogsBefore = page.dialogs.length;
+    await page.evaluate(CLICK_SEL, '[data-lin-save]');
+    await page.waitFor(function (f) { return new Function('return ' + f)()(10) === '4'; },
+      { args: [MM_STAGE.toString()], message: 'the move landing in track_db' });
+    assert.equal(page.dialogs.length, dialogsBefore + 1, 'it asked first');
+    const ids = await page.evaluate(function () {
+      var s = JSON.parse(localStorage.getItem('track_db')).slots[0];
+      return s.sessions.map(function (x) { return x.id; }).sort(function (a, b) { return a - b; });
+    });
+    assert.deepEqual(ids, [211, 212, 221], "Alpha's session is gone; Beta's and Gamma's are untouched");
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('SIR EXIT: an MM in SIR with no sessions moves without a prompt', async tc => {
+    const page = await openLinFor(tc, 18, leaveSirDb());
+    await pickLin(page, 'stageRevert:4');
+    const dialogsBefore = page.dialogs.length;
+    await page.evaluate(CLICK_SEL, '[data-lin-save]');
+    await page.waitFor(function (f) { return new Function('return ' + f)()(18) === '4'; },
+      { args: [MM_STAGE.toString()], message: "Eta's move landing" });
+    assert.equal(page.dialogs.length, dialogsBefore, 'nothing to delete, so nothing to ask');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── bug 5: a sub-goal linked under two goals is listed under each, once ───
+  /* The user's example: JLPT N4 belongs to Japanese and is linked under Move
+     to Japan. A link shows the SAME sub-goal twice, so its milestone is listed
+     under both — but counted once, drawn once on the calendar, and one click
+     selects one row. */
+  const linkedOwnerDb = () => seedDb({
+    calendarNotes: [], deadlines: [], mmEntries: [], sessions: [], saEntries: [],
+    goals: [
+      F.task('g-jp', { title: 'Japanese', children: [
+        F.task('sg-n4', { title: 'JLPT N4', isSubGoal: true,
+          milestones: [F.milestone('ms-mock', TODAY, dayFromToday(10), { title: 'Mock exam' })],
+          children: [msBlock('blk-mock', 'ms-mock', [F.task('t-mock', { title: 'Grammar drills' })])] })
+      ] }),
+      F.task('g-mv', { title: 'Move to Japan', children: [
+        F.task('sg-visa', { title: 'Visa', isSubGoal: true,
+          milestones: [F.milestone('ms-forms', dayFromToday(20), dayFromToday(25), { title: 'Submit forms' })],
+          children: [msBlock('blk-forms', 'ms-forms', [F.task('t-forms', { title: 'Fill the forms' })])] }),
+        { id: 'lnk-n4', linkedTaskId: 'sg-n4', isLink: true, isSubGoal: true }
+      ] })
+    ]
+  });
+  const MOCK_KEY = 'sg-n4|ms-mock';
+  const openLinkedOwner = async tc => {
+    const page = await openHere(tc, 'progress.html', { db: linkedOwnerDb(), hash: '#milestones' });
+    await renderedOrError(page, '[data-ms-row="sg-visa|ms-forms"]', 'the Milestones tab');
+    return page;
+  };
+  const MOCK_ROWS = function (k) {
+    return Array.prototype.map.call(document.querySelectorAll('[data-ms-row="' + k + '"]'), function (r) {
+      return { linkedFrom: r.getAttribute('data-ms-row-linked-from'), selected: r.getAttribute('aria-current') === 'true' };
+    });
+  };
+
+  await t.test('LINKED OWNER: listed under each goal, marked as linked, and counted once', async tc => {
+    const page = await openLinkedOwner(tc);
+    assert.equal(await page.evaluate(function () { return document.querySelector('[data-ms-totals]').textContent.trim(); }),
+      '2 milestones · 2 leaf subgoals', 'it read 3 and 3');
+    assert.deepEqual((await page.evaluate(MOCK_ROWS, MOCK_KEY)).map(r => r.linkedFrom), [null, 'g-jp'],
+      'under Japanese, and again under Move to Japan, marked as linked from Japanese');
+    assert.match(await page.evaluate(function () { return document.querySelector('[data-ms-linked-from="g-jp"]').textContent; }),
+      /linked from Japanese/);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LINKED OWNER: the calendar draws the linked milestone once', async tc => {
+    const page = await openLinkedOwner(tc);
+    const chips = await page.waitFor(function (d, k) {
+      var c = document.querySelector('[data-ms-day="' + d + '"]');
+      return c ? c.querySelectorAll('[data-ms-chip="' + k + '"]').length : false;
+    }, { args: [TODAY, MOCK_KEY], message: "today's calendar cell" });
+    assert.equal(chips, 1, 'one chip for Mock exam today — it drew two');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('LINKED OWNER: one click selects one row', async tc => {
+    const page = await openLinkedOwner(tc);
+    await page.evaluate(function (k) { document.querySelectorAll('[data-ms-row="' + k + '"]')[1].click(); return true; }, MOCK_KEY);
+    await page.waitFor(function (k) { return !!document.querySelector('[data-ms-row="' + k + '"][aria-current="true"]'); },
+      { args: [MOCK_KEY], message: 'a selected row' });
+    assert.deepEqual((await page.evaluate(MOCK_ROWS, MOCK_KEY)).map(r => r.selected), [false, true],
+      'the linked row alone — both used to light up');
+    await page.evaluate(function (k) { document.querySelectorAll('[data-ms-row="' + k + '"]')[0].click(); return true; }, MOCK_KEY);
+    await page.waitFor(function (k) {
+      var r = document.querySelectorAll('[data-ms-row="' + k + '"]');
+      return r[0] && r[0].getAttribute('aria-current') === 'true';
+    }, { args: [MOCK_KEY], message: 'the first row selected' });
+    assert.deepEqual((await page.evaluate(MOCK_ROWS, MOCK_KEY)).map(r => r.selected), [true, false]);
     assert.deepEqual(realErrors(page), []);
   });
 });

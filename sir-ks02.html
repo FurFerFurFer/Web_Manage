@@ -9,7 +9,7 @@
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
-  <script src="scripts/milestone-core.js?v=2"></script>
+  <script src="scripts/milestone-core.js?v=3"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
   <script src="scripts/source-dump-core.js?v=1"></script>
@@ -3080,16 +3080,31 @@
         if(!isProcedural(mm)||!["sir","finished"].includes(mm.ksStage)) return [];
         return sessions.filter(s=>s.mmId===mm.id);
       }
+      // The sessions a +LIN move to `newStage` deletes: every one of the MM's,
+      // when it is STORED in SIR or FINISHED and the move takes it out of both
+      // — the writer's own condition below, so the prompt and the delete
+      // cannot disagree. Declarative MMs included: their sessions are visible,
+      // but a finished review history is still work there is no undo for.
+      function endingSirSessions(mm,newStage){
+        if(!mm||!["sir","finished"].includes(mm.ksStage)||["sir","finished"].includes(newStage)) return [];
+        return sessions.filter(s=>s.mmId===mm.id);
+      }
       // Returns false when the user cancelled, having written nothing.
       function saveLinSession(items,title){
         // S4 is a Procedural MM's last phase. The option is not offered; this
         // refuses it at the writer as well.
         items=items.filter(({mmId,change})=>!(change.type==="stageAdvance"&&change.newValue==="sir"&&isProcedural(mmMap[mmId])));
         if(!items.length) return true;
-        const ending=items.filter(({mmId,change})=>change.type==="stageRevert"&&hiddenSirSessions(mmMap[mmId]).length>0);
+        // Every move out of SIR that deletes sessions asks first — before any
+        // write, so Cancel leaves everything as it was. A move with no
+        // sessions to delete does not ask.
+        const ending=items.filter(({mmId,change})=>change.type==="stageRevert"&&endingSirSessions(mmMap[mmId],change.newValue).length>0);
         if(ending.length&&!window.confirm(ending.map(({mmId,change})=>{
-          const mm=mmMap[mmId],n=hiddenSirSessions(mm).length;
-          return `"${mm.name}" is Procedural, so it shows as S4 — but it is still stored as ${stageLabel(mm.ksStage)}, with ${n} SIR session${n===1?"":"s"} hidden from every calendar.\n\nMoving it to ${stageLabel(change.newValue)} takes it out of SIR, which deletes ${n===1?"that session":"those sessions"}. Switching it back to Declarative will not bring ${n===1?"it":"them"} back.`;
+          const mm=mmMap[mmId],gone=endingSirSessions(mm,change.newValue),n=gone.length;
+          if(isProcedural(mm))
+            return `"${mm.name}" is Procedural, so it shows as S4 — but it is still stored as ${stageLabel(mm.ksStage)}, with ${n} SIR session${n===1?"":"s"} hidden from every calendar.\n\nMoving it to ${stageLabel(change.newValue)} takes it out of SIR, which deletes ${n===1?"that session":"those sessions"}. Switching it back to Declarative will not bring ${n===1?"it":"them"} back.`;
+          const d=gone.filter(s=>s.done).length;
+          return `"${mm.name}" is ${mm.ksStage==="sir"?"in SIR":"FINISHED"}, with ${n} SIR session${n===1?"":"s"} (${d} done).\n\nMoving it to ${stageLabel(change.newValue)} ends its SIR run and deletes ${n===1?"that session":"those sessions"}. Moving it back to SIR later starts a new run from the first review.`;
         }).join("\n\n")+"\n\nSave anyway?")) return false;
         const record={id:nid(),title:title||today(),date:today(),items};
         items.forEach(({mmId,change})=>{

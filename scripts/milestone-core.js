@@ -42,6 +42,11 @@
      moving the end of a milestone that was ALREADY late. Re-planning before a
      milestone is late is planning, not a slip.
 
+   The same statuses answer one more question, unreachedOn: which mind maps a
+   DAY still owes its milestone. The Schedule's ● Learn panel pins them and
+   Progress → MG lists their MGs first; both read it, and neither re-spells
+   which milestone a day belongs to or the past-day gate.
+
    Nothing here reads or writes localStorage, and nothing here constructs a
    Date — "today" arrives as a PARAMETER, a local YYYY-MM-DD the page computed,
    and day arithmetic is integer days-from-civil. That is what keeps this file's
@@ -486,6 +491,70 @@
     return out;
   }
 
+  // ── the to-learn a day still owes ────────────────────────────────────────
+  // What the Schedule's ● Learn panel pins on top and Progress → MG lists
+  // first: the mind maps still short of their waypoint for a milestone that
+  // MATTERS on `day` — one whose period covers the day (the Schedule's own rule
+  // for which milestone a day belongs to), or one already overdue.
+  //
+  // Membership is `st.learn.open`, which statusOf decided through targetFor +
+  // targetMet, so "has it reached the waypoint?" is never asked a second time:
+  // a level EQUAL to the waypoint is reached, exactly as the MG bar fills, and
+  // a Procedural MM's phase-only waypoint is no work at all.
+  //
+  // For `today` and later only. A past day is view-only — the rule the
+  // Schedule's pickers have always followed, and an MG cannot be scheduled on
+  // one — and the gate lives HERE so the two surfaces reading this cannot
+  // disagree about it.
+  //
+  // One record per mind map, under its most pressing milestone: overdue
+  // before on-time, most days late first, then the soonest end, then tab
+  // order. `procedural` says which action the page offers — a Procedural MM's
+  // progress is its MG level, so its MG is what gets pinned; any other MM is
+  // pinned to be studied. `waypoint` is read through targetFor, so a
+  // Procedural one carries its level alone.
+  function unreachedOn(rep, mms, day, today) {
+    if (!isDay(day) || !isDay(today) || day < today) return [];
+    var byId = new Map();
+    listOf(mms).forEach(function (m) { if (isMap(m) && isId(m.id) && !byId.has(m.id)) byId.set(m.id, m); });
+    var relevant = entries(rep).filter(function (st) {
+      if (!isMap(st) || !isMap(st.learn)) return false;
+      if (st.state === 'overdue') return true;
+      return !!st.dated && st.startDate <= day && day <= st.endDate;
+    });
+    relevant.sort(function (a, b) {
+      var al = a.state === 'overdue', bl = b.state === 'overdue';
+      if (al !== bl) return al ? -1 : 1;
+      if (al) return (b.daysLate - a.daysLate) || (a.order - b.order);
+      if (a.endDate !== b.endDate) return a.endDate < b.endDate ? -1 : 1;
+      return a.order - b.order;
+    });
+    var out = [];
+    var seen = new Set();
+    relevant.forEach(function (st) {
+      var targets = isMap(st.owner) && isMap(st.owner.mmTargets) ? st.owner.mmTargets : {};
+      listOf(st.learn.open).forEach(function (mmId) {
+        if (!isId(mmId) || seen.has(mmId)) return;
+        var mm = byId.get(mmId);
+        if (!mm) return;
+        var target = targetFor(mm, own(targets, mmId) ? targets[mmId] : null);
+        var waypoint = listOf(isMap(target) ? target.milestones : null)
+          .filter(function (e) { return isMap(e) && e.milestoneId === st.milestoneId; })[0];
+        if (!waypoint) return;
+        seen.add(mmId);
+        out.push({
+          mmId: mmId,
+          mm: mm,
+          st: st,
+          waypoint: waypoint,
+          procedural: isProcedural(mm),
+          late: st.state === 'overdue'
+        });
+      });
+    });
+    return out;
+  }
+
   // The one wording every surface uses:
   //   'OVERDUE · 5 days · 3 tasks, 1 to-learn left'
   // with zero parts omitted. 'done' and 'no work attached' for the two
@@ -608,6 +677,7 @@
     report: report,
     lateList: lateList,
     lateById: lateById,
+    unreachedOn: unreachedOn,
     label: label,
     baselineOf: baselineOf,
     withSlip: withSlip,

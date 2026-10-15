@@ -26,6 +26,7 @@ days. It is the count of them."* **MG always means Marginal Gains** — never "m
 | **Day note** | A note placed on a day of the Schedule or a calendar (`calendarNotes`) | the Journal |
 | **MG** | One change of focus (see below) | a goal |
 | **Storage** | A source: a real place where material lives | knowledge |
+| **Core Routine** | The supporting actions — the Schedule's ■ button (see below) | a **routine task**: a goal task repeated on chosen days, which belongs to **Chosen** |
 
 Still to be renamed (NOTES, Proposal 17): the **KS02** tab, which shows mind maps by phase,
 and the two screens both called **KS03** — the panel inside a mind map (phase, SIR,
@@ -92,7 +93,27 @@ that can be checked rather than judged by feel (NOTES, Proposal 17).
 - **True Storage** — a storage is a **source**, not knowledge: a real place where material
   lives. Storages are tagged to the Source Dump sections they relate to.
 
+## The Schedule's four kinds of work
+
+Confirmed 2026-10-14. A day's work comes in four kinds, and each Schedule day has one add button
+per kind:
+
+- ★ **Forced** — what the day imposes: day notes and deadlines.
+- ● **Learn** — mind maps to study and MGs to practise. What a milestone still needs comes first:
+  - the MG of a Procedural mind map whose MG level is below the level that day's milestone asks
+    for;
+  - a Declarative mind map short of its milestone;
+  - the SIR reviews due that day.
+
+  "That day's milestone" is the one whose dates cover the day. Example: Guitar at level 3, with
+  Chapter one asking for 5, is highlighted on every day of Chapter one until a Kolb records level
+  5.
+- ▲ **Chosen** — the to-do the user picked: goal tasks, routine tasks and milestone tasks.
+- ■ **Core Routine** — the supporting actions.
+
+The app works this way since 2026-10-14 (README, "Schedule and supporting actions").
+
 ## Not covered yet
 
-Progress & Schedule (goals, milestones, quests, supporting actions), Documentations, Home,
-and where the Journal sits in the learning loop.
+Progress (goals, milestones, quests), the rest of the Schedule, Documentations, Home, and where
+the Journal sits in the learning loop.
