@@ -10,7 +10,7 @@
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
   <script src="scripts/milestone-core.js?v=3"></script>
-  <script src="scripts/calendar-core.js?v=10"></script>
+  <script src="scripts/calendar-core.js?v=11"></script>
   <script src="scripts/doc-table-core.js?v=4"></script>
   <script src="scripts/schedule-paste-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -56,7 +56,7 @@
       db.slots=slots.map(s=>s.id===id?{...s,[key]:val}:s);
       TrackStorage.saveDB(db);
     }
-    // calendarNotes and deadlines are owned by progress.html. Holding them in
+    // calendarNotes, deadlines and refSchedules are owned by progress.html. Holding them in
     // React state and writing the array back would clobber anything that page
     // (or another tab) added since this one mounted, so every edit derives the
     // next array from what is stored RIGHT NOW and returns it for rendering.
@@ -1136,11 +1136,23 @@
           <tbody>
             {rows.map((row, i) => {
               const v = schedRowView(row);
+              // Days removed on the Progress Schedule with a class's ✕. A
+              // removal deletes nothing, so the class is still listed here —
+              // this says which days it is not drawn on. A paste preview's
+              // drafts never carry any.
+              const skips = TrackCalendar.refSkips(row);
+              const weekly = row.dow !== undefined && row.dow !== null;
+              const removedNote = !skips.length ? ''
+                : weekly ? 'not on ' + skips.join(', ')
+                : (skips.indexOf(row.date) !== -1 ? 'removed from the schedule' : '');
               return (
                 <tr key={row.id || i} className="border-b border-gray-800/60 last:border-0">
                   <td className="whitespace-nowrap py-0.5 pr-2 font-mono text-gray-400">{v.dayLabel}</td>
                   <td className="whitespace-nowrap py-0.5 pr-2 font-mono text-gray-400">{v.when}</td>
-                  <td className="py-0.5 pr-2 text-gray-200">{v.title}</td>
+                  <td className="py-0.5 pr-2 text-gray-200">
+                    {v.title}
+                    {removedNote && <div data-sched-skips className="text-[10px] text-amber-500/80">{removedNote}</div>}
+                  </td>
                   {/* The detail gets its own column rather than being glued to
                       the title, which is the whole point of the fourth cell:
                       the topic stays readable on its own. Muted, because a
@@ -1148,7 +1160,8 @@
                   <td data-sched-detail className="w-full py-0.5 pr-2 text-gray-500">{v.detail}</td>
                   {onRemove && (
                     <td className="py-0.5 text-right">
-                      <button onClick={()=>onRemove(row)} title="remove this class"
+                      <button onClick={()=>onRemove(row)} title="delete this class for good"
+                        data-sched-remove={row.id}
                         className="px-1 text-gray-600 hover:text-red-400">✕</button>
                     </td>
                   )}
@@ -1292,6 +1305,11 @@
     /* The page's window onto the timetable IT pasted. Stores nothing of its
        own — the entries live in the slot field refSchedules, because
        progress.html and index.html draw them and neither reads docPages.
+       progress.html OWNS that field now: it is where a class is moved,
+       renamed, given notes or removed from one day, and this list shows the
+       result because it reads the same entries. What this block writes, it
+       writes through a fresh read-modify-write (onMutate): the paste, and the
+       PERMANENT delete.
 
        Entries are scoped to the PAGE (docPageId), not to this block, so a page
        carrying two schedule blocks shows the same list twice rather than
@@ -1299,9 +1317,10 @@
        one paste can be removed in one gesture.
 
        It also lists ORPHANED imports — ones whose docPageId names no surviving
-       page. Deleting a page deliberately does NOT delete what it authored (the
-       day-note rule), and without this section those entries would still be
-       drawn on three hour grids with no way to remove them. */
+       page — and blocks ADDED IN THE SCHEDULE, which carry no docPageId at all.
+       Deleting a page deliberately does NOT delete what it authored (the
+       day-note rule), and without these sections those entries would still be
+       drawn on three hour grids with no way to delete them. */
     function ScheduleBlock({block, page, docPages, slot, onMutate}) {
       const SP = window.TrackSchedulePaste;
       const [showPaste, setShowPaste] = useState(false);
@@ -1315,6 +1334,11 @@
       // simply predates ownership or was written by hand — so only a pointer
       // that fails to resolve counts.
       const orphans = all.filter(e => e.docPageId && !pageIds.has(e.docPageId));
+      // A block added by hand in Progress → ★ Forced → Timetable, or one with
+      // no page for any other reason. It belongs to no page, so EVERY Timetable
+      // block lists it — the only place it can be deleted for good, and the
+      // reason it can never be unreachable from here.
+      const handAdded = all.filter(e => !e.docPageId);
 
       const groups = useMemo(() => {
         const by = new Map();
@@ -1356,16 +1380,19 @@
       };
 
       const removeImport = (importId, n) => {
-        if (!window.confirm('Remove these ' + n + ' ' + (n === 1 ? 'class' : 'classes') +
-          ' from the schedule?\n\nThis cannot be undone.')) return;
+        if (!window.confirm('Delete these ' + n + ' ' + (n === 1 ? 'class' : 'classes') +
+          ' for good?\n\nThey leave every schedule, with their notes. This cannot be undone.')) return;
         onMutate('refSchedules', prev => prev.filter(e => !(e && e.importId === importId && e.docPageId === page.id)));
       };
+      // The PERMANENT delete. Removing one day of a class is the Progress
+      // Schedule's ✕, which deletes nothing; this one takes the class off every
+      // schedule, with its notes and removed days, so the prompt says so.
       const removeOne = row => {
-        if (!window.confirm('Remove "' + (row.title || 'this class') + '" from the schedule?\n\nThis cannot be undone.')) return;
+        if (!window.confirm('Delete "' + (row.title || 'this class') + '" for good?\n\nIt leaves every schedule, with its notes. This cannot be undone.')) return;
         onMutate('refSchedules', prev => prev.filter(e => !(e && e.id === row.id)));
       };
       const removeOrphans = () => {
-        if (!window.confirm('Remove all ' + orphans.length + ' classes whose page no longer exists?\n\nThis cannot be undone.')) return;
+        if (!window.confirm('Delete all ' + orphans.length + ' classes whose page no longer exists, for good?\n\nThey leave every schedule, with their notes. This cannot be undone.')) return;
         const gone = new Set(orphans.map(e => e.id));
         onMutate('refSchedules', prev => prev.filter(e => !(e && gone.has(e.id))));
       };
@@ -1398,11 +1425,11 @@
               </button>
             )}
             <span className="text-[10px] text-gray-600">
-              drawn on every schedule as a read-only backdrop
+              drawn on every schedule · move, rename or remove one day of a class on the Progress Schedule · ✕ here deletes it for good
             </span>
           </div>
 
-          {!mine.length && !orphans.length && (
+          {!mine.length && !orphans.length && !handAdded.length && (
             <div className="py-2 text-[11px] text-gray-600">
               Nothing here yet. Show a picture of your timetable to an AI, then paste what it gives you.
             </div>
@@ -1427,6 +1454,15 @@
                 <button onClick={removeOrphans} className="px-1 text-amber-600 hover:text-red-400">✕ remove all</button>
               </div>
               <SchedRowList rows={orphans} onRemove={removeOne} />
+            </div>
+          )}
+
+          {handAdded.length > 0 && (
+            <div data-sched-hand className="mt-2 rounded border border-gray-800 p-1.5">
+              <div className="mb-0.5 text-[10px] text-gray-500">
+                {handAdded.length} added in the Schedule — drawn on every schedule, deletable here
+              </div>
+              <SchedRowList rows={handAdded} onRemove={removeOne} />
             </div>
           )}
 

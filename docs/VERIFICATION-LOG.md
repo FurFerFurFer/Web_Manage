@@ -3633,3 +3633,151 @@ passed.
 - `buildMMTree`'s rootless fallback, which has no case of its own.
 - The Schedule's `⚑` opening the first listing of a linked owner.
 - As everywhere: real touch hardware, the live Firebase project, multi-device sync, and print.
+
+### Timetable classes become editable blocks: ★ Forced → Timetable, notes of their own, removal per day (2026-10-15 / 16)
+
+The user asked for three things at once:
+
+1. Every detail of a timetable on ★ Forced, as a list sorted by date, latest first, from which
+   any block can be added.
+2. Every class — pasted or added by hand — changeable in every way, Documentations following, and
+   deletable in both places, Documentations being the permanent delete.
+3. `＋ day note here` was a misunderstanding: each class should carry the notes a task block
+   carries, and one click should arm it like a task block rather than open a card.
+
+Decided with the user before building:
+- ✕ in the Schedule removes **that day only**; Documentations' ✕ is the permanent delete.
+- Notes belong to the **block**, not to the day (one day holds many lectures).
+- The Timetable tab copies **KS02's +LIN LOG**, plus one button that opens or closes everything.
+- Asked whether editing one week of a weekly class should change every week or only that day, the
+  user answered "why would that even matter": their timetables are dated lectures, where one block
+  is one record. A weekly class is therefore one class — an edit changes every week and its notes
+  show on every week — recorded in NOTES as decided, with the detach shape if a week ever needs its
+  own.
+
+This reverses AGENTS' "reference data, never work" rule on purpose. README "A pasted timetable"
+and "★ Forced" describe the result; docs/CONCEPTS.md records that ★ Forced holds the timetable.
+
+**Where it lives.**
+- `TrackCalendar.refSkips` / `refSkipped` (`calendar-core.js`, now `?v=11` on Home and
+  Documentations) is the removal test, kept APART from `refOccupies`: a removed day is still
+  occupied, just not drawn, which is what lets the tab offer `＋ add back`. `refOn` drops a removed
+  day.
+- `progress.html` holds the twin and the pure writers beside `refBlocksFor`: `refMoved`,
+  `refResized`, `refWithEdit`, `refWithDate`, `refWithSkip(s)` / `refWithoutSkip`, `refWithNote` /
+  `refWithNoteEdit` / `refWithoutNote`, `refNewBlock` and `refDraftError`, plus `refGhostFor`, the
+  one ghost for the mouse and touch paths. `refSchedules` joins the `_writeP` autosave; the refresh
+  already adopted it.
+- The class block takes the day-note block's machinery — mouse drag, touch arm / swipe /
+  long-press, right-click resize, double-click overlap cycling, ✎ / 📌 / ⓘ / ✕ — and joins the
+  overlap order LAST. The read-only popover, `data-ref-make-note` and the note composer's
+  `duration` path are gone.
+- `touchKey`: the touch block key was spelled twice (touchmove, touchend); now once, with the
+  class's `entryId@day` case added once.
+- ★ Forced gains a fourth tab and `renderTimetableTab`. `All` stays notes and deadlines.
+- `documentations.html`: rows say which days a class was removed from; an *added in the Schedule*
+  section lists classes with no `docPageId`; all three of its delete prompts now say "for good".
+
+**Hooks**: `data-block-kind="ref"` (with `data-block-id` / `data-block-day`), `data-ref-notes-btn`,
+`data-ref-notes`, `data-ref-note`, `data-ref-note-chip`, `data-ref-note-title|detail|save|del`,
+`data-ref-info`, `data-ref-remove`, `data-ref-ghost`, `data-ref-toolbar`, `data-ref-add`,
+`data-ref-add-open|title|detail|date|start|end|save|error`, `data-ref-toggle-all`, `data-ref-list`,
+`data-ref-group`, `data-ref-group-toggle`, `data-ref-card`, `data-ref-card-toggle|detail|note`,
+`data-ref-edit`, `data-ref-editor`,
+`data-ref-edit-title|detail|date|dow|start|end|from|until|save|cancel|error`, `data-ref-skip`,
+`data-ref-unskip`, `data-ref-goto`, `data-sched-skips`, `data-sched-hand`, `data-sched-remove`.
+`data-ref-day` / `data-ref-id` are kept. `data-ref-popup`, `data-ref-detail` and
+`data-ref-make-note` went with the popover.
+
+**Offline.** `calendar-core` 118 → 121, swept under the five timezones: a removal drops only that
+day; a removed one-off is not drawn while its sibling is; both readers are total. Fail-first: a
+copy with `refOn`'s skip test removed failed exactly the two `refOn` cases, and the totality case
+passed on both sides, as a guard should.
+
+**Browser.**
+- Removed, as their premise is gone: `a class is UNTICKABLE and UNDRAGGABLE, and a drag writes
+  nothing`, `the popover is read-only, and makes a real note at the class hour`, `PROGRESS shows
+  the detail in the read-only popover`.
+- Updated: `GUARD: a class never squeezes or removes a real block` now also asserts the real block
+  is in front (z-order); the export → import round trip carries `skips` and `notes` as whole
+  entries; the quest guard's foreign-key list lost `refSchedules`, which Progress now owns; the
+  KS02 ownership seed's comment.
+- New, 16: mouse drag of a one-off (spread kept), weekly drag + resize, `WEEK view` weekday change
+  and range refusal, `TOUCH` arm / swipe / long-press, `✕` removes one day (Cancel first), `PROGRESS`
+  / `HOME` / `DOCUMENTATIONS does not draw a day a class was removed from`, `✎` notes of its own,
+  `★ Timetable` list + open/close all, rename reaching an open Documentations tab, add back,
+  `＋ Add a block` through to Documentations' permanent delete (Cancel first), two tabs with no
+  resurrection, the detail on the ⓘ card, `PHONE: the Timetable tab fits a 390px screen`.
+
+**Found by the new cases while building.** The fourth tab pushed ★ Forced's filter input 65px past
+the panel's clipped edge at 390px, on every tab. HEAD's three-tab row fit, so it was introduced
+here; the row now wraps with `min-w-[8rem]` on the input. The existing `all four add panels fit`
+case measures only the panel's outer box, so it could not see it; the new phone case measures the
+inside.
+
+**Baselines.** One frozen snapshot of `progress.html`, `documentations.html`, `calendar-core.js`
+and `tests/`. Each tree symlinks the repository, with real copies of those four. The builder
+refused any swap that matched other than once, and any doctored file identical to the snapshot.
+Every run went through a task-owned `--require` preload declaring the 18 new or changed cases,
+which ran 18 subtests every time. Runs were sequential, with a passing CONTROL before and after.
+
+| Tree | Rule reversed | Failed (of 18) |
+| --- | --- | --- |
+| CONTROL (before) | none | nothing |
+| D01 core | `refOn` ignores `skips` | HOME and DOCUMENTATIONS "does not draw" only (`['rs-w','rs-o']` against `['rs-o']`); PROGRESS passed |
+| D02 page | `refBlocksFor` ignores `skips` | PROGRESS "does not draw" (its claim), plus `✕` on "the removed class leaving its column" and add-back on "removed from this day" — the same drawing door, said rather than hidden. HOME and DOCUMENTATIONS passed: **disjoint from D01** |
+| D03 page | no drag commit | the five cases that drag: one-off, weekly, week view, the touch swipe, the two-tab edit (each "… reaching track_db") |
+| D04 page | ✕ writes before it asks | `✕` alone, on "Cancel left track_db byte-identical" |
+| D05 page | `refWithEdit` rebuilds from a field list | the rename case alone, on "and the class still belongs to its page" |
+| D06 page | the refresh does not adopt `refSchedules` | add-block on "gone from the open Progress grid", then three more — see below |
+| D07 page | the last note leaves `notes: []` | `✎` alone, on "the last note deleted the key" |
+| D08 page | days sorted earliest first | the list case alone, on its group order |
+| D09 page | close all shuts cards, not groups | the list case alone, on "every group folded" |
+| D10 page | classes FIRST in the overlap order | GUARD alone, on z-order (`{"real":10,"cls":15}`) |
+| D11b page | the filter row no longer wraps | PHONE alone (`"overflow":65`) |
+| D12 page | the touch key loses its day | TOUCH alone, on "the tap arming the class" |
+| D13 page | no weekly landing rule | week view alone, on "outside its range the column is refused" |
+| D15 docs | no *added in the Schedule* section | add-block alone, on "Documentations listing it" |
+| CONTROL (after) | none | nothing |
+
+**D06, and a harness lesson.** D06 first failed four cases: add-block on its own claim, then the
+two-tab case, the ⓘ card and the round trip. The two-tab case died at its START — "the class block
+rs-w" never appeared on a freshly seeded page — so none of the last three was evidence.
+add-block had failed before closing its tabs, and its leaked Progress tab, which under D06 could not
+refresh its timetable, wrote its stale array into each later case's fresh seed the moment
+`loadedSlotId` flipped from null back to the slot. The three two-tab cases now close both tabs in
+`finally`, and the corrected trees were re-run with one variable changed:
+
+| Tree (corrected tests) | Rule reversed | Failed (of 18) |
+| --- | --- | --- |
+| CONTROL | none | the week-view case — see below |
+| D06b page | the refresh does not adopt `refSchedules` | exactly add-block and the two-tab case, the latter on its own claim: "the deleted class was not written back", `['rs-w','rs-o']` against `['rs-w']` |
+
+**A flaky control.** That CONTROL failed the week-view case on "the sideways drag reaching
+track_db". The case was byte-identical to the version that passed in every other tree. It then
+passed 8/8 in an isolated probe and 5/5 in the suite's order, so it was intermittent: about one in
+thirty. The cause was not proven. One mechanism is certain to produce that exact message: the press
+sat 20px inside Monday's column and the drop exactly one column-width further, so the drop landed
+only ~20px past the column boundary, and a drop back in the class's own column is a no-op commit
+that writes the identical value. The case now presses at the block's centre, so the drop lands
+mid-column with ~80px either side. It also lets the mount-time scroll settle, and asserts the press
+point hits the class — so a missed press fails on its own message rather than reading as no write.
+Re-run with the shipped tests: the case passed 3/3 alone; a fresh CONTROL passed all 18; and
+D13b (no weekly landing rule) failed it alone, on "outside its range the column is refused"
+(`2 !== 1`).
+
+**Full runs.** `node tests/run.js` 2026-10-16 11:02:59–11:42:14 on the final tree: **all 25 suites
+passed**. `calendar-core` 121, `schema` 68 and `notes-core` 33 identical under all five timezones;
+the other offline suites unchanged; browser plan `1..1` with **417** subtests (404 − 3 + 16), 0
+failed. `git log -1` `a7e6bde` at both ends, the `md5sum` of every page, script, stylesheet and test
+file identical before and after, no suspend in the window, load ~3.3–4, 39 minutes. An earlier full
+run (09:15–09:55, 416 subtests, all passed) predates the week-view case, the `finally` closes and the
+prompt wording, so it is not the evidence for the shipped tree.
+
+**Not covered.**
+- Real touch hardware (synthesised TouchEvents only), the live Firebase project, multi-device
+  sync, and print.
+- A class running past midnight cannot be authored in the editor — the paste format refuses one
+  too; a stored one is drawn clipped.
+- The `ⓘ` / ✕ buttons' hover-only visibility on touch is the existing block model, not new.
+- Weekly per-week exceptions were deliberately not built (NOTES).

@@ -51,7 +51,7 @@ test('module surface', () => {
     'noteBlockDuration', 'dlBlockDuration', 'dlBlockSpan', 'dlBlockTime', 'itemParts', 'partSpan',
     'blockOn', 'noteBlockSpan', 'noteBlockStart', 'blockDay', 'partDay',
     'dlBlockDayValid', 'dlStrandedBlockDays',
-    'refSpan', 'refOccupies', 'refOn']) {
+    'refSpan', 'refOccupies', 'refSkips', 'refSkipped', 'refOn']) {
     assert.equal(typeof TC[name], 'function', name + ' is exported');
   }
   // dlDayCount was REMOVED rather than renamed: the number it returned changed
@@ -1732,6 +1732,47 @@ test('the Timetable filter hides reference blocks and nothing else', () => {
   assert.equal(TC.refOn(slot, '2026-09-14', { hidden: ['ref'] }).length, 0);
   assert.equal(TC.refOn(slot, '2026-09-14', { hidden: ['deadline'] }).length, 2, 'another key must not hide these');
   assert.equal(TC.refOn(slot, '2026-09-14', {}).length, 2);
+});
+
+// ── a class removed from one day on the Schedule ───────────────────────────
+// `skips` is written by progress.html's ✕ on a class block. It deletes nothing:
+// the class still OCCUPIES the day by its rule, it is just not drawn there,
+// and ★ Forced → Timetable puts it back. progress.html carries the twin; the
+// browser suite asserts Home, Documentations and Progress separately.
+
+test('refOn drops a day the class was removed from — and ONLY that day', () => {
+  const e = weekly({ skips: ['2026-09-14'] });
+  assert.deepEqual(TC.refOn(refSlot(e), '2026-09-14'), [], 'removed from the 14th, TZ=' + TZ);
+  assert.deepEqual(TC.refOn(refSlot(e), '2026-09-21').map(b => b.entryId), ['r-w'],
+    'the next Monday is still drawn');
+  assert.deepEqual(TC.refOn(refSlot(e), '2026-09-07').map(b => b.entryId), ['r-w'],
+    'and so is the one before');
+  // Removal is not the rule: the class still occupies the day, which is what
+  // lets the Timetable tab offer `＋ add back` for it.
+  assert.equal(TC.refOccupies(e, '2026-09-14'), true, 'still occupied by its rule');
+  assert.equal(TC.refSkipped(e, '2026-09-14'), true);
+  assert.equal(TC.refSkipped(e, '2026-09-21'), false);
+});
+
+test('a removed one-off is not drawn, and a sibling on the same day is untouched', () => {
+  const slot = refSlot(oneOff({ skips: ['2026-09-14'] }), weekly());
+  assert.deepEqual(TC.refOn(slot, '2026-09-14').map(b => b.entryId), ['r-w']);
+  assert.equal(TC.refOccupies(slot.refSchedules[0], '2026-09-14'), true);
+});
+
+test('refSkips and refSkipped are TOTAL — only a real day string counts', () => {
+  // schema.js does not validate this nested list, so the reader must survive
+  // anything an import, a sync or a hand edit can deliver.
+  for (const skips of [undefined, null, 'nope', 7, {}, [null, 3, {}, '', 'someday', '2026-9-14']]) {
+    const e = weekly({ skips });
+    assert.deepEqual(TC.refSkips(e), [], JSON.stringify(skips) + ' removes nothing');
+    assert.deepEqual(TC.refOn(refSlot(e), '2026-09-14').map(b => b.entryId), ['r-w'],
+      JSON.stringify(skips) + ' still draws the class');
+  }
+  assert.deepEqual(TC.refSkips(weekly({ skips: [7, '2026-09-14', null] })), ['2026-09-14'],
+    'a real day survives beside junk');
+  assert.deepEqual(TC.refSkips(null), []);
+  assert.equal(TC.refSkipped(null, '2026-09-14'), false);
 });
 
 test('buildDaySchedule returns reference blocks in their OWN array', () => {

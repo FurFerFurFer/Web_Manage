@@ -404,9 +404,13 @@
     // both is REFUSED rather than resolved by whichever branch runs first —
     // there is no defensible answer to which day such a record occupies.
     //
-    // REFERENCE DATA, NEVER WORK: nothing here is tickable or draggable, and
-    // this page writes to `refSchedules` at no point. documentations.html owns
-    // that key.
+    // THIS PAGE IS WHERE A CLASS IS EDITED. It owns `refSchedules` through its
+    // autosave, exactly as it owns calendarNotes; documentations.html pastes and
+    // deletes through a fresh read-modify-write. A class is moved, resized,
+    // renamed, given notes and removed from one day here — every write below
+    // SPREADS the stored entry, so docPageId, importId, createdAt and any key a
+    // later version added survive. It is still not tickable: nobody asked a
+    // lecture to be completed.
     const refDur = e => { const m = blockMins(e && e.duration); return m === null ? DEFAULT_BLOCK_MINS : m; };
     function refSpan(entry) {
       if (!entry) return null;
@@ -438,6 +442,20 @@
       if (isNaN(d.getTime())) return false;
       return d.getDay() === dow;
     }
+    // The days a class was REMOVED from with its ✕. Twin of
+    // TrackCalendar.refSkips / refSkipped — and TOTAL, because schema.js does
+    // not validate this nested list: anything that is not a real day string is
+    // dropped rather than allowed to throw out of a render. A removal deletes
+    // nothing, so the class still OCCUPIES the day by its rule (refOccupies
+    // says yes) and is simply not drawn there; the Timetable tab needs the
+    // first answer to offer `＋ add back` at all. Never read `entry.skips` at a
+    // call site.
+    function refSkips(entry) {
+      const raw = entry && entry.skips;
+      return Array.isArray(raw) ? raw.filter(s => typeof s === 'string' && BLOCK_DAY_RE.test(s)) : [];
+    }
+    function refSkipped(entry, ds) { return refSkips(entry).indexOf(ds) !== -1; }
+    const refIsWeekly = e => !!e && e.dow !== undefined && e.dow !== null;
     // The id is COMPOSITE (`entry.id@ds`) because one weekly entry appears on
     // many days at once, and in week view every column is in the DOM together
     // — a bare entry id could not tell a block drawn on the wrong day from one
@@ -446,7 +464,8 @@
       const out = [];
       (Array.isArray(list) ? list : []).forEach(entry => {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
-        if (!refOccupies(entry, ds)) return;
+        // occupied by its rule AND not removed from this one day
+        if (!refOccupies(entry, ds) || refSkipped(entry, ds)) return;
         const span = refSpan(entry);
         if (!span) return;
         // `detail` is the lecturer/room/mode, kept APART from the title — the
@@ -460,6 +479,147 @@
       return out.sort((a, b) => a.time.localeCompare(b.time) || a.title.localeCompare(b.title));
     }
     const REF_COLOR = '#94a3b8';
+    const REF_DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    // ── timetable writers ───────────────────────────────────────────────────
+    // Pure, and the ONLY spellings of each edit: the block, the drag machinery
+    // and the Timetable tab all go through these. Every one SPREADS the entry
+    // it is handed — rebuilding a record from a field list is the bug that
+    // cost day notes and deadlines before — and keeps EXACTLY ONE arm.
+    //
+    // ONE BLOCK IS ONE RECORD for the dated lectures a timetable mostly holds,
+    // so every edit here acts on that block alone. A WEEKLY entry is one class
+    // drawn on many days, and Documentations lists it as one row: editing it
+    // edits every week, while a removal (`skips`) is still per day.
+
+    // `skips`, written back. Sorted and de-duplicated so a removal and its
+    // add-back round-trip to the same value, and EMPTYING DELETES THE KEY —
+    // there is no fallback behind it, the `merges` rule, not `cautionDates: []`.
+    function refWithSkips(e, days) {
+      const next = Array.from(new Set(days.filter(d => typeof d === 'string' && BLOCK_DAY_RE.test(d)))).sort();
+      const { skips, ...rest } = e;
+      return next.length ? { ...rest, skips: next } : rest;
+    }
+    const refWithSkip    = (e, ds) => refWithSkips(e, refSkips(e).concat([ds]));
+    const refWithoutSkip = (e, ds) => refWithSkips(e, refSkips(e).filter(x => x !== ds));
+
+    // A one-off's removal belongs to its DAY, so moving the day carries it:
+    // a removed lecture moved to Thursday is still removed, on Thursday.
+    function refWithDate(e, ds) {
+      if (!BLOCK_DAY_RE.test(ds || '') || ds === e.date) return e;
+      const moved = { ...e, date: ds };
+      return refSkipped(e, e.date)
+        ? refWithSkips(moved, refSkips(e).filter(x => x !== e.date).concat([ds]))
+        : moved;
+    }
+
+    // A drag commits the class's OWN day and time. Unlike a day note there is
+    // no separate item date for a chip or a marker to stay on, so there is no
+    // blockDate/blockTime pair: a one-off moves its `date`; a weekly class
+    // moves its weekday — every week — and keeps its range, its removed days
+    // (inert on the new weekday, back again if it returns) and its notes.
+    function refMoved(e, srcDs, ds, time) {
+      if (!e) return e;
+      const t = NOTE_TIME_RE.test(time || '') ? time : e.time;
+      if (refIsWeekly(e)) {
+        const dow = (ds !== srcDs && BLOCK_DAY_RE.test(ds || '')) ? new Date(ds + 'T12:00:00').getDay() : e.dow;
+        return { ...e, time: t, dow };
+      }
+      return refWithDate({ ...e, time: t }, ds);
+    }
+    function refResized(e, duration, time) {
+      const d = blockMins(duration);
+      if (!e || d === null) return e;
+      return { ...e, duration: d, ...(NOTE_TIME_RE.test(time || '') ? { time } : {}) };
+    }
+    // The ghost a class drag starts from — ONE definition for the mouse and the
+    // touch path. A weekly class carries its own landing rule (see
+    // handlePointerMove), read from the entry NOW: the pointer effect is
+    // mount-only and would otherwise read a stale prop. `span` is anything
+    // with {time, duration}; `key` is the block's composite `entryId@ds`.
+    function refGhostFor(entry, ds, span, key) {
+      return {
+        type: 'ref', entryId: entry.id, id: key, date: ds, srcDate: ds,
+        time: span.time, duration: span.duration,
+        weekly: refIsWeekly(entry) ? {
+          from: BLOCK_DAY_RE.test(entry.from || '') ? entry.from : '',
+          until: BLOCK_DAY_RE.test(entry.until || '') ? entry.until : '',
+          skips: refSkips(entry)
+        } : null
+      };
+    }
+
+    // The editor's draft: {title, detail, start, end} plus `date` for a one-off
+    // or `dow`, `from`, `until` for a weekly class. Null when it may be saved.
+    function refDraftError(draft, weekly) {
+      if (!String(draft.title || '').trim()) return 'Give it a title.';
+      const s = minsOfTime(draft.start), en = minsOfTime(draft.end);
+      if (s === null || en === null) return 'Set a start and an end time.';
+      if (en <= s) return 'It has to end after it starts.';
+      if (!weekly) return BLOCK_DAY_RE.test(draft.date || '') ? null : 'Pick a day.';
+      const dow = Number(draft.dow);
+      if (!(dow === Math.floor(dow) && dow >= 0 && dow <= 6)) return 'Pick a weekday.';
+      for (const k of ['from', 'until']) {
+        if (draft[k] && !BLOCK_DAY_RE.test(draft[k])) return 'Pick a real day, or leave it blank.';
+      }
+      // the paste dialog's refusal: an inverted range draws nothing, ever
+      if (draft.from && draft.until && draft.from > draft.until)
+        return 'That range ends before it starts, so it would never be drawn.';
+      return null;
+    }
+    function refDraftOf(e) {
+      const span = refSpan(e) || { time: '09:00', duration: DEFAULT_BLOCK_MINS };
+      return {
+        title: e.title || '', detail: typeof e.detail === 'string' ? e.detail : '',
+        // CLAMPED rather than wrapped: addMins would turn a class running past
+        // midnight into an end before its start, which the form then refuses
+        start: span.time, end: timeOfMins(minsOfTime(span.time) + span.duration),
+        date: e.date || '', dow: refIsWeekly(e) ? e.dow : 1, from: e.from || '', until: e.until || ''
+      };
+    }
+    // A blank detail, start or end of range DELETES its key — absence is the
+    // default and '' is never stored, the day-note `time` rule.
+    function refWithEdit(e, draft) {
+      const s = minsOfTime(draft.start), en = minsOfTime(draft.end);
+      let next = { ...e, title: String(draft.title).trim(), time: draft.start, duration: en - s };
+      const detail = String(draft.detail || '').trim();
+      if (detail) next.detail = detail; else delete next.detail;
+      if (refIsWeekly(e)) {
+        next.dow = Number(draft.dow);
+        ['from', 'until'].forEach(k => { if (BLOCK_DAY_RE.test(draft[k] || '')) next[k] = draft[k]; else delete next[k]; });
+        delete next.date;
+      } else {
+        next = refWithDate(next, draft.date);
+      }
+      return next;
+    }
+    // ＋ Add a block: a one-off, written only with the keys it has. No
+    // docPageId — absence means "added in the Schedule", the calendarNotes
+    // rule — and no importId, because nothing was imported.
+    function refNewBlock(draft, id, createdAt) {
+      const s = minsOfTime(draft.start), en = minsOfTime(draft.end);
+      const e = { id, title: String(draft.title).trim(), time: draft.start, duration: en - s, date: draft.date, createdAt };
+      const detail = String(draft.detail || '').trim();
+      if (detail) e.detail = detail;
+      return e;
+    }
+
+    // A class's ✎ notes — the shape a task's notes have. The reader is total;
+    // the writers keep every stored item, readable or not, and deleting the
+    // last note DELETES the key.
+    function refNotes(e) {
+      const raw = e && e.notes;
+      return Array.isArray(raw) ? raw.filter(n => n && typeof n === 'object' && !Array.isArray(n)) : [];
+    }
+    const refNotesRaw = e => (e && Array.isArray(e.notes)) ? e.notes : [];
+    const refWithNote = (e, note) => ({ ...e, notes: refNotesRaw(e).concat([note]) });
+    const refWithNoteEdit = (e, noteId, fields) =>
+      ({ ...e, notes: refNotesRaw(e).map(n => (n && n.id === noteId) ? { ...n, ...fields } : n) });
+    function refWithoutNote(e, noteId) {
+      const left = refNotesRaw(e).filter(n => !(n && n.id === noteId));
+      const { notes, ...rest } = e;
+      return left.length ? { ...rest, notes: left } : rest;
+    }
 
     // ── chosen caution days ─────────────────────────────────────────────────
     // A deadline warns on the days the user CHOSE — `cautionDates`, a plain
@@ -5432,7 +5592,7 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, setSaActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, refSchedules, initialDate, initialDeadlineId, onOpenMilestone }) {
+    function SchedulePanel({ goals, setGoals, saActions, setSaActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, refSchedules, setRefSchedules, initialDate, initialDeadlineId, onOpenMilestone }) {
       const START_HOUR  = 0;
       const END_HOUR    = 24;
       const TIME_COL_W  = 56;
@@ -5526,13 +5686,25 @@
       // deadline dated on or after the day it was opened on, so that day is
       // only used for the cutoff, the tint and the first scroll.
       const [dlnPickerDay, setDlnPickerDay] = useState(null);
-      const [dlnTab, setDlnTab] = useState('all');        // 'all' | 'notes' | 'deadlines'
+      const [dlnTab, setDlnTab] = useState('all');        // 'all' | 'notes' | 'deadlines' | 'timetable'
       const [dlnDissect, setDlnDissect] = useState(null); // null | 'dayNote:<id>' | 'deadline:<id>'
       // One draft object, not one per row: only one row is open at a time.
       const [dlnPartDraft, setDlnPartDraft] = useState({ title: '', date: '', time: '' });
       // Which opened-day the flat list has already been scrolled to, so the
       // scroll happens once per opening and never fights the user afterwards.
       const dlnScrollRef = useRef(null);
+      // ★ Forced → Timetable, laid out like KS02's +LIN LOG: groups that fold
+      // (▶/▼) and cards that open. Both are SETS, unlike the LIN log's single
+      // open card, because `open all` has to be able to open every one. None
+      // of it is stored — how far one reader has unfolded a list is not data.
+      const [refOpenCards, setRefOpenCards] = useState(() => new Set());           // entry ids
+      const [refCollapsedGroups, setRefCollapsedGroups] = useState(() => new Set()); // 'weekly' | day
+      const [refEdit, setRefEdit] = useState(null);       // null | { id, draft }
+      const [refAddOpen, setRefAddOpen] = useState(false);
+      const [refAddDraft, setRefAddDraft] = useState({ title: '', detail: '', date: '', start: '09:00', end: '10:00' });
+      // The card ⓘ asked for, scrolled into view once; else the opened day.
+      const [refFocus, setRefFocus] = useState(null);
+      const refScrollRef = useRef(null);
       const [expandedNodes, setExpandedNodes] = useState(new Set());
       const [ghost, setGhost]     = useState(null);
       const [nowY, setNowY]       = useState(null);
@@ -5555,8 +5727,6 @@
       const [calNoteDraft,   setCalNoteDraft]   = useState({ title: '', detail: '', time: '' });
       const [calNoteEditing, setCalNoteEditing] = useState(null);
       const [calNoteTimelineModal, setCalNoteTimelineModal] = useState(null);
-      // The read-only popover for a reference (timetable) block: {ds, entryId}.
-      const [refPopup, setRefPopup] = useState(null);
       const [calNoteTimelineDraft, setCalNoteTimelineDraft] = useState({ title: '', detail: '', time: '' });
       const [dlOpenDay,   setDlOpenDay]   = useState(null);   // day number for the inline composer
       const [dlDraft,     setDlDraft]     = useState({ title: '', detail: '', time: '', date: '' });
@@ -5835,6 +6005,19 @@
               newDate = ghostRef.current.srcDate;
             }
           }
+          // A WEEKLY class moves its weekday — every week — so it may only land
+          // on a column where the moved class would actually be drawn: inside
+          // its [from, until] range and not a day it was removed from. Anywhere
+          // else the ghost stays on its own column, which is the promise
+          // handlePointerUp keeps. The rule rides IN the ghost, stashed at drag
+          // start: this effect is mount-only, so a prop read here would be the
+          // mount-time value, not the current one.
+          if (dragRef.current.type === 'ref' && ghostRef.current && ghostRef.current.weekly) {
+            const r = ghostRef.current.weekly;
+            const inside = (!r.from || newDate >= r.from) && (!r.until || newDate <= r.until)
+              && r.skips.indexOf(newDate) === -1;
+            if (!inside) newDate = ghostRef.current.srcDate;
+          }
 
           const prev = ghostRef.current;
           if (prev && (prev.date !== newDate || prev.time !== newTime)) {
@@ -5849,6 +6032,14 @@
           // Commit resize
           if (resizeRef.current) {
             const { type, id, itemId, partId, edge, previewDuration, previewTime, dateStr } = resizeRef.current;
+            // A class carries its length in `duration` and its start in `time`,
+            // on the entry itself — for a weekly class, every week's.
+            if (previewDuration !== undefined && type === 'ref') {
+              setRefSchedules(prev => prev.map(e => (e && e.id === itemId) ? refResized(e, previewDuration, previewTime) : e));
+              resizeRef.current = null;
+              setGhost(null);
+              return;
+            }
             if (previewDuration !== undefined && (type === 'dayNote' || type === 'deadline')) {
               // These two carry their length in `blockDuration`, not `duration`.
               // A part's own time/length live on the part; the parent's live on
@@ -5929,6 +6120,10 @@
               const setter = d.type === 'dayNote' ? setCalendarNotes : setDeadlines;
               if (g.partId) updatePart(d.type, g.itemId, g.partId, { date: g.date, time: g.time });
               else setter(prev => prev.map(x => x.id === g.itemId ? { ...x, blockDate: g.date, blockTime: g.time } : x));
+            } else if (d.type === 'ref') {
+              // A class's own day and time — see refMoved. A class that another
+              // tab deleted mid-drag matches nothing, so nothing is resurrected.
+              setRefSchedules(prev => prev.map(e => (e && e.id === g.entryId) ? refMoved(e, g.srcDate, g.date, g.time) : e));
             }
           }
           dragRef.current  = null;
@@ -5957,6 +6152,16 @@
           handlePointerUp();
         }
 
+        // The key a touched block arms under — ONE spelling for touchmove and
+        // touchend, which used to repeat it. A day-note or deadline block is
+        // keyed by item id plus part id, so two parts of one item arm
+        // independently; a class by entry id plus DAY, so one Monday of a
+        // weekly class arms without arming every other Monday in the week view.
+        const touchKey = (type, item, part, tds) =>
+          (type === 'dayNote' || type === 'deadline') ? (part ? item.id + ':' + part.id : item.id)
+            : type === 'ref' ? item.id + '@' + tds
+            : item.id;
+
         function onTouchMove(e) {
           const t = e.touches[0];
           if (resizeRef.current) {
@@ -5975,10 +6180,7 @@
             const { type, item, offsetY, blockHeight, part, span } = touchRef.current;
             const isRoutine = item.taskType === 'routine';
             const tds = touchRef.current.resizeDate;
-            // A day-note or deadline block is keyed by item id plus part id, so
-            // two parts of one item arm independently.
-            const bkey = (type === 'dayNote' || type === 'deadline')
-              ? (part ? item.id + ':' + part.id : item.id) : item.id;
+            const bkey = touchKey(type, item, part, tds);
             const isArmed = selMatch(selectedForDragRef.current, bkey, isRoutine, tds) ||
                             selMatch(selectedForResizeRef.current, bkey, isRoutine, tds);
             if (isArmed) {
@@ -6003,6 +6205,10 @@
                 const srcDay = part ? partDay(part, item) : blockDay(item);
                 const g = { type, itemId: item.id, partId: part ? part.id : undefined, id: bkey,
                   date: srcDay, srcDate: srcDay, time: span.time, duration: span.duration };
+                ghostRef.current = g; setGhost(g);
+              } else if (type === 'ref') {
+                dragRef.current = { type: 'ref', entryId: item.id, offsetY };
+                const g = refGhostFor(item, tds, span, bkey);
                 ghostRef.current = g; setGhost(g);
               } else {
                 if (type === 'goal') {
@@ -6037,8 +6243,7 @@
             const { type, item, part } = touchRef.current;
             const isRoutine = item.taskType === 'routine';
             const tds = touchRef.current.resizeDate;
-            const bkey = (type === 'dayNote' || type === 'deadline')
-              ? (part ? item.id + ':' + part.id : item.id) : item.id;
+            const bkey = touchKey(type, item, part, tds);
             if (selMatch(selectedForResizeRef.current, bkey, isRoutine, tds)) {
               setSelectedForResize(null);
             } else if (selMatch(selectedForDragRef.current, bkey, isRoutine, tds)) {
@@ -6116,6 +6321,13 @@
         if (kind === 'forced') {
           setDlnDissect(null); setDlnPartDraft({ title: '', date: '', time: '' });
           if (next) { setDlnTab('all'); dlnScrollRef.current = null; }
+          // The Timetable tab opens folded the LIN way — groups open, cards
+          // shut — with its add form closed and seeded to the day it adds to.
+          setRefAddOpen(false); setRefEdit(null); setRefFocus(null);
+          if (next) {
+            setRefOpenCards(new Set()); setRefCollapsedGroups(new Set());
+            setRefAddDraft(refAddDefaults(next)); refScrollRef.current = null;
+          }
         }
         if (kind === 'chosen') setPickerView('tree');
         if (kind === 'learn') setLearnTab('mm');
@@ -6452,6 +6664,23 @@
         setMouseDownInfo({ blockType: kind, id: key });
       }
 
+      // A timetable class. `b` is the block refBlocksFor built for column `ds`
+      // — it carries the entry, the composite id and the span — so the drag
+      // starts from the column the class was grabbed in.
+      function startDragRef(e, b, ds) {
+        if (suppressMouseRef.current) return;
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        mouseDownRef.current = {
+          startX: e.clientX, startY: e.clientY,
+          dragInfo: { type: 'ref', entryId: b.entryId, offsetY: e.clientY - rect.top },
+          ghostInfo: refGhostFor(b.entry, ds, b, b.id)
+        };
+        setMouseDownInfo({ blockType: 'ref', id: b.id });
+      }
+
       function startDragMMEntry(e, entry) {
         if (suppressMouseRef.current) return;
         if (e.button !== 0) return;
@@ -6479,7 +6708,10 @@
         const startTotalMin = th * 60 + tm;
         const startDuration = resolvedDuration !== undefined ? resolvedDuration
           : (type === 'goal' ? goalDurationFor(item, dateStr) : (item.duration || 60));
-        const id = partId ? item.id + ':' + partId : item.id;
+        // a class is keyed by entry AND day, like its block: one weekly entry
+        // is drawn in several columns at once
+        const id = type === 'ref' ? item.id + '@' + dateStr
+          : partId ? item.id + ':' + partId : item.id;
         resizeRef.current = { type, id, itemId: item.id, partId, edge, startY: clientY, startDuration, startTotalMin, dateStr };
       }
 
@@ -6971,11 +7203,14 @@
         return out;
       }
 
-      /* The reference backdrop landing on `ds` — a pasted timetable. Kept in
-         its own function and its own render layer rather than folded into
-         itemBlocksOn, which is load-bearing: these must never reach
-         computeOverlapInfo, or a class would squeeze a real task's block
-         sideways, and they must never reach the drag machinery at all. */
+      /* The timetable classes landing on `ds`. Kept apart from itemBlocksOn:
+         a class is its own record with its own writers (refMoved, refResized,
+         refWithSkip…), and every column of a week view draws a weekly class
+         under a composite `entryId@ds` id. They DO join this page's overlap
+         ordering — appended LAST, so real work stays in front by default and a
+         double-click brings a covered class forward. On this page that
+         ordering only ever decides z-index, never a width, so a class still
+         cannot squeeze a real block; the GUARD browser case measures that. */
       const refBlocksOn = ds => refBlocksFor(refSchedules, ds);
 
       function openDlComposer(day, ds) {
@@ -7120,6 +7355,320 @@
       // no third state to protect and nothing a stored `false` can break.
       function unscheduleBlock(kind, id) { patchItem(kind, id, x => ({ ...x, blockOff: true })); }
       function restoreBlock(kind, id)    { patchItem(kind, id, x => ({ ...x, blockOff: false })); }
+
+      // ── timetable classes ────────────────────────────────────────────────
+      // Every write goes through setRefSchedules and reaches storage on the
+      // refSchedules autosave, exactly as a day note does. Each one maps over
+      // the CURRENT array and changes only the entry it names, so an entry
+      // another tab deleted in the meantime matches nothing and is never
+      // brought back. The edits themselves are the pure ref* writers above.
+      const patchRef = (id, fn) => setRefSchedules(prev => prev.map(e => (e && e.id === id) ? fn(e) : e));
+      // Removing a class from ONE day deletes nothing: the day goes into
+      // `skips`, and ★ Forced → Timetable adds it back. The block's ✕ asks
+      // first; the tab's own control does not, matching that tab's `remove
+      // from schedule` for notes and deadlines.
+      const skipRefDay   = (id, ds) => patchRef(id, e => refWithSkip(e, ds));
+      const unskipRefDay = (id, ds) => patchRef(id, e => refWithoutSkip(e, ds));
+      const addRefNote    = (id, note)           => patchRef(id, e => refWithNote(e, note));
+      const editRefNote   = (id, noteId, fields) => patchRef(id, e => refWithNoteEdit(e, noteId, fields));
+      const removeRefNote = (id, noteId)         => patchRef(id, e => refWithoutNote(e, noteId));
+      const refAddDefaults = ds => ({ title: '', detail: '', date: ds || '', start: '09:00', end: '10:00' });
+      function saveRefEdit() {
+        if (!refEdit) return;
+        const entry = (refSchedules || []).find(e => e && e.id === refEdit.id);
+        if (!entry || refDraftError(refEdit.draft, refIsWeekly(entry))) return;
+        patchRef(refEdit.id, e => refWithEdit(e, refEdit.draft));
+        setRefEdit(null);
+      }
+      function addRefBlock() {
+        if (refDraftError(refAddDraft, false)) return;
+        const e = refNewBlock(refAddDraft, uid(), Date.now());
+        setRefSchedules(prev => [...prev, e]);
+        setRefAddOpen(false);
+        setRefAddDraft(refAddDefaults(refAddDraft.date));
+        // its card opens where it now sits, so the user sees what was made
+        setRefCollapsedGroups(prev => { const n = new Set(prev); n.delete(e.date); return n; });
+        setRefOpenCards(prev => new Set(prev).add(e.id));
+        setRefFocus(e.id);
+      }
+      // ⓘ on a class: ★ Forced on the Timetable tab, opened from the class's
+      // own column, with its card open, its group unfolded and the card
+      // scrolled to. Direct setters rather than openAddPanel, which would
+      // CLOSE the panel if it were already open on that day.
+      function openTimetableCard(ds, entry) {
+        setLearnPickerDay(null); setPickerDay(null); setCorePickerDay(null);
+        setSearch('');
+        setDlnDissect(null); setDlnPartDraft({ title: '', date: '', time: '' });
+        setRefAddOpen(false); setRefEdit(null); setRefAddDraft(refAddDefaults(ds));
+        setDlnPickerDay(ds);
+        setDlnTab('timetable');
+        const group = refIsWeekly(entry) ? 'weekly' : entry.date;
+        setRefCollapsedGroups(prev => { const n = new Set(prev); n.delete(group); return n; });
+        setRefOpenCards(prev => new Set(prev).add(entry.id));
+        setRefFocus(entry.id);
+        refScrollRef.current = null;
+      }
+
+      /* ★ Forced → Timetable — every detail of every class, since a class no
+         longer opens a card of its own. Laid out like KS02's +LIN LOG (the
+         user's choice): groups that fold with ▶/▼, cards that open with ▼/▲,
+         plus one button that opens or closes the lot.
+
+         Dated lectures are grouped by their OWN day, latest day first, and by
+         time inside a day — one card per block, because one block is one
+         record. A weekly class is ONE card in an EVERY WEEK group on top:
+         Documentations lists it as one row, editing it edits every week, and
+         listing its weeks one by one would need a horizon nobody chose. The
+         LIN log's editable day title is not copied — it is a LIN-only field.
+
+         Nothing here is cut off at the opened day, unlike the notes and
+         deadlines tabs: "all of the details" is the brief, and the opened
+         day is only tinted and scrolled to. */
+      function renderTimetableTab(openedOn, hit) {
+        const entries = (Array.isArray(refSchedules) ? refSchedules : [])
+          .filter(e => e && typeof e === 'object' && !Array.isArray(e));
+        const shown = entries.filter(hit);
+        const weekly = shown.filter(refIsWeekly).sort((a, b) =>
+          String(b.from || '').localeCompare(String(a.from || ''))
+          || (Number(a.dow) - Number(b.dow))
+          || String(a.time || '').localeCompare(String(b.time || '')));
+        // A one-off whose day is not a real day is drawn nowhere, so it is
+        // listed under NO DAY rather than becoming unreachable.
+        const byDay = new Map();
+        shown.filter(e => !refIsWeekly(e)).forEach(e => {
+          const k = BLOCK_DAY_RE.test(e.date || '') ? e.date : 'none';
+          if (!byDay.has(k)) byDay.set(k, []);
+          byDay.get(k).push(e);
+        });
+        const days = Array.from(byDay.keys()).sort((a, b) => (a === 'none') - (b === 'none') || b.localeCompare(a));
+        days.forEach(k => byDay.get(k).sort((a, b) =>
+          String(a.time || '').localeCompare(String(b.time || ''))
+          || String(a.title || '').localeCompare(String(b.title || ''))));
+        const groups = (weekly.length ? [['weekly', weekly]] : []).concat(days.map(k => [k, byDay.get(k)]));
+        const cardIds = shown.map(e => e.id);
+        const allOpen = groups.length > 0
+          && groups.every(([k]) => !refCollapsedGroups.has(k)) && cardIds.every(id => refOpenCards.has(id));
+        const toggleAll = () => {
+          if (allOpen) { setRefCollapsedGroups(new Set(groups.map(([k]) => k))); setRefOpenCards(new Set()); }
+          else { setRefCollapsedGroups(new Set()); setRefOpenCards(new Set(cardIds)); }
+        };
+        const toggleIn = (setter, key) => setter(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+        // Scrolled to once per opening: the card ⓘ or `Add` asked for, else
+        // the opened day's group.
+        const scrollTarget = refFocus ? 'card:' + refFocus : (byDay.has(openedOn) ? 'day:' + openedOn : null);
+        const anchor = key => key === scrollTarget ? (el => {
+          if (!el || refScrollRef.current === scrollTarget) return;
+          refScrollRef.current = scrollTarget;
+          if (el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+        }) : undefined;
+        const dayLabel = ds => new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const addErr = refDraftError(refAddDraft, false);
+        const setAdd = (k, v) => setRefAddDraft(d => ({ ...d, [k]: v }));
+        const setEdit = (k, v) => setRefEdit(r => r && ({ ...r, draft: { ...r.draft, [k]: v } }));
+        const inputCls = 'bg-gray-800 border border-gray-700 rounded px-2 py-1 text-[11px] text-white outline-none placeholder-gray-600 focus:border-gray-500';
+
+        const renderCard = e => {
+          const isWeekly = refIsWeekly(e);
+          const open = refOpenCards.has(e.id);
+          const span = refSpan(e);
+          const when = span ? formatTime12(span.time) + ' – ' + formatTime12(timeOfMins(minsOfTime(span.time) + span.duration)) : 'no time';
+          const detail = typeof e.detail === 'string' ? e.detail : '';
+          const notes = refNotes(e);
+          const skips = refSkips(e);
+          const removed = !isWeekly && BLOCK_DAY_RE.test(e.date || '') && refSkipped(e, e.date);
+          const page = e.docPageId ? (docPages || []).find(p => p.id === e.docPageId) : null;
+          const source = !e.docPageId ? 'Added in the Schedule'
+            : page ? 'From "' + (page.title || 'Untitled') + '"' : 'Its documentation page no longer exists';
+          const editing = refEdit && refEdit.id === e.id;
+          const draftErr = editing ? refDraftError(refEdit.draft, isWeekly) : null;
+          return (
+            <div key={e.id} ref={anchor('card:' + e.id)} data-ref-card={e.id}
+              className={`bg-gray-900 border border-gray-800 hover:border-gray-600 rounded mb-2 overflow-hidden ml-3 ${removed ? 'opacity-60' : ''}`}>
+              <div data-ref-card-toggle={e.id} onClick={() => toggleIn(setRefOpenCards, e.id)}
+                className="flex items-center gap-2 px-3 py-2 cursor-pointer">
+                <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: REF_COLOR }} />
+                <span className="text-[10px] font-mono text-gray-500 shrink-0">{span ? span.time : '—'}</span>
+                <span className="font-bold text-sm flex-1 truncate">{e.title || 'Class'}</span>
+                {detail && <span className="text-[11px] text-gray-500 truncate max-w-[40%]">{detail}</span>}
+                {removed && <span className="text-[9px] text-amber-400 shrink-0">removed</span>}
+                {isWeekly && skips.length > 0 && <span className="text-[9px] text-amber-400 shrink-0">{skips.length} removed</span>}
+                {notes.length > 0 && <span className="text-[10px] text-gray-400 shrink-0">📌 {notes.length}</span>}
+                <span className="text-gray-500 text-xs ml-1">{open ? '▲' : '▼'}</span>
+              </div>
+              {open && !editing && (
+                <div className="px-3 pb-3 border-t border-gray-800 pt-2 space-y-1.5">
+                  {detail && <div data-ref-card-detail className="text-xs text-gray-300">{detail}</div>}
+                  <div className="text-xs text-gray-400">
+                    {isWeekly
+                      ? `Every ${REF_DOW_NAMES[e.dow] || '—'} · ${when} · ${e.from || 'no start'} → ${e.until || 'no end'}`
+                      : `${BLOCK_DAY_RE.test(e.date || '') ? dayLabel(e.date) : 'No day'} · ${when}`}
+                  </div>
+                  <div className="text-[11px] text-gray-600">{source}</div>
+                  {removed && (
+                    <div className="flex items-center gap-2 text-[11px] text-amber-400">
+                      Removed from the schedule.
+                      <button data-ref-unskip={e.id + '@' + e.date} onClick={() => unskipRefDay(e.id, e.date)}
+                        className="text-[10px] bg-fuchsia-700 hover:bg-fuchsia-600 text-white rounded px-2 py-0.5 transition-colors">＋ add back</button>
+                    </div>
+                  )}
+                  {isWeekly && skips.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 text-[11px] text-amber-400">
+                      <span>Not on:</span>
+                      {skips.map(d => (
+                        <button key={d} data-ref-unskip={e.id + '@' + d} onClick={() => unskipRefDay(e.id, d)}
+                          title="put this day back on the schedule"
+                          className="text-[10px] rounded border border-amber-700/60 px-1.5 py-0.5 hover:bg-fuchsia-700 hover:text-white transition-colors">
+                          {dayLabel(d)} ＋
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {notes.length > 0 && (
+                    <div className="space-y-1">
+                      {notes.map(nt => (
+                        <div key={nt.id} data-ref-card-note={nt.id} className="bg-gray-800/70 border border-gray-700/50 rounded px-2 py-1">
+                          <p className="text-[11px] font-semibold text-gray-200 leading-tight">📌 {nt.title}</p>
+                          {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                    <button data-ref-edit={e.id} onClick={() => setRefEdit({ id: e.id, draft: refDraftOf(e) })}
+                      className="text-[11px] text-gray-300 hover:text-white">✎ edit</button>
+                    {!isWeekly && BLOCK_DAY_RE.test(e.date || '') && !removed && (
+                      <button data-ref-goto={e.id}
+                        onClick={() => { focusScheduleDay(e.date); setDlnPickerDay(null); setSearch(''); }}
+                        className="text-[11px] text-gray-500 hover:text-gray-200">go to day</button>
+                    )}
+                    {!isWeekly && BLOCK_DAY_RE.test(e.date || '') && !removed && (
+                      <button data-ref-skip={e.id} onClick={() => skipRefDay(e.id, e.date)}
+                        title="Take it off the hour grid — the class itself stays, here and in Documentations"
+                        className="text-[11px] text-gray-500 hover:text-red-400 ml-auto">remove from schedule</button>
+                    )}
+                  </div>
+                  {isWeekly && (
+                    <div className="text-[10px] text-gray-600">
+                      Remove one week with ✕ on that day's block. Notes are added with ✎ on a block, in day view.
+                    </div>
+                  )}
+                </div>
+              )}
+              {open && editing && (
+                <div data-ref-editor={e.id} className="px-3 pb-3 border-t border-gray-800 pt-2 flex flex-col gap-1.5">
+                  <input data-ref-edit-title value={refEdit.draft.title} placeholder="Title"
+                    onChange={ev => setEdit('title', ev.target.value)}
+                    onKeyDown={ev => { if (ev.key === 'Enter' && !draftErr) saveRefEdit(); }}
+                    className={inputCls} />
+                  <input data-ref-edit-detail value={refEdit.draft.detail} placeholder="Detail — lecturer, room, mode"
+                    onChange={ev => setEdit('detail', ev.target.value)}
+                    className={inputCls} />
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-gray-500">
+                    {isWeekly ? (
+                      <select data-ref-edit-dow value={String(refEdit.draft.dow)}
+                        onChange={ev => setEdit('dow', Number(ev.target.value))} className={inputCls}>
+                        {REF_DOW_NAMES.map((n, i) => <option key={i} value={i}>Every {n}</option>)}
+                      </select>
+                    ) : (
+                      <input data-ref-edit-date type="date" value={refEdit.draft.date}
+                        onChange={ev => setEdit('date', ev.target.value)} className={inputCls} />
+                    )}
+                    <input data-ref-edit-start type="time" value={refEdit.draft.start}
+                      onChange={ev => setEdit('start', ev.target.value)} className={inputCls} />
+                    <span>to</span>
+                    <input data-ref-edit-end type="time" value={refEdit.draft.end}
+                      onChange={ev => setEdit('end', ev.target.value)} className={inputCls} />
+                  </div>
+                  {isWeekly && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-gray-500">
+                      <span>from</span>
+                      <input data-ref-edit-from type="date" value={refEdit.draft.from}
+                        onChange={ev => setEdit('from', ev.target.value)} className={inputCls} />
+                      <span>until</span>
+                      <input data-ref-edit-until type="date" value={refEdit.draft.until}
+                        onChange={ev => setEdit('until', ev.target.value)} className={inputCls} />
+                      <span className="text-gray-600">blank = no limit</span>
+                    </div>
+                  )}
+                  {isWeekly && <div className="text-[10px] text-amber-400/80">This changes every week of the class.</div>}
+                  {draftErr && <div data-ref-edit-error className="text-[10px] text-amber-400">{draftErr}</div>}
+                  <div className="flex justify-end gap-2">
+                    <button data-ref-edit-cancel onClick={() => setRefEdit(null)}
+                      className="text-[11px] bg-gray-800 text-gray-400 hover:text-white rounded px-3 py-0.5">Cancel</button>
+                    <button data-ref-edit-save onClick={saveRefEdit} disabled={!!draftErr}
+                      className="text-[11px] bg-gray-700 hover:bg-gray-600 text-white rounded px-3 py-0.5 font-semibold disabled:opacity-40">Save</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        return (
+          <>
+            <div data-ref-toolbar className="px-3 py-2 border-b border-gray-800 flex-shrink-0 flex items-center gap-3">
+              <button data-ref-add-open onClick={() => { setRefAddOpen(o => !o); setRefAddDraft(refAddDefaults(openedOn)); }}
+                className="text-[11px] text-gray-400 hover:text-white">＋ Add a block</button>
+              {groups.length > 0 && (
+                <button data-ref-toggle-all onClick={toggleAll}
+                  className="text-[11px] text-gray-500 hover:text-gray-200 ml-auto">{allOpen ? '▶ close all' : '▼ open all'}</button>
+              )}
+            </div>
+            {refAddOpen && (
+              <div data-ref-add className="px-3 py-2 border-b border-gray-800 flex-shrink-0 flex flex-col gap-1.5">
+                <input data-ref-add-title autoFocus value={refAddDraft.title} placeholder="Title — the topic"
+                  onChange={ev => setAdd('title', ev.target.value)}
+                  onKeyDown={ev => { if (ev.key === 'Enter' && !addErr) addRefBlock(); }}
+                  className={inputCls} />
+                <input data-ref-add-detail value={refAddDraft.detail} placeholder="Detail — lecturer, room, mode (optional)"
+                  onChange={ev => setAdd('detail', ev.target.value)}
+                  className={inputCls} />
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-gray-500">
+                  <input data-ref-add-date type="date" value={refAddDraft.date}
+                    onChange={ev => setAdd('date', ev.target.value)} className={inputCls} />
+                  <input data-ref-add-start type="time" value={refAddDraft.start}
+                    onChange={ev => setAdd('start', ev.target.value)} className={inputCls} />
+                  <span>to</span>
+                  <input data-ref-add-end type="time" value={refAddDraft.end}
+                    onChange={ev => setAdd('end', ev.target.value)} className={inputCls} />
+                </div>
+                {addErr && refAddDraft.title.trim() && <div data-ref-add-error className="text-[10px] text-amber-400">{addErr}</div>}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setRefAddOpen(false)}
+                    className="text-[11px] bg-gray-800 text-gray-400 hover:text-white rounded px-3 py-0.5">Cancel</button>
+                  <button data-ref-add-save onClick={addRefBlock} disabled={!!addErr}
+                    className="text-[11px] bg-gray-700 hover:bg-gray-600 text-white rounded px-3 py-0.5 font-semibold disabled:opacity-40">Add</button>
+                </div>
+              </div>
+            )}
+            <div data-ref-list className="overflow-y-auto flex-1 py-2 pr-2">
+              {!groups.length && (
+                <div className="px-3 py-4 text-[11px] text-gray-600 italic">
+                  {entries.length
+                    ? 'No class matches the filter.'
+                    : 'No timetable yet. Paste one into a Documentations Timetable block, or add a block here.'}
+                </div>
+              )}
+              {groups.map(([k, list]) => {
+                const collapsed = refCollapsedGroups.has(k);
+                const label = k === 'weekly' ? 'EVERY WEEK' : k === 'none' ? 'NO DAY' : k + ' · ' + new Date(k + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+                return (
+                  <div key={k} ref={anchor('day:' + k)} data-ref-group={k}
+                    className={`mb-3 px-1 ${k === openedOn ? 'bg-fuchsia-950/20 rounded' : ''}`}>
+                    <div data-ref-group-toggle={k} onClick={() => toggleIn(setRefCollapsedGroups, k)}
+                      className="flex items-center gap-2 px-1 py-1 mb-1 cursor-pointer select-none">
+                      <span className="text-gray-600 text-xs">{collapsed ? '▶' : '▼'}</span>
+                      <span className={`text-xs font-bold tracking-widest shrink-0 ${k === openedOn ? 'text-fuchsia-300' : 'text-gray-500'}`}>{label}</span>
+                      <span className="text-[10px] text-gray-600">{list.length} {list.length === 1 ? 'class' : 'classes'}</span>
+                    </div>
+                    {!collapsed && list.map(renderCard)}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        );
+      }
 
       // Reset deletes `blockTime` and `blockDate` rather than storing the
       // anchored values it would have computed, so the block goes back to
@@ -7433,8 +7982,8 @@
                       <button
                         data-dln-open={ds}
                         onClick={() => openAddPanel('forced', ds)}
-                        title="Forced — day notes & deadlines"
-                        aria-label="Forced — day notes & deadlines"
+                        title="Forced — day notes, deadlines & timetable"
+                        aria-label="Forced — day notes, deadlines & timetable"
                         className="text-base w-7 h-7 flex items-center justify-center text-gray-700 hover:text-fuchsia-400 transition-colors rounded">★</button>
                       <button
                         data-day-add-learn={ds}
@@ -7548,6 +8097,7 @@
                 /* Day-note and deadline blocks landing on this column — by the
                    BLOCK's day, not the item's. See itemBlocksOn. */
                 const dayItemBlocks = itemBlocksOn(ds);
+                const dayRefBlocks = refBlocksOn(ds);
 
                 const dayBlockDescs = [
                   ...dayTasks.map(t => {
@@ -7568,6 +8118,13 @@
                   ...dayItemBlocks.map(b => {
                     const [th, tm] = b.span.time.split(':').map(Number);
                     return { id: b.id, top: (th + tm/60 - START_HOUR) * pxPerHour, height: Math.max(22, (b.span.duration/60) * pxPerHour) };
+                  }),
+                  /* Timetable classes LAST, so in any overlap a real block is
+                     orderedIds[0] — in front by default — and a double-click
+                     cycles a covered class forward. See refBlocksOn. */
+                  ...dayRefBlocks.map(b => {
+                    const [th, tm] = b.time.split(':').map(Number);
+                    return { id: b.id, top: (th + tm/60 - START_HOUR) * pxPerHour, height: Math.max(22, (b.duration/60) * pxPerHour) };
                   }),
                 ];
                 const dayOverlapInfo = computeOverlapInfo(dayBlockDescs);
@@ -8481,51 +9038,231 @@
                       );
                     })}
 
-                    {/* The reference backdrop — a pasted timetable, drawn BEHIND
-                        everything at zIndex 0 and at full column width. It is
-                        deliberately NOT in dayBlockDescs, so it never reaches
-                        computeOverlapInfo and a class can never squeeze a real
-                        task sideways.
+                    {/* Timetable classes — real blocks on this grid. Clicking one
+                        ARMS it exactly as a task block is armed; it opens no
+                        card (the user's call: the details live in ★ Forced →
+                        Timetable now). Mouse: drag moves it, right-click shows
+                        the resize handles, double-click cycles an overlap.
+                        Touch: tap arms, swipe moves, long-press resizes.
+                        `onClick` stopping propagation is LOAD-BEARING for that
+                        arming: a tap arms on touchend and the browser then
+                        synthesizes a click, which would otherwise reach the
+                        wrapper's un-arm handler and undo it at once.
 
-                        It carries no onMouseDown, no onTouchStart, no resize
-                        handle, no checkbox and no ✕. That ABSENCE is what makes
-                        it undraggable and untickable — a guard inside the shared
-                        drag handler would be one more thing to remember, and
-                        this repository has already paid for that shape. The one
-                        interaction it has is its own click, which opens a
-                        read-only popover; stopPropagation there matches every
-                        other block and keeps the wrapper's un-arm handler from
-                        firing, while arming nothing itself. */}
-                    {refBlocksOn(ds).map(b => {
-                      const [rh, rm] = b.time.split(':').map(Number);
+                        It stays visibly a class — dashed, timetable grey — and
+                        untickable. ✕ removes it from THIS DAY only (a `skips`
+                        entry; nothing is deleted, and the Timetable tab adds it
+                        back); ⓘ opens its card there; ✎ (day view) holds its
+                        notes, the same notes a task block has. */}
+                    {dayRefBlocks.map(b => {
+                      const ghostHere = ghost && ghost._resize && ghost.type === 'ref' && ghost.id === b.id;
+                      const dur      = ghostHere ? (ghost.duration || b.duration) : b.duration;
+                      const dispTime = (ghostHere && ghost.time) ? ghost.time : b.time;
+                      const [rh, rm] = dispTime.split(':').map(Number);
                       const top    = (rh + rm/60 - START_HOUR) * pxPerHour;
-                      const height = Math.max(18, (b.duration/60) * pxPerHour);
+                      const height = Math.max(22, (dur/60) * pxPerHour);
                       if (top < -height || top >= TOTAL_H) return null;
+                      const dragged    = ghost && !ghost._resize && ghost.type === 'ref' && ghost.id === b.id;
+                      const isSelected = selectedForResize && selectedForResize.id === b.id;
+                      const isArmed    = selectedForDrag   && selectedForDrag.id   === b.id;
+                      const isPickedUp = mouseDownInfo?.blockType === 'ref' && mouseDownInfo.id === b.id && !dragged;
+                      const notes = refNotes(b.entry);
+                      const commentOpen = timelineMode === 'day' && openComments.has(b.id);
+                      const closeNotes = () => {
+                        setOpenComments(prev => { const n = new Set(prev); n.delete(b.id); return n; });
+                        setTimelineEditingNoteIds(prev => ({ ...prev, [b.id]: null }));
+                        setNoteDrafts(prev => ({ ...prev, [b.id]: { title: '', detail: '' } }));
+                      };
                       return (
-                        <div key={b.id}
+                        <React.Fragment key={b.id}>
+                        <div
                           data-ref-day={ds}
                           data-ref-id={b.entryId}
+                          data-block-kind="ref"
+                          data-block-id={b.id}
+                          data-block-day={ds}
                           /* The block body stays title + time — a dense day
                              must not become a wall of text — so the detail is
-                             reachable here and in the popover. */
+                             reachable here, and on its card. */
                           title={`Timetable · ${b.title}${b.detail ? ' · ' + b.detail : ''} · ${b.time}–${addMins(b.time, b.duration)}`}
                           style={{
                             top: top + 'px', height: height + 'px', left: '3px', right: '3px',
-                            position: 'absolute', zIndex: 0,
-                            borderColor: REF_COLOR + '99', backgroundColor: REF_COLOR + '14',
+                            position: 'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(b.id),
+                            borderColor: REF_COLOR + 'aa', backgroundColor: REF_COLOR + '1f',
+                            ...(isPickedUp && { transform: 'translateY(-3px) scale(1.02)' }),
                           }}
-                          className="rounded px-1.5 py-0.5 overflow-hidden border border-dashed cursor-pointer opacity-70 hover:opacity-100"
-                          onClick={e => { e.stopPropagation(); setRefPopup({ ds, entryId: b.entryId }); }}
+                          className={`rounded px-1.5 py-0.5 overflow-hidden group border border-dashed transition-transform duration-100 ${
+                            dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
+                          } ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
+                          onMouseDown={e => startDragRef(e, b, ds)}
+                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type: 'ref', item: b.entry, span: { time: b.time, duration: b.duration }, offsetY: t.clientY - rect.top, blockHeight: rect.height, resizeDate: ds, startX: t.clientX, startY: t.clientY, moved: false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type: 'ref', id: b.id }); }, 600); }}
+                          onClick={e => e.stopPropagation()}
+                          onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(b.id); }}
+                          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'ref', id: b.id }); }}
                         >
-                          <div className="text-[11px] font-semibold truncate leading-tight" style={{ color: REF_COLOR }}>
-                            {b.title}
+                          {isSelected && (
+                            <div className="absolute top-0 left-0 right-0 h-3 cursor-n-resize bg-white/30 hover:bg-white/60 rounded-t z-20"
+                              onMouseDown={e => startResize(e, b.entry, 'top', 'ref', b.time, ds, b.duration)}
+                              onTouchStart={e => startResize(e, b.entry, 'top', 'ref', b.time, ds, b.duration)} />
+                          )}
+                          <div className={`min-w-0 ${timelineMode === 'day' ? 'pr-12' : 'pr-8'}`}>
+                            <div className="text-[11px] font-semibold truncate leading-tight" style={{ color: REF_COLOR }}>
+                              🕘 {b.title}
+                            </div>
+                            {height >= 32 && (
+                              <div className="text-[10px] leading-tight opacity-60" style={{ color: REF_COLOR }}>
+                                {formatTime12(dispTime)} – {formatTime12(addMins(dispTime, dur))}
+                              </div>
+                            )}
                           </div>
-                          {height >= 30 && (
-                            <div className="text-[10px] leading-tight opacity-60" style={{ color: REF_COLOR }}>
-                              {formatTime12(b.time)} – {formatTime12(addMins(b.time, b.duration))}
+                          {timelineMode === 'day' && (
+                            <button data-ref-notes-btn={b.id}
+                              className={`absolute top-0.5 right-8 text-base leading-none p-0.5 rounded transition-colors ${notes.length > 0 ? 'text-gray-300' : 'text-gray-500 hover:text-gray-300'}`}
+                              onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.has(b.id) ? n.delete(b.id) : n.add(b.id); return n; }); setViewingNote(null); }}
+                              onMouseDown={e => e.stopPropagation()}
+                              title="add note"
+                            >✎</button>
+                          )}
+                          {timelineMode === 'day' && notes.length > 0 && (
+                            <div className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
+                              style={{ flexFlow: 'column wrap' }}
+                              onMouseDown={e => e.stopPropagation()}>
+                              {notes.map(nt => (
+                                <div key={nt.id} data-ref-note-chip={nt.id}
+                                  className="bg-gray-800/90 border border-gray-600 rounded px-1.5 py-0.5 cursor-pointer hover:border-gray-500 transition-colors max-w-full"
+                                  onClick={e => { e.stopPropagation(); setViewingNote(prev => prev?.noteId === nt.id ? null : { taskId: b.id, noteId: nt.id }); setOpenComments(prev => { const n = new Set(prev); n.delete(b.id); return n; }); }}
+                                >
+                                  <p className="text-[10px] font-semibold text-gray-300 whitespace-nowrap leading-tight">📌 {nt.title}</p>
+                                </div>
+                              ))}
                             </div>
                           )}
+                          <button data-ref-info={b.id}
+                            className="absolute top-0.5 right-4 text-[11px] leading-none p-0.5 rounded text-gray-500 hover:text-white transition-colors"
+                            onClick={e => { e.stopPropagation(); openTimetableCard(ds, b.entry); }}
+                            onMouseDown={e => e.stopPropagation()}
+                            title="this class's details — ★ Forced → Timetable"
+                          >ⓘ</button>
+                          <button data-ref-remove={b.id}
+                            className={`absolute top-0.5 right-0.5 text-sm ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-500 hover:text-red-400 transition-opacity leading-none p-1`}
+                            onClick={e => {
+                              e.stopPropagation();
+                              /* Removing a class from ONE day deletes nothing —
+                                 the day goes into `skips` — but a stray click
+                                 would still hide a lecture, so it asks, and asks
+                                 BEFORE it writes. */
+                              const day = new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                              if (window.confirm('Remove "' + b.title + '" from ' + day + '?\n\nOnly this day. The class stays in Documentations, and ★ Forced → Timetable can add it back.'))
+                                skipRefDay(b.entryId, ds);
+                            }}
+                            onMouseDown={e => e.stopPropagation()}
+                            title="remove from this day"
+                          >×</button>
+                          {isSelected && (
+                            <div className="absolute bottom-0 left-0 right-0 h-3 cursor-s-resize bg-white/30 hover:bg-white/60 rounded-b z-20"
+                              onMouseDown={e => startResize(e, b.entry, 'bottom', 'ref', b.time, ds, b.duration)}
+                              onTouchStart={e => startResize(e, b.entry, 'bottom', 'ref', b.time, ds, b.duration)} />
+                          )}
                         </div>
+                        {/* The notes panel — the task block's, keyed by this
+                            block's composite id for the UI and written to the
+                            CLASS through refWithNote / refWithNoteEdit /
+                            refWithoutNote. */}
+                        {commentOpen && (
+                          <div data-ref-notes={b.id}
+                            style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: REF_COLOR + '99' }}
+                            className="bg-gray-900 border rounded-b shadow-xl"
+                            onMouseDown={e => e.stopPropagation()}
+                            onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+                              <span className="text-[9px] uppercase tracking-widest font-semibold" style={{ color: REF_COLOR }}>Notes</span>
+                              <button className="text-gray-500 hover:text-white text-xs leading-none"
+                                onClick={e => { e.stopPropagation(); closeNotes(); }}
+                                onMouseDown={e => e.stopPropagation()}>×</button>
+                            </div>
+                            {notes.length > 0 && (
+                              <div className="px-2 pb-1 flex flex-col gap-1 max-h-36 overflow-y-auto">
+                                {notes.map(nt => (
+                                  <div key={nt.id} data-ref-note={nt.id}
+                                    className={`bg-gray-800/70 border rounded px-2 py-1 relative group/note cursor-pointer ${timelineEditingNoteIds[b.id] === nt.id ? 'border-gray-500' : 'border-gray-700/50'}`}
+                                    onDoubleClick={e => { e.stopPropagation(); setNoteDrafts(prev => ({ ...prev, [b.id]: { title: nt.title || '', detail: nt.detail || '' } })); setTimelineEditingNoteIds(prev => ({ ...prev, [b.id]: nt.id })); }}>
+                                    <p className="text-[11px] font-semibold text-gray-200 leading-tight">{nt.title}</p>
+                                    {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
+                                    <button data-ref-note-del={nt.id}
+                                      className="absolute top-0.5 right-0.5 text-sm text-gray-500 hover:text-red-400 leading-none p-1"
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        if (!window.confirm('Delete this note?')) return;
+                                        removeRefNote(b.entryId, nt.id);
+                                        if (timelineEditingNoteIds[b.id] === nt.id) {
+                                          setTimelineEditingNoteIds(prev => ({ ...prev, [b.id]: null }));
+                                          setNoteDrafts(prev => ({ ...prev, [b.id]: { title: '', detail: '' } }));
+                                        }
+                                      }}
+                                      onMouseDown={e => e.stopPropagation()}
+                                    >×</button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div className="border-t border-gray-700/50 mx-2 mt-0.5" />
+                            <input data-ref-note-title={b.id}
+                              value={(noteDrafts[b.id] || {}).title || ''}
+                              onChange={e => setNoteDrafts(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), title: e.target.value } }))}
+                              placeholder="Title..."
+                              className="w-full bg-transparent text-sm font-semibold text-white px-2 pt-1.5 pb-0.5 outline-none placeholder-gray-600"
+                              onMouseDown={e => e.stopPropagation()}
+                            />
+                            <div className="border-t border-gray-700/50 mx-2" />
+                            <textarea data-ref-note-detail={b.id}
+                              value={(noteDrafts[b.id] || {}).detail || ''}
+                              onChange={e => setNoteDrafts(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), detail: e.target.value } }))}
+                              placeholder="Details..."
+                              className="w-full bg-transparent text-[11px] text-gray-300 px-2 py-1.5 resize-none outline-none placeholder-gray-600"
+                              rows={3}
+                              onMouseDown={e => e.stopPropagation()}
+                            />
+                            <div className="flex justify-end px-2 pb-2">
+                              <button data-ref-note-save={b.id}
+                                className="text-[11px] bg-gray-700 hover:bg-gray-600 text-white rounded px-3 py-0.5 font-semibold transition-colors disabled:opacity-40"
+                                disabled={!((noteDrafts[b.id] || {}).title || '').trim()}
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  const draft = noteDrafts[b.id] || {};
+                                  if (!draft.title?.trim()) return;
+                                  const editId = timelineEditingNoteIds[b.id];
+                                  if (editId) {
+                                    editRefNote(b.entryId, editId, { title: draft.title.trim(), detail: (draft.detail || '').trim() });
+                                    setTimelineEditingNoteIds(prev => ({ ...prev, [b.id]: null }));
+                                  } else {
+                                    addRefNote(b.entryId, { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() });
+                                  }
+                                  setNoteDrafts(prev => ({ ...prev, [b.id]: { title: '', detail: '' } }));
+                                }}
+                                onMouseDown={e => e.stopPropagation()}
+                              >{timelineEditingNoteIds[b.id] ? 'Save' : 'Done'}</button>
+                            </div>
+                          </div>
+                        )}
+                        {viewingNote?.taskId === b.id && !commentOpen && (() => {
+                          const nt = notes.find(n => n.id === viewingNote.noteId);
+                          if (!nt) return null;
+                          return (
+                            <div style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: REF_COLOR + '99' }}
+                              className="bg-gray-900 border rounded-b shadow-xl"
+                              onMouseDown={e => e.stopPropagation()}
+                              onClick={e => e.stopPropagation()}>
+                              <div className="flex items-center justify-between px-2 pt-1.5 pb-1">
+                                <span className="text-[12px] font-semibold text-gray-200 leading-tight">{nt.title}</span>
+                                <button className="text-gray-500 hover:text-white text-xs leading-none ml-2"
+                                  onClick={e => { e.stopPropagation(); setViewingNote(null); }}
+                                  onMouseDown={e => e.stopPropagation()}>×</button>
+                              </div>
+                              {nt.detail && <p className="text-[11px] text-gray-400 px-2 pb-2 leading-snug whitespace-pre-wrap">{nt.detail}</p>}
+                            </div>
+                          );
+                        })()}
+                        </React.Fragment>
                       );
                     })}
 
@@ -8701,6 +9438,24 @@
                             </div>
                           </div>
                         );
+                      } else if (ghost.type === 'ref') {
+                        const entry = (refSchedules || []).find(e => e && e.id === ghost.entryId);
+                        if (!entry) return null;
+                        return (
+                          <div data-ref-ghost
+                            style={{ top: top + 'px', height: h + 'px', left: '3px', right: '3px', position: 'absolute',
+                              borderColor: REF_COLOR, backgroundColor: REF_COLOR + '20' }}
+                            className="rounded px-1.5 py-0.5 text-xs border border-dashed pointer-events-none z-20">
+                            <div className="font-semibold truncate leading-tight" style={{ color: REF_COLOR }}>
+                              🕘 {entry.title || 'Class'}
+                            </div>
+                            <div className="text-[10px] opacity-70">
+                              {formatTime12(ghost.time)}
+                              {/* a weekly class moves every week — say so while it is moving */}
+                              {refIsWeekly(entry) ? ' · every ' + (REF_DOW_NAMES[new Date(ghost.date + 'T12:00:00').getDay()] || '') : ''}
+                            </div>
+                          </div>
+                        );
                       } else {
                         const task = allTasks.find(t => t.id === ghost.taskId);
                         if (!task) return null;
@@ -8826,15 +9581,21 @@
               on a caution day rather than only on the day it is due. Nothing
               here deletes an item: taking a block off the schedule only sets
               `blockOff`, and the strip chip, marker, due line and caution
-              run-up all stay exactly where they were. */}
+              run-up all stay exactly where they were.
+
+              The fourth tab, Timetable, is a different list with different
+              rules — every class, latest day first, never cut off at the
+              opened day — so it has its own renderer: renderTimetableTab. */}
           {dlnPickerDay && (() => {
             const openedOn = dlnPickerDay;
             const q = search.trim().toLowerCase();
             const hit = it => !q || String(it.title || '').toLowerCase().includes(q)
               || String(it.detail || '').toLowerCase().includes(q);
             const all = [];
-            if (dlnTab !== 'deadlines') (calendarNotes || []).forEach(n => all.push({ kind: 'dayNote', item: n }));
-            if (dlnTab !== 'notes') (deadlines || []).forEach(d => all.push({ kind: 'deadline', item: d }));
+            // `All` is notes and deadlines; the Timetable tab is its own list,
+            // sorted the other way round (latest first) and never cut off.
+            if (dlnTab === 'all' || dlnTab === 'notes') (calendarNotes || []).forEach(n => all.push({ kind: 'dayNote', item: n }));
+            if (dlnTab === 'all' || dlnTab === 'deadlines') (deadlines || []).forEach(d => all.push({ kind: 'deadline', item: d }));
             // The panel looks FORWARD from the day it was opened on and never
             // back: an item belonging to an earlier day is not listed at all.
             // Two things about the cut are load-bearing. It is on the item's
@@ -8862,15 +9623,22 @@
               || rowTime(a).localeCompare(rowTime(b))
               || String(a.item.title || '').localeCompare(String(b.item.title || '')));
             const firstOnOpenedDay = rows.findIndex(r => r.item.date === openedOn);
-            const close = () => { setDlnPickerDay(null); setSearch(''); setDlnDissect(null); setDlnPartDraft({ title: '', date: '', time: '' }); };
+            const close = () => {
+              setDlnPickerDay(null); setSearch(''); setDlnDissect(null); setDlnPartDraft({ title: '', date: '', time: '' });
+              setRefAddOpen(false); setRefEdit(null); setRefFocus(null);
+            };
             return (
               <>
                 <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
                 <div data-dln-panel className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[560px] max-w-[94vw] max-h-[82vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-                  {addPanelHeader('★', 'FORCED', 'DAY NOTES & DEADLINES', openedOn, close)}
-                  <div className="p-3 border-b border-gray-800 flex-shrink-0 flex items-center gap-2">
+                  {addPanelHeader('★', 'FORCED', 'DAY NOTES, DEADLINES & TIMETABLE', openedOn, close)}
+                  {/* Wraps: four tabs and an input's intrinsic width do not fit
+                      a phone's 366px panel, and an unwrapped row pushed the
+                      filter 65px past the panel's clipped edge. min-w-[8rem]
+                      keeps it on the tab line wherever it is usable there. */}
+                  <div className="p-3 border-b border-gray-800 flex-shrink-0 flex flex-wrap items-center gap-2">
                     <div className="flex gap-1">
-                      {[['all', 'All'], ['notes', 'Notes'], ['deadlines', 'Deadlines']].map(([k, lbl]) => (
+                      {[['all', 'All'], ['notes', 'Notes'], ['deadlines', 'Deadlines'], ['timetable', 'Timetable']].map(([k, lbl]) => (
                         <button key={k} onClick={() => setDlnTab(k)}
                           data-dln-tab={k}
                           className={`text-[10px] px-2 py-1 rounded transition-colors ${dlnTab === k ? 'bg-fuchsia-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>{lbl}</button>
@@ -8879,8 +9647,9 @@
                     <input value={search} onChange={e => setSearch(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Escape') close(); }}
                       placeholder="filter…"
-                      className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-fuchsia-600" />
+                      className="flex-1 min-w-[8rem] bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-fuchsia-600" />
                   </div>
+                  {dlnTab === 'timetable' ? renderTimetableTab(openedOn, hit) : (
                   <div className="overflow-y-auto flex-1">
                     {/* Naming the cutoff is not decoration. Opening this panel
                         from a later day in a slot full of earlier items would
@@ -9077,6 +9846,7 @@
                       );
                     })}
                   </div>
+                  )}
                 </div>
               </>
             );
@@ -9746,14 +10516,6 @@
                         // that never had one keeps the shape it always had — and
                         // clearing the field drops the key rather than storing ''
                         const withTime = noteTimed(calNoteTimelineDraft) ? { time: calNoteTimelineDraft.time } : {};
-                        // Only the timetable path ever seeds a duration, and it
-                        // is written as blockDuration so the new note covers the
-                        // class rather than a default hour. Absent on every
-                        // other path, so no existing note changes shape and
-                        // nothing needs migrating — the same write-only-what-
-                        // differs rule the block keys already follow.
-                        const withDur = blockMins(calNoteTimelineDraft.duration) !== null
-                          ? { blockDuration: calNoteTimelineDraft.duration } : {};
                         if (isEdit) {
                           setCalendarNotes(prev => prev.map(n => {
                             if (n.id !== noteId) return n;
@@ -9761,7 +10523,7 @@
                             return { ...rest, title: calNoteTimelineDraft.title.trim(), detail: calNoteTimelineDraft.detail.trim(), ...withTime };
                           }));
                         } else {
-                          setCalendarNotes(prev => [...prev, { id: uid(), date, title: calNoteTimelineDraft.title.trim(), detail: calNoteTimelineDraft.detail.trim(), createdAt: Date.now(), ...withTime, ...withDur }]);
+                          setCalendarNotes(prev => [...prev, { id: uid(), date, title: calNoteTimelineDraft.title.trim(), detail: calNoteTimelineDraft.detail.trim(), createdAt: Date.now(), ...withTime }]);
                         }
                         close();
                       }}
@@ -9775,87 +10537,6 @@
                         Delete
                       </button>
                     )}
-                  </div>
-                </div>
-              </>
-            );
-          })()}
-
-          {/* Reference (timetable) popover. READ-ONLY by design: a pasted class
-              is a fixed external constraint, not work the user chose, so
-              nothing here edits it and this page never writes refSchedules —
-              documentations.html owns that key and is where a class is removed.
-
-              What it DOES offer is the one thing the user asked for: turning a
-              class into a real day note on the same day and hour. That goes
-              through the EXISTING composer rather than a second writer, so the
-              note is created by exactly the code every other note goes
-              through; the only new thing is `duration`, which addCalNote
-              writes as blockDuration so the note lands on top of the class
-              rather than at a default 60 minutes. */}
-          {refPopup && (() => {
-            const entry = (refSchedules || []).find(x => x && x.id === refPopup.entryId);
-            if (!entry) return null;
-            const span = refSpan(entry);
-            if (!span) return null;
-            const close = () => setRefPopup(null);
-            const page = (docPages || []).find(p => p.id === entry.docPageId);
-            const weekly = entry.dow !== undefined && entry.dow !== null;
-            const DOWS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-            return (
-              <>
-                <div className="fixed inset-0 z-40 bg-black/50" onClick={close} />
-                <div data-ref-popup className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[340px] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
-                  <div className="px-3 py-1.5 text-[9px] tracking-widest border-b border-gray-800 flex items-center justify-between gap-2"
-                    style={{ color: REF_COLOR }}>
-                    <span>TIMETABLE · READ ONLY</span>
-                    <button onClick={close} className="text-gray-500 hover:text-gray-200 text-sm leading-none">✕</button>
-                  </div>
-                  <div className="p-3 space-y-1.5">
-                    <div className="text-sm font-semibold text-gray-100">{entry.title || 'Class'}</div>
-                    {/* The lecturer, room or mode. Rendered only when there is
-                        one — absence is the default for every entry stored
-                        before the paste format grew its fourth cell. */}
-                    {typeof entry.detail === 'string' && entry.detail ? (
-                      <div data-ref-detail className="text-xs text-gray-300">{entry.detail}</div>
-                    ) : null}
-                    <div className="text-xs text-gray-400">
-                      {formatTime12(span.time)} – {formatTime12(addMins(span.time, span.duration))}
-                    </div>
-                    <div className="text-[11px] text-gray-500">
-                      {weekly
-                        ? `Every ${DOWS[entry.dow] || '—'}${entry.from ? ', from ' + entry.from : ''}${entry.until ? ' until ' + entry.until : ''}`
-                        : `On ${entry.date}`}
-                    </div>
-                    <div className="text-[11px] text-gray-600">
-                      {page ? `From "${page.title || 'Untitled'}"` : 'Its documentation page no longer exists'}
-                      {' · remove it from a Timetable block in Documentations'}
-                    </div>
-                  </div>
-                  <div className="px-3 pb-3">
-                    <button data-ref-make-note
-                      onClick={() => {
-                        /* Hand off to the EXISTING timeline note modal rather
-                           than writing a note here. It is the composer already
-                           reachable from this view, so the user lands on a form
-                           they know and can still change the title before
-                           anything is stored — and the note is created by
-                           exactly the code every other timeline note goes
-                           through. `duration` is the only field this path adds.
-
-                           The day is refPopup.ds — the COLUMN the class was
-                           clicked in — which for a weekly entry is the specific
-                           week the user is looking at, not the entry's own
-                           abstract weekday. */
-                        const ds = refPopup.ds;
-                        close();
-                        setCalNoteTimelineModal({ date: ds, noteId: null });
-                        setCalNoteTimelineDraft({ title: entry.title || '', detail: '',
-                          time: span.time, duration: span.duration });
-                      }}
-                      className="w-full rounded bg-fuchsia-900/40 border border-fuchsia-700/60 px-2 py-1 text-[11px] text-fuchsia-200 hover:bg-fuchsia-900/70">
-                      ＋ day note here
-                    </button>
                   </div>
                 </div>
               </>
@@ -10877,10 +11558,12 @@
       // added from a documentation page carries that page's id, and the note /
       // deadline popups link back to it
       const [docPages, setDocPages] = useState(() => initialSlot.docPages || []);
-      // Also owned by documentations.html and also strictly read-only here. A
-      // pasted timetable is drawn on this page's hour grid as a backdrop; this
-      // page never writes the key, and the KS02-style ownership case asserts
-      // an ordinary Progress edit leaves it byte-identical.
+      // OWNED HERE, like calendarNotes: the Schedule is where a class is moved,
+      // resized, renamed, given notes and removed from a day, and the autosave
+      // below writes the key. documentations.html still pastes and deletes, but
+      // only through a fresh read-modify-write of the stored array, and the
+      // refresh below adopts what it wrote — the calendarNotes arrangement
+      // exactly.
       const [refSchedules, setRefSchedules] = useState(() => initialSlot.refSchedules || []);
       const [tab, setTab] = useState(() => window.location.hash.slice(1) || 'progress');
       const [selectedMilestone, setSelectedMilestone] = useState(null);
@@ -10907,6 +11590,7 @@
       useEffect(() => { if (loadedSlotId) _writeP('mgSchedule',    mgSchedule,    loadedSlotId); }, [mgSchedule, loadedSlotId]);
       useEffect(() => { if (loadedSlotId) _writeP('calendarNotes', calendarNotes, loadedSlotId); }, [calendarNotes, loadedSlotId]);
       useEffect(() => { if (loadedSlotId) _writeP('deadlines',     deadlines,     loadedSlotId); }, [deadlines, loadedSlotId]);
+      useEffect(() => { if (loadedSlotId) _writeP('refSchedules',  refSchedules,  loadedSlotId); }, [refSchedules, loadedSlotId]);
 
       useEffect(() => {
         // Adopt one complete stored snapshot, including its slot identity, in
@@ -11107,7 +11791,7 @@
                 calendarNotes={calendarNotes} setCalendarNotes={setCalendarNotes}
                 deadlines={deadlines} setDeadlines={setDeadlines}
                 docPages={docPages}
-                refSchedules={refSchedules}
+                refSchedules={refSchedules} setRefSchedules={setRefSchedules}
                 initialDate={initialScheduleDate}
                 initialDeadlineId={initialDeadlineId}
                 onOpenMilestone={openMilestone}

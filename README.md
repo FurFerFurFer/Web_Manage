@@ -516,7 +516,7 @@ included:
 
 | Button | Opens | Holds |
 | --- | --- | --- |
-| ★ **Forced** | the day notes & deadlines browser (it was `☰`) | the day notes and deadlines dated on or after that day |
+| ★ **Forced** | the day notes, deadlines & timetable browser (it was `☰`) | the day notes and deadlines dated on or after that day, and — on its Timetable tab — every timetable class |
 | ● **Learn** | every mind map and every MG (it was `◎` and `⊕`) | a pinned strip of what the day's milestone still needs, then `Mind maps` / `Marginal gains` tabs |
 | ▲ **Chosen** | the task picker (it was `+`) | the to-do: the goal tree, its routines and its milestones — no supporting actions |
 | ■ **Core Routine** | every supporting action (it was the end of the `+` picker) | each action, each routine and each of its steps |
@@ -853,6 +853,29 @@ from the item and nowhere else), and carries:
 - `reset to due time` on a deadline whose block has been moved off its anchor, which deletes both
   `blockTime` and `blockDate` so the block goes back to ending at the due time on the due day.
 
+**The Timetable tab** is the fourth, and a different list with different rules: every timetable
+class — see "A pasted timetable" below — laid out like KS02's +LIN LOG. A class no longer opens a
+card of its own on the grid, so this is where **every detail** lives:
+
+- **Latest first, never cut off.** Dated lectures are grouped by their own day, latest day first,
+  and by time inside a day; unlike the notes and deadlines tabs, an earlier day is listed too. A
+  weekly class is **one card** in an **EVERY WEEK** group at the top, because it is one class and
+  Documentations lists it as one row. A one-off whose day is malformed is listed under NO DAY rather
+  than becoming unreachable. The day the panel was opened from is tinted and scrolled to.
+- **Groups fold and cards open** (▶/▼, ▼/▲), and `▼ open all` / `▶ close all` flips every one at once.
+  None of that is stored. The LIN log's editable day title is not copied: it is a field of its own.
+- **A card** shows the time, title, detail, the day or the weekly rule and range, where the class
+  came from (its page, *added in the Schedule*, or a page that no longer exists), its notes, and the
+  days it was removed from. `✎ edit` opens a Save/Cancel form: title, detail, start and end, and the
+  day — or, for a weekly class, the weekday and range, with a reminder that it changes every week. A
+  blank detail or range end writes no key, an end before its start is refused, and so is an inverted
+  range, as in the paste dialog.
+- **`remove from schedule` and `＋ add back`** take a class off one day and put it back. Both write
+  `skips` and delete nothing, so neither asks — the tab's `remove from schedule` for a note or a
+  deadline does not ask either. A weekly class lists each removed day with its own `＋`.
+- **`＋ Add a block`** makes a one-off class on the day the panel was opened from (the day is
+  editable): title, optional detail, start and end. It belongs to no documentation page.
+
 ### Floating notes
 
 `notes-widget.js` mounts a floating notes widget on every page, with its rules in
@@ -1128,7 +1151,7 @@ Its absence means the item was added in the Schedule, so existing data reads exa
 
 Sibling order in the sidebar is the pages' relative order inside the flat `docPages` array — there is no separate order field. Drag-to-arrange therefore persists by splicing the one moved page to a new array position (and re-parenting is just a `parentId` change), so export/import, Firebase sync, and the slot constructors need no order-specific handling.
 
-#### A pasted timetable, drawn as a backdrop
+#### A pasted timetable, edited on the Schedule
 
 A picture of a timetable — a university term grid, a shift rota — becomes real blocks on the
 hour grid through the same route a table does: show the picture to an AI, paste what it gives
@@ -1149,9 +1172,9 @@ The format is four cells per row — day, time, title, detail:
 **The title is the topic alone; everything else is the detail.** The block drawn on an hour
 grid is one line tall, so a title carrying `· Dr Ada · Room 305-306` loses the topic to
 truncation — the part actually being scanned for. Split, the title stays readable on the grid
-and the detail is reachable in the Timetable list's own column, in the Progress popover, and
-in the hover tooltip on all three grids. The block body itself stays title + time, so a dense
-day does not become a wall of text.
+and the detail is reachable in the Timetable list's own column, on the class's card in Progress →
+★ Forced → Timetable, and in the hover tooltip on all three grids. The block body itself stays
+title + time, so a dense day does not become a wall of text.
 
 The detail is **optional and its absence is the default**: a blank cell writes no key, a
 three-cell paste is still legal, and every paste and every stored entry that predates the
@@ -1173,27 +1196,43 @@ Tolerances match the table format — the fence is optional, both ``` and `:::` 
 outer pipes are optional, and markdown separator and header rows are skipped, so an ordinary
 markdown table pastes with no extra work. Nothing is ever returned half-parsed.
 
-The blocks are drawn on **all three hour grids** — the Progress timeline, the Home calendar and
-any Documentations calendar block — as transparent dashed blocks in their own layer *behind*
-real work. They are read-only by construction:
+The classes are drawn on **all three hour grids** — the Progress timeline, the Home calendar and
+any Documentations calendar block — as dashed blocks in the timetable grey. **They are edited on
+the Progress Schedule** (the user's call, 2026-10-16): pasted or added by hand, a class is
+changeable in every way, and Documentations shows the result because it reads the same entries.
+On Home and in a Documentations calendar block they stay an inert layer (`pointer-events: none`).
 
-- **Not tickable and not draggable.** The Progress block carries no `onMouseDown`, no
-  `onTouchStart`, no resize handle, no checkbox and no `✕`; the two read-only layers carry
-  `pointer-events: none`. The absence of a handler is the mechanism, not a guard inside a
-  shared one.
-- **They never enter the overlap layout.** `buildDaySchedule` returns them in a separate
-  `refBlocks` array rather than in `blocks`, so a class can never squeeze a real task's width,
-  and a browser case measures a real block with and without a timetable behind it.
-- **Clicking one on Progress** opens a read-only card, with a `＋ day note here` button that
-  hands off to the existing timeline note composer seeded with the class's day, time and
-  length. That is the only writing path, and it writes a `calendarNotes` record — never a
-  timetable entry.
+On the Progress timeline a class behaves like a task block:
 
-Removal lives in the Timetable block: `✕` on a row, `✕ remove all` on an import, both behind a
-`window.confirm`. Deleting a documentation page does **not** delete the classes it pasted, the
-same rule that keeps day notes alive — they appear in an amber *from a page that no longer
-exists* section of any Timetable block, so nothing becomes unreachable. `⚟ Filter` in a
-calendar block has a **Timetable** entry that switches the backdrop off.
+- **Clicking it arms it; it opens nothing.** A mouse drags it straight away, a right-click shows
+  its resize handles, a double-click cycles it forward through an overlap; a finger taps to arm,
+  swipes the armed block to move it, and long-presses to resize. It carries no checkbox — a
+  lecture is not something you complete.
+- **A drag writes the class's own day and time.** A one-off moves its `date`; a weekly class moves
+  its weekday and time **every week** — it is one class, and Documentations lists it as one row.
+  The ghost of a weekly class only lands on a column inside its range. A resize writes `duration`
+  (and `time` from the top edge).
+- **✎ (day view) holds its notes** — the notes a task block has, written on the class itself, never
+  as a day note. A weekly class's notes show on each of its weeks, as a routine task's do.
+- **ⓘ opens its card** in ★ Forced → Timetable, where every detail lives and everything is edited
+  (see "★ Forced" above).
+- **✕ removes it from that day only**, after a confirmation. The day goes into `skips`, nothing is
+  deleted, and the Timetable tab's `＋ add back` restores it.
+
+In the Progress overlap order a class is appended **last**, so a real block overlapping it is in
+front until a double-click cycles the class forward. That order decides z-index only, never a
+width, so a class still cannot squeeze a real block; a browser case measures the real block with
+and without a class behind it. On Home and in Documentations, `buildDaySchedule` still returns
+classes in their own `refBlocks` array rather than in `blocks`.
+
+**Deleting for good lives in the Timetable block**: `✕` on a row and `✕ remove all` on an import,
+both behind a `window.confirm` that says so. Its rows show the days a class was removed from on the
+Schedule. Deleting a documentation page does **not** delete the classes it pasted, the same rule
+that keeps day notes alive — they appear in an amber *from a page that no longer exists* section
+of any Timetable block. A block **added in the Schedule** belongs to no page, so every Timetable
+block lists it in an *added in the Schedule* section, the one place it can be deleted for good —
+nothing becomes unreachable. `⚟ Filter` in a calendar block has a **Timetable** entry that
+switches the layer off.
 
 ### True Storage
 
@@ -1437,9 +1476,9 @@ Each page writes only the keys it owns, merging them into a fresh read of the st
 
 | Page | Keys it writes |
 | --- | --- |
-| `progress.html` | `goals`, `saActions`, `saEntries`, `mmEntries`, `mgSchedule`, `calendarNotes`, `deadlines` |
+| `progress.html` | `goals`, `saActions`, `saEntries`, `mmEntries`, `mgSchedule`, `calendarNotes`, `deadlines`, `refSchedules` |
 | `sir-ks02.html` | `sessions`, `mms`, `kolbs`, `mgChanges`, `linChanges`, `linDayTitles`, `pos`, `levelTemplates`, `sourceDumps` |
-| `documentations.html` | `docPages`, plus `calendarNotes` and `deadlines` through a fresh read-modify-write |
+| `documentations.html` | `docPages`, plus `calendarNotes`, `deadlines` and `refSchedules` through a fresh read-modify-write |
 | `true-storage.html` | `trueStorages`, `trueStoragePos`, plus `sourceDumps` through a fresh read-modify-write |
 | `notes-widget.js` | `notes`, `dateNotes` |
 | `index.html` | the slot list itself — create, rename, delete, import |
@@ -1506,7 +1545,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, timetable blocks, PDF export |
 | `true-storage.html` | Storages: KS03-style multiverse canvas, a SOURCE DUMP tab that is a documented copy of KS02's page and edits the same data, SRCH-style nested tree, one link, explanation, and source-dump tags |
-| `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry, the deadline rules, and `refOccupies` — the one test for which days a pasted timetable entry falls on (`window.TrackCalendar`) |
+| `scripts/calendar-core.js` | Shared read-only aggregation of a slot into per-day calendar data, plus the filter registry, the deadline rules, `refOccupies` — the one test for which days a pasted timetable entry falls on — and `refSkipped`, the days one was removed from (`window.TrackCalendar`) |
 | `scripts/viewport.js` | The one definition, in JavaScript, of what counts as a phone (`window.TrackViewport`) — `PHONE_PX`, `PHONE_QUERY`, `isPhone()` and a `subscribe()` returning its own disposer. Reads `window.matchMedia` and nothing else: no `document`, no storage, no date code |
 | `scripts/theme.js` | Initial appearance selection, the Grit/Night switch, persistence, and cross-tab updates. Holds the one normaliser that aliases the superseded `light` and maps an appearance to a `color-scheme` keyword |
 | `scripts/schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
@@ -1792,13 +1831,19 @@ warning that leaves the database editable. `parts` is checked more strictly and
 stray `null` in it imports cleanly under a field-only check and then throws out
 of the next render.
 
-A `refSchedules` item is one line of a pasted timetable — reference data, never work:
+A `refSchedules` item is one class of a timetable — one line of a paste, or a block added in the
+Schedule:
 
 ```js
 { id, title, time, duration, docPageId, importId, createdAt,
+  detail,                                   // optional: lecturer, room, mode
+  skips,                                    // optional: days removed on the Schedule
+  notes,                                    // optional: [{id, title, detail, createdAt}]
   date }                                    // one-off, OR
   dow, from, until }                        // weekly, inclusive
 ```
+
+A block added in the Schedule has no `docPageId` and no `importId`.
 
 **Exactly one of `date` and `dow` is present.** That single rule is what lets one paste format
 carry both a term timetable and a one-off day, and an entry carrying both is refused by every
@@ -1818,8 +1863,21 @@ Everything on the item is validated as a **warning**, alongside `blockDate`. The
 geometry and placement, never traversal, so none can throw out of a render; freezing the whole
 database over a mistyped hour would be the worse outcome.
 
-`documentations.html` owns the key and is the only page that writes it. `progress.html` and
-`index.html` read it and never write it — the mirror of how `docPages` works.
+`skips` and `notes` are **not** validated: they are read only through total readers
+(`TrackCalendar.refSkips` / `refSkipped` with the twin in `progress.html`, and `refNotes`) that drop
+whatever is not a real day or a record — the `parentIds` / `tags` reasoning. **Absence is the
+default for both, and emptying either deletes the key**: removing a class's last removed day or its
+last note leaves the entry exactly as it was before either existed. A removal is **not** part of the
+occupancy rule — a class still occupies a removed day by `refOccupies` and is simply not drawn there,
+which is what lets the Timetable tab offer `＋ add back`.
+
+`progress.html` **owns** the key, through its autosave, exactly as it owns `calendarNotes`: it is
+where a class is moved, resized, renamed, given notes and removed from a day, and every one of those
+writes spreads the stored entry so `docPageId`, `importId`, `createdAt` and any key a later version
+added survive. `documentations.html` pastes and deletes through a fresh read-modify-write of the
+stored array, and `progress.html`'s refresh on `storage` adopts what it wrote, so a class deleted in
+Documentations is not written back by Progress's next edit — a two-tab browser case asserts that.
+`index.html` reads the key and never writes it.
 
 Ids for new records come from `TrackStorage.newId()` in `storage-guard.js`
 (timestamp + random, e.g. `mshajngq-ehhoj`), which `progress.html`'s `uid()`,
@@ -1946,7 +2004,7 @@ It runs three layers:
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone. For the timetable: a class drawn on its own day on all three grids and not on a day it was removed from, each surface asserted separately; moved, resized and armed like a task block by mouse and by touch, with a weekly class taking a new weekday only inside its range; removed from one day behind a confirmation whose Cancel writes nothing; given notes of its own; listed, edited, restored and added on ★ Forced → Timetable; deleted for good in Documentations; and a class deleted there not written back by Progress's next edit |
 
 The first three offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.

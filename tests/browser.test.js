@@ -294,9 +294,10 @@ test('browser suites', skipUnlessChrome, async t => {
       // ordinary KS02 edit has to leave them exactly as they were found.
       trueStorages: [{ id: 'ts-x', name: 'owned by True Storage', parentIds: [], tags: [] }],
       trueStoragePos: { 'ts-x': { x: 5, y: 6 } },
-      // Owned by documentations.html, which is the only page that writes a
-      // pasted timetable. KS02 has never heard of it either.
-      refSchedules: [{ id: 'rs-x', dow: 1, time: '09:00', duration: 60, title: 'owned by Documentations' }] };
+      // A pasted timetable — owned by progress.html, which edits it, and
+      // written by documentations.html through a fresh read-modify-write. KS02
+      // has never heard of it.
+      refSchedules: [{ id: 'rs-x', dow: 1, time: '09:00', duration: 60, title: 'owned by Progress' }] };
     for (const [k, v] of Object.entries(foreign)) {
       assert.notEqual(await ks02.evaluate(WRITE_SLOT_KEY, k, v), false, 'seeding ' + k);
     }
@@ -8788,7 +8789,7 @@ test('browser suites', skipUnlessChrome, async t => {
     await night.close();
   });
 
-  // ── 15. A pasted timetable, drawn as a read-only backdrop ────────────────
+  // ── 15. A pasted timetable — drawn on three grids, edited on the Schedule ──
   /* Three surfaces draw these blocks and progress.html carries its own copy of
      the occupancy test, because it does not load calendar-core.js. That is the
      duplication shape this repository has paid for before, so EVERY surface is
@@ -8915,52 +8916,325 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('a class is UNTICKABLE and UNDRAGGABLE, and a drag writes nothing', async () => {
-    /* The absence of a drag handler is the mechanism, so this asserts the
-       absence AND the consequence: dragging one leaves track_db byte-identical.
-       Byte-identical on the raw string, never a re-parse — the thing being
-       protected is the bytes. */
-    // A ONE-OFF entry: this case is about the element's shape, not about which
-    // days a weekly rule occupies, so it must not fail when that is broken.
-    const page = await open('progress.html', { db: refDb([refOneOff()]), hash: '#schedule' });
-    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
-      { message: 'the backdrop' });
+  /* ── a class is changeable on the Progress Schedule (2026-10-16) ──────────
+     The user's call: a class is a real block — moved, resized, renamed, given
+     notes, removed from one day — and Documentations deletes it for good.
+     Every case below judges the STORED entry, never the screen alone. */
 
-    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+  const REF_STORED = function () {
+    return (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules) || [];
+  };
+  const REF_ENTRY = function (id) {
+    var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules) || [];
+    return all.filter(function (e) { return e && e.id === id; })[0] || null;
+  };
+  const RAW_DB = function () { return localStorage.getItem('track_db'); };
 
-    const shape = await page.evaluate(function (mon) {
-      var el = document.querySelector('[data-ref-day="' + mon + '"]');
-      var r = el.getBoundingClientRect();
-      // a real drag: down, three moves across and down, up
-      var fire = function (type, x, y) {
-        el.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, buttons: 1 }));
-      };
-      fire('mousedown', r.left + 10, r.top + 5);
-      fire('mousemove', r.left + 60, r.top + 60);
-      fire('mousemove', r.left + 120, r.top + 160);
-      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: r.left + 120, clientY: r.top + 160 }));
-      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: r.left + 120, clientY: r.top + 160 }));
-      return {
-        checkboxes: el.querySelectorAll('input[type="checkbox"]').length,
-        buttons: el.querySelectorAll('button').length
-      };
-    }, MONDAY);
+  /* Progress in DAY mode on `day` — the ?date= link opens day mode — at a
+     desktop width. Day mode is where a block's ✎ notes are drawn, and its one
+     column is where every drag below starts and ends. */
+  const openRefDay = async (db, waitId = 'rs-o', day = MONDAY) => {
+    const page = await open('progress.html', { db, hash: '?date=' + day + '#schedule', viewport: [1280, 900] });
+    await page.waitFor(function (id) { return !!document.querySelector('[data-ref-id="' + id + '"]'); },
+      { args: [waitId], message: 'the class block ' + waitId });
+    return page;
+  };
 
-    assert.equal(shape.checkboxes, 0, 'nothing to tick — a class is not work the user chose');
-    assert.equal(shape.buttons, 0, 'no ✕ and no ⓘ: it is removed from Documentations, not here');
+  // A point inside a block, clear of its buttons (they sit top-right), after
+  // scrolling it into view — real Input events hit-test.
+  const REF_POINT = function (sel) {
+    var el = document.querySelector(sel);
+    if (!el) return null;
+    el.scrollIntoView({ block: 'center' });
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + 20), y: Math.round(r.top + Math.min(r.height / 2, 14)) };
+  };
+  /* A REAL mouse drag through the browser's input pipeline rather than events
+     dispatched on the element: hit testing, React's delegation and the
+     document-level listeners the Schedule's drag lives on all take part. */
+  const mouseDrag = async (page, from, dx, dy) => {
+    const send = (type, x, y, buttons) => page.session.send('Input.dispatchMouseEvent',
+      { type, x, y, button: 'left', buttons, clickCount: 1 });
+    await send('mousePressed', from.x, from.y, 1);
+    for (let i = 1; i <= 4; i++) await send('mouseMoved', from.x + dx * i / 4, from.y + dy * i / 4, 1);
+    await send('mouseReleased', from.x + dx, from.y + dy, 0);
+  };
+  /* One touch event on a block, at the same point REF_POINT uses. Every event
+     of a touch goes to the element it STARTED on, so the move is dispatched on
+     the block too, and left to bubble to the Schedule's document listeners. */
+  const REF_TOUCH = function (sel, type, dy) {
+    var el = document.querySelector(sel);
+    if (!el) return 'missing ' + sel;
+    var r = el.getBoundingClientRect();
+    var x = r.left + 20, y = r.top + Math.min(r.height / 2, 14) + (dy || 0);
+    var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
+    var live = (type === 'touchend' || type === 'touchcancel') ? [] : [t];
+    el.dispatchEvent(new TouchEvent(type, {
+      bubbles: true, cancelable: true, composed: true,
+      touches: live, targetTouches: live, changedTouches: [t]
+    }));
+    return 'ok';
+  };
 
-    await sleep(600);
-    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
-      'a drag across the grid left track_db byte-identical');
+  await t.test('a class is untickable, and a mouse drag MOVES it — its own day and time, every other key kept', async () => {
+    /* A one-off's drag writes its OWN `date` and `time`: unlike a day note,
+       a class has no separate item date for a chip or a marker to stay on. And
+       the writer SPREADS the entry, so the page, the import, the detail and a
+       key no version of this page has heard of all survive. */
+    const page = await openRefDay(refDb([refOneOff({ detail: 'Dr Ada · R204', futureKey: 'kept' })]));
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('[data-ref-id="rs-o"] input[type="checkbox"]').length;
+    }), 0, 'nothing to tick — a lecture is not completed');
+
+    await mouseDrag(page, await page.evaluate(REF_POINT, '[data-ref-id="rs-o"]'), 0, 64);  // 64px = 1h
+    // wait for ANY write, then assert — never wait for the right answer
+    const moved = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+      return e && e.time !== '13:00' ? e : false;
+    }, { message: 'the drag reaching track_db' });
+    assert.equal(moved.time, '14:00', 'an hour later');
+    assert.equal(moved.date, MONDAY, 'on the same day');
+    assert.deepEqual(Object.keys(moved).sort(),
+      ['date', 'detail', 'docPageId', 'duration', 'futureKey', 'id', 'importId', 'time', 'title'],
+      'spread, not rebuilt — no key lost and none invented');
+    assert.equal(moved.detail, 'Dr Ada · R204');
+    assert.equal(moved.futureKey, 'kept');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('GUARD: a class never squeezes or removes a real block', async () => {
-    /* Passes on both sides by design. Reference blocks are returned in their
-       own array precisely so they never reach the overlap layout; if this ever
-       fails, the backdrop has started taking a surface away, which is the
-       "show both, always" rule. */
+  await t.test('a WEEKLY class dragged in its column keeps its weekday, and a resize writes its length', async () => {
+    /* A weekly entry is ONE class — Documentations lists it as one row — so a
+       drag moves every week's time. A drag that stays in its column must not
+       touch `dow`, `from` or `until`, and must not grow a second arm. */
+    const page = await openRefDay(refDb([refWeekly()]), 'rs-w');
+    await mouseDrag(page, await page.evaluate(REF_POINT, '[data-ref-id="rs-w"]'), 0, 64);
+    const moved = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+      return e && e.time !== '09:00' ? e : false;
+    }, { message: 'the drag reaching track_db' });
+    assert.equal(moved.time, '10:00');
+    assert.equal(moved.dow, MON_DOW, 'still a Monday class');
+    assert.equal(moved.from, '2020-01-01');
+    assert.equal(moved.until, '2099-12-31');
+    assert.equal('date' in moved, false, 'still exactly one arm');
+
+    // a right-click selects it, exactly as it selects a task block
+    await page.evaluate(function () {
+      document.querySelector('[data-ref-id="rs-w"]').dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-w"] .cursor-s-resize'); },
+      { message: 'the resize handles on a selected class' });
+    const handle = await page.evaluate(function () {
+      var r = document.querySelector('[data-ref-id="rs-w"] .cursor-s-resize').getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    });
+    await mouseDrag(page, handle, 0, 32);   // half an hour
+    const resized = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+      return e && e.duration !== 90 ? e : false;
+    }, { message: 'the resize reaching track_db' });
+    assert.equal(resized.duration, 120);
+    assert.equal(resized.time, '10:00', 'the bottom edge leaves the start alone');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('WEEK view: a weekly class dragged to another column takes that weekday — never outside its range', async () => {
+    /* Moving one Monday's block onto the next column moves the CLASS: it is
+       one class, listed as one row. The ghost only lands on a column inside
+       [from, until], so a class whose range stops at that Monday refuses the
+       column and keeps its weekday — while the time still moves. The week view
+       runs today..today+6, so the neighbour is Tuesday unless Monday is the
+       last column, and then it is Sunday (and the bound is a start instead). */
+    const shiftDay = (ds, n) => {
+      const d = new Date(ds + 'T12:00:00'); d.setDate(d.getDate() + n);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    const dir = ((1 - new Date().getDay() + 7) % 7) === 6 ? -1 : 1;
+    const NB = shiftDay(MONDAY, dir), NB_DOW = dir > 0 ? 2 : 0;
+    const bounded = refWeekly(Object.assign({ id: 'rs-r', title: 'Bounded', time: '13:00' },
+      dir > 0 ? { until: MONDAY } : { from: MONDAY }));
+    const page = await open('progress.html', {
+      db: refDb([refWeekly(), bounded]), hash: '#schedule', viewport: [1280, 900]
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-r"]'); },
+      { message: 'both classes in the week view' });
+    const colW = await page.evaluate(function () {
+      return document.querySelector('[data-ref-id="rs-w"]').getBoundingClientRect().width + 6;
+    });
+    /* Pressed at the block's horizontal CENTRE, so the drop lands mid-column
+       one column over. Pressed 20px in (REF_POINT), the drop sat ~20px past a
+       column boundary, and one control run in ~30 dropped back into the
+       block's own column — a no-op drag that reads exactly like no write. */
+    const CENTRE_POINT = function (sel) {
+      var el = document.querySelector(sel);
+      el.scrollIntoView({ block: 'center' });
+      var r = el.getBoundingClientRect();
+      var p = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + Math.min(r.height / 2, 14)) };
+      // the press must land ON the class, or a miss would read as "no write"
+      var hit = document.elementFromPoint(p.x, p.y);
+      p.onBlock = !!(hit && hit.closest(sel));
+      return p;
+    };
+    await sleep(300);   // let the timeline's mount-time scroll settle before measuring
+
+    const pressW = await page.evaluate(CENTRE_POINT, '[data-ref-id="rs-w"]');
+    assert.equal(pressW.onBlock, true, 'the press point is on the weekly class: ' + JSON.stringify(pressW));
+    await mouseDrag(page, pressW, dir * colW, 0);
+    // landed = the class changed in ANY way; the assertions judge how
+    const w = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+      return e && (e.dow !== 1 || e.time !== '09:00') ? e : false;
+    }, { message: 'the sideways drag reaching track_db' });
+    assert.equal(w.dow, NB_DOW, 'the class now falls on ' + NB);
+    assert.equal(w.time, '09:00', 'a sideways drag keeps the time');
+    assert.equal(w.from, '2020-01-01');
+    assert.equal(w.until, '2099-12-31');
+    await page.waitFor(function (d) { return !!document.querySelector('[data-ref-day="' + d + '"][data-ref-id="rs-w"]'); },
+      { args: [NB], message: 'the class drawn in the new column' });
+
+    const pressR = await page.evaluate(CENTRE_POINT, '[data-ref-id="rs-r"]');
+    assert.equal(pressR.onBlock, true, 'the press point is on the bounded class: ' + JSON.stringify(pressR));
+    await mouseDrag(page, pressR, dir * colW, 64);
+    const r = await page.waitFor(function () {
+      var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules) || [];
+      var e = all.filter(function (x) { return x.id === 'rs-r'; })[0];
+      return e && e.time !== '13:00' ? e : false;
+    }, { message: 'the bounded drag reaching track_db' });
+    assert.equal(r.dow, 1, 'outside its range the column is refused: still a Monday class');
+    assert.equal(r.time, '14:00', 'while the time moves');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('TOUCH: a tap ARMS a class and opens nothing, a swipe moves it, a long-press shows its handles', async () => {
+    /* The Schedule's two-stage touch model, now reaching a class: tap to arm,
+       swipe the ARMED block to move it, long-press to resize. Synthesised
+       TouchEvents cover the handler logic, not real hardware — the standing
+       gap. */
+    const page = await openRefDay(refDb([refOneOff()]));
+    await page.evaluate(function () { document.querySelector('[data-ref-id="rs-o"]').scrollIntoView({ block: 'center' }); });
+    const SEL = '[data-ref-id="rs-o"]';
+    await page.evaluate(REF_TOUCH, SEL, 'touchstart');
+    await page.evaluate(REF_TOUCH, SEL, 'touchend');
+    await page.waitFor(function (s) { return document.querySelector(s).className.indexOf('ring-cyan-400') >= 0; },
+      { args: [SEL], message: 'the tap arming the class' });
+    assert.equal(await page.evaluate(function () {
+      return !!document.querySelector('[data-ref-popup], [data-dln-panel]');
+    }), false, 'a tap opens no card and no panel');
+    assert.deepEqual(page.dialogs, [], 'and asks nothing');
+
+    // swipe the ARMED block down an hour
+    await sleep(600);   // past the 500ms mouse suppression a touch leaves behind
+    await page.evaluate(REF_TOUCH, SEL, 'touchstart');
+    await page.evaluate(REF_TOUCH, SEL, 'touchmove', 64);
+    await page.evaluate(REF_TOUCH, SEL, 'touchend', 64);
+    const moved = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+      return e && e.time !== '13:00' ? e : false;
+    }, { message: 'the swipe reaching track_db' });
+    assert.equal(moved.time, '14:00');
+
+    // long-press: hold past 600ms, then lift
+    await page.evaluate(function (s) { document.querySelector(s).scrollIntoView({ block: 'center' }); }, SEL);
+    await page.evaluate(REF_TOUCH, SEL, 'touchstart');
+    await sleep(750);
+    await page.evaluate(REF_TOUCH, SEL, 'touchend');
+    await page.waitFor(function (s) {
+      return !!document.querySelector(s + ' .cursor-n-resize') && !!document.querySelector(s + ' .cursor-s-resize');
+    }, { args: [SEL], message: 'the long-press showing both resize handles' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('✕ removes a class from ONE day: Cancel writes nothing, OK writes that day alone', async () => {
+    /* A removal deletes nothing — the day goes into `skips` and the Timetable
+       tab adds it back — but a stray click would hide a lecture, so it asks
+       BEFORE it writes. Cancel is the half that matters. */
+    const page = await openRefDay(refDb([refWeekly(), refOneOff()]), 'rs-w');
+    const before = await page.evaluate(RAW_DB);
+    const sel = '[data-ref-remove="rs-w@' + MONDAY + '"]';
+
+    const msg = await answering(page, false, CLICK_SOON_SEL, [sel]);
+    assert.match(msg, /Mathematics/, 'the prompt names the class');
+    assert.match(msg, /Only this day/, 'and says how much goes');
+    assert.equal(await page.evaluate(RAW_DB), before, 'Cancel left track_db byte-identical');
+
+    await answering(page, true, CLICK_SOON_SEL, [sel]);
+    const w = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])
+        .filter(function (x) { return x.id === 'rs-w'; })[0];
+      return e && e.skips ? e : false;
+    }, { message: 'the removal reaching track_db' });
+    assert.deepEqual(w.skips, [MONDAY], 'that day, and only that day');
+    const rest = Object.assign({}, w); delete rest.skips;
+    assert.deepEqual(rest, refWeekly(), 'nothing else about the class changed');
+    assert.deepEqual(await page.evaluate(REF_ENTRY, 'rs-o'), refOneOff(), 'and its neighbour was not touched');
+
+    await page.waitFor(function () { return !document.querySelector('[data-ref-id="rs-w"]'); },
+      { message: 'the removed class leaving its column' });
+    assert.deepEqual(await page.evaluate(REF_IDS_ON, MONDAY), ['rs-o'], 'the other class is still drawn');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* A removed day is NOT DRAWN on any of the three hour grids. progress.html
+     carries its own copy of the skip test (refSkipped), so each surface is
+     asserted SEPARATELY: doctor calendar-core.js and only HOME and
+     DOCUMENTATIONS fail; doctor progress.html and only PROGRESS does. The
+     one-off on the same day is the precondition that the layer rendered at
+     all, so a dead layer cannot pass for a correct removal. */
+  const removedSeed = (pageOver) => refDb([refWeekly({ skips: [MONDAY] }), refOneOff()], pageOver);
+
+  await t.test('PROGRESS does not draw a day a class was removed from', async () => {
+    const page = await open('progress.html', { db: removedSeed(), hash: '#schedule' });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the class layer rendering at all' });
+    assert.deepEqual(await page.evaluate(REF_IDS_ON, MONDAY), ['rs-o'],
+      'the weekly class is not drawn on ' + MONDAY + ', the one-off is');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('HOME does not draw a day a class was removed from', async () => {
+    const page = await open('index.html', { db: removedSeed() });
+    await page.waitFor(function () { return !!document.querySelector('.cal-cell'); }, { message: 'the home calendar' });
+    assert.notEqual(await page.evaluate(CLICK_CAL_DAY, MONDAY), false, MONDAY + ' is in the grid');
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the Home class layer rendering at all' });
+    assert.deepEqual(await page.evaluate(REF_IDS_ON, MONDAY), ['rs-o']);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS does not draw a day a class was removed from', async () => {
+    const page = await open('documentations.html', {
+      db: removedSeed({ blocks: [{ id: 'b-1', type: 'schedule' }, { id: 'b-2', type: 'calendar', hidden: [], scope: 'page' }] }),
+      hash: '?page=p-1'
+    });
+    await page.waitFor(function () { return !!document.querySelector('.cal-cell'); }, { message: 'the calendar block' });
+    assert.notEqual(await page.evaluate(CLICK_CAL_DAY, MONDAY), false, MONDAY + ' is in the grid');
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
+      { message: 'the Documentations class layer rendering at all' });
+    assert.deepEqual(await page.evaluate(REF_IDS_ON, MONDAY), ['rs-o']);
+    // and its Timetable list still LISTS the class, saying which day it skips
+    assert.match(await page.evaluate(function () {
+      var el = document.querySelector('[data-sched-import] [data-sched-skips]');
+      return el ? el.textContent : '';
+    }), new RegExp('not on ' + MONDAY));
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('GUARD: a class never squeezes or removes a real block, and sits BEHIND it by default', async () => {
+    /* The geometry half passes on both sides by design: if it ever fails, a
+       class has started taking a surface away, which is the "show both,
+       always" rule. Since classes became real blocks they join this page's
+       overlap ORDER — appended last, so a real block is in front until a
+       double-click cycles the class forward. That ordering decides z-index
+       only, never a width; the z half is what pins "appended last". */
     const note = { id: 'n-1', date: MONDAY, title: 'Real work', time: '09:00', blockDuration: 60 };
     const withRef = await open('progress.html', {
       // one-off again: the claim is about geometry, not about weekday resolution
@@ -8968,12 +9242,19 @@ test('browser suites', skipUnlessChrome, async t => {
       hash: '#schedule'
     });
     await withRef.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
-      { message: 'the backdrop' });
+      { message: 'the class block' });
     const geomWith = await withRef.evaluate(function () {
       var el = document.querySelector('[data-block-id="n-1"]');
       var r = el.getBoundingClientRect();
       return { w: Math.round(r.width), h: Math.round(r.height) };
     });
+    const z = await withRef.evaluate(function () {
+      return {
+        real: Number(getComputedStyle(document.querySelector('[data-block-id="n-1"]')).zIndex),
+        cls: Number(getComputedStyle(document.querySelector('[data-ref-id="rs-o"]')).zIndex)
+      };
+    });
+    assert.ok(z.real > z.cls, 'the real block is in front of the class it overlaps: ' + JSON.stringify(z));
     await withRef.close();
 
     const without = await open('progress.html', {
@@ -8993,63 +9274,290 @@ test('browser suites', skipUnlessChrome, async t => {
       'the real block is exactly the size it is with no timetable behind it');
   });
 
-  await t.test('the popover is read-only, and makes a real note at the class hour', async () => {
-    // one-off, titled like the weekly one so the assertions below read the same
-    const page = await open('progress.html', {
-      db: refDb([refOneOff({ title: 'Mathematics', time: '09:00', duration: 90 })]), hash: '#schedule'
-    });
-    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
-      { message: 'the backdrop' });
-
-    await page.evaluate(function (mon) {
-      document.querySelector('[data-ref-day="' + mon + '"]').click();
-    }, MONDAY);
-    await page.waitFor(function () { return !!document.querySelector('[data-ref-popup]'); },
-      { message: 'the read-only popover' });
-
-    const text = await page.evaluate(function () {
-      return document.querySelector('[data-ref-popup]').innerText;
-    });
-    assert.match(text, /READ ONLY/, 'it says so');
-    assert.match(text, /Mathematics/);
+  await t.test('✎ gives a class a note of its OWN — no day note is made, and deleting the last one deletes the key', async () => {
+    /* `＋ day note here` was a misunderstanding (2026-10-16): the user wanted
+       each class to carry the notes a task block carries. They live ON the
+       class, so calendarNotes stays empty; and they are deleted the way a
+       task's are — asked first, with Cancel keeping every byte. */
+    const page = await openRefDay(refDb([refOneOff({ title: 'Mathematics' })]));
+    await page.evaluate(function () { document.querySelector('[data-ref-id="rs-o"]').click(); });
+    await sleep(300);
     assert.equal(await page.evaluate(function () {
-      return document.querySelectorAll('[data-ref-popup] input, [data-ref-popup] textarea').length;
-    }), 0, 'nothing about the class is editable here');
+      return !!document.querySelector('[data-ref-popup], [data-ref-make-note]');
+    }), false, 'a click opens no card — the popup and its day-note button are gone');
 
-    const beforeRefs = await page.evaluate(function () {
-      return JSON.stringify(((JSON.parse(localStorage.getItem('track_db')).slots || [])[0] || {}).refSchedules);
-    });
+    const key = 'rs-o@' + MONDAY;
+    await page.evaluate(CLICK_SEL, '[data-ref-notes-btn="' + key + '"]');
+    await page.waitFor(function (k) { return !!document.querySelector('[data-ref-note-title="' + k + '"]'); },
+      { args: [key], message: 'the class notes panel' });
+    await page.evaluate(function (setterSrc, k) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-ref-note-title="' + k + '"]'), 'Lecture 3');
+      set(document.querySelector('[data-ref-note-detail="' + k + '"]'), 'covered epithelium');
+      return true;
+    }, SET_REACT_INPUT, key);
+    await page.evaluate(CLICK_SEL, '[data-ref-note-save="' + key + '"]');
+    const withNote = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+      return e && e.notes ? e : false;
+    }, { message: 'the note reaching the class' });
+    assert.equal(withNote.notes.length, 1);
+    assert.equal(withNote.notes[0].title, 'Lecture 3');
+    assert.equal(withNote.notes[0].detail, 'covered epithelium');
+    assert.deepEqual(await page.evaluate(function () {
+      return ((JSON.parse(localStorage.getItem('track_db')).slots || [])[0] || {}).calendarNotes;
+    }), [], 'no day note was made');
+    const noteId = withNote.notes[0].id;
+    await page.waitFor(function (id) { return !!document.querySelector('[data-ref-note-chip="' + id + '"]'); },
+      { args: [noteId], message: 'the 📌 chip on the class block' });
 
-    await page.evaluate(function () { document.querySelector('[data-ref-make-note]').click(); });
-    await page.waitFor(function () {
-      return !!Array.prototype.find.call(document.querySelectorAll('button'),
-        function (b) { return b.textContent.trim() === 'Add Note'; });
-    }, { message: 'the note composer, seeded from the class' });
+    const before = await page.evaluate(RAW_DB);
+    const msg = await answering(page, false, CLICK_SOON_SEL, ['[data-ref-note-del="' + noteId + '"]']);
+    assert.match(msg, /Delete this note/);
+    assert.equal(await page.evaluate(RAW_DB), before, 'Cancel left track_db byte-identical');
 
-    await page.evaluate(function () {
-      Array.prototype.find.call(document.querySelectorAll('button'),
-        function (b) { return b.textContent.trim() === 'Add Note'; }).click();
-    });
-
-    const notes = await page.waitFor(function () {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var ns = ((db.slots || [])[0] || {}).calendarNotes || [];
-      return ns.length ? ns : false;
-    }, { message: 'the note reaching track_db' });
-
-    assert.equal(notes.length, 1);
-    assert.equal(notes[0].title, 'Mathematics', 'seeded from the class');
-    assert.equal(notes[0].date, MONDAY, 'on the day the class was clicked, not its abstract weekday');
-    assert.equal(notes[0].time, '09:00');
-    assert.equal(notes[0].blockDuration, 90,
-      'and it covers the class rather than a default hour');
-
-    assert.equal(await page.evaluate(function () {
-      return JSON.stringify(((JSON.parse(localStorage.getItem('track_db')).slots || [])[0] || {}).refSchedules);
-    }), beforeRefs, 'progress.html wrote nothing to refSchedules — documentations.html owns it');
-
+    await answering(page, true, CLICK_SOON_SEL, ['[data-ref-note-del="' + noteId + '"]']);
+    // wait for the delete to LAND (no note left, however it was stored), then
+    // judge the shape — a writer leaving `notes: []` must fail on the assert
+    const gone = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+      return e && !(e.notes && e.notes.length) ? e : false;
+    }, { message: 'the note leaving the class' });
+    assert.equal(Object.prototype.hasOwnProperty.call(gone, 'notes'), false, 'the last note deleted the key');
+    assert.deepEqual(gone, refOneOff({ title: 'Mathematics' }), 'and left the class exactly as it was');
     assert.deepEqual(realErrors(page), []);
     await page.close();
+  });
+
+  /* ── ★ Forced → Timetable ────────────────────────────────────────────── */
+
+  const openTimetableTab = async page => {
+    await page.evaluate(CLICK_SEL, '[data-dln-open="' + MONDAY + '"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-dln-tab="timetable"]'); },
+      { message: 'the ★ Forced panel' });
+    await page.evaluate(CLICK_SEL, '[data-dln-tab="timetable"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-toolbar]'); },
+      { message: 'the Timetable tab' });
+  };
+  const REF_GROUPS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-ref-group]'),
+      function (g) { return g.getAttribute('data-ref-group'); });
+  };
+
+  await t.test('★ Timetable lists every class, latest day first, and open all / close all flips every fold', async () => {
+    /* The +LIN LOG layout the user asked for: groups that fold, cards that
+       open, latest day first — a weekly class as ONE card in an EVERY WEEK
+       group on top. Nothing is cut off at the opened day: an EARLIER lecture
+       is listed too, which is the opposite of the notes and deadlines tabs. */
+    const EARLY = '2020-03-02', LATE = '2099-06-01';
+    const page = await openRefDay(refDb([
+      refWeekly(),
+      refOneOff(),
+      refOneOff({ id: 'rs-early', date: EARLY, title: 'Long ago' }),
+      refOneOff({ id: 'rs-late', date: LATE, title: 'Far ahead' }),
+      refOneOff({ id: 'rs-o2', date: MONDAY, time: '08:00', title: 'Earlier that day' })
+    ]));
+    await openTimetableTab(page);
+    assert.deepEqual(await page.evaluate(REF_GROUPS), ['weekly', LATE, MONDAY, EARLY],
+      'every week first, then latest day first — the earlier lecture included');
+    assert.deepEqual(await page.evaluate(function (d) {
+      return Array.prototype.map.call(document.querySelectorAll('[data-ref-group="' + d + '"] [data-ref-card]'),
+        function (c) { return c.getAttribute('data-ref-card'); });
+    }, MONDAY), ['rs-o2', 'rs-o'], 'and by time inside a day');
+    assert.equal(await page.evaluate(function (d) {
+      return document.querySelector('[data-ref-group="' + d + '"]').className.indexOf('fuchsia') >= 0;
+    }, MONDAY), true, 'the day it was opened from is tinted');
+
+    const OPEN_CARDS = function () { return document.querySelectorAll('[data-ref-edit]').length; };
+    const CARDS = function () { return document.querySelectorAll('[data-ref-card]').length; };
+    assert.equal(await page.evaluate(OPEN_CARDS), 0, 'cards start shut, as in the LIN log');
+
+    await page.evaluate(CLICK_SEL, '[data-ref-toggle-all]');
+    await page.waitFor(function () { return document.querySelectorAll('[data-ref-edit]').length === 5; },
+      { message: 'open all opening every card' });
+    assert.match(await page.evaluate(function () { return document.querySelector('[data-ref-toggle-all]').textContent; }),
+      /close all/);
+
+    await page.evaluate(CLICK_SEL, '[data-ref-toggle-all]');
+    // landed = the button flipped back; then judge what it folded
+    await page.waitFor(function () { return /open all/.test(document.querySelector('[data-ref-toggle-all]').textContent); },
+      { message: 'close all taking effect' });
+    assert.equal(await page.evaluate(OPEN_CARDS), 0, 'every card shut');
+    assert.equal(await page.evaluate(CARDS), 0, 'and every group folded, so no card is listed at all');
+    assert.deepEqual(await page.evaluate(REF_GROUPS), ['weekly', LATE, MONDAY, EARLY], 'the groups stay listed');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* The three two-tab cases below close BOTH tabs in `finally`. A failed case
+     that leaves a Progress tab open leaves a live writer: when the next case
+     clears and seeds the origin, that tab's autosave puts its own
+     refSchedules into the fresh data. Under a doctored refresh that turned one
+     real failure into four, the later three failing on data they never wrote. */
+  await t.test('★ Timetable: a rename reaches Documentations, which is open in another tab', async () => {
+    /* "The timetable in DOC will also change in accord" — the user's words.
+       Documentations is opened FIRST and left open, so what this proves is the
+       live refresh, not a fresh mount reading the new value. */
+    const docs = await open('documentations.html', { db: refDb([refOneOff()]), hash: '?page=p-1' });
+    let page = null;
+    try {
+      await docs.waitFor(function () { return /Makeup lecture/.test((document.querySelector('[data-sched-import]') || {}).textContent || ''); },
+        { message: 'the Documentations list' });
+      // fresh:false — a second tab must not wipe the state the first is under test with
+      page = await open('progress.html', { fresh: false, hash: '?date=' + MONDAY + '#schedule', viewport: [1280, 900] });
+      await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); }, { message: 'the class' });
+
+      await openTimetableTab(page);
+      await page.evaluate(CLICK_SEL, '[data-ref-card-toggle="rs-o"]');
+      await page.waitFor(function () { return !!document.querySelector('[data-ref-edit="rs-o"]'); }, { message: 'the open card' });
+      await page.evaluate(CLICK_SEL, '[data-ref-edit="rs-o"]');
+      await page.waitFor(function () { return !!document.querySelector('[data-ref-edit-title]'); }, { message: 'the editor' });
+      await page.evaluate(function (setterSrc) {
+        var set = new Function('return ' + setterSrc)();
+        set(document.querySelector('[data-ref-edit-title]'), 'Histology II');
+        set(document.querySelector('[data-ref-edit-detail]'), '');
+        return true;
+      }, SET_REACT_INPUT);
+      await page.evaluate(CLICK_SEL, '[data-ref-edit-save]');
+      const saved = await page.waitFor(function () {
+        var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+        return e && e.title !== 'Makeup lecture' ? e : false;
+      }, { message: 'the rename reaching track_db' });
+      assert.equal(saved.title, 'Histology II');
+      assert.equal(Object.prototype.hasOwnProperty.call(saved, 'detail'), false, 'a blank detail writes no key');
+      assert.equal(saved.docPageId, 'p-1', 'and the class still belongs to its page');
+
+      await docs.waitFor(function () {
+        return /Histology II/.test((document.querySelector('[data-sched-import]') || {}).textContent || '');
+      }, { message: 'Documentations showing the new name, live' });
+      assert.deepEqual(realErrors(page), []);
+      assert.deepEqual(realErrors(docs), []);
+    } finally {
+      if (page) await page.close();
+      await docs.close();
+    }
+  });
+
+  await t.test('★ Timetable: ＋ add back puts a removed day back, and deletes the key with the last one', async () => {
+    const page = await open('progress.html', {
+      db: refDb([refWeekly({ skips: [MONDAY] }), refOneOff()]),
+      hash: '?date=' + MONDAY + '#schedule', viewport: [1280, 900]
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); }, { message: 'the day' });
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-ref-id="rs-w"]'); }), false,
+      'removed from this day');
+    await openTimetableTab(page);
+    await page.evaluate(CLICK_SEL, '[data-ref-card-toggle="rs-w"]');
+    const sel = '[data-ref-unskip="rs-w@' + MONDAY + '"]';
+    await page.waitFor(function (s) { return !!document.querySelector(s); }, { args: [sel], message: 'the add-back control' });
+    // it deletes nothing and is undone by ✕, so — like the tab's own
+    // `remove from schedule` — it does not ask
+    await expectNoDialog(page, CLICK_SEL, [sel]);
+    // landed = no removed day left, however stored; the shape is judged below
+    const back = await page.waitFor(function () {
+      var e = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules || [])[0];
+      return e && !(e.skips && e.skips.length) ? e : false;
+    }, { message: 'the add-back reaching track_db' });
+    assert.deepEqual(back, refWeekly(), 'the key is gone and the class is exactly as pasted');
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-w"]'); },
+      { message: 'the class drawn on the day again' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('＋ Add a block lands on the grid and in Documentations, whose ✕ deletes it for good', async () => {
+    /* A block added by hand belongs to no page, so EVERY Timetable block lists
+       it under "Added in the Schedule" — the one place it can be deleted for
+       good. Documentations' ✕ is the permanent delete, so it is tested on its
+       Cancel path first. */
+    const docs = await open('documentations.html', { db: refDb([refOneOff()]), hash: '?page=p-1' });
+    let page = null;
+    try {
+      await docs.waitFor(function () { return !!document.querySelector('[data-sched-block]'); }, { message: 'the Timetable block' });
+      page = await open('progress.html', { fresh: false, hash: '?date=' + MONDAY + '#schedule', viewport: [1280, 900] });
+      await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); }, { message: 'the class' });
+
+      await openTimetableTab(page);
+      await page.evaluate(CLICK_SEL, '[data-ref-add-open]');
+      await page.waitFor(function () { return !!document.querySelector('[data-ref-add-title]'); }, { message: 'the add form' });
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-ref-add-date]').value; }), MONDAY,
+        'it adds to the day the panel was opened from');
+      await page.evaluate(function (setterSrc) {
+        var set = new Function('return ' + setterSrc)();
+        set(document.querySelector('[data-ref-add-title]'), 'Tutorial');
+        set(document.querySelector('[data-ref-add-start]'), '15:00');
+        set(document.querySelector('[data-ref-add-end]'), '16:30');
+        return true;
+      }, SET_REACT_INPUT);
+      await page.evaluate(CLICK_SEL, '[data-ref-add-save]');
+      const made = await page.waitFor(function () {
+        var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules) || [];
+        return all.length === 2 ? all[1] : false;
+      }, { message: 'the new block reaching track_db' });
+      assert.deepEqual(Object.keys(made).sort(), ['createdAt', 'date', 'duration', 'id', 'time', 'title'],
+        'a one-off with only the keys it has — no page, no import, no blank detail');
+      assert.equal(made.date, MONDAY);
+      assert.equal(made.time, '15:00');
+      assert.equal(made.duration, 90);
+      await page.waitFor(function (id) { return !!document.querySelector('[data-ref-id="' + id + '"]'); },
+        { args: [made.id], message: 'the new block on the grid' });
+
+      const row = '[data-sched-hand] [data-sched-remove="' + made.id + '"]';
+      await docs.waitFor(function (s) { return !!document.querySelector(s); }, { args: [row], message: 'Documentations listing it' });
+      const before = await docs.evaluate(RAW_DB);
+      const msg = await answering(docs, false, CLICK_SOON_SEL, [row]);
+      assert.match(msg, /for good/, 'the prompt says the delete is permanent');
+      assert.equal(await docs.evaluate(RAW_DB), before, 'Cancel left track_db byte-identical');
+      await answering(docs, true, CLICK_SOON_SEL, [row]);
+      await docs.waitFor(function (id) {
+        var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules) || [];
+        return !all.some(function (e) { return e.id === id; });
+      }, { args: [made.id], message: 'the block deleted for good' });
+      await page.waitFor(function (id) { return !document.querySelector('[data-ref-id="' + id + '"]'); },
+        { args: [made.id], message: 'and gone from the open Progress grid' });
+      assert.deepEqual(realErrors(page), []);
+      assert.deepEqual(realErrors(docs), []);
+    } finally {
+      if (page) await page.close();
+      await docs.close();
+    }
+  });
+
+  await t.test('two tabs: a class Documentations deleted STAYS deleted after Progress edits another', async () => {
+    /* Progress now writes the whole refSchedules array through its autosave,
+       exactly as it writes calendarNotes. The hazard is a stale copy written
+       back: a class deleted elsewhere coming back on Progress's next edit.
+       The refresh on `storage` is what prevents it, and this proves it. */
+    const page = await openRefDay(refDb([refWeekly(), refOneOff()]), 'rs-w');
+    let docs = null;
+    try {
+      docs = await open('documentations.html', { fresh: false, hash: '?page=p-1' });
+      const row = '[data-sched-import] [data-sched-remove="rs-o"]';
+      await docs.waitFor(function (s) { return !!document.querySelector(s); }, { args: [row], message: 'the Documentations row' });
+      await answering(docs, true, CLICK_SOON_SEL, [row]);
+      await docs.waitFor(function () {
+        var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules) || [];
+        return all.length === 1;
+      }, { message: 'the delete landing' });
+      // Give Progress's refresh a fair chance, but do NOT make it a precondition:
+      // with the refresh broken this case must fail on the resurrection itself,
+      // in the assertion below, rather than on a timeout here.
+      await page.waitFor(function () { return !document.querySelector('[data-ref-id="rs-o"]'); },
+        { timeout: 5000 }).catch(() => {});
+
+      await mouseDrag(page, await page.evaluate(REF_POINT, '[data-ref-id="rs-w"]'), 0, 64);
+      const after = await page.waitFor(function () {
+        var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).refSchedules) || [];
+        var w = all.filter(function (e) { return e.id === 'rs-w'; })[0];
+        return w && w.time !== '09:00' ? all : false;
+      }, { message: 'the Progress edit reaching track_db' });
+      assert.deepEqual(after.map(function (e) { return e.id; }), ['rs-w'], 'the deleted class was not written back');
+      assert.deepEqual(realErrors(page), []);
+      assert.deepEqual(realErrors(docs), []);
+    } finally {
+      await page.close();
+      if (docs) await docs.close();
+    }
   });
 
   // ── the paste modal ──────────────────────────────────────────────────────
@@ -9192,27 +9700,20 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('PROGRESS shows the detail in the read-only popover', async () => {
-    const page = await open('progress.html', {
-      db: refDb([refOneOff({ title: 'Epithelial tissue', detail: 'Dr Wanida · R305' })]), hash: '#schedule'
-    });
-    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
-      { message: 'the backdrop' });
-    await page.evaluate(function (mon) {
-      document.querySelector('[data-ref-day="' + mon + '"]').click();
-    }, MONDAY);
-    await page.waitFor(function () { return !!document.querySelector('[data-ref-popup]'); },
-      { message: 'the read-only popover' });
-
+  await t.test('PROGRESS shows the detail on the class card that ⓘ opens in ★ Forced → Timetable', async () => {
+    /* The popup that used to carry the detail is gone, so the detail lives on
+       the class's card now — and ⓘ on the block is the way there, opening the
+       panel on the Timetable tab with that card already open. */
+    const page = await openRefDay(refDb([refOneOff({ title: 'Epithelial tissue', detail: 'Dr Wanida · R305' })]));
+    await page.evaluate(CLICK_SEL, '[data-ref-info="rs-o@' + MONDAY + '"]');
+    const detail = await page.waitFor(function () {
+      var el = document.querySelector('[data-ref-card="rs-o"] [data-ref-card-detail]');
+      return el ? el.textContent : false;
+    }, { message: 'the open card on the Timetable tab' });
+    assert.equal(detail, 'Dr Wanida · R305');
     assert.equal(await page.evaluate(function () {
-      var el = document.querySelector('[data-ref-detail]');
-      return el ? el.textContent : null;
-    }), 'Dr Wanida · R305');
-    // still read-only: showing a detail must not have made one editable
-    assert.equal(await page.evaluate(function () {
-      return document.querySelectorAll('[data-ref-popup] input, [data-ref-popup] textarea').length;
-    }), 0);
-
+      return document.querySelector('[data-dln-tab="timetable"]').className.indexOf('bg-fuchsia-600') >= 0;
+    }), true, 'on the Timetable tab');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -9446,8 +9947,11 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('refSchedules round-trips through export → import, both arms', async () => {
-    const page = await open('index.html', { db: refDb([refWeekly(), refOneOff()]) });
+  await t.test('refSchedules round-trips through export → import, both arms, with removed days and notes', async () => {
+    const note = { id: 'rn-1', title: 'Lecture 3', detail: 'covered epithelium', createdAt: 1 };
+    const page = await open('index.html', {
+      db: refDb([refWeekly({ skips: [MONDAY] }), refOneOff({ notes: [note] })])
+    });
     const exported = await page.evaluate(function () {
       var db = JSON.parse(localStorage.getItem('track_db'));
       return JSON.stringify(db.slots[0]);
@@ -9459,9 +9963,33 @@ test('browser suites', skipUnlessChrome, async t => {
       return slot.refSchedules;
     }, exported);
     assert.equal(back.length, 2);
-    assert.equal(back.find(function (e) { return e.id === 'rs-w'; }).dow, 1);
-    assert.equal(back.find(function (e) { return e.id === 'rs-o'; }).date, MONDAY);
+    // whole entries, so a removed day or a note dropped on the way fails here
+    assert.deepEqual(back.find(function (e) { return e.id === 'rs-w'; }), refWeekly({ skips: [MONDAY] }));
+    assert.deepEqual(back.find(function (e) { return e.id === 'rs-o'; }), refOneOff({ notes: [note] }));
 
+    await page.close();
+  });
+
+  await t.test('PHONE: the Timetable tab fits a 390px screen, every card open', async () => {
+    const page = await open('progress.html', {
+      db: refDb([refWeekly({ detail: 'Dr Ada · Room 305-306, Building 3' }),
+        refOneOff({ title: 'A lecture whose topic is long enough to wrap twice on a phone', detail: 'อ.วินิดา · ห้องปฏิบัติการ 305-306' })]),
+      hash: '?date=' + MONDAY + '#schedule', viewport: PHONE
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); }, { message: 'the class' });
+    await openTimetableTab(page);
+    await page.evaluate(CLICK_SEL, '[data-ref-toggle-all]');
+    await page.waitFor(function () { return document.querySelectorAll('[data-ref-edit]').length === 2; },
+      { message: 'every card open' });
+    const fit = await page.evaluate(function () {
+      var panel = document.querySelector('[data-dln-panel]');
+      var r = panel.getBoundingClientRect();
+      return { left: Math.round(r.left), right: Math.round(r.right), vw: window.innerWidth,
+        overflow: panel.scrollWidth - panel.clientWidth };
+    });
+    assert.ok(fit.left >= 0 && fit.right <= fit.vw, 'the panel is inside the screen: ' + JSON.stringify(fit));
+    assert.ok(fit.overflow <= 1, 'and nothing in it scrolls sideways: ' + JSON.stringify(fit));
+    assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
@@ -10289,7 +10817,7 @@ test('browser suites', skipUnlessChrome, async t => {
     const before = await page.evaluate(function () {
       var s = JSON.parse(localStorage.getItem('track_db')).slots[0];
       var out = {};
-      ['mms', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
+      ['mms', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos',
         'sessions', 'kolbs', 'notes', 'dateNotes', 'pos', 'levelTemplates'].forEach(function (k) {
           out[k] = JSON.stringify(s[k]);
         });
@@ -10304,7 +10832,7 @@ test('browser suites', skipUnlessChrome, async t => {
     const after = await page.evaluate(function () {
       var s = JSON.parse(localStorage.getItem('track_db')).slots[0];
       var out = {};
-      ['mms', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
+      ['mms', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos',
         'sessions', 'kolbs', 'notes', 'dateNotes', 'pos', 'levelTemplates'].forEach(function (k) {
           out[k] = JSON.stringify(s[k]);
         });

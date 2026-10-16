@@ -1212,6 +1212,30 @@ supporting actions") and **not** changed there:
   that surface again only if asked. It is also not the "behind pace" warning declined on
   2026-10-08: it orders and highlights MGs where they are chosen, and raises no alarm.
 
+### Editable timetable classes: found along the way, and left out
+
+Found while making timetable classes editable on the Schedule (README "A pasted timetable") and
+**not** changed there:
+
+- **A deadline drag snaps to the caution days the page MOUNTED with.** `handlePointerMove` lives in
+  the Schedule's mount-only pointer effect and reads the `deadlines` prop, which is therefore the
+  first render's value for the rest of the session. A deadline created after the Schedule opened
+  is not found and its block is pinned to its own column; a deadline whose caution days changed
+  since can be dropped on a day it no longer occupies, and `handlePointerUp` writes that
+  `blockDate` without asking again — the one rule ("a block sits on a day the deadline occupies")
+  a drag was never supposed to be able to break. The fix is the one the class drag already uses:
+  stash the allowed days in the ghost at drag start (`refGhostFor`), with a case seen failing first.
+- **The block notes panel now exists four times** — goal task, supporting action, MM entry and
+  class — each ~70 lines differing in colour and writer. A shared component would remove three of
+  them, but it touches three surfaces with cases of their own, so it is its own change.
+- **Decided 2026-10-16 from the user's answers, not forgotten:** a weekly class is one class, so a
+  drag or an edit changes **every week**, and its notes show on every week (a routine task's
+  rule). The user said weekly edits did not matter — their timetables are dated lectures, where one
+  block is one record. If a single week ever needs its own time or notes, the shape is a detach:
+  add the day to the weekly entry's `skips` and mint a one-off carrying that day's change and notes.
+- **The +LIN LOG's editable day title was not copied** into the Timetable tab: it is a stored field
+  of the LIN log, and the timetable has no equivalent. Ask before adding one.
+
 ### Finish routing the canvas pages' hard-coded UI accents through the theme
 
 `progress.html` is **done** — see README "Appearance and accessibility". `sir-ks02.html` (101 hex

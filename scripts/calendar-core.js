@@ -540,12 +540,22 @@
      rather than resolved by whichever branch happens to run first — there is
      no defensible answer to which day such a record occupies.
 
-     THIS IS REFERENCE DATA, NEVER WORK. Nothing here is tickable, nothing is
-     draggable, and no reader may write to it. It is returned in its own array
-     rather than mixed into `blocks`, which is load-bearing three times over:
-     every existing consumer of `blocks` is untouched, overlapInfo never sees a
-     ghost so a class can never squeeze a real task's width, and each surface
-     opts in to drawing the layer rather than inheriting it by accident. */
+     A class is EDITED on the Progress Schedule — moved, resized, renamed, given
+     notes, removed from one day — and deleted for good in a Documentations
+     Timetable block. Every surface that loads THIS file only draws it: the Home
+     and Documentations layers stay inert (pointer-events: none), and nothing
+     here writes. It is returned in its own array rather than mixed into
+     `blocks`, which is load-bearing three times over: every existing consumer
+     of `blocks` is untouched, overlapInfo never sees a ghost so a class can
+     never squeeze a real task's width, and each surface opts in to drawing the
+     layer rather than inheriting it by accident.
+
+     `skips` lists the days a class has been REMOVED from on the Schedule. A
+     removal deletes nothing — the day is added back from ★ Forced → Timetable
+     — so the class still OCCUPIES that day by its own rule (refOccupies says
+     yes) and is simply not drawn there (refSkipped says so). The two questions
+     are kept apart because the Timetable tab has to ask the first one to offer
+     `＋ add back` at all. */
 
   const refDur = e => { const m = blockMins(e && e.duration); return m === null ? DEFAULT_BLOCK_MINS : m; };
 
@@ -595,6 +605,19 @@
     return d.getDay() === dow;
   }
 
+  /* The days a class was removed from — TOTAL, because `skips` is a nested
+     list that schema.js deliberately does not validate (the parentIds / tags
+     reasoning): anything that is not a real day string is dropped rather than
+     allowed to throw out of a render. progress.html carries the documented
+     twin; never read `entry.skips` at a call site. */
+  function refSkips(entry) {
+    const raw = entry && entry.skips;
+    return Array.isArray(raw) ? raw.filter(s => typeof s === 'string' && DAY_RE.test(s)) : [];
+  }
+  function refSkipped(entry, ds) {
+    return refSkips(entry).indexOf(ds) !== -1;
+  }
+
   /* Every reference block drawn on `ds`, in time order. The id is COMPOSITE
      (`entry.id@ds`) because one weekly entry appears on many days at once —
      every column of a week view is in the DOM together, so an id that repeated
@@ -606,7 +629,8 @@
     const out = [];
     list.forEach(entry => {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
-      if (!refOccupies(entry, ds)) return;
+      // occupied by its rule AND not removed from this one day on the Schedule
+      if (!refOccupies(entry, ds) || refSkipped(entry, ds)) return;
       const span = refSpan(entry);
       if (!span) return;
       out.push({
@@ -858,7 +882,7 @@
     noteBlockDuration, dlBlockDuration, dlBlockSpan, dlBlockTime, itemParts, partSpan,
     blockOn, noteBlockSpan, noteBlockStart, blockDay, partDay,
     dlBlockDayValid, dlStrandedBlockDays,
-    refSpan, refOccupies, refOn, REF_COLOR,
+    refSpan, refOccupies, refSkips, refSkipped, refOn, REF_COLOR,
     DEFAULT_BLOCK_MINS, DEFAULT_NOTE_TIME,
     originKey,
     buildBuckets, buildMilestoneLanes, buildDaySchedule, overlapInfo, durLabel

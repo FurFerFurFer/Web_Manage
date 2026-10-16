@@ -98,7 +98,10 @@ that can be checked rather than judged by feel (NOTES, Proposal 17).
 Confirmed 2026-10-14. A day's work comes in four kinds, and each Schedule day has one add button
 per kind:
 
-- ★ **Forced** — what the day imposes: day notes and deadlines.
+- ★ **Forced** — what the day imposes: day notes, deadlines and the **timetable** — the classes
+  a pasted timetable or a hand-added block puts on a day. The timetable joined Forced on
+  2026-10-15: its details live on ★ Forced's Timetable tab, and each class is a block that can be
+  changed, given notes and removed from a day like any other.
 - ● **Learn** — mind maps to study and MGs to practise. What a milestone still needs comes first:
   - the MG of a Procedural mind map whose MG level is below the level that day's milestone asks
     for;

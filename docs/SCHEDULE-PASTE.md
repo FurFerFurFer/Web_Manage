@@ -11,22 +11,25 @@ The route is: **show the picture to an AI → paste what it gives you into Track
 ## What you get
 
 The classes are drawn on all three hour grids — the Progress timeline, the Home calendar,
-and any Documentations calendar block — as **transparent, dashed blocks behind your real
-work**.
+and any Documentations calendar block — as **dashed grey blocks**, so a class never looks
+like work you planned.
 
-They are deliberately not tasks:
+On the **Progress timeline** each class is a real block you can change, like a task block:
 
-- **Not tickable.** A lecture is not something you complete; it happens whether or not you
-  tick it.
-- **Not draggable, not resizable.** It is a fixed external constraint. Moving it in Track
-  would not move the class.
-- **They never push your real blocks around.** A class takes the full width of the column
-  *behind* everything else, so a task scheduled on top of one is exactly the size it would
-  be with no timetable at all.
+- **Click it once** and it is ready to move — it does not pop anything up. Drag it to another
+  time (or, for a one-off class, another day), right-click it to resize, or on a touch screen
+  tap to arm it, swipe to move it and long-press to resize.
+- **✎** (in day view) gives it notes — the same notes a task block has, kept on the class.
+- **ⓘ** opens its card in **★ Forced → Timetable**, where every detail lives and where you
+  rename it, change its detail, day, time and length, or put a removed day back.
+- **✕** removes it from **that day only** — a cancelled lecture. Nothing is deleted, and the
+  Timetable tab can add the day back.
 
-What you *can* do is click one on the Progress timeline. That opens a small read-only card
-showing the class, and a **＋ day note here** button that starts a real day note on that
-day, at that hour, already the length of the class.
+Classes are **not tickable**: a lecture is not something you complete. A class you drag or
+rename shows the change in its Documentations Timetable list straight away. A **weekly**
+class is one class, so moving or renaming it changes every week.
+
+You can also add a class by hand: **★ Forced → Timetable → ＋ Add a block**.
 
 ---
 
@@ -78,8 +81,8 @@ wide. Glue `· Dr Ada · Room 305-306, Building 3` onto the title and the topic 
 the only part you actually scan for — is the part that gets truncated away.
 
 Split, the title stays readable on the grid, and the detail is there when you
-want it: its own column in the Timetable list, a line in the popover when you
-click a class on the Progress timeline, and in the hover tooltip everywhere.
+want it: its own column in the Timetable list, on the class's card in Progress →
+★ Forced → Timetable, and in the hover tooltip everywhere.
 
 ### Three cells still works
 
@@ -230,13 +233,18 @@ Nothing is added while an error is showing, so a bad paste costs you nothing.
 
 ## After it is on the page
 
-The Timetable block lists everything that page pasted, grouped by import:
+The Timetable block lists everything that page pasted, grouped by import, and says which days
+a class was removed from on the Progress Schedule:
 
-- **`✕`** on a single row removes that one class.
-- **`✕ remove all`** on an import removes that whole paste. Both ask first — there is no
+- **`✕`** on a single row **deletes that class for good** — from every schedule, with its notes.
+- **`✕ remove all`** on an import deletes that whole paste. Both ask first — there is no
   undo in Track.
 - **`⧉ copy as text`** gives you the block back in this same format, so you can hand it to
   an AI to amend and paste the corrected version in.
+
+Changing a class — its time, day, title, detail — happens on the Progress Schedule, and the
+list here follows. Classes you added by hand there belong to no page, so every Timetable
+block lists them in an *added in the Schedule* section, where they can be deleted too.
 
 Classes are switchable off like anything else on a calendar: in a Documentations calendar
 block, **`⚟ Filter`** has a **Timetable** entry.
