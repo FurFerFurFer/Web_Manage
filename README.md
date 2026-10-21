@@ -120,10 +120,16 @@ The shared interface currently provides:
 - A growth-ring texture on Home and a fine vertical grain on every application page,
   both pure CSS. The concept artwork in `World/assets/images/` belongs to the Track
   World game project, is documentation-only, and is not loaded by the application.
-- A browser-tab icon on all five pages: concentric rings on the Grit evergreen,
-  written as an inline `data:image/svg+xml` URI in each `<head>`. It ships no file,
-  and declaring it is what stops the browser probing `/favicon.ico` — which is why
-  the suite's ~165 "no page errors" assertions stay clean.
+- A browser-tab icon per page, so the five tabs tell apart at 16px by colour and
+  glyph: Home keeps the concentric rings on the Grit evergreen (`#2e6349`), Progress
+  & Schedule a dart in a dartboard's bullseye — a goal reached — on the Grit tag red
+  (`#b91c1c`), the Knowledge Record a mind map on violet (`#4a3f6b`), Documentations
+  a page on teal (`#1f5560`), and True Storage an archive box on bark brown
+  (`#6b4a2e`). Each is an inline `data:image/svg+xml` URI
+  on line 7 of its own page, so one changes without touching the others. They ship
+  no file, and every page declaring one is what stops the browser probing
+  `/favicon.ico` — which is why the suite's ~165 "no page errors" assertions stay
+  clean, and why removing a page's icon rather than replacing it breaks them.
 - A slower motion curve (`--motion-slow`, `--ease-growth`) reserved for signature
   moments. Anything a user is waiting on stays on `--motion-fast`.
 - Measured contrast: every text role **and** every accent role clears 4.5:1
