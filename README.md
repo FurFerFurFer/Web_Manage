@@ -125,11 +125,17 @@ The shared interface currently provides:
   & Schedule a dart in a dartboard's bullseye — a goal reached — on the Grit tag red
   (`#b91c1c`), the Knowledge Record a mind map on violet (`#4a3f6b`), Documentations
   a page on teal (`#1f5560`), and True Storage an archive box on bark brown
-  (`#6b4a2e`). Each is an inline `data:image/svg+xml` URI
-  on line 7 of its own page, so one changes without touching the others. They ship
-  no file, and every page declaring one is what stops the browser probing
-  `/favicon.ico` — which is why the suite's ~165 "no page errors" assertions stay
-  clean, and why removing a page's icon rather than replacing it breaks them.
+  (`#6b4a2e`). Each is an inline `data:image/svg+xml` URI on line 7 of its own page,
+  so one changes without touching the others. Every page declaring one is what stops
+  the browser probing `/favicon.ico` — which is why the suite's ~165 "no page errors"
+  assertions stay clean, and why removing a page's icon rather than replacing it
+  breaks them.
+- A home-screen icon per page for iPhone and iPad, which ignore SVG icons for Add to
+  Home Screen: line 8 of each page links `assets/icons/<page>-180.png?v=1` as its
+  `apple-touch-icon`. Each PNG is that page's tab icon rendered at 180×180 as a full
+  square, because iOS rounds the corners itself and turns transparency black. They
+  are rendered from the tab icon rather than drawn separately, so changing a page's
+  tab icon means re-rendering its PNG and bumping that page's `?v=`.
 - A slower motion curve (`--motion-slow`, `--ease-growth`) reserved for signature
   moments. Anything a user is waiting on stays on `--motion-fast`.
 - Measured contrast: every text role **and** every accent role clears 4.5:1
