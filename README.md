@@ -528,7 +528,7 @@ included:
 
 | Button | Opens | Holds |
 | --- | --- | --- |
-| ★ **Forced** | the day notes, deadlines & timetable browser (it was `☰`) | the day notes and deadlines dated on or after that day, and — on its Timetable tab — every timetable class |
+| ★ **Forced** | the day notes, deadlines & timetable picker (it was `☰`) | the day notes and deadlines dated on or after that day — a click adds a block for one on the day — and, on its Timetable tab, every timetable class |
 | ● **Learn** | every mind map and every MG (it was `◎` and `⊕`) | a pinned strip of what the day's milestone still needs, then `Mind maps` / `Marginal gains` tabs |
 | ▲ **Chosen** | the task picker (it was `+`) | the to-do: the goal tree, its routines and its milestones — no supporting actions |
 | ■ **Core Routine** | every supporting action (it was the end of the `+` picker) | each action, each routine and each of its steps |
@@ -765,22 +765,53 @@ The popup can also be opened straight from a link: `progress.html?date=<due day>
 selects the Schedule, anchors the timeline on the due day, and opens that deadline. The id has to match
 a stored deadline, so a stale link opens nothing instead of erroring.
 
-**Schedule blocks for day notes and deadlines.** Every day note and every deadline has a real block
-on the hour grid, and it has one **automatically**: 60 minutes, auto-placed relative to the time it
-already has. A **deadline's block ends at its due time** (it is the run-up to the deadline, not the
-deadline itself) and a **day note's block starts at its time**; a note with no time of its own sits
-at `08:00`. A block is a first-class block — it takes part in the side-by-side overlap layout with
-goal, supporting-action and MM blocks, and it drags and resizes by mouse and by touch — unlike the
-zero-height note marker and deadline hairline, which are deliberately excluded from that layout.
+**Schedule blocks for day notes and deadlines.** A day note or a deadline is on the hour grid only
+once it has been **added from ★ Forced** (below), the way a mind map is only there once ● Learn
+adds it. Every pick adds **one block** on the day the panel was opened from, so a deadline can be
+given several prep sessions on several days. An item nobody added has no block at all — since
+2026-10-21; before that every note and deadline had one automatically, and those automatic blocks
+are gone from all three grids (Progress, the Home day preview and a Documentations calendar block).
+Nothing was deleted to take them away, and nothing was migrated: the readers stopped drawing them.
 
-Nothing is written to make that happen. `blockOff` is the single switch for being on the grid and
-its **absence** means the item has a block, so items stored long before any of these keys existed
-are simply drawn — there is nothing to migrate because nothing needs writing. `blockDuration` is
-only a remembered length, `blockTime` only a remembered start and `blockDate` only a remembered day;
-each falls back to the automatic default when absent.
+Each block is one record in the item's **`parts`** list. A new block carries an id, a `createdAt`
+and `done: false`, plus a `date` only when the day differs from the one it would inherit. It has no
+title, so it reads as its item and follows a rename, and no time or length, so it **starts where its
+item does**: a **deadline's block ends at its due time** (it is the run-up to the deadline, not the
+deadline itself) and a **day note's block starts at its time**, at `08:00` for a note with no time of
+its own, both 60 minutes long. Dragging or resizing a block writes that block's own `date`, `time`
+and `blockDuration`. A block is a first-class block, drawn with a solid border like the ■ Core
+Routine and ● Learn blocks: it takes part in the side-by-side overlap layout with goal,
+supporting-action and MM blocks, it drags and resizes by mouse and by touch, it has its **own tick**,
+`ⓘ` opens its note or deadline, and `✕` takes it off the schedule. The tick is that block's session,
+never the deadline's own `done` — that stays in the deadline's popup, where it hides the `!` days. The
+`✕` asks first, because it deletes that block's record; removing the last block deletes the `parts`
+key, and the item is simply off the grid again. Blocks made with the old `＋` task composer keep
+their names and are drawn the same way.
 
-An item's block and its own identity are separate. **Both surfaces are always drawn**: a note keeps
-its day-strip chip and its point marker whatever its block is doing, and a deadline keeps its red
+**Sub-tasks (`✂` in ★ Forced).** A note or a deadline can be dissected into named **sub-tasks** —
+child tasks of the original, which **is not gone**: its own blocks stay on the grid beside them (the
+user's rules, 2026-10-22). They are made in ★ Forced: a row's `✂` opens a name box under it, and each
+name added becomes a sub-task **off the schedule**, listed under its original as `not on the
+schedule`. Clicking a sub-task's row in a day's ★ Forced puts it on **that** day; its `date` is always
+written, so it sits where it was put and never follows the item's own date. Clicking it from another
+day **moves** it there: a sub-task is one record with one date, so it is never on two days. On the
+grid it is a block under its own name, with its own tick, drag and resize, starting at its own time or
+else where the original's block starts. Once an original has sub-tasks, its own blocks have **no
+tick** and read **done when every sub-task is** — a parent task's rule. A sub-task block's `✕` takes it
+**off the schedule** and keeps it under its original, as a task block's `×` unschedules a task; the `×`
+on its row in ★ Forced **deletes** it. Both ask. A deadline's sub-task follows a pick's rules: put on
+a day the deadline does not occupy, that day becomes a caution day in the same write, and a deadline
+with no real due day refuses it. `TrackCalendar.drawnParts` and `partDone` are the one definitions of
+what is drawn and what is done, with their twins in `progress.html`.
+
+The item-level keys the automatic block used — `blockOff`, `blockDuration`, `blockTime` and
+`blockDate` — are **legacy**: read, never written by anything but a ★ Forced pick's `blockOff:
+false`. `blockDuration`, `blockTime` and `blockDate` are now only where a new block starts and which
+day an undated one sits on. A stored `blockOff: true` (the old `remove from schedule`) still hides
+every block an item has; picking the item in ★ Forced writes `false`, which shows them again.
+
+An item's blocks and its own identity are separate. **Both surfaces are always drawn**: a note keeps
+its day-strip chip and its point marker whatever its blocks are doing, and a deadline keeps its red
 due-time hairline and its amber caution run-up. Scheduling something never takes away the way it was
 already visible, and taking a block off the grid never makes the item disappear.
 
@@ -817,26 +848,34 @@ still visible), the quadrant list auto-scrolls when the finger nears its top or 
 abandons the drag without re-filing anything. Arming and un-arming are selection, not edits: neither
 writes a byte. A dropped chip stays armed, so it can be moved again straight away.
 
-**Work can be scheduled on any day.** `blockDate` puts an item's block on a day that is not its own,
-and a `date` on a part puts that one step somewhere else again — so a deadline's prep can live on an
-earlier caution day, or be split across several. The item's chip, marker, due line and caution
-run-up all stay on the item's own `date` regardless. A deadline's block and every one of its parts
-must sit on a day the deadline **occupies** — one of its chosen caution days, or the due day itself.
-That is set membership, not a range: a day that merely falls between two chosen ones is outside it. A
-horizontal drag SNAPS to the nearest allowed day, the task-day picker refuses anything outside the set,
-and un-picking a caution day or moving the due day in a way that would strand already-placed prep is
-**refused** with the offending day named. Nothing here moves or clamps a day the user chose; the user
-moves the block and comes back. A day note's block has no such restriction and may go anywhere.
+**Work can be scheduled on any day.** A block's own `date` puts it on a day that is not its item's —
+so a deadline's prep can live on an earlier caution day, or be spread across several. An undated
+block sits on the item's legacy `blockDate` if it has one, else on the item's own `date`. The item's
+chip, marker, due line and caution run-up all stay on the item's own `date` regardless. Every block
+of a deadline must sit on a day the deadline **occupies** — one of its chosen caution days, or the due
+day itself. That is set membership, not a range: a day that merely falls between two chosen ones is
+outside it. A ★ Forced pick on any other day makes that day a caution day in the same write (below);
+a horizontal drag SNAPS to the nearest allowed day; and un-picking a caution day or moving the due day
+in a way that would strand a placed block is **refused** with the offending day named. A deadline
+with no blocks has nothing to strand, so no edit of it is refused, whatever legacy keys it carries.
+`TrackCalendar.blockDays` is the one definition of which days an item's blocks sit on, with its twin
+in `progress.html`. Nothing here moves or clamps a day the user chose; the user moves the block and
+comes back. A day note's block has no such restriction and may go anywhere.
 
-A drag therefore writes `blockDate`/`blockTime` — or a part's own `date`/`time` — and **never** the
-item's `date` or `time`. That is load-bearing for a deadline: moving a *due* day remains the sole
-business of its edit form, which is the one path that refuses an orphaned caution day and stranded
-prep. A run-up that
-would begin before `00:00` is clipped at the top of the grid and shortened, so it still ends on its
-due time rather than being pushed past it.
+The days a deadline's block may be dragged to are read **when the drag starts**, from the deadline as
+it is then, and carried with the drag. The Schedule's pointer listeners are installed once, when it
+mounts; they used to read the deadlines as they were at that moment, so a caution day added since —
+which every ★ Forced pick on a new day does — was unknown to the drag, and the block just put there
+snapped onto the due day the first time it was dragged.
+
+A drag therefore writes a block's own `date`/`time` and **never** the item's `date` or `time`. That is
+load-bearing for a deadline: moving a *due* day remains the sole business of its edit form, which is
+the one path that refuses an orphaned caution day and stranded prep. A run-up that would begin before
+`00:00` is clipped at the top of the grid and shortened, so it still ends on its due time rather than
+being pushed past it.
 
 **★ Forced** (it was the `☰` button) is the first of the four in each timeline day header — what
-the day imposes — and opens a browser over every
+the day imposes — and lists every
 day note and deadline in the slot **dated on or after the day it was opened from** — not only that
 day's, but never an earlier one — as **one flat list in chronological order** by each item's own date
 and time. The panel is opened from a day in order to put work on it, so it **looks forward from that
@@ -848,22 +887,32 @@ earlier one, and an earlier item is reached by opening the panel from a day on o
 everything in the slot is behind the cutoff the panel says so and names the day, rather than
 reporting an empty workspace. The rows belonging to the day the panel was opened on are tinted
 and scrolled into view. `All` / `Notes` / `Deadlines` tabs and a text filter narrow it. Each row
-links to that item's existing popup, shows its **own date and time as a read-out** (they are changed
-from the item and nowhere else), and carries:
+shows its **own date and time as a read-out** (they are changed from the item and nowhere else),
+the days its blocks already sit on, and `ⓘ`, which opens that item's popup.
 
-- `＋`, which opens a task composer: a name, a **day** and an optional time, then `Add`. Tasks are
-  stored in `parts`, mirroring what `✂` already does to a scheduled goal task. A task inherits the
-  parent block's start and length unless given its own, and its day is written only when it differs
-  from the parent block's. On a deadline `Add` is refused unless the day is a chosen caution day or
-  the due day; `min`/`max` narrow the native picker, but with a sparse set they cannot express the
-  gaps, so `dlBlockDayValid` is the gate. While an item has tasks, **the tasks replace the parent block** on the grid,
-  exactly as a goal task whose child sits on the same day is represented by the child. Each task
-  gets its own checkbox, and removing the last one deletes the key so the parent block returns.
-- `remove from schedule`, which sets `blockOff` and **deletes nothing** — the length, day and anchor
-  are all remembered, so `＋ add block back` is a restore rather than a recomputed guess. The item
-  itself is untouched: its marker, chip, hairline and caution run-up all stay.
-- `reset to due time` on a deadline whose block has been moved off its anchor, which deletes both
-  `blockTime` and `blockDate` so the block goes back to ending at the due time on the due day.
+**A row does one thing, the thing ● Learn's and ■ Core Routine's rows do: clicking it adds a block
+for that item on the day the panel was opened from, and closes the panel.** Picking it again adds
+another. The user replaced the row's old controls — `＋` (a task composer that defaulted to the
+item's own day rather than the opened one), `remove from schedule`, `＋ add block back` and `reset
+to due time` — on 2026-10-21; a block now comes off with its own `✕` on the grid.
+
+- **A deadline picked on a day it does not occupy makes that day a caution day**, in the same write
+  as the block, so the block always sits on a day the deadline occupies. The row says so before the
+  click (`also makes <day> one of its caution days`). The chosen days only grow, through the one
+  caution writer, so nothing can strand; removing the block later leaves the caution day as it is.
+- A deadline whose due day is not a real day is still listed, since this is the only surface it
+  appears on, but its row is marked refused (`aria-disabled`) and says why, and the writer refuses
+  the pick, leaving the panel open on the reason.
+- A legacy item whose blocks the old `remove from schedule` hid says how many; picking it shows
+  them again beside the new one.
+
+Beside `ⓘ`, a row's **`✂`** opens a name box for its **sub-tasks** (see "Sub-tasks" above), and they
+are listed under the row, each with the day and time it is on or `not on the schedule`. Clicking one
+puts it on the day the panel was opened from — or moves it there — under the same caution-day and
+refusal rules as the row, and closes the panel; its `×` deletes it.
+
+Adding a block, naming a sub-task and putting one on a day delete nothing, so they do not ask; a
+sub-task's `×` deletes it, so it does.
 
 **The Timetable tab** is the fourth, and a different list with different rules: every timetable
 class — see "A pasted timetable" below — laid out like KS02's +LIN LOG. A class no longer opens a
@@ -883,8 +932,8 @@ card of its own on the grid, so this is where **every detail** lives:
   blank detail or range end writes no key, an end before its start is refused, and so is an inverted
   range, as in the paste dialog.
 - **`remove from schedule` and `＋ add back`** take a class off one day and put it back. Both write
-  `skips` and delete nothing, so neither asks — the tab's `remove from schedule` for a note or a
-  deadline does not ask either. A weekly class lists each removed day with its own `＋`.
+  `skips` and delete nothing, and each undoes the other, so neither asks. A weekly class lists each
+  removed day with its own `＋`.
 - **`＋ Add a block`** makes a one-off class on the day the panel was opened from (the day is
   editable): title, optional detail, start and end. It belongs to no documentation page.
 
@@ -1782,7 +1831,7 @@ their **absence carries meaning**:
   Schedule authored it. Preserve it by spreading (`{...item, …}`), never by
   rebuilding an item from a field list.
 - `time` (`calendarNotes` only) is the hour a day note belongs to. Absent means
-  the note has no time of its own — it still gets a block, at `08:00` — so a
+  the note has no time of its own — a block added for it starts at `08:00` — so a
   writer must **omit the key** rather than store `''`, and clearing the field in
   the UI deletes the key. `deadlines` have always had a required `time`; this is
   the note-only addition.
@@ -1802,35 +1851,42 @@ their **absence carries meaning**:
   writes `false` rather than deleting the key, and no stored deadline needed a
   migration. It is not validated in `schema.js`: a malformed value cannot break a
   render the way a malformed date can.
-- `blockOff` (both) takes the item's **schedule block** off the hour grid. This
-  is the one on-grid switch. Absent means the item **has** a block, which is what
-  puts one on every item stored before these keys existed with nothing written to
-  it — the feature needs no migration because it needs no writes. Removing a
-  block therefore **deletes nothing**: the length, day and anchor stay stored so
-  putting it back is a restore, not a recomputed guess. Re-adding writes `false`
-  rather than deleting the key — every reader goes through `blockOn`'s `!!`, so
-  there is no third state to protect, exactly as for `done`.
-- `blockDuration` (both) is the length in minutes of the block. Absent means the
-  automatic 60, so it is only a remembered length and never a switch.
-- `blockTime` (both) is the block's own start. Absent is a meaningful **third**
-  state — "still anchored", i.e. a deadline's block ends at its due time and a
-  note's starts at its own — so it is written only when the block is moved off
-  that anchor, and `reset to due time` deletes the key rather than storing the
-  value it would have computed. That is what makes reset a restore rather than a
-  recomputed guess, the same reasoning that keeps a tick from rewriting the
-  chosen caution days.
-- `blockDate` (both) is the day the block is **drawn** on, which need not be the
-  day the item belongs to. Absent means the item's own `date`. It is what lets a
-  deadline's prep sit on an earlier caution day; the item's chip, marker, due
-  line and caution marks all stay on `date` regardless. On a deadline it must be
-  one of the chosen caution days or the due day — membership, not a range —
-  enforced at every authoring path and by refusing an un-pick or a due-day move
-  that would strand it.
-- `parts` (both) holds the tasks an item was dissected into. Absent means not
-  dissected, and removing the last one deletes the key so the parent block comes
-  back rather than the item being left "dissected into nothing". A part may carry
-  its own `date`, `time` and `blockDuration`; each is written only when it
-  differs from what the part would inherit from its parent block.
+- `parts` (both) holds the item's **schedule blocks**, one record per block —
+  what ★ Forced adds, one per pick. Absent means the item is not on the hour grid
+  at all, and removing the last block deletes the key rather than storing `[]`.
+  A block carries `id`, `createdAt` and `done`, and may carry its own `date`,
+  `time` and `blockDuration`; each is written only when it differs from what the
+  block would inherit, and a drag or a resize writes the block's own. A ★ Forced
+  block has no `title` and reads as its item. A part **with** a `title` is a
+  **sub-task**, a child task of the item (the old `＋` composer's tasks are
+  sub-tasks too): it carries `unscheduled: true` while it is off the schedule,
+  and the key is deleted when it is put on a day, its `date` then always written.
+  A `parentId` left on a few parts by a build withdrawn the same day is ignored.
+  Until 2026-10-21 an item with no parts had one block automatically; it no longer
+  does, and nothing was migrated.
+
+The four keys below are **legacy**. They belonged to the automatic block, are
+still read, and are never written — except `blockOff: false` by a ★ Forced pick.
+
+- `blockOff` (both), when `true`, hides every block the item has. It was the old
+  `remove from schedule`, which deleted nothing so that a block could be put
+  back. A pick writes `false` rather than deleting the key — every reader goes
+  through `blockOn`'s `!!`, so there is no third state to protect, exactly as for
+  `done`.
+- `blockDuration` (both) is the length in minutes a new block starts at. Absent
+  means 60.
+- `blockTime` (both) is where a new block starts. Absent is a meaningful **third**
+  state — "anchored", i.e. a deadline's block ends at its due time and a note's
+  starts at its own.
+- `blockDate` (both) is the day a block with no `date` of its own sits on.
+  Absent means the item's own `date`. The item's chip, marker, due line and
+  caution marks stay on `date` regardless. On its own — with no parts — it is no
+  block at all, so it strands nothing and refuses no edit.
+
+A deadline's blocks must each sit on a day it occupies — one of the chosen
+caution days or the due day; membership, not a range — enforced at every
+authoring path and by refusing an un-pick or a due-day move that would strand
+one.
 
 `blockDuration`, `blockTime` and `blockDate` **are** validated in `schema.js`,
 and the split from `done` and `blockOff` above is deliberate: those two are safe
@@ -2016,7 +2072,7 @@ It runs three layers:
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone. For the timetable: a class drawn on its own day on all three grids and not on a day it was removed from, each surface asserted separately; moved, resized and armed like a task block by mouse and by touch, with a weekly class taking a new weekday only inside its range; removed from one day behind a confirmation whose Cancel writes nothing; given notes of its own; listed, edited, restored and added on ★ Forced → Timetable; deleted for good in Documentations; and a class deleted there not written back by Progress's next edit |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone. For day-note and deadline blocks: an item nobody added draws no block, asserted on each of the three grids separately; a ★ Forced pick adding exactly one untitled, untimed block on the opened day and closing the panel, a second pick a second block, and a pick on a day a deadline does not occupy making it a caution day in the same write; a deadline with no real due day listed but refused; a block's `✕` asking, with Cancel writing nothing; its tick writing only its own `done`; a ★ Forced `✂` adding a named sub-task off the schedule, its row putting it on that day with its date always written and moving it from another day — one block, never two — the caution day arriving in the same write, a deadline with no real due day refusing it, the original's block untickable and done only when every sub-task is, a sub-task's `✕` unscheduling it and its row `×` deleting it, both asking, and Home and Documentations each drawing a scheduled sub-task beside its original and none for one off the schedule; a legacy `blockOff` hiding blocks until a pick; a deadline with no blocks never refusing an un-pick, on Progress and in Documentations; and a block dragged by mouse and by touch onto a caution day added since the page mounted. For the timetable: a class drawn on its own day on all three grids and not on a day it was removed from, each surface asserted separately; moved, resized and armed like a task block by mouse and by touch, with a weekly class taking a new weekday only inside its range; removed from one day behind a confirmation whose Cancel writes nothing; given notes of its own; listed, edited, restored and added on ★ Forced → Timetable; deleted for good in Documentations; and a class deleted there not written back by Progress's next edit |
 
 The first three offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.

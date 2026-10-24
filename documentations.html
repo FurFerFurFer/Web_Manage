@@ -11,7 +11,7 @@
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
   <script src="scripts/milestone-core.js?v=3"></script>
-  <script src="scripts/calendar-core.js?v=11"></script>
+  <script src="scripts/calendar-core.js?v=14"></script>
   <script src="scripts/doc-table-core.js?v=4"></script>
   <script src="scripts/schedule-paste-core.js?v=2"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -1810,20 +1810,14 @@
         // those cells are marked and refuse.
         //
         // Read off the PROPOSED record, not the stored one. A block with no
-        // blockDate follows the item's own `date`, so it moves WITH a draft
-        // due-day change; reading TC.blockDay(dl) here would underline the OLD
+        // `date` of its own follows the item's `date`, so it moves WITH a draft
+        // due-day change; reading the stored day here would underline the OLD
         // due day, a cell the deadline is about to stop occupying. Display
         // only — every refusal still goes through dlStrandedBlockDays, which
-        // builds the same probe internally. This is the one place in this file
-        // that re-states "an absent blockDate follows date", so a future
-        // extraction of that probe should collect it.
+        // builds the same probe internally. Which days a deadline's blocks sit
+        // on is TC.blockDays, the one definition; this file used to re-state it.
         const proposed = dl ? {...dl, date: due} : null;
-        const held = new Set();
-        if (proposed && TC.blockOn(proposed)) {
-          const parts = TC.itemParts(proposed);
-          (parts.length ? parts.map(p => TC.partDay(p, proposed)) : [TC.blockDay(proposed)])
-            .forEach(day => { if (day) held.add(day); });
-        }
+        const held = new Set(proposed ? TC.blockDays(proposed).filter(Boolean) : []);
         // What un-picking EVERYTHING would strand — the same quantity the
         // Progress picker reports, and the gate on `clear all`. `stranded` is
         // the draft's own and is the backstop on Save: the click handler

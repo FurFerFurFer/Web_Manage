@@ -49,7 +49,8 @@ test('module surface', () => {
     'buildBuckets', 'buildMilestoneLanes', 'buildDaySchedule', 'overlapInfo', 'durLabel',
     'noteTimed', 'daysBetween', 'dayShift',
     'noteBlockDuration', 'dlBlockDuration', 'dlBlockSpan', 'dlBlockTime', 'itemParts', 'partSpan',
-    'blockOn', 'noteBlockSpan', 'noteBlockStart', 'blockDay', 'partDay',
+    'blockOn', 'noteBlockSpan', 'noteBlockStart', 'blockDay', 'partDay', 'blockDays',
+    'partIsSub', 'partScheduled', 'drawnParts', 'itemSubtasks', 'partDone',
     'dlBlockDayValid', 'dlStrandedBlockDays',
     'refSpan', 'refOccupies', 'refSkips', 'refSkipped', 'refOn']) {
     assert.equal(typeof TC[name], 'function', name + ' is exported');
@@ -58,9 +59,9 @@ test('module surface', () => {
   // meaning (span length including the due day → count of chosen days), and a
   // changed meaning behind an unchanged name is worse than the churn.
   assert.equal(TC.dlDayCount, undefined, 'dlDayCount is gone, replaced by dlCautionCount');
-  // the two automatic defaults are values, not functions
-  assert.equal(TC.DEFAULT_BLOCK_MINS, 60, 'every item starts with a 60-minute block');
-  assert.equal(TC.DEFAULT_NOTE_TIME, '08:00', 'and an untimed note starts at 08:00');
+  // the two block defaults are values, not functions
+  assert.equal(TC.DEFAULT_BLOCK_MINS, 60, 'every block starts at 60 minutes');
+  assert.equal(TC.DEFAULT_NOTE_TIME, '08:00', 'and an untimed note\'s block starts at 08:00');
   assert.equal(TC.MONTHS.length, 12);
   assert.equal(TC.DOWS.length, 7);
   assert.equal(TC.MS_MAX_LANES, 3);
@@ -623,62 +624,69 @@ test('noteTimed accepts only a well-formed HH:MM', () => {
   assert.equal(TC.noteTimed(null), false);
 });
 
-test('a note without a time is in the strip AND on the grid at the default hour', () => {
-  const slot = F.emptySlot({ calendarNotes: [F.calNote('plain', '2026-03-10')] });
+/* Since 2026-10-21 a note or a deadline is on the hour grid only through its
+   PARTS — the blocks ★ Forced adds, one per pick. `{ id: 'b' }` is exactly what
+   a pick on the item's own day stores: no title, no time, no length. */
+const BLOCK = { id: 'b' };
+
+test('a note without a time is in the strip, and once added on the grid at the default hour', () => {
+  const slot = F.emptySlot({ calendarNotes: [F.calNote('plain', '2026-03-10', { parts: [BLOCK] })] });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
   assert.deepEqual(ids(day.calNotes), ['plain'], 'the strip lists it');
   assert.deepEqual(ids(day.calNotesAll), ['plain']);
-  assert.deepEqual(ids(day.blocks), ['plain'], 'and so does the hour grid');
+  assert.deepEqual(ids(day.blocks), ['plain:b'], 'and so does the hour grid');
   assert.equal(day.blocks[0].time, '08:00');
 });
 
 test('a note with a time is on the hour grid and stays in the strip', () => {
   const slot = F.emptySlot({
     calendarNotes: [
-      F.calNote('timed', '2026-03-10', { time: '15:00', title: 'Review at 3pm' }),
-      F.calNote('plain', '2026-03-10')
+      F.calNote('timed', '2026-03-10', { time: '15:00', title: 'Review at 3pm', parts: [BLOCK] }),
+      F.calNote('plain', '2026-03-10', { parts: [BLOCK] })
     ]
   });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
   assert.deepEqual(ids(day.calNotes).sort(), ['plain', 'timed'], 'the strip keeps both');
   assert.deepEqual(ids(day.calNotesAll).sort(), ['plain', 'timed']);
-  assert.deepEqual(ids(day.blocks).sort(), ['plain', 'timed'], 'and both reach the grid');
+  assert.deepEqual(ids(day.blocks).sort(), ['plain:b', 'timed:b'], 'and both reach the grid');
 
-  const b = day.blocks.find(x => x.id === 'timed');
+  const b = day.blocks.find(x => x.id === 'timed:b');
   assert.equal(b.kind, 'Day note');
   assert.equal(b.time, '15:00');
-  assert.equal(b.title, 'Review at 3pm');
+  assert.equal(b.title, 'Review at 3pm', 'an untitled block is labelled by its note');
   assert.equal(b.done, false);
-  assert.equal(b.duration, 60, 'at the automatic default length');
+  assert.equal(b.duration, 60, 'at the default length');
   assert.equal(b.item.id, 'timed', 'the whole item rides along, so docPageId is still readable');
+  assert.equal(b.part.id, 'b', 'and so does the part it is');
 });
 
 test('a malformed time puts the note at the default hour, never at midnight', () => {
   const slot = F.emptySlot({
-    calendarNotes: [F.calNote('bad', '2026-03-10', { time: 'half past' }), F.calNote('empty', '2026-03-10', { time: '' })]
+    calendarNotes: [F.calNote('bad', '2026-03-10', { time: 'half past', parts: [BLOCK] }),
+      F.calNote('empty', '2026-03-10', { time: '', parts: [BLOCK] })]
   });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
   assert.deepEqual(ids(day.calNotes).sort(), ['bad', 'empty']);
-  assert.deepEqual(ids(day.blocks).sort(), ['bad', 'empty']);
+  assert.deepEqual(ids(day.blocks).sort(), ['bad:b', 'empty:b']);
   day.blocks.forEach(b => assert.equal(b.time, '08:00', b.id + ' falls back rather than to 00:00'));
 });
 
 test('a timed note is filtered by origin like any other note', () => {
   const slot = F.emptySlot({
     calendarNotes: [
-      F.calNote('sched', '2026-03-10', { time: '09:00' }),
-      F.calNote('doc', '2026-03-10', { time: '10:00', docPageId: 'p-1' })
+      F.calNote('sched', '2026-03-10', { time: '09:00', parts: [BLOCK] }),
+      F.calNote('doc', '2026-03-10', { time: '10:00', docPageId: 'p-1', parts: [BLOCK] })
     ]
   });
-  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['doc'] }).blocks), ['sched']);
-  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['daynote'] }).blocks), ['doc']);
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['doc'] }).blocks), ['sched:b']);
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['daynote'] }).blocks), ['doc:b']);
   assert.deepEqual(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['daynote', 'doc'] }).blocks, []);
 });
 
 test('a timed note takes part in overlap layout with real schedule blocks', () => {
   const slot = F.emptySlot({
     goals: [F.task('t', { scheduledDate: '2026-03-10', scheduledTime: '15:00', duration: 60 })],
-    calendarNotes: [F.calNote('timed', '2026-03-10', { time: '15:00' })]
+    calendarNotes: [F.calNote('timed', '2026-03-10', { time: '15:00', parts: [BLOCK] })]
   });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
   const laid = day.blocks.map(b => {
@@ -686,39 +694,80 @@ test('a timed note takes part in overlap layout with real schedule blocks', () =
     return { id: b.id, top: h * 60 + m, height: b.duration };
   });
   const info = TC.overlapInfo(laid);
-  assert.deepEqual(info.timed.sort(), ['t', 'timed'], 'they share the same hour and are grouped');
+  assert.deepEqual(info['timed:b'].sort(), ['t', 'timed:b'], 'they share the same hour and are grouped');
 });
 
 // ── day-note and deadline schedule blocks ──────────────────────────────────
-/* Every note and every deadline is on the hour grid by DEFAULT, at
-   DEFAULT_BLOCK_MINS. `blockOff` is the switch that takes one off again;
-   `blockDuration` is only a remembered length, `blockDate` only a remembered
-   day. All three absences mean "the automatic default", which is what puts
-   blocks on items stored long before these keys existed without writing
-   anything to them. */
+/* A note or a deadline is on the hour grid ONLY through its parts — one block
+   per ★ Forced pick (2026-10-21) — and an item with no parts has no block at
+   all. The item's span (noteBlockSpan / dlBlockSpan) is where a block STARTS.
+   Its keys — blockOff, blockDuration, blockTime, blockDate — are legacy, read
+   and never written, and every absence is still the default. */
 
-test('a note with no block keys at all still gets the automatic block', () => {
-  const slot = F.emptySlot({ calendarNotes: [F.calNote('timed', '2026-03-10', { time: '15:00' })] });
-  const b = TC.buildDaySchedule(slot, '2026-03-10').blocks[0];
-  assert.equal(b.time, '15:00', 'anchored to the note time');
-  assert.equal(b.duration, 60, 'at the automatic default length');
-  assert.equal(b.metaLabel, undefined, 'and it is a real span, so it may be captioned');
-  assert.equal(b.kind, 'Day note');
+test('an item with no parts has no block — the automatic block is gone', () => {
+  const slot = F.emptySlot({
+    calendarNotes: [F.calNote('timed', '2026-03-10', { time: '15:00' }), F.calNote('bare', '2026-03-10')],
+    deadlines: [F.deadline('dl', '2026-03-10', { cautionDates: [], time: '17:00' })]
+  });
+  const day = TC.buildDaySchedule(slot, '2026-03-10');
+  assert.deepEqual(day.blocks, [], 'nothing reaches the hour grid by itself');
+  // …and nothing it was visible by before is taken away
+  assert.deepEqual(ids(day.calNotes).sort(), ['bare', 'timed'], 'both chips stay');
+  assert.deepEqual(ids(day.deadlines), ['dl'], 'and so does the due line');
+
+  // the keys an automatic block left behind draw nothing on any day either —
+  // a moved, resized or re-added one is still not a block without a part
+  const legacy = F.emptySlot({
+    calendarNotes: [F.calNote('n', '2026-03-10', { time: '15:00', blockDuration: 90, blockTime: '10:00', blockOff: false })],
+    deadlines: [F.deadline('d', '2026-03-10',
+      { cautionDates: ['2026-03-09'], time: '17:00', blockDate: '2026-03-09', blockTime: '08:00' })]
+  });
+  for (const ds of ['2026-03-09', '2026-03-10']) {
+    assert.deepEqual(TC.buildDaySchedule(legacy, ds).blocks, [], 'no block on ' + ds);
+  }
 });
 
-test('a note with a blockDuration keeps the length the user chose', () => {
+test('an untitled block starts where its item does and is labelled by it', () => {
   const slot = F.emptySlot({
-    calendarNotes: [F.calNote('sched', '2026-03-10', { time: '15:00', blockDuration: 90 })]
+    calendarNotes: [F.calNote('n', '2026-03-10', { time: '15:00', title: 'Lab coat', parts: [BLOCK] })],
+    deadlines: [F.deadline('d', '2026-03-10', { cautionDates: [], time: '17:00', title: 'Essay', parts: [BLOCK] })]
+  });
+  const byId = Object.fromEntries(TC.buildDaySchedule(slot, '2026-03-10').blocks.map(b => [b.id, b]));
+  assert.equal(byId['n:b'].time, '15:00', 'a note block STARTS at the note time');
+  assert.equal(byId['n:b'].duration, 60, 'at the default length');
+  assert.equal(byId['n:b'].title, 'Lab coat', 'and reads as its note');
+  assert.equal(byId['n:b'].kind, 'Day note');
+  assert.equal(byId['n:b'].metaLabel, undefined, 'a real span, so it may be captioned');
+  assert.equal(byId['d:b'].time, '16:00', 'a deadline block ENDS at the due time');
+  assert.equal(byId['d:b'].title, 'Essay');
+  assert.equal(byId['d:b'].kind, 'Deadline prep');
+
+  // an item with no title still draws a word, never "undefined"
+  const bare = TC.buildDaySchedule(F.emptySlot({
+    calendarNotes: [F.calNote('x', '2026-03-10', { title: '', parts: [BLOCK] })],
+    deadlines: [F.deadline('y', '2026-03-10', { cautionDates: [], time: '17:00', title: '', parts: [BLOCK] })]
+  }), '2026-03-10').blocks;
+  assert.deepEqual(bare.map(b => b.title).sort(), ['Deadline', 'Note']);
+  // and a titled part — the old ＋ composer's — keeps its own name
+  const titled = TC.buildDaySchedule(F.emptySlot({
+    calendarNotes: [F.calNote('n', '2026-03-10', { title: 'Lab coat', parts: [{ id: 'b', title: 'Iron it' }] })]
+  }), '2026-03-10').blocks[0];
+  assert.equal(titled.title, 'Iron it');
+});
+
+test('a legacy blockDuration is the length a block starts at', () => {
+  const slot = F.emptySlot({
+    calendarNotes: [F.calNote('sched', '2026-03-10', { time: '15:00', blockDuration: 90, parts: [BLOCK] })]
   });
   const b = TC.buildDaySchedule(slot, '2026-03-10').blocks[0];
   assert.equal(b.time, '15:00', 'a note block STARTS at the note time');
-  assert.equal(b.duration, 90);
+  assert.equal(b.duration, 90, 'the length the old automatic block was given is not thrown away');
 });
 
 test('an UNTIMED note blocks at 08:00 and keeps its chip as well', () => {
-  const slot = F.emptySlot({ calendarNotes: [F.calNote('bare', '2026-03-10')] });
+  const slot = F.emptySlot({ calendarNotes: [F.calNote('bare', '2026-03-10', { parts: [BLOCK] })] });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
-  assert.deepEqual(ids(day.blocks), ['bare'], 'no stored time still means a block');
+  assert.deepEqual(ids(day.blocks), ['bare:b'], 'no stored time still places the block');
   assert.equal(day.blocks[0].time, '08:00', 'at the default hour');
   assert.equal(TC.noteBlockStart(slot.calendarNotes[0]), '08:00');
   assert.deepEqual(ids(day.calNotes), ['bare'], 'and the strip chip is NOT taken away for it');
@@ -726,25 +775,25 @@ test('an UNTIMED note blocks at 08:00 and keeps its chip as well', () => {
 
 test('a TIMED note shows in the strip as well as on the grid', () => {
   // "show both, always": scheduling something must never remove the way it was
-  // already visible. Before this change a timed note left the strip entirely.
+  // already visible. Before 2026-08-19 a timed note left the strip entirely.
   const slot = F.emptySlot({
-    calendarNotes: [F.calNote('t', '2026-03-10', { time: '15:00', blockDuration: 30 })]
+    calendarNotes: [F.calNote('t', '2026-03-10', { time: '15:00', blockDuration: 30, parts: [BLOCK] })]
   });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
-  assert.deepEqual(ids(day.blocks), ['t']);
+  assert.deepEqual(ids(day.blocks), ['t:b']);
   assert.deepEqual(ids(day.calNotes), ['t'], 'the chip stays');
   assert.deepEqual(ids(day.calNotesAll), ['t']);
 });
 
-test('a deadline block ends at the due time, automatically', () => {
+test('a deadline block ends at the due time', () => {
   const slot = F.emptySlot({
     deadlines: [
-      F.deadline('bare', '2026-03-10', { startDate: '2026-03-08', time: '17:00' }),
-      F.deadline('prep', '2026-03-10', { startDate: '2026-03-08', time: '17:00', blockDuration: 120 })
+      F.deadline('bare', '2026-03-10', { startDate: '2026-03-08', time: '17:00', parts: [BLOCK] }),
+      F.deadline('prep', '2026-03-10', { startDate: '2026-03-08', time: '17:00', blockDuration: 120, parts: [BLOCK] })
     ]
   });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
-  assert.deepEqual(ids(day.blocks), ['bare', 'prep'], 'both are on the grid, no opting in');
+  assert.deepEqual(ids(day.blocks), ['bare:b', 'prep:b']);
   assert.equal(day.blocks[0].time, '16:00', 'the default run-up ENDS at the due time');
   assert.equal(day.blocks[0].duration, 60);
   assert.equal(day.blocks[0].kind, 'Deadline prep');
@@ -752,42 +801,46 @@ test('a deadline block ends at the due time, automatically', () => {
   assert.deepEqual(TC.dlBlockSpan(slot.deadlines[1]), { time: '15:00', duration: 120 });
 });
 
-test('blockOff takes an item off the grid and remembers everything else', () => {
-  const n = F.calNote('n', '2026-03-10', { time: '15:00', blockDuration: 90, blockOff: true });
+test('the legacy blockOff hides an item\'s blocks and remembers everything else', () => {
+  const n = F.calNote('n', '2026-03-10', { time: '15:00', blockDuration: 90, blockOff: true, parts: [BLOCK] });
   const d = F.deadline('d', '2026-03-10',
-    { startDate: '2026-03-08', time: '17:00', blockDuration: 45, blockTime: '08:00', blockOff: true });
+    { startDate: '2026-03-08', time: '17:00', blockDuration: 45, blockTime: '08:00', blockOff: true, parts: [BLOCK] });
   const day = TC.buildDaySchedule(F.emptySlot({ calendarNotes: [n], deadlines: [d] }), '2026-03-10');
   assert.deepEqual(day.blocks, [], 'neither is on the hour grid');
   assert.equal(TC.blockOn(n), false);
   assert.equal(TC.noteBlockSpan(n), null);
   assert.equal(TC.dlBlockSpan(d), null);
-  // the strip chip and the due line are untouched — removing a block never
+  // the strip chip and the due line are untouched — hiding a block never
   // removes the item
   assert.deepEqual(ids(day.calNotes), ['n']);
   assert.deepEqual(ids(day.deadlines), ['d']);
-  // and nothing was thrown away, so putting the block back is a restore
+  // and nothing was thrown away: the `blockOff: false` a ★ Forced pick writes
+  // shows the blocks again, at the length and start they had
   assert.deepEqual(TC.noteBlockSpan({ ...n, blockOff: false }), { time: '15:00', duration: 90 });
   assert.deepEqual(TC.dlBlockSpan({ ...d, blockOff: false }), { time: '08:00', duration: 45 });
+  const shown = TC.buildDaySchedule(F.emptySlot({
+    calendarNotes: [{ ...n, blockOff: false }], deadlines: [{ ...d, blockOff: false }] }), '2026-03-10');
+  assert.deepEqual(ids(shown.blocks).sort(), ['d:b', 'n:b']);
 });
 
-test('blockDate moves the block to another day, alone', () => {
+test('a legacy blockDate is the day an undated block sits on, and moves nothing else', () => {
   const slot = F.emptySlot({
-    calendarNotes: [F.calNote('n', '2026-03-10', { time: '15:00', blockDate: '2026-03-12' })],
+    calendarNotes: [F.calNote('n', '2026-03-10', { time: '15:00', blockDate: '2026-03-12', parts: [BLOCK] })],
     deadlines: [F.deadline('d', '2026-03-10',
-      { startDate: '2026-03-08', time: '17:00', blockDate: '2026-03-09' })]
+      { startDate: '2026-03-08', time: '17:00', blockDate: '2026-03-09', parts: [BLOCK] })]
   });
   const own = TC.buildDaySchedule(slot, '2026-03-10');
-  assert.deepEqual(own.blocks, [], 'the block has left the item\'s own day');
+  assert.deepEqual(own.blocks, [], 'the block is not on the item\'s own day');
   assert.deepEqual(ids(own.calNotes), ['n'], 'but the chip stays on the original date');
   assert.deepEqual(ids(own.deadlines), ['d'], 'and so does the due line');
 
   const moved = TC.buildDaySchedule(slot, '2026-03-12');
-  assert.deepEqual(ids(moved.blocks), ['n'], 'the note block draws on its chosen day');
+  assert.deepEqual(ids(moved.blocks), ['n:b'], 'the note block draws on that day');
   assert.equal(moved.blocks[0].time, '15:00');
   assert.deepEqual(ids(moved.calNotes), [], 'without dragging the chip along');
 
   const runUp = TC.buildDaySchedule(slot, '2026-03-09');
-  assert.deepEqual(ids(runUp.blocks), ['d'], 'prep sits on a caution day');
+  assert.deepEqual(ids(runUp.blocks), ['d:b'], 'prep sits on a caution day');
   assert.equal(runUp.blocks[0].time, '16:00', 'still ending at the due TIME');
   assert.deepEqual(ids(runUp.deadlinesCaution), ['d'], 'and the run-up marker is unaffected');
   assert.equal(TC.blockDay(slot.deadlines[0]), '2026-03-09');
@@ -796,10 +849,10 @@ test('blockDate moves the block to another day, alone', () => {
 
 test('a malformed blockDate falls back to the item\'s own day', () => {
   for (const v of ['', 'nonsense', '2026-3-1', 7, null, {}, []]) {
-    const n = F.calNote('n', '2026-03-10', { time: '15:00', blockDate: v });
+    const n = F.calNote('n', '2026-03-10', { time: '15:00', blockDate: v, parts: [BLOCK] });
     assert.equal(TC.blockDay(n), '2026-03-10', 'fallback for ' + JSON.stringify(v));
     assert.deepEqual(ids(TC.buildDaySchedule(F.emptySlot({ calendarNotes: [n] }), '2026-03-10').blocks),
-      ['n'], 'so the block is never lost to a day that does not exist');
+      ['n:b'], 'so the block is never lost to a day that does not exist');
   }
 });
 
@@ -824,14 +877,16 @@ test('a run-up clipped by midnight keeps its end on the due time', () => {
 test('GUARD: a block changes neither the due list nor the caution run-up', () => {
   const base = { cautionDates: ['2026-03-08', '2026-03-09'], time: '17:00' };
   const plain = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base })] });
-  const withBlock = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockDuration: 60 })] });
-  const moved = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockDate: '2026-03-09' })] });
-  const off = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockOff: true })] });
-  const ticked = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockDuration: 60, done: true })] });
+  const withBlock = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockDuration: 60, parts: [BLOCK] })] });
+  const moved = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10',
+    { ...base, parts: [{ id: 'a', date: '2026-03-08' }, { id: 'b', date: '2026-03-09' }] })] });
+  const off = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockOff: true, parts: [BLOCK] })] });
+  const ticked = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10',
+    { ...base, parts: [{ id: 'b', done: true }], done: true })] });
 
   for (const ds of ['2026-03-08', '2026-03-09', '2026-03-10']) {
     const a = TC.buildDaySchedule(plain, ds);
-    for (const [label, slot] of [['duration', withBlock], ['blockDate', moved], ['blockOff', off]]) {
+    for (const [label, slot] of [['a block', withBlock], ['blocks on caution days', moved], ['blockOff', off]]) {
       const b = TC.buildDaySchedule(slot, ds);
       assert.deepEqual(ids(a.deadlines), ids(b.deadlines), 'due list unchanged by ' + label + ' on ' + ds);
       assert.deepEqual(ids(a.deadlinesCaution), ids(b.deadlinesCaution), 'run-up unchanged by ' + label + ' on ' + ds);
@@ -841,53 +896,43 @@ test('GUARD: a block changes neither the due list nor the caution run-up', () =>
   }
   assert.equal(TC.dlCautionCount(moved.deadlines[0]), TC.dlCautionCount(plain.deadlines[0]));
   assert.deepEqual(TC.dlCautionDays(moved.deadlines[0]), ['2026-03-08', '2026-03-09'],
-    'and blockDate never rewrites the chosen days');
-  // and the tick still suppresses the run-up, block or no block
+    'and a block\'s own day never rewrites the chosen days');
+  // and the deadline's tick still suppresses the run-up, a block's tick or no
   assert.deepEqual(ids(TC.buildDaySchedule(ticked, '2026-03-09').deadlinesCaution), []);
   assert.deepEqual(ids(TC.buildDaySchedule(ticked, '2026-03-10').deadlines), ['d'],
     'while the deadline itself stays on its due day');
-});
 
-test('blockTime moves the block off the due-time anchor without touching it', () => {
-  const d = F.deadline('moved', '2026-03-10',
-    { startDate: '2026-03-08', time: '17:00', blockDuration: 60, blockTime: '08:00' });
-  assert.deepEqual(TC.dlBlockSpan(d), { time: '08:00', duration: 60 });
-  assert.equal(d.date, '2026-03-10', 'the due day is untouched');
-  assert.equal(d.time, '17:00', 'and so is the due time');
-  // absence is the third state: deleting the key restores the anchor rather
-  // than storing whatever it happened to compute
-  const { blockTime, ...reset } = d;
-  assert.deepEqual(TC.dlBlockSpan(reset), { time: '16:00', duration: 60 });
-});
-
-test('a run-up clipped by midnight keeps its end on the due time', () => {
-  const d = F.deadline('early', '2026-03-10', { startDate: '2026-03-10', time: '00:30', blockDuration: 60 });
-  assert.deepEqual(TC.dlBlockSpan(d), { time: '00:00', duration: 30 },
-    'clipped at the top, not pushed past the deadline');
-});
-
-test('GUARD: a block changes neither the due list nor the caution run-up', () => {
-  const base = { startDate: '2026-03-08', time: '17:00' };
-  const plain = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base })] });
-  const withBlock = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockDuration: 60 })] });
-  const ticked = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', { ...base, blockDuration: 60, done: true })] });
-
+  // the same independence on an un-migrated legacy record, whose run-up is
+  // the expanded `startDate` span rather than chosen days
+  const legacyPlain = F.emptySlot({ deadlines: [F.legacyDeadline('d', '2026-03-10', '2026-03-08')] });
+  const legacyBlock = F.emptySlot({ deadlines: [F.legacyDeadline('d', '2026-03-10', '2026-03-08',
+    { blockDuration: 60, parts: [{ id: 'a', date: '2026-03-08' }, BLOCK] })] });
   for (const ds of ['2026-03-08', '2026-03-09', '2026-03-10']) {
-    const a = TC.buildDaySchedule(plain, ds), b = TC.buildDaySchedule(withBlock, ds);
-    assert.deepEqual(ids(a.deadlines), ids(b.deadlines), 'due list unchanged on ' + ds);
-    assert.deepEqual(ids(a.deadlinesCaution), ids(b.deadlinesCaution), 'run-up unchanged on ' + ds);
+    const a = TC.buildDaySchedule(legacyPlain, ds), b = TC.buildDaySchedule(legacyBlock, ds);
+    assert.deepEqual(ids(a.deadlines), ids(b.deadlines), 'legacy due list unchanged on ' + ds);
+    assert.deepEqual(ids(a.deadlinesCaution), ids(b.deadlinesCaution), 'legacy run-up unchanged on ' + ds);
   }
-  // and the tick still suppresses the run-up, block or no block
-  assert.deepEqual(ids(TC.buildDaySchedule(ticked, '2026-03-09').deadlinesCaution), []);
-  assert.deepEqual(ids(TC.buildDaySchedule(ticked, '2026-03-10').deadlines), ['d'],
-    'while the deadline itself stays on its due day');
+});
+
+test('GUARD: a block\'s tick is the block\'s, never the deadline\'s', () => {
+  // A block ticked done is one session done. The deadline's own `done` is what
+  // hides its `!` days, and it is set in its popup and nowhere else.
+  const slot = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', {
+    cautionDates: ['2026-03-09'], time: '17:00', parts: [{ id: 'b', date: '2026-03-09', done: true }] })] });
+  assert.equal(TC.buildDaySchedule(slot, '2026-03-09').blocks[0].done, true, 'the block reads its own tick');
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-09').deadlinesCaution), ['d'],
+    'and the deadline still warns on its caution day');
+  // …and the other way round: a ticked deadline does not tick its blocks
+  const ticked = F.emptySlot({ deadlines: [F.deadline('d', '2026-03-10', {
+    cautionDates: ['2026-03-09'], time: '17:00', done: true, parts: [{ id: 'b', date: '2026-03-09' }] })] });
+  assert.equal(TC.buildDaySchedule(ticked, '2026-03-09').blocks[0].done, false);
 });
 
 test('a malformed blockDuration or blockTime is inert, never NaN geometry', () => {
-  const mk = v => F.emptySlot({ calendarNotes: [F.calNote('n', '2026-03-10', { time: '09:00', blockDuration: v })] });
+  const mk = v => F.emptySlot({ calendarNotes: [F.calNote('n', '2026-03-10', { time: '09:00', blockDuration: v, parts: [BLOCK] })] });
   for (const v of ['60', NaN, Infinity, 0, -30, null, {}, []]) {
     const b = TC.buildDaySchedule(mk(v), '2026-03-10').blocks[0];
-    assert.equal(b.duration, 60, 'falls back to the automatic default for ' + JSON.stringify(v));
+    assert.equal(b.duration, 60, 'falls back to the default for ' + JSON.stringify(v));
   }
   // A positive value below the 5-minute UI snap is still the user's: the reader
   // must not discard what schema.js accepted, or an imported note would render
@@ -904,7 +949,7 @@ test('a malformed blockDuration or blockTime is inert, never NaN geometry', () =
     { time: '08:00', duration: 60 });
 });
 
-test('parts stand in for the parent block, as a goal task\'s children do', () => {
+test('every part is a block, and one with no time of its own inherits its item\'s start', () => {
   const slot = F.emptySlot({
     deadlines: [F.deadline('essay', '2026-03-10', {
       startDate: '2026-03-08', time: '17:00', blockDuration: 60,
@@ -912,16 +957,17 @@ test('parts stand in for the parent block, as a goal task\'s children do', () =>
     })]
   });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
-  assert.deepEqual(ids(day.blocks), ['essay:a', 'essay:b'], 'the parent block is replaced by its parts');
-  assert.equal(day.blocks[0].time, '16:00', 'a part with no time of its own inherits the parent block start');
+  assert.deepEqual(ids(day.blocks), ['essay:a', 'essay:b'], 'one block per part');
+  assert.equal(day.blocks[0].time, '16:00', 'a part with no time of its own inherits the item\'s start');
   assert.equal(day.blocks[0].duration, 60);
   assert.equal(day.blocks[1].time, '13:00', 'and one with its own keeps it');
   assert.equal(day.blocks[1].duration, 45);
-  assert.equal(day.blocks[0].kind, 'Deadline part');
-  assert.deepEqual(ids(day.deadlines), ['essay'], 'the due-day entry is untouched by dissection');
+  assert.equal(day.blocks[0].kind, 'Deadline prep');
+  assert.equal(day.blocks[0].title, 'Outline', 'a titled part keeps its title');
+  assert.deepEqual(ids(day.deadlines), ['essay'], 'the due-day entry is untouched');
 });
 
-test('parts of a blockOff item draw nothing — blockOff is the one switch', () => {
+test('parts of a blockOff item draw nothing — blockOff still hides them all', () => {
   const slot = F.emptySlot({
     deadlines: [F.deadline('d', '2026-03-10',
       { startDate: '2026-03-08', time: '17:00', blockOff: true, parts: [{ id: 'a', title: 'x' }] })],
@@ -952,25 +998,129 @@ test('a part\'s own date splits one item across several days', () => {
   assert.deepEqual(ids(d8.blocks), ['essay:a'], 'a part with its own date draws there');
   assert.deepEqual(d8.blocks[0], Object.assign({}, d8.blocks[0], { time: '09:00', duration: 90 }));
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-09').blocks), ['essay:b'],
-    'a dated part with no time of its own still inherits the parent block start');
+    'a dated part with no time of its own still inherits the item\'s start');
   assert.equal(TC.buildDaySchedule(slot, '2026-03-09').blocks[0].time, '16:00');
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10').blocks), ['essay:c'],
-    'and an undated part stays on the parent block\'s day');
+    'and an undated part stays on the item\'s own day');
   assert.equal(TC.partDay({ date: '2026-03-08' }, slot.deadlines[0]), '2026-03-08');
-  assert.equal(TC.partDay({}, slot.deadlines[0]), '2026-03-10', 'absence means the parent block\'s day');
+  assert.equal(TC.partDay({}, slot.deadlines[0]), '2026-03-10', 'absence means the item\'s day');
   assert.equal(TC.partDay({ date: 'junk' }, slot.deadlines[0]), '2026-03-10');
   // the due line and the caution run-up are untouched by any of it
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10').deadlines), ['essay']);
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-09').deadlinesCaution), ['essay']);
 });
 
-test('a part follows a moved parent block rather than the item\'s own date', () => {
+test('a part follows a legacy blockDate rather than the item\'s own date', () => {
   const slot = F.emptySlot({
     calendarNotes: [F.calNote('n', '2026-03-10',
       { time: '15:00', blockDate: '2026-03-12', parts: [{ id: 'p', title: 'step' }] })]
   });
   assert.deepEqual(TC.buildDaySchedule(slot, '2026-03-10').blocks, [], 'not on the note\'s own day');
   assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-12').blocks), ['n:p']);
+});
+
+test('blockDays is the days an item\'s blocks sit on — its parts and nothing else', () => {
+  const d = F.deadline('d', '2026-03-10', { cautionDates: ['2026-03-08', '2026-03-09'], time: '17:00',
+    parts: [{ id: 'a', date: '2026-03-08' }, { id: 'b' }, { id: 'c', date: '2026-03-08' }, { id: 'e', date: 'junk' }] });
+  assert.deepEqual(TC.blockDays(d), ['2026-03-08', '2026-03-10', '2026-03-08', '2026-03-10'],
+    'one entry per block, duplicates kept, an undated or malformed one on the item\'s own day');
+  assert.equal(TC.blockDays({ ...d, blockDate: '2026-03-09' })[1], '2026-03-09',
+    'an undated block follows a legacy blockDate');
+  const { parts, ...partless } = d;
+  assert.deepEqual(TC.blockDays({ ...partless, blockDate: '2026-03-09', blockTime: '08:00' }), [],
+    'no parts, no days — whatever legacy keys it carries');
+  assert.deepEqual(TC.blockDays({ ...d, blockOff: true }), [], 'and none while blockOff hides them');
+  for (const v of [null, undefined, {}, { parts: 'x' }, { parts: [null, 7] }]) {
+    assert.deepEqual(TC.blockDays(v), [], 'total over ' + JSON.stringify(v));
+  }
+});
+
+// ── sub-tasks: a note's or a deadline's child tasks ────────────────────────
+/* The user's rules (2026-10-22): in ★ Forced a note or a deadline is
+   dissected into named SUB-TASKS — child tasks of the original, which is NOT
+   gone. A sub-task is a part with a title. It starts `unscheduled`, is put on
+   exactly one day, and is drawn only while it is on the schedule. */
+
+test('SUB: a sub-task on the schedule is drawn beside its original, and one off it draws nothing', () => {
+  const d = F.deadline('essay', '2026-03-10', { cautionDates: ['2026-03-09'], time: '17:00', title: 'Essay',
+    parts: [{ id: 'b' }, { id: 's1', title: 'Outline', date: '2026-03-10' },
+      { id: 's2', title: 'Draft', unscheduled: true }, { id: 's3', title: 'Edit', date: '2026-03-09', time: '10:00' }] });
+  const slot = F.emptySlot({ deadlines: [d] });
+  const day = TC.buildDaySchedule(slot, '2026-03-10');
+  assert.ok(!ids(day.blocks).includes('essay:s2'), 'a sub-task off the schedule draws nothing');
+  assert.deepEqual(ids(day.blocks).sort(), ['essay:b', 'essay:s1'],
+    'the original\'s block is NOT gone, and its sub-task is drawn beside it');
+  const byId = Object.fromEntries(day.blocks.map(b => [b.id, b]));
+  assert.equal(byId['essay:s1'].title, 'Outline', 'the sub-task under its own name');
+  assert.equal(byId['essay:b'].title, 'Essay', 'and the original under its own');
+  assert.equal(byId['essay:s1'].time, '16:00', 'a sub-task with no time of its own starts where the original does');
+  const d9 = TC.buildDaySchedule(slot, '2026-03-09');
+  assert.deepEqual(ids(d9.blocks), ['essay:s3'], 'one put on another day is drawn there, alone');
+  assert.equal(d9.blocks[0].time, '10:00', 'at its own time');
+  for (const ds of ['2026-03-08', '2026-03-09', '2026-03-10', '2026-03-11']) {
+    assert.ok(!TC.buildDaySchedule(slot, ds).blocks.some(b => b.id === 'essay:s2'),
+      'a sub-task off the schedule draws nothing, on ' + ds);
+  }
+  assert.deepEqual(TC.drawnParts(d).map(p => p.id), ['b', 's1', 's3'], 'drawnParts is that rule, by itself');
+  assert.deepEqual(TC.itemSubtasks(d).map(p => p.id), ['s1', 's2', 's3'], 'and itemSubtasks every sub-task, on or off');
+});
+
+test('SUB: every part stored before sub-tasks reads as it did', () => {
+  // the old `＋` composer's titled part with no date: a sub-task, still on the item's day
+  const n = F.calNote('n', '2026-03-10', { time: '09:00', title: 'Lab', parts: [{ id: 'old', title: 'Gloves' }] });
+  assert.deepEqual(ids(TC.buildDaySchedule(F.emptySlot({ calendarNotes: [n] }), '2026-03-10').blocks), ['n:old'],
+    'an old composer task stays where it was drawn');
+  // the rejected ✂ build's children carried `parentId`: it hides nothing
+  const cut = F.calNote('m', '2026-03-10', { time: '09:00', parts: [{ id: 'p' }, { id: 'c', parentId: 'p', title: 'Step' }] });
+  assert.deepEqual(ids(TC.buildDaySchedule(F.emptySlot({ calendarNotes: [cut] }), '2026-03-10').blocks).sort(), ['m:c', 'm:p'],
+    'a parentId hides nothing — the original it once hid is drawn again');
+  assert.equal(TC.partIsSub(TC.itemParts(n)[0]), true, 'the old composer task is a sub-task of its note');
+  // a ★ pick is never a sub-task
+  assert.equal(TC.partIsSub({ id: 'b' }), false, 'an untitled part is a block of the original');
+  assert.equal(TC.partIsSub({ id: 'b', title: '   ' }), false, 'and a blank title is not a name');
+});
+
+test('SUB: the original reads done only when every sub-task is, and its own tick stops counting', () => {
+  const mk = (a, b, own) => F.deadline('d', '2026-03-10', { cautionDates: [], time: '17:00',
+    parts: [{ id: 'o', done: own }, { id: 'a', title: 'A', done: a, unscheduled: true },
+      { id: 'b', title: 'B', done: b, date: '2026-03-10' }] });
+  const orig = d => TC.buildDaySchedule(F.emptySlot({ deadlines: [d] }), '2026-03-10').blocks.find(x => x.id === 'd:o');
+  assert.equal(orig(mk(true, true, false)).done, true, 'every sub-task done: the original is done');
+  assert.equal(orig(mk(true, false, false)).done, false, 'one still open: it is not');
+  assert.equal(orig(mk(false, true, false)).done, false, 'and one OFF the schedule still counts');
+  assert.equal(orig(mk(false, false, true)).done, false, 'its own tick no longer counts once it has sub-tasks');
+  const d = mk(true, false, true);
+  const [, a, b] = TC.itemParts(d);
+  assert.equal(TC.partDone(d, a), true, 'a sub-task reads its own tick');
+  assert.equal(TC.partDone(d, b), false);
+  const plain = F.deadline('x', '2026-03-10', { parts: [{ id: 'q', done: true }] });
+  assert.equal(TC.partDone(plain, TC.itemParts(plain)[0]), true, 'an original with no sub-tasks reads its own tick');
+  assert.equal(TC.partDone(plain, null), false);
+});
+
+test('SUB: a sub-task holds the day it is on, and one off the schedule holds none', () => {
+  const d = F.deadline('d', '2026-03-10', { cautionDates: ['2026-03-08', '2026-03-09'], time: '17:00',
+    parts: [{ id: 's', title: 'x', date: '2026-03-08' }, { id: 'u', title: 'y', unscheduled: true, date: '2026-03-09' }] });
+  assert.deepEqual(TC.blockDays(d), ['2026-03-08'], 'only the scheduled sub-task\'s day');
+  assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: ['2026-03-09'] }), ['2026-03-08'],
+    'un-picking the day a sub-task is on is refused, and the day named');
+  assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: ['2026-03-08'] }), [],
+    'while one off the schedule strands nothing');
+  assert.deepEqual(TC.dlStrandedBlockDays(d, { date: '2026-03-07', cautionDates: [] }), ['2026-03-08'],
+    'and its date is its own, so a due-day move does not carry it');
+});
+
+test('SUB: the sub-task readers are total', () => {
+  for (const v of [null, undefined, {}, { parts: 'x' }, { parts: [null, 7] }]) {
+    assert.deepEqual(TC.drawnParts(v), [], 'drawnParts over ' + JSON.stringify(v));
+    assert.deepEqual(TC.itemSubtasks(v), [], 'itemSubtasks over ' + JSON.stringify(v));
+  }
+  for (const p of [null, undefined, 7, 'x', [], {}, { title: 7 }, { title: null }]) {
+    assert.equal(TC.partIsSub(p), false, 'partIsSub over ' + JSON.stringify(p));
+  }
+  assert.equal(TC.partScheduled({ unscheduled: true }), false);
+  assert.equal(TC.partScheduled({}), true, 'absence is on the schedule — every part stored before this');
+  assert.equal(TC.partScheduled({ unscheduled: false }), true);
 });
 
 test('dlStrandedBlockDays names every block day an un-pick or a move would orphan', () => {
@@ -983,10 +1133,10 @@ test('dlStrandedBlockDays names every block day an un-pick or a move would orpha
   assert.deepEqual(TC.dlStrandedBlockDays(d, null), []);
   assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: all, date: '2026-03-10' }), []);
 
-  // UN-PICKING a day that holds a block, and one that holds a part. This is
-  // the case the old contiguous span could not express: 03-06 is un-picked
-  // while 03-05 and 03-07 stay, so the orphaned day is in the MIDDLE of the
-  // remaining set rather than off one end.
+  // UN-PICKING a day that holds a block — `b`, undated, on the legacy blockDate
+  // — and one that holds `a`. This is the case the old contiguous span could
+  // not express: 03-06 is un-picked while 03-05 and 03-07 stay, so the
+  // orphaned day is in the MIDDLE of the remaining set rather than off one end.
   assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: all.filter(x => x !== '2026-03-06') }),
     ['2026-03-06']);
   assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: ['2026-03-05', '2026-03-08', '2026-03-09'] }),
@@ -994,35 +1144,41 @@ test('dlStrandedBlockDays names every block day an un-pick or a move would orpha
   assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: [] }),
     ['2026-03-06', '2026-03-07'], 'clearing every day strands both');
 
-  // pulling the due day back past the undated part, which sits on the block day
+  // pulling the due day back past both blocks
   assert.deepEqual(TC.dlStrandedBlockDays(d, { cautionDates: ['2026-03-05'], date: '2026-03-05' }),
     ['2026-03-06', '2026-03-07']);
 
-  // a blockOff deadline has no block to strand, so no edit is ever refused
+  // a blockOff deadline's blocks are hidden, so no edit is ever refused
   assert.deepEqual(TC.dlStrandedBlockDays({ ...d, blockOff: true }, { cautionDates: [] }), []);
 
-  // THE case that a due-day move depends on. With no blockDate and no parts the
-  // block sits on the item's OWN date, so it MOVES WITH a due-day change and
-  // cannot be stranded by one. Reading the stored blockDay here instead would
-  // report the old due day as orphaned and refuse every move of an un-anchored
-  // deadline — which is exactly what it did until a browser case caught it.
-  const unanchored = F.deadline('u', '2026-03-10', { cautionDates: ['2026-03-08'], time: '17:00' });
+  // THE case that a due-day move depends on. A block with no `date` of its own
+  // and no legacy blockDate sits on the item's OWN date, so it MOVES WITH a
+  // due-day change and cannot be stranded by one. Reading the stored day here
+  // instead would report the old due day as orphaned and refuse every such
+  // move — which is exactly what it did until a browser case caught it.
+  const unanchored = F.deadline('u', '2026-03-10', { cautionDates: ['2026-03-08'], time: '17:00', parts: [BLOCK] });
   assert.deepEqual(TC.dlStrandedBlockDays(unanchored, { date: '2026-03-22' }), [],
-    'moving the due day carries the automatic block with it');
+    'moving the due day carries the block with it');
   assert.deepEqual(TC.dlStrandedBlockDays(unanchored, { date: '2026-03-09' }), [],
     'in either direction');
   assert.deepEqual(TC.dlStrandedBlockDays(unanchored, { cautionDates: [] }), [],
     'and un-picking every caution day cannot strand it either — it is on the due day');
-  // ...while an ANCHORED block is still checked against the proposed due day
+  // ...while an ANCHORED block is still checked against the proposed set
   const anchored = F.deadline('a', '2026-03-10',
-    { cautionDates: ['2026-03-08'], time: '17:00', blockDate: '2026-03-08' });
+    { cautionDates: ['2026-03-08'], time: '17:00', parts: [{ id: 'b', date: '2026-03-08' }] });
   assert.deepEqual(TC.dlStrandedBlockDays(anchored, { date: '2026-03-22' }), [],
     '03-08 is still a chosen day, so the move is fine');
   assert.deepEqual(TC.dlStrandedBlockDays(anchored, { cautionDates: [] }), ['2026-03-08'],
     'but un-picking the day it sits on strands it');
 
-  // and the plain deadline every form starts from — no chosen days at all —
-  // strands nothing, because its block sits on the due day it always occupies
+  // A deadline with NO blocks has nothing to strand, whatever legacy keys an
+  // automatic block left behind — every un-pick and every move is allowed.
+  const none = F.deadline('n', '2026-03-10',
+    { cautionDates: ['2026-03-08'], time: '17:00', blockDate: '2026-03-08', blockTime: '08:00' });
+  assert.deepEqual(TC.dlStrandedBlockDays(none, { cautionDates: [] }), [],
+    'a legacy blockDate alone is not a block');
+  assert.deepEqual(TC.dlStrandedBlockDays(none, { cautionDates: [], date: '2026-03-05' }), []);
+  // and so is the plain deadline every form starts from
   assert.deepEqual(
     TC.dlStrandedBlockDays(F.deadline('p', '2026-03-10', { cautionDates: [] }), { cautionDates: [] }), []);
 
@@ -1052,8 +1208,8 @@ test('itemParts tolerates every malformed stored value', () => {
 test('note and deadline blocks join overlap layout with real schedule blocks', () => {
   const slot = F.emptySlot({
     goals: [F.task('t', { scheduledDate: '2026-03-10', scheduledTime: '16:00', duration: 60 })],
-    calendarNotes: [F.calNote('n', '2026-03-10', { time: '16:00', blockDuration: 60 })],
-    deadlines: [F.deadline('d', '2026-03-10', { startDate: '2026-03-08', time: '17:00', blockDuration: 60 })]
+    calendarNotes: [F.calNote('n', '2026-03-10', { time: '16:00', blockDuration: 60, parts: [BLOCK] })],
+    deadlines: [F.deadline('d', '2026-03-10', { startDate: '2026-03-08', time: '17:00', blockDuration: 60, parts: [BLOCK] })]
   });
   const day = TC.buildDaySchedule(slot, '2026-03-10');
   const laid = day.blocks.map(b => {
@@ -1061,19 +1217,19 @@ test('note and deadline blocks join overlap layout with real schedule blocks', (
     return { id: b.id, top: h * 60 + m, height: b.duration };
   });
   const info = TC.overlapInfo(laid);
-  assert.deepEqual(info.d.sort(), ['d', 'n', 't'],
+  assert.deepEqual(info['d:b'].sort(), ['d:b', 'n:b', 't'],
     'all three share 16:00–17:00 and are laid out side by side');
 });
 
 test('a block is filtered by origin like the item that owns it', () => {
   const slot = F.emptySlot({
     deadlines: [
-      F.deadline('sched', '2026-03-10', { startDate: '2026-03-10', time: '17:00', blockDuration: 60 }),
-      F.deadline('doc', '2026-03-10', { startDate: '2026-03-10', time: '12:00', blockDuration: 30, docPageId: 'p-1' })
+      F.deadline('sched', '2026-03-10', { startDate: '2026-03-10', time: '17:00', blockDuration: 60, parts: [BLOCK] }),
+      F.deadline('doc', '2026-03-10', { startDate: '2026-03-10', time: '12:00', blockDuration: 30, docPageId: 'p-1', parts: [BLOCK] })
     ]
   });
-  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['doc'] }).blocks), ['sched']);
-  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['deadline'] }).blocks), ['doc']);
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['doc'] }).blocks), ['sched:b']);
+  assert.deepEqual(ids(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['deadline'] }).blocks), ['doc:b']);
   assert.deepEqual(TC.buildDaySchedule(slot, '2026-03-10', { hidden: ['deadline', 'doc'] }).blocks, []);
 });
 

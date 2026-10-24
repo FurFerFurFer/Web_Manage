@@ -3781,3 +3781,412 @@ prompt wording, so it is not the evidence for the shipped tree.
   too; a stored one is drawn clipped.
 - The `ⓘ` / ✕ buttons' hover-only visibility on touch is the existing block model, not new.
 - Weekly per-week exceptions were deliberately not built (NOTES).
+
+### ★ Forced adds a block, like the other three add buttons (2026-10-21)
+
+The user found ★ Forced's row controls meaningless — `＋` (a task composer that defaulted to the
+item's own day, not the day the panel was opened on), `remove from schedule` and `＋ add block back`
+— and asked only that day notes and deadlines "be able to become a normal task block". Two
+questions settled the shape before building:
+
+- **Only when added.** No note or deadline gets a block by itself any more; each pick adds a new
+  block on the opened day, as ● Learn and ■ Core Routine add theirs, so a deadline can be given
+  several prep sessions.
+- **A deadline picked on a day it does not occupy makes that day a caution day**, in the same
+  write. The rule "a deadline's block sits on a caution day or its due day" stays.
+
+Chosen without asking, and named in the hand-off so they can be vetoed: a solid border on these
+blocks; no `✎` notes panel on them; the Timetable tab's controls unchanged.
+
+**Where it lives.**
+- A block is a `parts` record — the shape the old `＋` composer already stored, drawn on all three
+  grids, draggable, resizable and tickable — so no field, key or migration was added. An item with
+  no parts has no block: the parent-block branch is gone from `itemBlocksOn` (`progress.html`) and
+  from `buildDaySchedule` (`calendar-core.js`, now `?v=12` on Home and Documentations).
+- `blockDays` is new, in `calendar-core.js` with the twin in `progress.html`: the one definition of
+  which days an item's blocks sit on. It replaced the same rule spelled at four sites — both
+  `dlStrandedBlockDays` copies and both caution pickers' "holds prep" sets — each of which read "no
+  parts → the item's own day".
+- `withForcedBlock` is the one writer (pure, in `progress.html`): `{id, createdAt, done: false}`
+  plus a `date` only when it differs from `blockDay(item)`, the caution-day union through
+  `dlWithCautionDays`, and `blockOff: false` over a legacy `true`. It is also the one guard
+  (`forcedPickRefusal`); the row's `pick()` deliberately does not re-check.
+- The ★ Forced row is one button plus `ⓘ`. `unscheduleBlock`, `restoreBlock`,
+  `resetDlBlockAnchor`, `addPart` and the `dlnDissect` / `dlnPartDraft` state are gone, and so are
+  the parent-block branches of the renderer, the drag and resize commits and both drag starts.
+- The block's `✕` prompt moved into `removePart`, its only handler.
+- **A bug fixed on the way, because the new flow walked straight into it** (NOTES listed it on
+  2026-10-16): the Schedule's mount-only pointer effect read the `deadlines` prop for its snap, so a
+  caution day a pick added was unknown to the drag, and the block just put there snapped onto the
+  due day. The allowed days now ride in the ghost (`dlDragDays`), stashed at both drag starts.
+
+**Hooks**: `data-dln-add`, `data-dln-info`, `data-dln-on`, `data-dln-hidden`,
+`data-dln-caution-hint`, `data-dln-refused` on the row; `data-block-done`, `data-block-open`,
+`data-block-remove` on the block. Gone: `data-dln-dissect`, `data-dln-part-input|date|time|add|warn`,
+`data-dln-unschedule`, `data-dln-schedule`, `data-dln-reset`.
+
+**Offline.** `calendar-core` stays at 121 cases, swept under the five timezones: 17 cases that
+assumed the automatic block now seed a part; three cases the file held twice keep one copy; new:
+no parts → no block, an untitled block labelled by its item, `blockDays`, a block's tick is never
+the deadline's; the GUARD gained a legacy-span variant. Fail-first: the new file against the
+pre-change module failed 8 — the two named claims on their own messages (`nothing reaches the hour
+grid by itself`, `a legacy blockDate alone is not a block`), the label (`'Part'` for `'Lab coat'`),
+the kind wording, and two that are only the missing export (weak, said so).
+
+**Browser.**
+- Removed, as their premise is gone, and replaced by the cases below: `remove from schedule writes
+  blockOff and keeps everything else`, `dissecting replaces the parent block with its parts, and
+  emptying restores it`, `a task is added on a chosen day, capped to a deadline's caution period`.
+- Inverted rather than deleted: `PROGRESS: an item with no block keys is on the grid automatically`
+  is now `… an item with no parts has no block, and nothing is written for it`, with an added item
+  beside it as the control.
+- Re-seeded with a part, claims unchanged: the due-time / note-time geometry, the midnight clip, the
+  overlap layout, the stray-`blockDuration` 08:00 case, the column case, HOME's moved block, the
+  strand refusals on Progress and in Documentations (four cases seeded a bare `blockDate` as
+  prep), and the cases that borrowed an automatic note block — the two touch-arming cases and the
+  class GUARD (`n-arm`, `n-1` now `…:b`).
+- Rewritten for the new rule: the Documentations case that composed a timed note expected it on
+  that page's hour grid (`a day note with a time moves to the hour grid…`); it is now listed with its
+  time and on no grid until added. Home and Documentations each gained "none for an item never
+  added" beside their existing block.
+- Rewritten in place for the pick: the legacy-`blockOff` case (still hidden, and a pick shows it),
+  the untimed note (now picked, still no `time` key), and the foreign-key guard (a pick, not
+  `remove from schedule`).
+- New, 10: a pick's exact stored shape and a second pick; a pick on a non-caution day (with every
+  write recorded, none holding one half without the other); a deadline with no real due day; the
+  block `✕` (Cancel first, then one prompt, then the last block deleting the key); a block's own
+  tick; a deadline with no blocks refusing no un-pick, on Progress and in Documentations
+  separately; and three drags — a mouse drag within the new caution day, and a mouse drag and a
+  touch swipe onto it from the due day. 417 − 3 + 10 = **424** browser subtests.
+- The shared `mouseDrag` helper now waits two frames — or 250ms, since a background tab runs no
+  frames — before releasing. In the void run below, one new vertical drag landed on its third move
+  (16:45 for 17:00) while its date, the claim it is named for, held; neither the edge auto-scroll
+  (the press sat 176px and 227px from the 80px zones, `scrollTop` unchanged) nor the smooth viewport
+  scroll (the document does not scroll) was the cause, and 6× CPU throttling did not reproduce it.
+  The wait is a precaution, not a proven fix, and that case now asserts "later than 16:00" rather
+  than the incidental minute. A frames-only first version hung the two-tab timetable case, which
+  drags in a background tab — caught by running every `mouseDrag` case.
+
+**Baselines.** Each tree is a real copy of the scratch working tree, `tests/` included, with ONE
+rule reversed by a builder that refuses any swap matching other than once and checks with `diff -rq`
+that exactly one file differs. Every run went through a task-owned `--require` preload declaring
+the 32 block cases, and printed `32 case(s) matched` every time. Runs were sequential, the journal
+was checked over each run's window, and two of them were void (below).
+
+| Tree | Rule reversed | Failed (of 32) |
+| --- | --- | --- |
+| CONTROL | none | nothing |
+| D1 core | an item with no parts gets its automatic block back | the HOME and DOCUMENTATIONS "none for an item never added" cases, each on its own claim (`got [… "Unadded note 11:00 · 1h" …]`), and the Documentations timed-note case ("not on the hour grid"). Every PROGRESS case passed |
+| D2 page | the same, in `progress.html`'s copy | PROGRESS "no parts has no block" alone, on "only the item that was added is on the grid": **disjoint from D1** |
+| D3 page | the drag snap reads the mount-time `deadlines` again | the three drag cases, each on its date ("snapped … to 2026-10-23", the due day) |
+| D4 page | the MOUSE ghost carries no allowed days | the mouse carrying case alone — the vertical one passes BY DESIGN, an empty set pinning the ghost to its own column |
+| D5 page | the TOUCH ghost carries no allowed days | the touch case alone: **disjoint from D4** |
+| D6 page | a pick no longer makes its day a caution day | the caution case on its claim, plus the three drag cases on their SETUP precondition ("the pick made today a caution day") — not evidence about dragging; D3 ⊂ D6 by construction, said rather than claimed away |
+| D7 page | the block `✕` no longer asks | the `✕` case alone, on "the control asked before writing" |
+| D8 page | the writer no longer refuses a deadline whose due day is not a real day | first run **void** (suspend). It also showed the case could not fail: the row was `disabled`, and React drops a click on a button whose `disabled` prop is set, so the click "past the row" never reached the writer. The row is now `aria-disabled`; re-run on the final code: the malformed-due-day case alone, on "a click on it writes nothing — the writer refused" |
+| D9 page | `progress.html`'s `dlStrandedBlockDays` reads a partless item's own day again | first run **void** (network); re-run on the final code: the PROGRESS "no blocks never refuses an un-pick" case alone |
+| D10 core | the same, in `calendar-core.js` | the DOCUMENTATIONS "no blocks never refuses an un-pick" case alone: **disjoint from D9** |
+| CONTROL | none | one case, on a Firebase script `net::ERR_SOCKET_NOT_CONNECTED` in `realErrors` — the hotspot dropping; the case's own assertions had passed |
+
+The final-code set was CONTROL, D8, D9, CONTROL: both controls passed all 32. D1–D7 and D10 ran on
+the tree before the row's `disabled` → `aria-disabled` change, which touches none of their cases.
+
+**Two void runs, and why.** The machine slept twice: a lid close 13:21–14:13 (during the first full
+run), and an automatic suspend at 14:57 — on battery, GNOME suspends after 15 idle minutes, with no
+`Lid closed` line in the journal to give it away. The charger went in at about 15:10, after which
+nothing slept. Separately, the laptop is on a phone hotspot that dropped at 15:03, taking the CDN
+scripts every page mounts from with it; that is the D9 void and the last control's one failure.
+
+**Full runs.**
+- 12:48–14:20, on the scratch tree before the last fixes: **void**. The lid closed 13:21–14:13
+  mid-run; cases 386–395 died on `CDP connection closed` and the panel timeouts after it. Before
+  the suspend it found the real stragglers: the Documentations timed-note case (now rewritten),
+  one new vertical drag landing at 16:45 (the `mouseDrag` wait and the relaxed minute, above), and
+  the known ~1-in-30 week-view class drag, which then passed in every narrowed run.
+- 15:27, on the repository with the final tree: **void**. All 24 offline suite runs passed, then
+  the lid closed 15:37:00–16:36:44 and cases 125–126 died on `CDP connection closed`. Stopped by
+  explicit PID.
+- **16:41:06–17:16:14, on the repository** — HEAD `c6e986c` plus this change, uncommitted — run by
+  the peer session `track-website-a1` at the user's request, and checked here from its log:
+  **all 25 suites passed**, exit 0. `calendar-core` 121, `schema` 68 and `notes-core` 33 identical
+  under all five timezones; `true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21,
+  `doc-table-core` 103, `schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, `viewport`
+  10, `cdp-cleanup` 13; browser plan `1..1` with **424** subtests ok and 0 not ok. The md5 of every
+  page, script, stylesheet and test file was identical before and after, HEAD `c6e986c` at both
+  ends, the journal clean over 16:40–17:18, the laptop on mains, 35 minutes. Every code and test
+  file was confirmed byte-identical to the tree the baselines were built from. The week-view flake
+  did not fire.
+
+**Not covered.**
+- Real touch hardware (synthesised TouchEvents only), the live Firebase project, multi-device
+  sync, and print.
+- What existing data looks like after the change was checked against synthetic fixtures only:
+  every note and deadline without parts leaves all three grids, and no real export was opened.
+
+### Per-page tab icons, and iPhone/iPad home-screen icons (2026-10-21)
+
+The user asked for a separate icon per page, then for Progress to be "a dart on the circle board
+representing reaching a goal", in red. Two commits, both pushed and live on GitHub Pages:
+- `7ace023`: each page's inline `data:image/svg+xml` tab icon (line 7) is its own. Home keeps the
+  rings; Progress is a dart in a dartboard's bullseye on `#b91c1c`, the Grit tag red (white on it is
+  6.5:1; the brick `--color-danger` read too close to True Storage's brown).
+- `c6e986c`: line 8 of each page links `assets/icons/<page>-180.png?v=1` as `apple-touch-icon`,
+  because iOS ignores SVG for Add to Home Screen. Each PNG is rendered FROM that page's line-7 icon —
+  the rounded rect swapped for a full 180×180 square, glyph in `translate(18 18) scale(4.5)` — and
+  screenshotted through `tests/lib/cdp.js`. The square is full-bleed because iOS masks the corners
+  and turns transparency black.
+
+**Targeted check** (a task-owned script, not committed): served the repository, opened all five
+pages through `cdp.js`, and asserted for each one: exactly one `link[rel="icon"]`; its URI decodes,
+and the pixel at (2,16) is the page's own background; no request matching `favicon.ico`; no page
+errors other than Firebase/googleapis/gstatic ones; exactly one `apple-touch-icon`, served as
+`200 image/png 180x180`, with the pixel at (4,90) on the page's background and alpha 255 in the
+corner. It passed 5/5 after the final `7ace023` icons, and again after `c6e986c`. A fetch of the live
+GitHub Pages copy then showed 5/5 for both: tab colours by 09:34 and touch PNGs by 09:46.
+
+**Fail-first: not shown.** The check asserts a different colour per page, which the old shared
+icon could not satisfy. But it was never run against the pre-change tree, so that is reasoning,
+not evidence. No case was added to `tests/browser.test.js`. The only committed coverage is the
+existing "no page errors" assertions, which catch a page that stops declaring an icon (the
+`/favicon.ico` 404). Nothing in the suite pins a page's icon or its touch PNG.
+
+**Full run.** `node tests/run.js` 16:41:06–17:16:14, on the REPOSITORY: HEAD `c6e986c` plus the
+★ Forced change above, uncommitted. This is the run that entry still owed. Exit 0, "all 25 suites
+passed". `calendar-core` 121, `schema` 68 and `notes-core` 33 under all five timezones;
+`true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+`schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, `viewport` 10, `cdp-cleanup` 13;
+browser plan `1..1` with **424** subtests ok and 0 not ok. The `md5sum` of every page, script,
+stylesheet and test file was identical before and after (`de1ef2a1…`), HEAD was the same at both
+ends, the laptop was on mains power, and journalctl over 16:40–17:17 shows no lid, suspend or resume
+events. Four earlier full runs are not evidence: two of this session's, stopped by hand because an
+icon edit superseded the tree under them, and the ★ Forced session's two, each spanning a suspend.
+
+**Not covered.**
+- A real Add to Home Screen on the user's iPhone and iPad was not observed. Neither was iOS's
+  "Open as Web App" storage split, which the user was warned about.
+- The GNOME dock launchers (five `.desktop` files and their icons under `~/.local/share/`) are
+  outside the repository. They pass `desktop-file-validate`, but their look in the dock and their
+  window grouping were not observed on screen.
+- Android home-screen icons: no manifest was added.
+
+### `✂` splits a note's or deadline's block into named sub-tasks, as a task block splits (2026-10-21 / 22)
+
+**Superseded the same evening, and removed (2026-10-24).** The user rejected this build: the split
+belongs in ★ Forced, and the original must not be hidden. Kept here as the record of what was built
+and proven; see "Sub-tasks in ★ Forced" below for what replaced it.
+
+After the ★ Forced change above, the user asked where the old `＋` composer's "dissect" had gone.
+Offered a rename on the block, they answered: "make the original one the parent and make the ones
+that I name all as child (the same as the feature that split task block)". Built to that; nothing
+else was asked.
+
+**Where it lives.**
+- No new field, key or migration. A sub-task is one more `parts` record, carrying `parentId` (the id
+  of the block it was split from) and a `title`; `schema.js` already accepts it (a part only has to
+  be an object). It copies the block's own `date`, `time` and `blockDuration`, so it starts where the
+  block was — `addDissectChild`'s rule for a task.
+- `calendar-core.js` (`?v=13` on Home and Documentations) gained `partIsTop`, `partChildren`,
+  `drawnParts` and `partDone`, with the private `partParent`; `progress.html` has the documented
+  twins. `drawnParts` is the one definition of which parts are drawn: a split block is hidden only on
+  a day one of its sub-tasks sits on — the goal rule `buildDaySchedule` already applies to a task
+  with sub-tasks — and `blockDays` reads it. `partDone`: a split block is done when every sub-task is.
+- One level, enforced in `partParent` ALONE. The first draft also checked it in `drawnParts` and
+  `partChildren`; that is two doors, so the doctored one-level baseline (OB below) could not have
+  failed, and the extra checks were removed before any evidence was taken.
+- `progress.html`: `withPartChild` (pure, id minted outside), `addPartChild`, a `✂` on each block
+  (`data-block-dissect`) and a Dissect box modelled on the task one (`data-part-dissect`,
+  `-input`, `-add`, `-child`, `-remove`, `-close`). A split block draws no checkbox; the block gained
+  `data-block-split` (its sub-task count) and `data-block-state` (`done` / `open`). `removePart`'s
+  one prompt now says whether it removes a sub-task, a split block (its sub-tasks stay) or a plain
+  block. The ★ Forced row's hidden-block count reads `drawnParts`.
+- **Found by writing the second case, and fixed before evidence:** with the block hidden behind its
+  sub-tasks, its `✂` — the only way into its box — was hidden too, so nothing more could be added.
+  A sub-task's `✂` now opens its block's box (`dissectOf` in `itemBlocksOn`), and a name added
+  there is a sibling, never a grandchild.
+
+**Offline.** `calendar-core` 121 → **126**, swept under the five timezones on the repository with
+identical results (126/126 each). New: a split block giving way to its sub-tasks, and back on its
+day once none share it; `partDone`; one level; a removed block's sub-task being a block of its own,
+plus every hand-edited shape (cycle, self-parent, duplicate id, orphan) staying drawn; and a GUARD
+that a split never leaves a day unheld. Against the PRE-split module the file failed 5: the export
+list, and the three SPLIT cases each on its own message ("the sub-tasks are drawn, and the block they
+came from is not", "every one done", "a sub-task is never split again"), plus the orphan case
+("…so it can be split in turn"). The GUARD passed there, by design — its first draft did not (an
+exact `deepEqual` on `blockDays` caught a duplicate day, not the claim) and now compares a set. Four
+doctored copies of the module, one rule each:
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| OA | a `parentId` naming no other part no longer reads as top-level | the orphan case alone, on "it is top-level now, so it can be split in turn" |
+| OB | a parent need not be top-level (any depth) | the one-level case on its claim, and the orphan case on "a cycle hides nothing" — the one-level rule is what keeps a cycle drawn |
+| OC | a split block is done by its own tick | the done case alone, on "every one done" |
+| OD | a split block is hidden on EVERY day | the split case on "the block is back on its own day", and the GUARD on "the block on its day, the sub-task on its own" — the stranding the GUARD exists for; the done case died on a missing block, collateral |
+
+**Browser.** 424 → **428** subtests: PROGRESS `✂ splits a block into named sub-tasks — drawn instead
+of it, each starting where it was` (the second name added from the first sub-task's `✂`, landing as
+its sibling) and `a split block comes back on its own day once no sub-task shares it — untickable,
+done only when they are` (box `×` with Cancel first, byte-identical; then the block's `✕`, keeping
+its sub-task, which then opens its own box); and HOME and DOCUMENTATIONS `a split block's day draws
+its sub-tasks, not the block`, each asserted separately beside an unsplit control. Against the
+pre-split tree (the repository copy with only the new test file): HOME, DOCUMENTATIONS and the
+PROGRESS comes-back case failed on their claims ("the split block gives way…" with the parent in
+the list; "while a sub-task shares its day, the block is not drawn"); the PROGRESS `✂` case died on
+its missing `✂` hook — weak, and said so.
+
+**Baselines.** Each tree is a real copy of the scratch tree (`tests/` included) with ONE rule
+reversed by a builder that refuses a swap matching other than once; `diff -rq` showed exactly one
+file different in each, and the CONTROL's `progress.html`, `calendar-core.js` and `browser.test.js`
+have the md5s of the files then landed in the repository. Runs were sequential through the
+`--require` preload (9 cases: the four above plus the pick, `✕`, tick and Home/Documentations block
+cases), each printing `9 case(s) matched`, the journal checked over each window.
+
+| Tree | Rule reversed | Failed (of 9) |
+| --- | --- | --- |
+| CONTROL | none | nothing (08:53) |
+| B1 core | `drawnParts` hides nothing | HOME and DOCUMENTATIONS, each on "the split block gives way to its sub-tasks" with the parent in the list; every PROGRESS case passed |
+| B2 page | the same, in `progress.html`'s copy | both PROGRESS split cases on their claims: **disjoint from B1** |
+| B3 page | a sub-task copies no position | the `✂` case alone, on "the sub-task starts where the block was, at its length" |
+| B4 page | `removePart` no longer asks | the existing `✕` case and the comes-back case, both on "the control asked before writing" — the box's `×` reaches the same prompt |
+| B5 page | a split block keeps its checkbox | the comes-back case alone, on "with no checkbox of its own" |
+| B6 page | `partDone` reads the block's own tick | the comes-back case alone, on "and done, because its one remaining sub-task is" — the same case as B5, a different assertion |
+| B7 page | an orphan's `parentId` keeps it from being top-level | the comes-back case alone, on "its block gone, the sub-task is a block of its own — a tick and a ✂" |
+| B8 page | a sub-task's `✂` opens its own box | both PROGRESS split cases, on `the Dissect box of d-s:p, opened from d-s:…` — the claim is that box's reachability, so the timeout is the claim |
+| B9 page | removing a block takes its sub-tasks too | first run **void** (below); re-run: the comes-back case alone, on "the sub-task is kept exactly as it was" |
+| CONTROL | none | nothing (13:59–14:00, after the resume), and again at 14:02 beside the B9 re-run |
+
+A first set (`sbl2`, 08:43–08:52, both controls green) is what tightened three cases before the set
+above: B3 fired on a later symptom, B5 and B6 on one shared `deepEqual`, and B9 only as a timeout on
+a wait for the right answer. The position claim now comes first, the tick and done claims are
+separate assertions, and the removal waits for the write to land and then asserts.
+
+**Void run.** The laptop was on battery and suspended at 09:00:45 — idle, no lid line — until the lid
+opened at 13:58:58, inside B9. Its first two cases died on `CDP connection closed` and a mounting
+timeout after the resume; that run is not evidence. B1–B8 had finished by 09:00:32 with no suspend
+in their windows.
+
+**Full run.** `node tests/run.js` 21:05:32–21:42:14 (2,202s, load ~1.3 at the start), on the
+REPOSITORY with the final tree — HEAD `c6e986c` plus this change and the ★ Forced one, uncommitted —
+once the charger was in (the 14:00 attempt was put off at 22% battery). Exit 0, "all 25 suites
+passed": `calendar-core` **126**, `schema` 68 and `notes-core` 33 identical under all five timezones;
+`true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+`schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, `viewport` 10, `cdp-cleanup` 13;
+browser plan `1..428`, **428** subtests ok and 0 not ok, the four new cases among them (#179, #180,
+#187, #188). The `md5sum` of all 38 pages, scripts, stylesheets and test files was identical before
+and after, HEAD was the same at both ends, the laptop was on mains, and journalctl over the window
+shows no lid, suspend or network-drop events.
+
+**Not covered.**
+- Real touch hardware: the `✂` shows on hover, or once a block is long-press-selected, like `✕`.
+- `withPartChild`'s own refusal of a sub-task as a parent: no control can hand it one.
+- Multi-device sync and the live Firebase project.
+
+### Sub-tasks in ★ Forced: the original stays, each sub-task on one day (2026-10-22 / 24)
+
+The user rejected the `✂`-on-the-block build above ("completely wrong"): the first version — the
+committed `＋` composer in ★ Forced — "got the concept right but not the UI". Asked three questions
+and one follow-up, they chose:
+- sub-tasks listed under their original's row, a `✂` there opening a name box;
+- a sub-task made **off the schedule**, put on a day by clicking it in that day's ★ Forced, and moved by
+  clicking it from another — "the newly created block will have a date on it only depending on WHICH
+  DATE I put that block into";
+- each sub-task **unique** — "it can't be on more than 1 day";
+- the original **not gone**; its blocks have no tick once it has sub-tasks and are done when they all are.
+Chosen without asking, and named in the hand-off: a sub-task block's `✕` unschedules it (as a task
+block's `×` does) while its row `×` deletes it; a placed sub-task starts at its own time, else the
+original's; ticks on the grid only; one level.
+
+**Where it lives.** The `✂` build's code was removed whole: the code files went back to the verified
+★ Forced versions (the scratch copies matched the repository byte for byte before the swap, so only
+`✂` work was discarded), and this was built on top.
+- No new field or migration. A sub-task is a `parts` record WITH a `title`; `unscheduled: true`
+  while off the schedule, deleted when placed, `date` then always written. Stored data reads as it
+  did: ★ picks are untitled, the old composer's titled parts are scheduled sub-tasks, and the
+  rejected build's `parentId` is ignored, so the originals it hid come back.
+- `calendar-core.js` (`?v=14` on Home and Documentations): `partIsSub`, `partScheduled`,
+  `drawnParts`, `itemSubtasks`, `partDone`, twinned in `progress.html`; `blockDays` and
+  `buildDaySchedule` read `drawnParts`, blocks carry `done: partDone(…)`.
+- `progress.html`: `withSubtask`, `withSubtaskOn` (refusal and caution day through the pick's own
+  `forcedPickRefusal` / `forcedPickAddsCaution`; the one guard behind an `aria-disabled` row),
+  `withSubtaskOff`; handlers `addSubtask`, `placeSubtask`, `unschedulePart` (asks); `removePart`'s
+  prompt names a sub-task. The ★ row gained `✂` (`data-dln-split`), the name box
+  (`data-dln-sub-input` / `-add`) and one line per sub-task (`data-dln-sub`, `-when`, `-remove`);
+  the grid block gained `data-block-sub` and `data-block-state`, lost its tick on an original with
+  sub-tasks, and its `✕` unschedules a sub-task.
+
+**Offline.** `calendar-core` 121 → **126**: SUB cases for drawing (a scheduled sub-task beside its
+original, none for one off the schedule), stored data reading as it did, the done rule, held days
+and stranding, and totality. Against the PRE-✂ module and the ✂ module the file failed 6 each: the
+export list; "a sub-task off the schedule draws nothing"; "every sub-task done: the original is
+done"; "only the scheduled sub-task's day"; and the stored-data case — on the ✂ module on "a
+parentId hides nothing", on the pre-✂ module only on the missing export (weak); plus totality on the
+missing exports (weak). Five doctored copies of the module:
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL | none | nothing (126/126) |
+| O1 | `drawnParts` draws sub-tasks off the schedule | the drawing case on "a sub-task off the schedule draws nothing", and the held-day case |
+| O2 | the original hidden on a day a sub-task shares (the rejected rule) | the drawing case on "the original's block is NOT gone…", the stored-data case on "a parentId hides nothing"; the done case collateral (no block to read) |
+| O3 | `partDone` reads the original's own tick | the done case alone |
+| O4 | every part is a sub-task | four cases, among them "an untitled part is a block of the original" |
+| O5 | `blockDays` reads every part | the held-day case alone |
+
+**Browser.** 424 → **432**: PROGRESS `✂ in ★ Forced adds a named sub-task OFF the schedule…`, `a
+sub-task's row puts it on THAT day — its date always written — and from another day MOVES it: one
+block, never two`, `a sub-task put on a day its deadline does not occupy makes that day a caution day,
+in the same write`, `a sub-task of a deadline with no real due day is listed but refused, writing
+nothing`, `once it has sub-tasks the original's block has no tick, and is done only when every
+sub-task is`, `a sub-task block's ✕ takes it off the schedule and keeps it; its ★ row × deletes it —
+both ask`; HOME and DOCUMENTATIONS `a sub-task on the schedule is drawn beside its original, and one
+off it is not`. Each closes its page in `finally`: a failing Progress case otherwise leaves a live
+tab whose autosave rewrote the next case's seed — seen once, on the ✂ build, as a missing block.
+Against the ✂ build and the pre-✂ build: HOME and DOCUMENTATIONS on "a sub-task off the schedule is
+not drawn", the done case on "the original's block has no tick of its own", the removal case on the
+pre-✂ build on "and says it is kept"; the other Progress cases on the missing `✂` hooks (weak).
+
+**Baselines.** Each tree is a real copy of the scratch tree (`tests/` included) with ONE
+rule reversed by a builder that refuses a swap matching other than once; `diff -rq` showed exactly
+one file different in each, and the CONTROL's `progress.html` and `browser.test.js` had the md5s of
+the scratch tree. Sequential runs, 06:45–07:07, through the task-owned preload (11 cases: the eight
+above plus the pick, `✕` and tick cases), each printing `11 case(s) matched`; journalctl showed no
+suspend in any window, and the charger went in during the set.
+
+| Tree | Rule reversed | Failed (of 11) |
+| --- | --- | --- |
+| CONTROL | none | nothing |
+| B1 core | `drawnParts` draws sub-tasks off the schedule | HOME and DOCUMENTATIONS, each on "a sub-task off the schedule is not drawn" |
+| B2 page | the same, in `progress.html`'s copy | the `✂` case on "no block for a sub-task off the schedule", and the removal case waiting for its block to leave: **disjoint from B1** |
+| B3 page | the original hidden on a day a sub-task shares (the rejected rule) | the placing case on "and the original's block is NOT gone — it is beside it"; the done case collateral (two blocks of three) |
+| B4 core | the same, in `calendar-core.js` | first run: HOME and DOCUMENTATIONS as TIMEOUTS — both waited for two blocks, and one was drawn. The waits now look for the sub-task every reading draws, and the re-run failed each on "the original is not gone": **disjoint from B3** |
+| B5 page | `partDone` reads the original's own tick | the done case alone, on "done only when every sub-task is" |
+| B6 page | the original keeps its checkbox | the done case alone, on "the original's block has no tick of its own" |
+| B7 page | no caution day added with the sub-task | the caution case alone, on "today joined the chosen days, the old one kept" |
+| B8 page | `unscheduled` kept when placed | the placing case alone, on "unscheduled is deleted, nothing else added" |
+| B9 page | `date` written only when it differs from the item's day | the placing case alone, on "its date is written even on the item's own day" |
+| B10 page | a placed sub-task placed again from another day is COPIED, not moved | the placing case alone, on "one sub-task, one record — moved, never copied" — the user's "can't be on more than 1 day" |
+| B11 page | `withSubtaskOn` no longer refuses | the malformed case alone, on "a click on it writes nothing — the writer refused" |
+| B12 page | a sub-task block's `✕` deletes it | the removal case alone, on "the sub-task is KEPT" |
+| B13 page | `unschedulePart` no longer asks | the removal case alone, on "the control asked before writing" |
+| B14 page | `removePart` no longer asks | the existing `✕` case and the removal case at its row `×`, both on "the control asked before writing" |
+| CONTROL | none | nothing (07:07), and again at 07:12 with the final test file (8/8) |
+
+
+**Full run.** `node tests/run.js` 07:13:30–07:51:44 (2,294s, load ~2 at the start), run from the
+SCRATCH tree (`TRACK_TEST_ROOT` set to it) rather than the repository: the code there is the
+repository's HEAD `c6e986c` plus the ★ Forced change and this one — exactly the eleven files then
+landed — WITHOUT another session's Journey work, which was in progress in the repository at the same
+time (journey-*.js, notes-core.js, run.js and more). Exit 0, "all 25 suites passed": `calendar-core`
+**126**, `schema` 68 and `notes-core` 33 identical under all five timezones; `true-storage-core` 24,
+`source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103, `schedule-paste-core` 35,
+`quest-core` 54, `milestone-core` 63, `viewport` 10, `cdp-cleanup` 13; browser plan `1..432`,
+**432** subtests ok and 0 not ok, the eight new cases among them. The md5 of every page, script,
+stylesheet and test file in that tree was identical before and after, the laptop was on mains, and
+journalctl shows no suspend in the window. **Still owed:** the joint `node tests/run.js` on the
+repository once Journey has landed. The Journey session (`track-website-81`) agreed to run it, and
+to set AGENTS.md's "What a passing run looks like" from it, since that is the run with both changes
+in; that paragraph still quotes the superseded `✂` run until then.
+
+**Not covered.**
+- Real touch hardware; the `✂` and the sub-task rows are plain buttons, synthesised clicks only.
+- A sub-task cannot be ticked off the schedule (NOTES), so an original whose sub-task was never
+  placed never reads done — by the rule, but unseen by the user so far.
+- Multi-device sync and the live Firebase project.

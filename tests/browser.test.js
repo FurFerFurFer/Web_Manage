@@ -837,7 +837,7 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('a day note with a time moves to the hour grid, and clearing it moves it back', async () => {
+  await t.test('a day note with a time is listed with it, is on no hour grid until added, and clearing it drops the key', async () => {
     const db = seedDb({ calendarNotes: [], deadlines: [], docPages: [F.docPage('p-1')] });
     const page = await open('documentations.html', { db });
     await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
@@ -868,16 +868,17 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(stored.time, '14:30');
     assert.equal(stored.docPageId, 'p-1');
 
-    const placed = await page.waitFor(function () {
-      var onGrid = Array.prototype.some.call(document.querySelectorAll('.doc-cal .cal-sched-block'),
+    // Listed in the day panel WITH its time — and on no hour grid: since
+    // 2026-10-21 a note is drawn there only once ★ Forced adds a block for it,
+    // and composing one adds none. Wait on the row, then assert the grid.
+    await page.waitFor(function () {
+      return Array.prototype.some.call(document.querySelectorAll('.doc-cal .cal-doc-row'),
+        function (r) { return /Review the draft/.test(r.textContent) && /14:30/.test(r.textContent); });
+    }, { message: 'the note listed in the day panel with its time' });
+    assert.equal(await page.evaluate(function () {
+      return Array.prototype.some.call(document.querySelectorAll('.doc-cal .cal-sched-block'),
         function (b) { return /Review the draft/.test(b.textContent); });
-      var listed = Array.prototype.some.call(document.querySelectorAll('.doc-cal .cal-doc-row'),
-        function (r) { return /Review the draft/.test(r.textContent); });
-      var inStrip = Array.prototype.some.call(document.querySelectorAll('.doc-cal .cal-sched-note'),
-        function (c) { return /Review the draft/.test(c.textContent); });
-      return onGrid && listed && !inStrip ? 'placed' : false;
-    }, { message: 'the note being drawn on the hour grid and nowhere else' });
-    assert.equal(placed, 'placed');
+    }), false, 'and not on the hour grid — a block comes only from ★ Forced');
 
     // clearing the time must drop the key, not store an empty string
     await page.evaluate(function () {
@@ -1243,7 +1244,7 @@ test('browser suites', skipUnlessChrome, async t => {
      the picks. */
   await t.test('un-picking a day that holds prep is refused, and nothing is written', async () => {
     const prepDay = dayFromToday(-1);
-    const { db, due } = cautionDb({ cautionDates: [dayFromToday(-4), prepDay], blockDate: prepDay });
+    const { db, due } = cautionDb({ cautionDates: [dayFromToday(-4), prepDay], parts: [{ id: 'b', date: prepDay }] });
     const page = await openDlPopup({ db, due });
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
 
@@ -1275,6 +1276,36 @@ test('browser suites', skipUnlessChrome, async t => {
       return c.length === 1 && c[0] === v ? d : false;
     }, { args: [prepDay], message: 'the harmless un-pick still going through' });
     assert.deepEqual(after.cautionDates, [prepDay], 'so the refusal narrows the set, it does not freeze it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* The other side of the same rule since 2026-10-21: a deadline with NO
+     blocks has nothing to strand, whatever keys the old automatic block left
+     on it. A bare `blockDate` used to read as prep on that day and freeze its
+     un-pick; now it is only the day a future block would inherit. Asserted
+     here for Progress's own copy of dlStrandedBlockDays, and separately below
+     for Documentations, which asks calendar-core.js. */
+  await t.test('PROGRESS: a deadline with no blocks never refuses an un-pick, whatever legacy keys it carries', async () => {
+    const prepDay = dayFromToday(-1);
+    const { db, due } = cautionDb({ cautionDates: [dayFromToday(-4), prepDay], blockDate: prepDay, blockTime: '08:00' });
+    const page = await openDlPopup({ db, due });
+    const namedBefore = await page.evaluate(function () {
+      return !!document.querySelector('[data-dl-caution-refused]');
+    });
+    const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    await clickCautionDay(page, prepDay);
+    // wait for ANY write, then assert — a refusal writes nothing, and must read
+    // as a wrong value rather than as a timeout
+    const until = Date.now() + 3000;
+    while (Date.now() < until
+      && await page.evaluate(function () { return localStorage.getItem('track_db'); }) === before) await sleep(50);
+    const after = await storedDeadline(page);
+    assert.deepEqual(after.cautionDates, [dayFromToday(-4)],
+      'the day it once sat on un-picks like any other — nothing refused it');
+    assert.equal(namedBefore, false, 'and nothing was ever named as holding prep');
+    assert.equal(after.blockDate, prepDay, 'while the legacy key is left exactly as it was');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -2357,12 +2388,12 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('DOCUMENTATIONS refuses an un-pick that would strand placed prep', async () => {
-    // blockDate anchors this deadline's prep on day 16, one of its chosen days.
+    // A block on day 16 is this deadline's prep, on one of its chosen days.
     // Un-picking 16 would leave that block on a day the deadline no longer
     // occupies, so it is REFUSED and the day is named — never moved, never
     // dropped. Day 15 holds nothing and must still un-pick, or the refusal has
     // frozen the whole picker instead of protecting one day.
-    const { db } = moveDb({ blockDate: thisMonthDay(16) });
+    const { db } = moveDb({ parts: [{ id: 'b', date: thisMonthDay(16) }] });
     const page = await open('documentations.html', { db });
     await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
       { message: 'documentations editor' });
@@ -2399,7 +2430,36 @@ test('browser suites', skipUnlessChrome, async t => {
     const stored = (await storedDl(page))[0];
     assert.ok(stored.cautionDates.indexOf(thisMonthDay(16)) >= 0,
       'the protected day survived the save');
-    assert.equal(stored.blockDate, thisMonthDay(16), 'and its prep never moved');
+    assert.deepEqual(stored.parts, [{ id: 'b', date: thisMonthDay(16) }], 'and its prep never moved');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DOCUMENTATIONS: a deadline with no blocks never refuses an un-pick, whatever legacy keys it carries', async () => {
+    // The Documentations half of the rule asserted for Progress above, through
+    // TC.dlStrandedBlockDays — the one definition this page asks.
+    const { db } = moveDb({ blockDate: thisMonthDay(16), blockTime: '08:00' });
+    const page = await open('documentations.html', { db });
+    await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+      { message: 'documentations editor' });
+    await addCalendarBlock(page);
+    await selectDay(page, 18);
+    await openDocDlEdit(page);
+    const namedBefore = await page.evaluate(function () {
+      return !!document.querySelector('.cal-doc-form [data-dl-caution-refused]');
+    });
+
+    await clickDocCau(page, thisMonthDay(16));
+    assert.equal((await docCau(page, thisMonthDay(16))).on, '0',
+      'the day it once sat on un-picks like any other — nothing refused it');
+    assert.equal(namedBefore, false, 'and nothing was ever named as holding prep');
+
+    await docDlSave(page);
+    await page.waitFor(function () { return !document.querySelector('.cal-doc-form'); },
+      { message: 'the form closing after Save' });
+    const stored = (await storedDl(page))[0];
+    assert.deepEqual(stored.cautionDates, [thisMonthDay(15), thisMonthDay(17)], 'saved without it');
+    assert.equal(stored.blockDate, thisMonthDay(16), 'while the legacy key is left exactly as it was');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -2636,7 +2696,7 @@ test('browser suites', skipUnlessChrome, async t => {
     // Marks drop silently; WORK never does. This deadline's prep is anchored on
     // day 16, so pulling the due day back to the 15th would leave that block on
     // a day the deadline no longer occupies. Refused, and the day is named.
-    const { db, due } = moveDb({ blockDate: thisMonthDay(16) });
+    const { db, due } = moveDb({ parts: [{ id: 'b', date: thisMonthDay(16) }] });
     const page = await openDocEditOn(db, 18);
     const before = await docRawDb(page);
 
@@ -2674,7 +2734,7 @@ test('browser suites', skipUnlessChrome, async t => {
     // day against the OLD due day, finds 18 === 18, and allows an un-pick that
     // strands the work. That is the whole reason all four call sites carry the
     // date now.
-    const { db } = moveDb({ blockDate: thisMonthDay(18) });
+    const { db } = moveDb({ parts: [{ id: 'b', date: thisMonthDay(18) }] });
     const page = await openDocEditOn(db, 18);
     const before = await docRawDb(page);
 
@@ -2711,7 +2771,7 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(stored.cautionDates,
       [thisMonthDay(15), thisMonthDay(16), thisMonthDay(17), thisMonthDay(18)],
       'the old due day is stored as a caution day, sorted in');
-    assert.equal(stored.blockDate, thisMonthDay(18), 'and the prep never moved');
+    assert.deepEqual(stored.parts, [{ id: 'b', date: thisMonthDay(18) }], 'and the prep never moved');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -4431,7 +4491,7 @@ test('browser suites', skipUnlessChrome, async t => {
       'and a milestone\'s slip record, record for record, a cleared slip still without its `to`');
 
     assert.equal(imported.calendarNotes.find(n => n.id === 'cn-sched').blockOff, true,
-      'blockOff round-tripped — the one key that decides whether an item is on the grid');
+      'blockOff round-tripped — the legacy key that still hides an item\'s blocks');
     assert.equal(imported.calendarNotes.find(n => n.id === 'cn-sched').blockDuration, 90,
       'and the day note block');
 
@@ -6188,15 +6248,17 @@ test('browser suites', skipUnlessChrome, async t => {
 
   /* ── 10. day-note and deadline schedule blocks ──────────────────────────
 
-     Every note and every deadline is a real span on the hour grid, and it is so
-     AUTOMATICALLY: `blockOff` is the switch that takes one off, `blockDuration`
-     only a remembered length and `blockDate` only a remembered day. All three
-     absences mean "the automatic default", which is what put blocks on items
-     stored long before these keys existed with nothing written to them.
+     Since 2026-10-21 a note or a deadline is on the hour grid ONLY through its
+     blocks: the `parts` ★ Forced adds, one per pick, on the day the panel was
+     opened from. An item with no parts has no block. Until then every item
+     had one automatically, and the cases that pinned that are inverted here
+     rather than deleted. `blockOff`, `blockDuration`, `blockTime` and
+     `blockDate` are legacy — read, never written — and each absence is still
+     the default.
 
-     The rules have ONE definition, TrackCalendar.blockOn and friends in
+     The rules have ONE definition, TrackCalendar.blockDays and friends in
      calendar-core.js, with a second copy in progress.html because that page
-     does not load it. So the block is asserted on the Progress grid, on the
+     does not load it. So a block is asserted on the Progress grid, on the
      Home calendar and inside a Documentations block SEPARATELY — a rule
      forgotten at one of several surfaces is this repository's recurring bug,
      and a single assertion would let the forgotten one hide behind a passing
@@ -6215,12 +6277,20 @@ test('browser suites', skipUnlessChrome, async t => {
     var s = (db.slots || [])[0] || {};
     return ((s[key] || []).filter(function (x) { return x.id === id; })[0]) || null;
   };
+  /* The stored item once its parts list has reached length `n` — a WRITE
+     landing, not the answer a case hopes for, which is asserted afterwards. */
+  const ITEM_WITH_PARTS = function (key, id, n) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var s = (db.slots || [])[0] || {};
+    var x = (s[key] || []).filter(function (r) { return r.id === id; })[0];
+    return (x && (Array.isArray(x.parts) ? x.parts.length : 0) === n) ? x : false;
+  };
   /* `day` is the COLUMN the block is drawn in, and reading it is not optional
-     for anything about blockDate: the week view has all seven columns in the
-     DOM at once, so a block drawn on the wrong day still appears in this list
-     with the right id, time and height. A case that checks only those passes
-     against a blockDay that ignores blockDate entirely — which is exactly what
-     the doctored-baseline run caught. */
+     for anything about a block's day: the week view has all seven columns in
+     the DOM at once, so a block drawn on the wrong day still appears in this
+     list with the right id, time and height. A case that checks only those
+     passes against a blockDay that ignores blockDate entirely — which is
+     exactly what the doctored-baseline run caught. */
   const BLOCKS = function () {
     return Array.prototype.map.call(document.querySelectorAll('[data-block-kind]'), function (e) {
       return {
@@ -6239,49 +6309,63 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.evaluate(CLICK_SEL, '[data-dln-open="' + ds + '"]');
     await page.waitFor(function () { return !!document.querySelector('[data-dln-panel]'); }, { message: 'the day-notes panel' });
   };
+  // What a ★ Forced pick on the item's OWN day stores: an id, and nothing a
+  // reader could mistake for a choice — no title, no time, no length.
+  const BLOCK = { id: 'b' };
+  // ★ Forced opened on `ds`, then the row for `key` ('<kind>:<id>') picked.
+  const pickForced = async (page, ds, key) => {
+    await openDlnPanel(page, ds);
+    await page.waitFor(function (k) { return !!document.querySelector('[data-dln-add="' + k + '"]'); },
+      { args: [key], message: 'the ★ Forced row for ' + key });
+    await page.evaluate(CLICK_SEL, '[data-dln-add="' + key + '"]');
+  };
 
-  await t.test('PROGRESS: an item with no block keys is on the grid automatically', async () => {
-    // The heart of the change, on the first of the three surfaces. Data stored
-    // before any of these keys existed must be drawn WITHOUT being written to.
+  await t.test('PROGRESS: an item with no parts has no block, and nothing is written for it', async () => {
+    /* The heart of the change, on the first of the three surfaces. Every item
+       stored before 2026-10-21 has no parts, and it must leave the grid
+       WITHOUT a byte being written to it — while one that was added stays. */
     const db = seedDb({
       calendarNotes: [
         F.calNote('n-timed', TODAY, { title: 'Timed marker note', time: '14:30' }),
-        F.calNote('n-bare', TODAY, { title: 'Untimed note' })
+        F.calNote('n-bare', TODAY, { title: 'Untimed note' }),
+        F.calNote('n-added', TODAY, { title: 'Added note', time: '10:00', parts: [BLOCK] })
       ],
-      deadlines: [F.deadline('d-bare', TODAY, { cautionDates: [],  time: '17:00', title: 'Bare deadline' })]
+      deadlines: [F.deadline('d-bare', TODAY, { cautionDates: [], time: '17:00', title: 'Bare deadline' })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
+    // the block that SHOULD render first, so an empty grid is a finding and
+    // not a slow mount
+    await page.waitFor(function () { return !!document.querySelector('[data-block-id="n-added:b"]'); },
+      { message: 'the added note\'s block' });
+    const blocks = await page.evaluate(BLOCKS);
+    assert.deepEqual(blocks.map(b => b.id), ['n-added:b'], 'only the item that was added is on the grid');
+    assert.equal(blocks[0].day, TODAY);
+    assert.equal(blocks[0].top, 10 * 64 + 'px', 'starting at its note\'s time');
 
-    const byId = Object.fromEntries((await page.evaluate(BLOCKS)).map(b => [b.id, b]));
-    assert.ok(byId['n-timed'], 'the timed note is drawn as a block');
-    assert.equal(byId['n-timed'].top, 14.5 * 64 + 'px', 'starting at its own time');
-    assert.equal(byId['n-timed'].height, 64 + 'px', 'at the automatic 60 minutes');
-    assert.ok(byId['n-bare'], 'the UNTIMED note is drawn too');
-    assert.equal(byId['n-bare'].top, 8 * 64 + 'px', 'at the 08:00 default hour');
-    assert.ok(byId['d-bare'], 'and so is the deadline, with no opting in');
-    assert.equal(byId['d-bare'].top, 16 * 64 + 'px', 'its run-up ENDS at the due time');
-
-    // "show both, always": the marker is not taken away by the block
+    // "show both, always": the marker and the due line were never the block
     assert.equal(await page.evaluate(function () {
       return Array.prototype.some.call(document.querySelectorAll('#root span'), function (e) {
         return /bg-fuchsia/.test(e.className || '') && e.textContent.indexOf('Timed marker note') >= 0;
       });
-    }), true, 'the timed note ALSO still renders as its point marker');
+    }), true, 'the timed note still renders as its point marker');
+    assert.equal(await page.evaluate(function () {
+      return document.body.textContent.indexOf('Bare deadline') >= 0;
+    }), true, 'and the deadline still draws its due line');
 
     // and none of it was written
     const stored = await page.evaluate(READ_ITEM, 'deadlines', 'd-bare');
-    assert.equal('blockDuration' in stored, false, 'nothing was written to storage');
-    assert.equal('blockDate' in stored, false);
-    assert.equal('blockOff' in stored, false);
+    for (const k of ['parts', 'blockOff', 'blockDuration', 'blockDate', 'blockTime']) {
+      assert.equal(k in stored, false, k + ' was not written');
+    }
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
   await t.test('a deadline block ends at the due time and a note block starts at its time', async () => {
     const db = seedDb({
-      calendarNotes: [F.calNote('n-s', TODAY, { title: 'Scheduled note', time: '09:00', blockDuration: 90 })],
-      deadlines: [F.deadline('d-p', TODAY, { cautionDates: [],  time: '20:00', title: 'Prep', blockDuration: 60 })]
+      calendarNotes: [F.calNote('n-s', TODAY, { title: 'Scheduled note', time: '09:00', blockDuration: 90, parts: [BLOCK] })],
+      deadlines: [F.deadline('d-p', TODAY, { cautionDates: [], time: '20:00', title: 'Prep', blockDuration: 60, parts: [BLOCK] })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
@@ -6289,12 +6373,12 @@ test('browser suites', skipUnlessChrome, async t => {
     const byId = Object.fromEntries(blocks.map(b => [b.id, b]));
 
     // default timeline zoom is 64px/hour, so an hour is 64px
-    assert.ok(byId['n-s'], 'the note has a block');
-    assert.equal(byId['n-s'].top, 9 * 64 + 'px', 'a note block STARTS at the note time');
-    assert.equal(byId['n-s'].height, 90 / 60 * 64 + 'px');
-    assert.ok(byId['d-p'], 'the deadline has a block');
-    assert.equal(byId['d-p'].top, 19 * 64 + 'px', 'a deadline block ENDS at the due time');
-    assert.equal(byId['d-p'].height, 64 + 'px');
+    assert.ok(byId['n-s:b'], 'the note has a block');
+    assert.equal(byId['n-s:b'].top, 9 * 64 + 'px', 'a note block STARTS at the note time');
+    assert.equal(byId['n-s:b'].height, 90 / 60 * 64 + 'px', 'at the length the item remembers');
+    assert.ok(byId['d-p:b'], 'the deadline has a block');
+    assert.equal(byId['d-p:b'].top, 19 * 64 + 'px', 'a deadline block ENDS at the due time');
+    assert.equal(byId['d-p:b'].height, 64 + 'px');
 
     // the marker stays: scheduling something never takes away the way it was
     // already visible
@@ -6309,11 +6393,11 @@ test('browser suites', skipUnlessChrome, async t => {
 
   await t.test('a midnight-clipped run-up keeps its end on the due time', async () => {
     const db = seedDb({
-      deadlines: [F.deadline('d-e', TODAY, { cautionDates: [],  time: '00:30', title: 'Early', blockDuration: 60 })]
+      deadlines: [F.deadline('d-e', TODAY, { cautionDates: [], time: '00:30', title: 'Early', blockDuration: 60, parts: [BLOCK] })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
-    const b = (await page.evaluate(BLOCKS)).find(x => x.id === 'd-e');
+    const b = (await page.evaluate(BLOCKS)).find(x => x.id === 'd-e:b');
     assert.ok(b, 'the block is drawn');
     assert.equal(b.top, '0px', 'clipped at the top of the grid');
     assert.equal(b.height, 30 / 60 * 64 + 'px', 'and shortened so it still ends at 00:30');
@@ -6446,59 +6530,568 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(empty, 'No day notes or deadlines on or after ' + FAR + '.',
       'the empty state names the cutoff rather than claiming the slot is empty');
 
-    // it is a view filter: it writes nothing
+    // opening and filtering are a view: they write nothing
     assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }),
       bytes, 'track_db is byte-identical');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('remove from schedule writes blockOff and keeps everything else', async () => {
-    // It must DELETE nothing: putting the block back has to restore the length,
-    // day and anchor the user chose rather than guess at them again. And the
-    // item's own surfaces — chip, marker, due line, run-up — all stay.
+  await t.test('a ★ Forced pick adds ONE block on the opened day, closes the panel, and keeps every other key', async () => {
+    /* The one thing the panel does now, the thing ● Learn's and ■ Core
+       Routine's rows do. What is stored is asserted KEY BY KEY: a pick writes
+       an id, a createdAt and done:false, plus a `date` only when the day
+       differs from the one the block would inherit — never a title (the block
+       reads as its item), a time or a length (it starts where the item does).
+       Everything the item already had survives the spread, including a key no
+       version of this page has heard of. */
+    const D1 = dayFromToday(1), D2 = dayFromToday(2);
     const db = seedDb({
-      deadlines: [F.deadline('d-1', TODAY, {
-        cautionDates: ['2026-08-01', '2026-08-02'], time: '17:00', title: 'Essay', detail: 'body',
-        done: true, docPageId: 'p-1', blockDuration: 45, blockTime: '08:00'
+      calendarNotes: [F.calNote('n-1', D1, { title: 'Lab coat', time: '09:00' })],
+      deadlines: [F.deadline('d-1', D2, {
+        cautionDates: [TODAY, D1], time: '17:00', title: 'Essay', detail: 'body',
+        docPageId: 'p-1', futureKey: 'kept'
       })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
     const before = await page.evaluate(READ_ITEM, 'deadlines', 'd-1');
-    assert.equal((await page.evaluate(BLOCKS)).length, 1, 'it starts on the grid');
 
+    // the row carries ONE action and ⓘ, and none of the four old controls
     await openDlnPanel(page, TODAY);
-    await page.evaluate(CLICK_SEL, '[data-dln-unschedule="d-1"]');
-    const after = await page.waitFor(function () {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return (d && d.blockOff === true) ? d : false;
-    }, { message: 'blockOff reaching track_db' });
+    assert.deepEqual(await page.evaluate(function () {
+      var p = document.querySelector('[data-dln-panel]');
+      return ['data-dln-dissect', 'data-dln-unschedule', 'data-dln-schedule', 'data-dln-reset', 'data-dln-part-input']
+        .filter(function (a) { return !!p.querySelector('[' + a + ']'); });
+    }), [], 'no ＋ composer, no remove from schedule, no add block back, no reset to due time');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('[data-dln-add="deadline:d-1"]').length + ':'
+        + document.querySelectorAll('[data-dln-info="deadline:d-1"]').length;
+    }), '1:1', 'one pick control and one ⓘ');
+    await page.evaluate(CLICK_SEL, '[data-dln-add="deadline:d-1"]');
+    const first = await page.waitFor(ITEM_WITH_PARTS, { args: ['deadlines', 'd-1', 1], message: 'the pick reaching track_db' });
 
-    assert.equal(after.blockDuration, 45, 'the remembered length is NOT deleted');
-    assert.equal(after.blockTime, '08:00', 'nor the anchor');
-    for (const k of ['id', 'date', 'time', 'cautionDates', 'title', 'detail', 'done', 'docPageId', 'createdAt']) {
-      assert.deepEqual(after[k], before[k], k + ' survived the write');
+    const p0 = first.parts[0];
+    assert.deepEqual(Object.keys(p0).sort(), ['createdAt', 'date', 'done', 'id'],
+      'an id, a createdAt, done:false and the day — nothing a reader could take for a choice');
+    assert.equal(p0.date, TODAY, 'on the day the panel was opened from, not the due day');
+    assert.equal(p0.done, false);
+    for (const k of ['id', 'date', 'time', 'cautionDates', 'title', 'detail', 'docPageId', 'createdAt', 'futureKey']) {
+      assert.deepEqual(first[k], before[k], k + ' survived the write');
     }
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-dln-panel]'); }), false,
+      'the panel closed, as ● Learn and ■ Core Routine do');
+    const b0 = await page.waitFor(function (id) {
+      var e = document.querySelector('[data-block-id="' + id + '"]');
+      return e ? { day: e.getAttribute('data-block-day'), top: e.style.top } : false;
+    }, { args: ['d-1:' + p0.id], message: 'the new block on the grid' });
+    assert.deepEqual(b0, { day: TODAY, top: 16 * 64 + 'px' },
+      'drawn in the opened day\'s column, its run-up ending at the 17:00 due time');
 
-    // putting it back is a restore, not a guess
-    await page.evaluate(CLICK_SEL, '[data-dln-schedule="d-1"]');
-    const back = await page.waitFor(function () {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return (d && d.blockOff === false) ? d : false;
-    }, { message: 'the block being restored' });
-    assert.equal(back.blockDuration, 45, 'at the length it had');
-    assert.equal(back.blockTime, '08:00', 'and where it was');
+    // a second pick adds a SECOND block — prep across several days
+    await pickForced(page, D1, 'deadline:d-1');
+    const second = await page.waitFor(ITEM_WITH_PARTS, { args: ['deadlines', 'd-1', 2], message: 'the second pick' });
+    assert.equal(second.parts[0].id, p0.id, 'the first block is untouched');
+    assert.equal(second.parts[1].date, D1);
+    await page.waitFor(function () { return document.querySelectorAll('[data-block-id^="d-1:"]').length > 1; },
+      { message: 'the second block on the grid' });
+    assert.deepEqual((await page.evaluate(BLOCKS)).filter(b => b.id.indexOf('d-1:') === 0).map(b => b.day).sort(),
+      [TODAY, D1].sort(), 'one block in each column');
+
+    // a note picked on its OWN day stores no day at all — it follows the note
+    await pickForced(page, D1, 'dayNote:n-1');
+    const note = await page.waitFor(ITEM_WITH_PARTS, { args: ['calendarNotes', 'n-1', 1], message: 'the note pick' });
+    assert.deepEqual(Object.keys(note.parts[0]).sort(), ['createdAt', 'done', 'id'],
+      'no `date` when it is the day the block would inherit anyway');
+    assert.equal(note.time, '09:00', 'and the note\'s own time is untouched');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('a removed block leaves the strip chip and the due line drawn', async () => {
+  await t.test('PROGRESS: a deadline picked on a day it does not occupy makes that day a caution day, in the same write', async () => {
+    /* The user's rule (2026-10-21). A deadline's block must sit on a day the
+       deadline occupies, so a pick anywhere else marks the day — and the row
+       says so BEFORE the click. ONE write carries both halves: every track_db
+       write is recorded, and none may hold the block without the day or the
+       day without the block. */
+    const D1 = dayFromToday(1), D3 = dayFromToday(3);
     const db = seedDb({
-      calendarNotes: [F.calNote('n-off', TODAY, { title: 'Off-grid note', time: '14:30', blockOff: true })],
-      deadlines: [F.deadline('d-off', TODAY, { cautionDates: [],  time: '17:00', title: 'Off-grid deadline', blockOff: true })]
+      deadlines: [F.deadline('d-c', D3, { cautionDates: [D1], time: '17:00', title: 'Report' })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    const HINT = function () { return !!document.querySelector('[data-dln-caution-hint="d-c"]'); };
+    const BANGS = function (ds) {
+      var strip = document.querySelector('[data-day-strip="' + ds + '"]');
+      if (!strip) return -1;
+      return Array.prototype.filter.call(strip.querySelectorAll('button'), function (b) {
+        return b.textContent.indexOf('!') >= 0 && b.textContent.indexOf('Report') >= 0;
+      }).length;
+    };
+
+    // a day it already occupies needs no hint
+    await openDlnPanel(page, D1);
+    assert.equal(await page.evaluate(HINT), false, 'no hint on one of its caution days');
+    await page.evaluate(CLICK_SEL, '[data-dln-open="' + D1 + '"]');
+    await page.waitFor(function () { return !document.querySelector('[data-dln-panel]'); },
+      { message: 'the panel closing' });
+
+    assert.equal(await page.evaluate(BANGS, TODAY), 0, 'no "!" on today to begin with');
+    await page.evaluate(function () {
+      window.__dlSnaps = [];
+      var prev = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (k, v) {
+        if (k === 'track_db') {
+          try {
+            var d = (JSON.parse(v).slots[0].deadlines || []).filter(function (x) { return x.id === 'd-c'; })[0];
+            if (d) window.__dlSnaps.push({ parts: (d.parts || []).length, caution: (d.cautionDates || []).slice() });
+          } catch (e) { window.__dlSnaps.push({ error: String(e) }); }
+        }
+        return prev.apply(this, arguments);
+      };
+      return true;
+    });
+    await openDlnPanel(page, TODAY);
+    assert.equal(await page.evaluate(HINT), true, 'the row says the pick will also mark today, before the click');
+    await page.evaluate(CLICK_SEL, '[data-dln-add="deadline:d-c"]');
+    const after = await page.waitFor(ITEM_WITH_PARTS, { args: ['deadlines', 'd-c', 1], message: 'the pick reaching track_db' });
+    assert.deepEqual(after.cautionDates, [TODAY, D1], 'today joined the chosen days, sorted, the old one kept');
+    assert.equal(after.parts[0].date, TODAY, 'and the block sits on it');
+    assert.equal(after.date, D3, 'the due day did not move');
+    assert.equal('startDate' in after, false, 'written through the one caution writer');
+
+    const snaps = await page.evaluate(function () { return window.__dlSnaps; });
+    assert.ok(snaps.length > 0, 'the write was observed');
+    for (const s of snaps) {
+      assert.equal((s.caution || []).indexOf(TODAY) >= 0, s.parts === 1,
+        'never one half without the other: ' + JSON.stringify(s));
+    }
+    await page.waitFor(function (ds) {
+      var strip = document.querySelector('[data-day-strip="' + ds + '"]');
+      return !!strip && strip.textContent.indexOf('Report') >= 0;
+    }, { args: [TODAY], message: 'today\'s strip re-rendering' });
+    assert.equal(await page.evaluate(BANGS, TODAY), 1, 'and today now carries the deadline\'s "!"');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROGRESS: a deadline whose due day is not a real day is listed but refused, writing nothing', async () => {
+    /* Listed, because this panel is the only surface such a record appears on
+       and it must stay reachable — but a pick would have no day to check its
+       block against. The WRITER is the one guard: the row is aria-disabled and
+       says why, but a click still reaches withForcedBlock, so this click is
+       the writer's refusal under test — a `disabled` row would swallow it in
+       React and let the case pass with that refusal gone. */
+    const db = seedDb({ deadlines: [F.deadline('d-bad', 'someday', { cautionDates: [], time: '17:00', title: 'Broken' })] });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    const bytes = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+    await openDlnPanel(page, TODAY);
+    assert.equal(await page.evaluate(function () {
+      var b = document.querySelector('[data-dln-add="deadline:d-bad"]'); return b ? b.getAttribute('aria-disabled') : null;
+    }), 'true', 'its row is listed, and marked as refused');
+    assert.match(await page.evaluate(function () {
+      var e = document.querySelector('[data-dln-refused="d-bad"]'); return e ? e.textContent : '';
+    }), /not a real day/, 'and says why');
+    await page.evaluate(CLICK_SEL, '[data-dln-add="deadline:d-bad"]');
+    await sleep(400);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), bytes,
+      'a click on it writes nothing — the writer refused');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-dln-panel]'); }), true,
+      'and the panel stays open on the reason');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROGRESS: a block\'s ✕ asks first — Cancel writes nothing, OK removes only that block, and the last deletes parts', async () => {
+    /* Removing a block deletes a record, so it asks — once, and BEFORE it
+       writes. The item itself is never touched: it keeps its due line, and
+       ★ Forced can add a block again. Emptying the list deletes the key
+       rather than storing [], because absence is what "no blocks" is. */
+    const db = seedDb({
+      deadlines: [F.deadline('d-x', TODAY, { cautionDates: [], time: '17:00', title: 'Essay',
+        parts: [{ id: 'p1' }, { id: 'p2', time: '10:00' }] })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    await page.waitFor(function () { return document.querySelectorAll('[data-block-id^="d-x:"]').length === 2; },
+      { message: 'both blocks on the grid' });
+    const bytes = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+
+    const asked = await answering(page, false, CLICK_SOON_SEL, ['[data-block-remove="d-x:p1"]']);
+    assert.match(String(asked), /Essay/, 'the prompt names the block');
+    await sleep(300);
+    assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), bytes,
+      'Cancel: track_db is byte-identical');
+
+    const n0 = page.dialogs.length;
+    await answering(page, true, CLICK_SOON_SEL, ['[data-block-remove="d-x:p1"]']);
+    const one = await page.waitFor(ITEM_WITH_PARTS, { args: ['deadlines', 'd-x', 1], message: 'one block removed' });
+    await sleep(300);
+    assert.equal(page.dialogs.length, n0 + 1, 'one click, exactly one prompt');
+    assert.deepEqual(one.parts.map(p => p.id), ['p2'], 'only that block went');
+    assert.equal(one.title, 'Essay', 'and the deadline is untouched');
+    assert.equal(one.date, TODAY);
+
+    await answering(page, true, CLICK_SOON_SEL, ['[data-block-remove="d-x:p2"]']);
+    const none = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return (d && !(Array.isArray(d.parts) && d.parts.length)) ? d : false;
+    }, { message: 'the last block going' });
+    assert.equal('parts' in none, false, 'emptied by DELETING the key, not by storing []');
+    assert.equal(none.id, 'd-x', 'the deadline itself is kept');
+    await page.waitFor(function () { return !document.querySelector('[data-block-id^="d-x:"]'); },
+      { message: 'the grid emptying' });
+    assert.equal(await page.evaluate(function () { return document.body.textContent.indexOf('Essay') >= 0; }), true,
+      'and its due line is still drawn');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROGRESS: a block\'s tick writes that block\'s done and nothing else', async () => {
+    /* A block is one session of work, and its tick says that session is done.
+       It is never the deadline's tick, which hides the `!` days and is set in
+       the popup — so the deadline gains no `done` key here. */
+    const db = seedDb({
+      deadlines: [F.deadline('d-t', TODAY, { cautionDates: [], time: '17:00', title: 'Essay',
+        parts: [{ id: 'p1', done: false }, { id: 'p2', time: '10:00', done: false }] })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    await mountSchedule(page);
+    await page.waitFor(function () { return !!document.querySelector('[data-block-done="d-t:p1"]'); },
+      { message: 'the block\'s tick' });
+    await page.evaluate(CLICK_SEL, '[data-block-done="d-t:p1"]');
+    const after = await page.waitFor(function () {
+      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+      return (d && d.parts && d.parts[0].done !== false) ? d : false;
+    }, { message: 'the tick reaching track_db' });
+    assert.equal(after.parts[0].done, true, 'that block is done');
+    assert.equal(after.parts[1].done, false, 'the other is not');
+    assert.equal('done' in after, false, 'and the deadline itself is NOT ticked');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* ── sub-tasks: ✂ in ★ Forced ──────────────────────────────────────────
+     The user's rules (2026-10-22). A note's or a deadline's ✂ in ★ Forced
+     names SUB-TASKS — child tasks of the original, which is NOT gone. A
+     sub-task is a titled part, made OFF the schedule and listed under its
+     original. Clicking its row in a day's ★ Forced puts it on THAT day, and
+     from another day MOVES it: one record, one date, never on two days. Once
+     an original has sub-tasks its blocks have no tick and are done when every
+     sub-task is. Asserted on Progress here, and on Home and in Documentations
+     separately below. */
+  const SET_SEL = function (setterSrc, sel, value) {
+    var el = document.querySelector(sel);
+    if (!el) return false;
+    new Function('return ' + setterSrc)()(el, value);
+    return true;
+  };
+  const BYTES = function () { return localStorage.getItem('track_db'); };
+  // a WRITE landing — never the answer a case hopes for, which is asserted after
+  const writeLanded = (page, before, message) => page.waitFor(function (b) {
+    return localStorage.getItem('track_db') !== b;
+  }, { args: [before], message });
+  // ✂ on the row `key` ('<kind>:<id>') of the open panel, then each of `names`
+  // added, each waited for until it reaches track_db. Returns the stored item.
+  const addSubtasks = async (page, key, storeKey, id, names) => {
+    await page.evaluate(CLICK_SEL, '[data-dln-split="' + key + '"]');
+    await page.waitFor(function (k) { return !!document.querySelector('[data-dln-sub-input="' + k + '"]'); },
+      { args: [key], message: 'the ✂ name box for ' + key });
+    let item = null;
+    for (const name of names) {
+      const n = (((await page.evaluate(READ_ITEM, storeKey, id)) || {}).parts || []).length;
+      await page.evaluate(SET_SEL, SET_REACT_INPUT, '[data-dln-sub-input="' + key + '"]', name);
+      await page.waitFor(function (k) { var b = document.querySelector('[data-dln-sub-add="' + k + '"]'); return !!b && !b.disabled; },
+        { args: [key], message: 'Add enabled for "' + name + '"' });
+      await page.evaluate(CLICK_SEL, '[data-dln-sub-add="' + key + '"]');
+      item = await page.waitFor(ITEM_WITH_PARTS, { args: [storeKey, id, n + 1], message: 'the sub-task "' + name + '" reaching track_db' });
+    }
+    return item;
+  };
+  const SUB_WHEN = function (skey) {
+    var e = document.querySelector('[data-dln-sub-when="' + skey + '"]');
+    return e ? e.textContent.trim() : null;
+  };
+  // EVERY element drawn for a block id — a sub-task on two days would be two
+  const BLOCK_AT = function (id) {
+    return Array.prototype.map.call(document.querySelectorAll('[data-block-id="' + id + '"]'), function (e) {
+      return { day: e.getAttribute('data-block-day'), state: e.getAttribute('data-block-state'),
+        sub: e.getAttribute('data-block-sub'), text: e.textContent, tick: !!e.querySelector('[data-block-done]') };
+    });
+  };
+
+  await t.test('PROGRESS: ✂ in ★ Forced adds a named sub-task OFF the schedule — the original untouched and still drawn', async () => {
+    /* ✂ names and schedules nothing. The record is asserted key by key, its
+       row says where it is, the grid has no block for it, and the original's
+       block is exactly as it was. The second name goes in by Enter. */
+    const D3 = dayFromToday(3);
+    const db = seedDb({
+      deadlines: [F.deadline('d-a', D3, { cautionDates: [], time: '17:00', title: 'Essay', futureKey: 'kept', parts: [{ id: 'b' }] })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    try {
+      await mountSchedule(page);
+      await page.waitFor(function () { return !!document.querySelector('[data-block-id="d-a:b"]'); },
+        { message: 'the original\'s block' });
+      const before = await page.evaluate(READ_ITEM, 'deadlines', 'd-a');
+      await openDlnPanel(page, TODAY);
+      const one = await addSubtasks(page, 'deadline:d-a', 'deadlines', 'd-a', ['Outline']);
+      const s1 = one.parts[1];
+      assert.deepEqual(Object.keys(s1).sort(), ['createdAt', 'done', 'id', 'title', 'unscheduled'],
+        'a name, an id, a createdAt, done and unscheduled — no day, no time');
+      assert.deepEqual([s1.title, s1.done, s1.unscheduled], ['Outline', false, true]);
+      assert.deepEqual(one.parts[0], before.parts[0], 'the original\'s block is untouched');
+      for (const k of ['date', 'time', 'cautionDates', 'title', 'futureKey']) {
+        assert.deepEqual(one[k], before[k], k + ' survived the write');
+      }
+      assert.equal(await page.waitFor(SUB_WHEN, { args: ['deadline:d-a:' + s1.id], message: 'its row under the original' }),
+        'not on the schedule', 'listed under its original, not on the schedule');
+
+      // the box stayed open and empty; the second name goes in by Enter
+      assert.equal(await page.evaluate(function () {
+        var i = document.querySelector('[data-dln-sub-input="deadline:d-a"]'); return i ? i.value : null;
+      }), '', 'the box stays open, emptied');
+      await page.evaluate(SET_SEL, SET_REACT_INPUT, '[data-dln-sub-input="deadline:d-a"]', 'Draft');
+      await page.evaluate(function () {
+        document.querySelector('[data-dln-sub-input="deadline:d-a"]')
+          .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return true;
+      });
+      const two = await page.waitFor(ITEM_WITH_PARTS, { args: ['deadlines', 'd-a', 3], message: 'Enter adding the second' });
+      const s2 = two.parts[2];
+      assert.deepEqual([s2.title, s2.unscheduled], ['Draft', true]);
+      // the row for it rendering is the grid rendering too: one commit
+      await page.waitFor(SUB_WHEN, { args: ['deadline:d-a:' + s2.id], message: 'the second row' });
+      assert.deepEqual(await page.evaluate(BLOCK_AT, 'd-a:' + s1.id), [], 'no block for a sub-task off the schedule');
+      assert.deepEqual(await page.evaluate(BLOCK_AT, 'd-a:' + s2.id), []);
+      assert.equal((await page.evaluate(BLOCK_AT, 'd-a:b')).length, 1, 'and the original\'s block is still drawn');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  await t.test('PROGRESS: a sub-task\'s row puts it on THAT day — its date always written — and from another day MOVES it: one block, never two', async () => {
+    /* Placed first on the item's OWN day, where a ★ pick would store no
+       date, so "always written" is a claim about a real value. Then moved
+       from a caution day's ★ Forced: the record is moved, never copied, and
+       the grid draws it once. The original's block stays beside it. */
+    const D1 = dayFromToday(1), D3 = dayFromToday(3);
+    const db = seedDb({
+      deadlines: [F.deadline('d-p', D3, { cautionDates: [D1], time: '17:00', title: 'Essay',
+        parts: [{ id: 'b' }, { id: 's', title: 'Outline', createdAt: 1, done: false, unscheduled: true }] })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    try {
+      await mountSchedule(page);
+
+      // 1 — onto the due day, the item's own
+      await openDlnPanel(page, D3);
+      let bytes = await page.evaluate(BYTES);
+      await page.evaluate(CLICK_SEL, '[data-dln-sub="deadline:d-p:s"]');
+      await writeLanded(page, bytes, 'the sub-task going on the schedule');
+      const on = (await page.evaluate(READ_ITEM, 'deadlines', 'd-p')).parts[1];
+      assert.equal(on.date, D3, 'its date is written even on the item\'s own day — it sits where it was put');
+      assert.deepEqual(Object.keys(on).sort(), ['createdAt', 'date', 'done', 'id', 'title'],
+        'unscheduled is deleted, nothing else added');
+      assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-dln-panel]'); }), false, 'the panel closed');
+      const placed = await page.waitFor(function () {
+        var a = document.querySelectorAll('[data-block-id="d-p:s"]');
+        return a.length ? Array.prototype.map.call(a, function (e) { return e.getAttribute('data-block-day'); }) : false;
+      }, { message: 'the sub-task\'s block' });
+      assert.deepEqual(placed, [D3], 'drawn in that day\'s column');
+      assert.ok(/Outline/.test((await page.evaluate(BLOCK_AT, 'd-p:s'))[0].text), 'under its own name');
+      assert.deepEqual((await page.evaluate(BLOCK_AT, 'd-p:b')).map(x => x.day), [D3],
+        'and the original\'s block is NOT gone — it is beside it');
+
+      // 2 — from a caution day's ★ Forced: MOVED there, never copied
+      await openDlnPanel(page, D1);
+      assert.notEqual(await page.evaluate(SUB_WHEN, 'deadline:d-p:s'), 'not on the schedule', 'the row says where it is');
+      bytes = await page.evaluate(BYTES);
+      await page.evaluate(CLICK_SEL, '[data-dln-sub="deadline:d-p:s"]');
+      await writeLanded(page, bytes, 'the move reaching track_db');
+      const moved = await page.evaluate(READ_ITEM, 'deadlines', 'd-p');
+      assert.deepEqual(moved.parts.map(x => x.id), ['b', 's'], 'one sub-task, one record — moved, never copied');
+      assert.equal(moved.parts[1].date, D1, 'and it is on the day it was moved to');
+      const now = await page.waitFor(function (was) {
+        var a = Array.prototype.map.call(document.querySelectorAll('[data-block-id="d-p:s"]'), function (e) { return e.getAttribute('data-block-day'); });
+        return a.join() !== was ? a : false;
+      }, { args: [D3], message: 'the grid re-drawing the moved sub-task' });
+      assert.deepEqual(now, [D1], 'drawn once, in the new day\'s column — never on two days');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  await t.test('PROGRESS: a sub-task put on a day its deadline does not occupy makes that day a caution day, in the same write', async () => {
+    /* The same rule as a ★ pick, through the same two functions. The row says
+       so before the click, and ONE write carries both halves: every track_db
+       write is recorded, and none may hold the day without the sub-task or
+       the sub-task without the day. */
+    const D1 = dayFromToday(1), D3 = dayFromToday(3);
+    const db = seedDb({
+      deadlines: [F.deadline('d-c', D3, { cautionDates: [D1], time: '17:00', title: 'Report',
+        parts: [{ id: 's', title: 'Collect data', createdAt: 1, done: false, unscheduled: true }] })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    try {
+      await mountSchedule(page);
+      await page.evaluate(function () {
+        window.__subSnaps = [];
+        var prev = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (k, v) {
+          if (k === 'track_db') {
+            try {
+              var d = (JSON.parse(v).slots[0].deadlines || []).filter(function (x) { return x.id === 'd-c'; })[0];
+              if (d) window.__subSnaps.push({ date: ((d.parts || [])[0] || {}).date || null, caution: (d.cautionDates || []).slice() });
+            } catch (e) { window.__subSnaps.push({ error: String(e) }); }
+          }
+          return prev.apply(this, arguments);
+        };
+        return true;
+      });
+      await openDlnPanel(page, TODAY);
+      assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-dln-caution-hint="d-c"]'); }), true,
+        'the row says the opened day will become a caution day, before the click');
+      const bytes = await page.evaluate(BYTES);
+      await page.evaluate(CLICK_SEL, '[data-dln-sub="deadline:d-c:s"]');
+      await writeLanded(page, bytes, 'the sub-task going on the schedule');
+      const after = await page.evaluate(READ_ITEM, 'deadlines', 'd-c');
+      assert.deepEqual(after.cautionDates, [TODAY, D1], 'today joined the chosen days, the old one kept');
+      assert.equal(after.parts[0].date, TODAY, 'and the sub-task sits on it');
+      assert.equal('startDate' in after, false, 'written through the one caution writer');
+      const snaps = await page.evaluate(function () { return window.__subSnaps; });
+      assert.ok(snaps.length > 0, 'the write was observed');
+      for (const sn of snaps) {
+        assert.equal((sn.caution || []).indexOf(TODAY) >= 0, sn.date === TODAY,
+          'never one half without the other: ' + JSON.stringify(sn));
+      }
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  await t.test('PROGRESS: a sub-task of a deadline with no real due day is listed but refused, writing nothing', async () => {
+    /* The writer is the one guard, as for a ★ pick: the row is aria-disabled
+       and says why, and its click still reaches withSubtaskOn — so this click
+       is the writer's refusal under test. */
+    const db = seedDb({
+      deadlines: [F.deadline('d-bad', 'someday', { cautionDates: [], time: '17:00', title: 'Broken',
+        parts: [{ id: 's', title: 'Step', createdAt: 1, done: false, unscheduled: true }] })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    try {
+      await mountSchedule(page);
+      const bytes = await page.evaluate(BYTES);
+      await openDlnPanel(page, TODAY);
+      assert.equal(await page.evaluate(function () {
+        var b = document.querySelector('[data-dln-sub="deadline:d-bad:s"]'); return b ? b.getAttribute('aria-disabled') : null;
+      }), 'true', 'its sub-task is listed, and marked as refused');
+      await page.evaluate(CLICK_SEL, '[data-dln-sub="deadline:d-bad:s"]');
+      await sleep(400);
+      assert.equal(await page.evaluate(BYTES), bytes, 'a click on it writes nothing — the writer refused');
+      assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-dln-panel]'); }), true,
+        'and the panel stays open on the reason');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  await t.test('PROGRESS: once it has sub-tasks the original\'s block has no tick, and is done only when every sub-task is', async () => {
+    /* A parent task's rule. The original's own `done` is never written by
+       this, and nor is the deadline's. */
+    const db = seedDb({
+      deadlines: [F.deadline('d-d', TODAY, { cautionDates: [], time: '17:00', title: 'Essay',
+        parts: [{ id: 'b', done: false }, { id: 's1', title: 'Outline', date: TODAY, time: '09:00', done: false },
+          { id: 's2', title: 'Draft', date: TODAY, time: '11:00', done: false }] })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    try {
+      await mountSchedule(page);
+      await page.waitFor(function () { return document.querySelectorAll('[data-block-id^="d-d:"]').length === 3; },
+        { message: 'the original and both sub-tasks on the grid' });
+      const orig0 = (await page.evaluate(BLOCK_AT, 'd-d:b'))[0];
+      assert.equal(orig0.tick, false, 'the original\'s block has no tick of its own');
+      assert.equal(orig0.state, 'open');
+
+      for (const [sid, last] of [['s1', false], ['s2', true]]) {
+        const bytes = await page.evaluate(BYTES);
+        await page.evaluate(CLICK_SEL, '[data-block-done="d-d:' + sid + '"]');
+        await writeLanded(page, bytes, 'the tick on ' + sid + ' reaching track_db');
+        await page.waitFor(function (id) { var e = document.querySelector('[data-block-id="' + id + '"]'); return !!e && e.getAttribute('data-block-state') === 'done'; },
+          { args: ['d-d:' + sid], message: 'the grid re-drawing ' + sid + ' ticked' });
+        assert.equal((await page.evaluate(BLOCK_AT, 'd-d:b'))[0].state, last ? 'done' : 'open',
+          last ? 'done only when every sub-task is' : 'not done while a sub-task is open');
+      }
+      const after = await page.evaluate(READ_ITEM, 'deadlines', 'd-d');
+      assert.equal(after.parts[0].done, false, 'the original\'s own done is never written');
+      assert.equal('done' in after, false, 'and the deadline is NOT ticked');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  await t.test('PROGRESS: a sub-task block\'s ✕ takes it off the schedule and keeps it; its ★ row × deletes it — both ask', async () => {
+    /* Two removals, as for a task: off the schedule (kept, with its own time
+       and length), and gone. Each asks, and each Cancel is byte-identical. */
+    const db = seedDb({
+      deadlines: [F.deadline('d-r', TODAY, { cautionDates: [], time: '17:00', title: 'Essay',
+        parts: [{ id: 's', title: 'Outline', date: TODAY, time: '10:00', blockDuration: 45, done: false }] })]
+    });
+    const page = await open('progress.html', { db, hash: '#schedule' });
+    try {
+      await mountSchedule(page);
+      await page.waitFor(function () { return !!document.querySelector('[data-block-id="d-r:s"]'); }, { message: 'the sub-task\'s block' });
+
+      let bytes = await page.evaluate(BYTES);
+      const asked = await answering(page, false, CLICK_SOON_SEL, ['[data-block-remove="d-r:s"]']);
+      assert.match(String(asked), /Outline/, 'the prompt names it');
+      assert.match(String(asked), /stays as a sub-task/, 'and says it is kept');
+      await sleep(300);
+      assert.equal(await page.evaluate(BYTES), bytes, 'Cancel: track_db is byte-identical');
+      await answering(page, true, CLICK_SOON_SEL, ['[data-block-remove="d-r:s"]']);
+      await writeLanded(page, bytes, 'taking it off the schedule');
+      const off = await page.evaluate(READ_ITEM, 'deadlines', 'd-r');
+      assert.equal(off.parts.length, 1, 'the sub-task is KEPT');
+      assert.deepEqual(off.parts[0], { id: 's', title: 'Outline', time: '10:00', blockDuration: 45, done: false, unscheduled: true },
+        'off the schedule: its day gone, its own time and length kept');
+      await page.waitFor(function () { return !document.querySelector('[data-block-id="d-r:s"]'); }, { message: 'the block leaving the grid' });
+      await openDlnPanel(page, TODAY);
+      assert.equal(await page.waitFor(SUB_WHEN, { args: ['deadline:d-r:s'], message: 'its row' }), 'not on the schedule',
+        'and it is still listed under its deadline');
+
+      bytes = await page.evaluate(BYTES);
+      const asked2 = await answering(page, false, CLICK_SOON_SEL, ['[data-dln-sub-remove="deadline:d-r:s"]']);
+      assert.match(String(asked2), /Delete the sub-task "Outline"/, 'the row × asks to DELETE it');
+      await sleep(300);
+      assert.equal(await page.evaluate(BYTES), bytes, 'Cancel: track_db is byte-identical');
+      await answering(page, true, CLICK_SOON_SEL, ['[data-dln-sub-remove="deadline:d-r:s"]']);
+      await writeLanded(page, bytes, 'deleting it');
+      const gone = await page.evaluate(READ_ITEM, 'deadlines', 'd-r');
+      assert.equal('parts' in gone, false, 'gone, and the emptied list deleted rather than stored as []');
+      assert.equal(gone.title, 'Essay', 'the deadline itself is kept');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  await t.test('PROGRESS: a legacy blockOff item\'s blocks stay hidden — and a pick shows them again', async () => {
+    /* `blockOff: true` was the old `remove from schedule`. It still hides every
+       block an item has, nothing writes it any more, and the item's own
+       surfaces stay drawn. A pick writes `false` — re-adding never deletes the
+       key — so the hidden block comes back beside the new one, and the row
+       says it will before the click. */
+    const db = seedDb({
+      calendarNotes: [F.calNote('n-off', TODAY, { title: 'Off-grid note', time: '14:30', blockOff: true, parts: [{ id: 'old' }] })],
+      deadlines: [F.deadline('d-off', TODAY, { cautionDates: [], time: '17:00', title: 'Off-grid deadline', blockOff: true, parts: [{ id: 'old' }] })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
@@ -6511,84 +7104,39 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(await page.evaluate(function () {
       return document.body.textContent.indexOf('Off-grid deadline') >= 0;
     }), true, 'and the deadline is still drawn on its due day');
+
+    await openDlnPanel(page, TODAY);
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-dln-hidden="n-off"]'); }), true,
+      'the row names the hidden block before the pick brings it back');
+    await page.evaluate(CLICK_SEL, '[data-dln-add="dayNote:n-off"]');
+    const after = await page.waitFor(ITEM_WITH_PARTS, { args: ['calendarNotes', 'n-off', 2], message: 'the pick' });
+    assert.equal(after.blockOff, false, 'the pick writes blockOff:false rather than deleting the key');
+    assert.equal(after.parts[0].id, 'old', 'and the hidden block was kept all along');
+    await page.waitFor(function () { return !!document.querySelector('[data-block-id^="n-off:"]'); },
+      { message: 'the note\'s blocks drawn' });
+    assert.deepEqual((await page.evaluate(BLOCKS)).map(b => b.id).filter(id => id.indexOf('n-off:') === 0).length, 2,
+      'both blocks are drawn — the hidden one and the new one');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('an UNTIMED note is on the grid at 08:00 and never gets time:""', async () => {
+  await t.test('an UNTIMED note picked in ★ Forced lands at 08:00 and never gets time:""', async () => {
     const db = seedDb({ calendarNotes: [F.calNote('n-u', TODAY, { title: 'Untimed note' })] });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
-    const b = (await page.evaluate(BLOCKS)).find(x => x.id === 'n-u');
-    assert.ok(b, 'it is on the grid with no time of its own');
-    assert.equal(b.top, 8 * 64 + 'px', 'at the default hour');
-
-    // …and being on the grid invented no stored time
-    const still = await page.evaluate(READ_ITEM, 'calendarNotes', 'n-u');
-    assert.equal('time' in still, false, 'no time key was invented');
-    assert.equal('blockDuration' in still, false, 'and nothing was written at all');
-
-    // the row reports it as untimed rather than claiming 08:00 is the user's
     await openDlnPanel(page, TODAY);
+    // the row reports it as untimed rather than claiming 08:00 is the user's
     assert.match(await page.evaluate(function () {
       var e = document.querySelector('[data-dln-date="n-u"]'); return e ? e.textContent : '';
     }), /—/, 'the row shows the note has no time of its own');
-    assert.deepEqual(realErrors(page), []);
-    await page.close();
-  });
-
-  await t.test('dissecting replaces the parent block with its parts, and emptying restores it', async () => {
-    const db = seedDb({
-      deadlines: [F.deadline('d-1', TODAY, { cautionDates: [],  time: '17:00', title: 'Essay', blockDuration: 60 })]
-    });
-    const page = await open('progress.html', { db, hash: '#schedule' });
-    await mountSchedule(page);
-    assert.deepEqual((await page.evaluate(BLOCKS)).map(b => b.id), ['d-1'], 'the parent block to begin with');
-
-    await openDlnPanel(page, TODAY);
-    await page.evaluate(CLICK_SEL, '[data-dln-dissect="deadline:d-1"]');
-    await page.waitFor(function () { return !!document.querySelector('[data-dln-part-input="deadline:d-1"]'); },
-      { message: 'the dissect sub-panel' });
-    await page.evaluate(function (setterSrc) {
-      var set = new Function('return ' + setterSrc)();
-      set(document.querySelector('[data-dln-part-input="deadline:d-1"]'), 'Outline');
-      return true;
-    }, SET_REACT_INPUT);
-    await page.evaluate(CLICK_SEL, '[data-dln-part-add="deadline:d-1"]');
-
-    const withPart = await page.waitFor(function () {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return (d && d.parts && d.parts.length === 1) ? d : false;
-    }, { message: 'the part reaching track_db' });
-    assert.equal(withPart.parts[0].title, 'Outline');
-    assert.equal(withPart.parts[0].time, '16:00', 'a new part inherits the parent block start');
-    assert.equal(withPart.parts[0].blockDuration, 60, 'and its length');
-    assert.equal('date' in withPart.parts[0], false,
-      'and NO date of its own — absence means it follows the parent block\'s day');
-    assert.equal(withPart.blockDuration, 60, 'the parent keeps its own block record');
-
-    const ids = await page.waitFor(function () {
-      var b = Array.prototype.map.call(document.querySelectorAll('[data-block-kind]'),
-        function (e) { return e.getAttribute('data-block-id'); });
-      return (b.length === 1 && b[0].indexOf(':') > 0) ? b : false;
-    }, { message: 'the parts standing in for the parent block' });
-    assert.match(ids[0], /^d-1:/, 'the parent block is replaced by its part');
-
-    // removing the last part deletes the key, so the parent block comes back
-    await page.evaluate(function () {
-      var rows = document.querySelectorAll('[data-dln-panel] .group\\/part button');
-      if (!rows.length) return false;
-      rows[rows.length - 1].click();
-      return true;
-    });
-    const back = await page.waitFor(function () {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return (d && !('parts' in d)) ? d : false;
-    }, { message: 'the parts key being deleted' });
-    assert.equal('parts' in back, false, 'emptied rather than left as []');
-    assert.deepEqual((await page.evaluate(BLOCKS)).map(b => b.id), ['d-1'], 'and the parent block is back');
+    await page.evaluate(CLICK_SEL, '[data-dln-add="dayNote:n-u"]');
+    const after = await page.waitFor(ITEM_WITH_PARTS, { args: ['calendarNotes', 'n-u', 1], message: 'the pick' });
+    assert.equal('time' in after, false, 'no time key was invented on the note');
+    assert.equal('time' in after.parts[0], false, 'nor on its block');
+    const top = await page.waitFor(function (id) {
+      var e = document.querySelector('[data-block-id="' + id + '"]'); return e ? e.style.top : false;
+    }, { args: ['n-u:' + after.parts[0].id], message: 'the block on the grid' });
+    assert.equal(top, 8 * 64 + 'px', 'at the default hour');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -6599,7 +7147,7 @@ test('browser suites', skipUnlessChrome, async t => {
     // note block silently sits on top of a scheduled task.
     const db = seedDb({
       goals: [F.task('g-x', { title: 'Overlapping task', scheduledDate: TODAY, scheduledTime: '09:00', duration: 60 })],
-      calendarNotes: [F.calNote('n-o', TODAY, { title: 'Overlapping note', time: '09:00', blockDuration: 60 })],
+      calendarNotes: [F.calNote('n-o', TODAY, { title: 'Overlapping note', time: '09:00', blockDuration: 60, parts: [BLOCK] })],
       deadlines: []
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
@@ -6609,7 +7157,7 @@ test('browser suites', skipUnlessChrome, async t => {
        the two is 15" is the assertion that actually proves they were grouped —
        checking that the note is 10-or-15 would pass even if it were excluded. */
     const z = await page.waitFor(function () {
-      var note = document.querySelector('[data-block-id="n-o"]');
+      var note = document.querySelector('[data-block-id="n-o:b"]');
       if (!note) return false;
       var task = Array.prototype.find.call(document.querySelectorAll('#root div'), function (e) {
         return e.textContent.indexOf('Overlapping task') >= 0 && e.style && e.style.height
@@ -6637,13 +7185,13 @@ test('browser suites', skipUnlessChrome, async t => {
        stray blockDuration is realistic: clearing a note's time in
        documentations.html drops the `time` key and knows nothing about blocks. */
     const db = seedDb({
-      calendarNotes: [F.calNote('n-orphan', TODAY, { title: 'Orphan note', blockDuration: 60 })],
+      calendarNotes: [F.calNote('n-orphan', TODAY, { title: 'Orphan note', blockDuration: 60, parts: [BLOCK] })],
       deadlines: []
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
     const b = await page.waitFor(function () {
-      var e = document.querySelector('[data-block-id="n-orphan"]');
+      var e = document.querySelector('[data-block-id="n-orphan:b"]');
       return e ? { top: e.style.top, height: e.style.height } : false;
     }, { message: 'the orphan note being drawn' });
     assert.equal(b.top, 8 * 64 + 'px', 'at the default hour, never at 00:00');
@@ -6656,12 +7204,15 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('the Home calendar draws the same two blocks', async () => {
+  await t.test('the Home calendar draws the same two blocks, and none for an item never added', async () => {
     // Asserted separately from Progress on purpose: this surface reads
     // calendar-core.js, Progress reads its own copy of the same rules.
     const db = seedDb({
-      calendarNotes: [F.calNote('n-s', TODAY, { title: 'Scheduled note', time: '09:00', blockDuration: 90 })],
-      deadlines: [F.deadline('d-p', TODAY, { cautionDates: [],  time: '20:00', title: 'Prep block', blockDuration: 60 })]
+      calendarNotes: [
+        F.calNote('n-s', TODAY, { title: 'Scheduled note', time: '09:00', blockDuration: 90, parts: [BLOCK] }),
+        F.calNote('n-none', TODAY, { title: 'Unadded note', time: '11:00' })
+      ],
+      deadlines: [F.deadline('d-p', TODAY, { cautionDates: [], time: '20:00', title: 'Prep block', blockDuration: 60, parts: [BLOCK] })]
     });
     // index.html is static markup with no React #root — its calendar is a
     // plain DOM build, and the day preview only exists once a day is selected.
@@ -6687,17 +7238,22 @@ test('browser suites', skipUnlessChrome, async t => {
       'the deadline run-up block reaches Home, ending at its 20:00 due time — got ' + JSON.stringify(seen));
     assert.ok(seen.some(t => /Scheduled note/.test(t) && /09:00/.test(t)),
       'and so does the note block — got ' + JSON.stringify(seen));
+    assert.ok(!seen.some(t => /Unadded note/.test(t)),
+      'but a note nobody added draws no block — got ' + JSON.stringify(seen));
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('a Documentations calendar block draws the deadline run-up too', async () => {
+  await t.test('a Documentations calendar block draws the deadline run-up too, and none for an item never added', async () => {
     // The third surface, again asserted on its own. The block is added through
     // the real block menu rather than a hand-built record, so the test cannot
     // drift from the shape the page actually writes.
     const db = seedDb({
       docPages: [F.docPage('p-1', { title: 'Test Page' })],
-      deadlines: [F.deadline('d-p', TODAY, { cautionDates: [],  time: '20:00', title: 'Prep block', blockDuration: 60 })],
+      deadlines: [
+        F.deadline('d-p', TODAY, { cautionDates: [], time: '20:00', title: 'Prep block', blockDuration: 60, parts: [BLOCK] }),
+        F.deadline('d-none', TODAY, { cautionDates: [], time: '12:00', title: 'Unadded deadline' })
+      ],
       calendarNotes: []
     });
     const page = await open('documentations.html', { db });
@@ -6728,11 +7284,93 @@ test('browser suites', skipUnlessChrome, async t => {
     // end would still be "there"
     assert.match(text, /Prep block ?19:00/,
       'the run-up ENDS at the 20:00 due time, so it starts at 19:00 — got ' + text.slice(0, 200));
+    const blocks = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('.doc-cal .cal-sched-block'),
+        function (b) { return b.textContent.replace(/\s+/g, ' ').trim(); });
+    });
+    assert.ok(!blocks.some(t => /Unadded deadline/.test(t)),
+      'but a deadline nobody added draws no block — got ' + JSON.stringify(blocks));
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
 
-  await t.test('changing a block writes no key progress.html does not own', async () => {
+  /* Sub-tasks on the two read-only surfaces, each asserted on its own: both
+     read calendar-core.js, Progress its own copy, and a rule forgotten at one
+     surface hides behind a passing sibling. */
+  await t.test('HOME: a sub-task on the schedule is drawn beside its original, and one off it is not', async () => {
+    const db = seedDb({
+      calendarNotes: [F.calNote('n-s', TODAY, { title: 'Lab day', time: '09:00',
+        parts: [{ id: 'b' }, { id: 's1', title: 'Gloves', date: TODAY, time: '11:00' },
+          { id: 's2', title: 'Goggles', unscheduled: true }] })]
+    });
+    const page = await open('index.html', { db });
+    try {
+      await page.waitFor(function () {
+        var g = document.querySelector('#cal-grid'); return !!g && g.children.length > 0;
+      }, { message: 'the Home calendar grid' });
+      await page.evaluate(function () {
+        var cells = Array.prototype.filter.call(document.querySelectorAll('.cal-cell'),
+          function (c) { return !c.classList.contains('empty'); });
+        cells[new Date().getDate() - 1].click();
+        return true;
+      });
+      const seen = await page.waitFor(function () {
+        var d = document.querySelector('#cal-detail');
+        if (!d) return false;
+        var blocks = Array.prototype.map.call(d.querySelectorAll('.cal-sched-block'),
+          function (b) { return b.textContent.replace(/\s+/g, ' ').trim(); });
+        // wait for the block every reading draws — the scheduled sub-task —
+        // then assert, so a missing original reads as a wrong value
+        return blocks.some(function (t) { return /Gloves/.test(t); }) ? blocks : false;
+      }, { message: 'the scheduled sub-task on the Home day preview' });
+      assert.ok(!seen.some(t => /Goggles/.test(t)), 'a sub-task off the schedule is not drawn — got ' + JSON.stringify(seen));
+      assert.ok(seen.some(t => /Lab day/.test(t) && /09:00/.test(t)), 'the original is not gone — got ' + JSON.stringify(seen));
+      assert.ok(seen.some(t => /Gloves/.test(t) && /11:00/.test(t)), 'and its sub-task is beside it — got ' + JSON.stringify(seen));
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  await t.test('DOCUMENTATIONS: a sub-task on the schedule is drawn beside its original, and one off it is not', async () => {
+    const db = seedDb({
+      docPages: [F.docPage('p-1', { title: 'Test Page' })],
+      deadlines: [F.deadline('d-s', TODAY, { cautionDates: [], time: '20:00', title: 'Essay due',
+        parts: [{ id: 'b' }, { id: 's1', title: 'Outline', date: TODAY, time: '12:00' },
+          { id: 's2', title: 'Proofread', unscheduled: true }] })],
+      calendarNotes: []
+    });
+    const page = await open('documentations.html', { db });
+    try {
+      await page.waitFor(function () { return !!document.querySelector('.docs-editor'); },
+        { message: 'documentations editor' });
+      await page.evaluate(function () {
+        Array.prototype.find.call(document.querySelectorAll('.docs-addmenu button'),
+          function (b) { return /Calendar/.test(b.textContent); }).click();
+      });
+      await page.waitFor(function () { return !!document.querySelector('.doc-cal'); }, { message: 'the calendar block' });
+      await page.evaluate(function () {
+        var d = new Date();
+        var cells = Array.prototype.filter.call(document.querySelectorAll('.doc-cal .cal-cell'),
+          function (c) { return !c.classList.contains('empty'); });
+        cells[d.getDate() - 1].click();
+        return true;
+      });
+      const blocks = await page.waitFor(function () {
+        var b = Array.prototype.map.call(document.querySelectorAll('.doc-cal .cal-sched-block'),
+          function (x) { return x.textContent.replace(/\s+/g, ' ').trim(); });
+        return b.some(function (t) { return /Outline/.test(t); }) ? b : false;
+      }, { message: 'the scheduled sub-task inside the calendar block' });
+      assert.ok(!blocks.some(t => /Proofread/.test(t)), 'a sub-task off the schedule is not drawn — got ' + JSON.stringify(blocks));
+      assert.ok(blocks.some(t => /Essay due ?19:00/.test(t)), 'the original is not gone — got ' + JSON.stringify(blocks));
+      assert.ok(blocks.some(t => /Outline ?12:00/.test(t)), 'and its sub-task is beside it — got ' + JSON.stringify(blocks));
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  await t.test('a ★ Forced pick writes no key progress.html does not own', async () => {
     const db = seedDb({
       deadlines: [F.deadline('d-1', TODAY, { cautionDates: [],  time: '17:00', title: 'Essay' })]
     });
@@ -6747,13 +7385,8 @@ test('browser suites', skipUnlessChrome, async t => {
       var out = {}; keys.forEach(function (k) { out[k] = JSON.stringify(s[k]); }); return out;
     }, FOREIGN);
 
-    await openDlnPanel(page, TODAY);
-    await page.evaluate(CLICK_SEL, '[data-dln-unschedule="d-1"]');
-    await page.waitFor(function () {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return !!(d && d.blockOff === true);
-    }, { message: 'the write landing' });
+    await pickForced(page, TODAY, 'deadline:d-1');
+    await page.waitFor(ITEM_WITH_PARTS, { args: ['deadlines', 'd-1', 1], message: 'the write landing' });
 
     assert.deepEqual(await page.evaluate(function (keys) {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
@@ -6765,9 +7398,10 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   /* ── work scheduled on a day of its own ──────────────────────────────────
-     `blockDate` on an item and `date` on a part are what let prep sit on a day
-     that is not the item's own. The three rendering surfaces are asserted
-     SEPARATELY, as everything else in this section is. */
+     A part's own `date` — or, for one with none, a legacy `blockDate` on its
+     item — is what lets prep sit on a day that is not the item's own. The
+     three rendering surfaces are asserted SEPARATELY, as everything else in
+     this section is. */
 
   /* Two independent day pickers, and the difference matters.
 
@@ -6786,26 +7420,29 @@ test('browser suites', skipUnlessChrome, async t => {
       '-' + String(n).padStart(2, '0');
   };
 
-  await t.test('PROGRESS: blockDate draws the run-up on a caution day, marker staying put', async () => {
+  await t.test('PROGRESS: a block on another day draws in that column, marker staying put', async () => {
+    // Both ways a block reaches another day: its own `date` (the deadline's),
+    // and a legacy `blockDate` an undated block inherits (the note's).
     const due = WEEK(3), moved = WEEK(1);
     const db = seedDb({
-      calendarNotes: [F.calNote('n-m', due, { title: 'Moved note', time: '15:00', blockDate: moved })],
+      calendarNotes: [F.calNote('n-m', due, { title: 'Moved note', time: '15:00', blockDate: moved, parts: [BLOCK] })],
       deadlines: [F.deadline('d-m', due, {
-        cautionDates: [WEEK(0), WEEK(1), WEEK(2)], time: '17:00', title: 'Moved prep', blockDate: moved
+        cautionDates: [WEEK(0), WEEK(1), WEEK(2)], time: '17:00', title: 'Moved prep',
+        parts: [{ id: 'b', date: moved }]
       })]
     });
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
     // the week view shows both days at once, so one read covers the move
     const blocks = await page.evaluate(BLOCKS);
-    assert.deepEqual(blocks.map(b => b.id).sort(), ['d-m', 'n-m'], 'each block is drawn exactly once');
+    assert.deepEqual(blocks.map(b => b.id).sort(), ['d-m:b', 'n-m:b'], 'each block is drawn exactly once');
     // THE assertion of this case: the COLUMN, not just the id. Both blocks are
     // in the DOM either way; only the day tells a moved one from an unmoved one.
     assert.deepEqual(blocks.map(b => b.day), [moved, moved],
-      'both are drawn in the column they were moved to, not the due day');
+      'both are drawn in the column they sit on, not the due day');
     // the deadline's run-up still ENDS at the due time, on the day it moved to
-    assert.equal(blocks.find(b => b.id === 'd-m').top, 16 * 64 + 'px');
-    assert.equal(blocks.find(b => b.id === 'n-m').top, 15 * 64 + 'px', 'and the note keeps its own hour');
+    assert.equal(blocks.find(b => b.id === 'd-m:b').top, 16 * 64 + 'px');
+    assert.equal(blocks.find(b => b.id === 'n-m:b').top, 15 * 64 + 'px', 'and the note keeps its own hour');
     // the marker follows the note's own date, not its block's
     assert.equal(await page.evaluate(function () {
       return Array.prototype.some.call(document.querySelectorAll('#root span'), function (e) {
@@ -6821,7 +7458,8 @@ test('browser suites', skipUnlessChrome, async t => {
     // calendar-core.js, Progress reads its own copy of the same rules.
     const db = seedDb({
       deadlines: [F.deadline('d-m', MDAY(13), {
-        cautionDates: [MDAY(10), MDAY(11), MDAY(12)], time: '20:00', title: 'Moved prep', blockDate: MDAY(11)
+        cautionDates: [MDAY(10), MDAY(11), MDAY(12)], time: '20:00', title: 'Moved prep',
+        blockDate: MDAY(11), parts: [BLOCK]
       })]
     });
     const page = await open('index.html', { db });
@@ -6845,10 +7483,10 @@ test('browser suites', skipUnlessChrome, async t => {
     };
     const onMoved = await readDay(11);
     assert.ok(onMoved.blocks.some(t => /Moved prep/.test(t) && /19:00/.test(t)),
-      'the block draws on the day it was moved to, still ending at 20:00 — got ' + JSON.stringify(onMoved.blocks));
+      'the block draws on the day it sits on, still ending at 20:00 — got ' + JSON.stringify(onMoved.blocks));
     const onDue = await readDay(13);
     assert.match(onDue.text, /Moved prep/, 'the due day still lists the deadline itself');
-    assert.deepEqual(onDue.blocks, [], 'but no BLOCK is drawn there any more');
+    assert.deepEqual(onDue.blocks, [], 'but no BLOCK is drawn there');
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
@@ -6882,65 +7520,6 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('a task is added on a chosen day, capped to a deadline\'s caution period', async () => {
-    const TOMORROW = dayFromToday(1), YESTERDAY = dayFromToday(-1);
-    const db = seedDb({
-      deadlines: [F.deadline('d-1', TODAY, {
-        cautionDates: [YESTERDAY], time: '17:00', title: 'Essay'
-      })]
-    });
-    const page = await open('progress.html', { db, hash: '#schedule' });
-    await mountSchedule(page);
-    await openDlnPanel(page, TODAY);
-    await page.evaluate(CLICK_SEL, '[data-dln-dissect="deadline:d-1"]');
-    await page.waitFor(function () { return !!document.querySelector('[data-dln-part-date="deadline:d-1"]'); },
-      { message: 'the task composer' });
-
-    // the day picker is capped to the caution window at both ends
-    assert.deepEqual(await page.evaluate(function () {
-      var e = document.querySelector('[data-dln-part-date="deadline:d-1"]');
-      return { min: e.getAttribute('min'), max: e.getAttribute('max'), value: e.value };
-    }), { min: YESTERDAY, max: TODAY, value: TODAY },
-      'seeded to the block\'s day and capped to the caution period');
-
-    await page.evaluate(function (setterSrc, day) {
-      var set = new Function('return ' + setterSrc)();
-      set(document.querySelector('[data-dln-part-input="deadline:d-1"]'), 'Outline');
-      set(document.querySelector('[data-dln-part-date="deadline:d-1"]'), day);
-      return true;
-    }, SET_REACT_INPUT, YESTERDAY);
-    await page.evaluate(CLICK_SEL, '[data-dln-part-add="deadline:d-1"]');
-    const withPart = await page.waitFor(function () {
-      var db = JSON.parse(localStorage.getItem('track_db') || '{}');
-      var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
-      return (d && d.parts && d.parts.length === 1) ? d : false;
-    }, { message: 'the task reaching track_db' });
-    assert.equal(withPart.parts[0].date, YESTERDAY, 'the task carries the chosen day');
-    assert.equal(withPart.date, TODAY, 'and the deadline itself did NOT move');
-    assert.deepEqual(withPart.cautionDates, [YESTERDAY], 'nor its chosen caution days');
-
-    // a day outside the window is refused rather than written
-    await page.evaluate(function (setterSrc, day) {
-      var set = new Function('return ' + setterSrc)();
-      set(document.querySelector('[data-dln-part-input="deadline:d-1"]'), 'Too late');
-      set(document.querySelector('[data-dln-part-date="deadline:d-1"]'), day);
-      return true;
-    }, SET_REACT_INPUT, TOMORROW);
-    await page.waitFor(function () {
-      var b = document.querySelector('[data-dln-part-add="deadline:d-1"]');
-      return !!b && b.disabled;
-    }, { message: 'Add being refused for a day outside the caution period' });
-    assert.equal(await page.evaluate(function () {
-      return !!document.querySelector('[data-dln-part-warn="deadline:d-1"]');
-    }), true, 'and the reason is shown');
-    await page.evaluate(CLICK_SEL, '[data-dln-part-add="deadline:d-1"]');
-    await sleep(300);
-    assert.equal((await page.evaluate(READ_ITEM, 'deadlines', 'd-1')).parts.length, 1,
-      'clicking anyway wrote nothing');
-    assert.deepEqual(realErrors(page), []);
-    await page.close();
-  });
-
   await t.test('PROGRESS refuses a due-day move that would strand placed prep', async () => {
     // Cancel path: the stored bytes must be untouched. Nothing here may move or
     // clamp a day the user chose — it refuses and names the day instead.
@@ -6949,7 +7528,7 @@ test('browser suites', skipUnlessChrome, async t => {
     const due = dayFromToday(2), placed = dayFromToday(-2);
     const db = seedDb({
       deadlines: [F.deadline('dl-move', due, {
-        cautionDates: [placed], time: '17:00', title: 'Essay', blockDate: placed
+        cautionDates: [placed], time: '17:00', title: 'Essay', parts: [{ id: 'b', date: placed }]
       })]
     });
     const page = await open('progress.html', { db, hash: '?date=' + due + '&dl=dl-move#schedule' });
@@ -7984,13 +8563,13 @@ test('browser suites', skipUnlessChrome, async t => {
     const page = await browser.newPage();
     await page.clearStorage(server.origin);
     await page.seed(seedDb({
-      calendarNotes: [F.calNote('n-arm', TODAY, { title: 'Armed note', time: '09:00' })]
+      calendarNotes: [F.calNote('n-arm', TODAY, { title: 'Armed note', time: '09:00', parts: [BLOCK] })]
     }));
     await page.setViewport(1280, 900);
     await page.goto(server.url('progress.html') + '#schedule');
     await page.skipFirebase();
     await mountSchedule(page);
-    await page.waitFor(function () { return !!document.querySelector('[data-block-id="n-arm"]'); },
+    await page.waitFor(function () { return !!document.querySelector('[data-block-id="n-arm:b"]'); },
       { message: 'the seeded note block' });
     return page;
   };
@@ -7998,20 +8577,20 @@ test('browser suites', skipUnlessChrome, async t => {
   await t.test('TOUCH: tapping empty grid space un-arms a schedule block', async () => {
     const page = await openArmedSchedule();
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
-    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm"]'), false,
+    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm:b"]'), false,
       'it does not start armed');
 
-    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm"]'), 'ok');
-    await page.waitFor(ARMED_SEL, { args: ['[data-block-id="n-arm"]'],
+    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm:b"]'), 'ok');
+    await page.waitFor(ARMED_SEL, { args: ['[data-block-id="n-arm:b"]'],
       message: 'the block showing the armed ring' });
 
     /* The named assertion, and the only one here that can fail pre-fix —
        everything above passes on both sides. A plain assert rather than a
        waitFor, so the failure reads `true !== false` against this message
        instead of a timeout that could equally mean the case went blind. */
-    assert.equal(await page.evaluate(CLICK_EMPTY_GRID, 'n-arm', 40), 'ok');
+    assert.equal(await page.evaluate(CLICK_EMPTY_GRID, 'n-arm:b', 40), 'ok');
     await sleep(300);
-    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm"]'), false,
+    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm:b"]'), false,
       'tapping empty grid space cleared the armed ring');
 
     // arming and un-arming are selection, not edits
@@ -8049,14 +8628,14 @@ test('browser suites', skipUnlessChrome, async t => {
        case, because a "fix" that broke it would otherwise look identical. */
     const page = await openArmedSchedule();
 
-    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm"]'), 'ok');
+    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm:b"]'), 'ok');
     await sleep(300);
-    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm"]'), true,
+    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm:b"]'), true,
       'one tap arms the block, and the block\'s own click does not clear it');
 
-    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm"]'), 'ok');
+    assert.equal(await page.evaluate(TAP_REAL, '[data-block-id="n-arm:b"]'), 'ok');
     await sleep(300);
-    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm"]'), false,
+    assert.equal(await page.evaluate(ARMED_SEL, '[data-block-id="n-arm:b"]'), false,
       're-tapping the armed block still un-arms it');
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -8957,6 +9536,20 @@ test('browser suites', skipUnlessChrome, async t => {
       { type, x, y, button: 'left', buttons, clickCount: 1 });
     await send('mousePressed', from.x, from.y, 1);
     for (let i = 1; i <= 4; i++) await send('mouseMoved', from.x + dx * i / 4, from.y + dy * i / 4, 1);
+    /* Two frames before the release, so the last move has been dispatched
+       when the button comes up — a hand never releases in the same instant
+       it stops. Added after a full run where a 64px drag landed on its third
+       move's 48px; the mechanism was not reproduced (6x CPU throttling did
+       not), so this is a precaution, not a proven cause. The timer is not
+       optional: a BACKGROUND tab runs no animation frames at all, so a
+       frames-only wait hangs the two-tab case that drags behind another tab. */
+    await page.evaluate(function () {
+      return new Promise(function (r) {
+        var done = false, fin = function () { if (!done) { done = true; r(true); } };
+        requestAnimationFrame(function () { requestAnimationFrame(fin); });
+        setTimeout(fin, 250);
+      });
+    });
     await send('mouseReleased', from.x + dx, from.y + dy, 0);
   };
   /* One touch event on a block, at the same point REF_POINT uses. Every event
@@ -8975,6 +9568,113 @@ test('browser suites', skipUnlessChrome, async t => {
     }));
     return 'ok';
   };
+
+  /* ── a deadline block's drag reads the days it may land on NOW ───────────
+     Here rather than in section 10 because mouseDrag is declared just above,
+     and a `const` is not hoisted.
+
+     The Schedule's pointer effect is mount-only. Its deadline snap used to
+     read the `deadlines` prop — the list as it was when the page mounted — so
+     a caution day added since was unknown to the drag, and a ★ Forced pick
+     adds one. The allowed days now ride in the ghost, read from the item as
+     rendered when the drag starts.
+
+     Three doors, and the cases are built so each one has a case that only it
+     can fail. The READ is shared by mouse and touch; the STASH is written in
+     two places, startDragBlockItem and the touch path's ghost. A vertical drag
+     cannot see a missing stash — an empty set pins the ghost to its own
+     column, which a vertical drag never leaves — so the two carrying cases
+     drag ACROSS: a block on the due day onto the caution day the pick just
+     added. The stale read snaps it back to the due day; a missing stash pins
+     it there. */
+  const forcedDragSetup = async () => {
+    const DUE = dayFromToday(2);
+    const page = await open('progress.html', {
+      db: seedDb({ deadlines: [F.deadline('d-g', DUE, {
+        cautionDates: [], time: '17:00', title: 'Lab report', parts: [{ id: 'due' }] })] }),
+      hash: '#schedule'
+    });
+    await mountSchedule(page);
+    await pickForced(page, TODAY, 'deadline:d-g');
+    const d = await page.waitFor(ITEM_WITH_PARTS, { args: ['deadlines', 'd-g', 2], message: 'the pick reaching track_db' });
+    assert.deepEqual(d.cautionDates, [TODAY], 'the pick made today a caution day — one the page did NOT mount with');
+    const picked = '[data-block-id="d-g:' + d.parts[1].id + '"]';
+    await page.waitFor(function (s) { return !!document.querySelector(s); }, { args: [picked], message: 'the new block' });
+    return { page, DUE, picked, pickedId: d.parts[1].id, dueSel: '[data-block-id="d-g:due"]' };
+  };
+  // mid-block, clear of the tick on the left and ⓘ / ✕ on the right — and,
+  // the block spanning its column, mid-COLUMN, so a drag of whole columns
+  // drops mid-column too
+  const BLOCK_POINT = function (sel) {
+    var el = document.querySelector(sel);
+    if (!el) return null;
+    el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    var r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width * 0.45), y: Math.round(r.top + Math.min(r.height / 2, 14)),
+      colW: el.parentElement.getBoundingClientRect().width };
+  };
+  // the stored part once a drag has written its own time — the write landing
+  const PART_MOVED = function (partId) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var d = (((db.slots || [])[0] || {}).deadlines || [])[0];
+    var p = d && (d.parts || []).filter(function (x) { return x.id === partId; })[0];
+    return (p && p.time) ? p : false;
+  };
+  // One touch event on a block, `dx`/`dy` from the point BLOCK_POINT uses.
+  // Every event of a touch goes to the element it STARTED on, so the move is
+  // dispatched on the block too, and left to bubble to the document listeners.
+  const BLOCK_TOUCH = function (sel, type, dx, dy) {
+    var el = document.querySelector(sel);
+    if (!el) return 'missing ' + sel;
+    var r = el.getBoundingClientRect();
+    var x = r.left + r.width * 0.45 + (dx || 0), y = r.top + Math.min(r.height / 2, 14) + (dy || 0);
+    var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
+    var live = (type === 'touchend' || type === 'touchcancel') ? [] : [t];
+    el.dispatchEvent(new TouchEvent(type, {
+      bubbles: true, cancelable: true, composed: true,
+      touches: live, targetTouches: live, changedTouches: [t]
+    }));
+    return 'ok';
+  };
+
+  await t.test('PROGRESS: a mouse drag keeps a block on the caution day ★ Forced just added', async () => {
+    // The user's own sequence: add a block to today, then move it an hour.
+    const { page, picked, pickedId } = await forcedDragSetup();
+    await mouseDrag(page, await page.evaluate(BLOCK_POINT, picked), 0, 64);   // an hour later, same column
+    const p = await page.waitFor(PART_MOVED, { args: [pickedId], message: 'the drag reaching track_db' });
+    assert.equal(p.date, TODAY, 'it stays on today rather than snapping to the day the page mounted knowing');
+    // the minute it lands on is incidental to the claim; that it moved at all is not
+    assert.ok(p.time > '16:00', 'and it moved later than its 16:00 start: ' + p.time);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROGRESS: a mouse drag carries a deadline block onto a caution day added since the page mounted', async () => {
+    const { page, DUE, dueSel } = await forcedDragSetup();
+    const from = await page.evaluate(BLOCK_POINT, dueSel);
+    await mouseDrag(page, from, -2 * from.colW, 0);   // the due day's column → today's, two to the left
+    const p = await page.waitFor(PART_MOVED, { args: ['due'], message: 'the drag reaching track_db' });
+    assert.equal(p.date, TODAY, 'it lands on today — not snapped back, and not pinned, to ' + DUE);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('TOUCH: a swipe carries a deadline block onto a caution day added since the page mounted', async () => {
+    const { page, DUE, dueSel } = await forcedDragSetup();
+    const { colW } = await page.evaluate(BLOCK_POINT, dueSel);
+    assert.equal(await page.evaluate(BLOCK_TOUCH, dueSel, 'touchstart'), 'ok');
+    await page.evaluate(BLOCK_TOUCH, dueSel, 'touchend');
+    await page.waitFor(function (s) { return document.querySelector(s).className.indexOf('ring-cyan-400') >= 0; },
+      { args: [dueSel], message: 'the tap arming the block' });
+    await sleep(600);   // past the 500ms mouse suppression a touch leaves behind
+    await page.evaluate(BLOCK_TOUCH, dueSel, 'touchstart');
+    await page.evaluate(BLOCK_TOUCH, dueSel, 'touchmove', -2 * colW, 0);
+    await page.evaluate(BLOCK_TOUCH, dueSel, 'touchend', -2 * colW, 0);
+    const p = await page.waitFor(PART_MOVED, { args: ['due'], message: 'the swipe reaching track_db' });
+    assert.equal(p.date, TODAY, 'it lands on today — not snapped back, and not pinned, to ' + DUE);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
 
   await t.test('a class is untickable, and a mouse drag MOVES it — its own day and time, every other key kept', async () => {
     /* A one-off's drag writes its OWN `date` and `time`: unlike a day note,
@@ -9235,7 +9935,7 @@ test('browser suites', skipUnlessChrome, async t => {
        overlap ORDER — appended last, so a real block is in front until a
        double-click cycles the class forward. That ordering decides z-index
        only, never a width; the z half is what pins "appended last". */
-    const note = { id: 'n-1', date: MONDAY, title: 'Real work', time: '09:00', blockDuration: 60 };
+    const note = { id: 'n-1', date: MONDAY, title: 'Real work', time: '09:00', blockDuration: 60, parts: [BLOCK] };
     const withRef = await open('progress.html', {
       // one-off again: the claim is about geometry, not about weekday resolution
       db: seedDb({ refSchedules: [refOneOff({ time: '09:00', duration: 90 })], calendarNotes: [note], deadlines: [] }),
@@ -9244,13 +9944,13 @@ test('browser suites', skipUnlessChrome, async t => {
     await withRef.waitFor(function () { return !!document.querySelector('[data-ref-id="rs-o"]'); },
       { message: 'the class block' });
     const geomWith = await withRef.evaluate(function () {
-      var el = document.querySelector('[data-block-id="n-1"]');
+      var el = document.querySelector('[data-block-id="n-1:b"]');
       var r = el.getBoundingClientRect();
       return { w: Math.round(r.width), h: Math.round(r.height) };
     });
     const z = await withRef.evaluate(function () {
       return {
-        real: Number(getComputedStyle(document.querySelector('[data-block-id="n-1"]')).zIndex),
+        real: Number(getComputedStyle(document.querySelector('[data-block-id="n-1:b"]')).zIndex),
         cls: Number(getComputedStyle(document.querySelector('[data-ref-id="rs-o"]')).zIndex)
       };
     });
@@ -9261,10 +9961,10 @@ test('browser suites', skipUnlessChrome, async t => {
       db: seedDb({ refSchedules: [], calendarNotes: [note], deadlines: [] }),
       hash: '#schedule'
     });
-    await without.waitFor(function () { return !!document.querySelector('[data-block-id="n-1"]'); },
+    await without.waitFor(function () { return !!document.querySelector('[data-block-id="n-1:b"]'); },
       { message: 'the real block' });
     const geomWithout = await without.evaluate(function () {
-      var el = document.querySelector('[data-block-id="n-1"]');
+      var el = document.querySelector('[data-block-id="n-1:b"]');
       var r = el.getBoundingClientRect();
       return { w: Math.round(r.width), h: Math.round(r.height) };
     });

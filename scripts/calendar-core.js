@@ -383,31 +383,34 @@
   const SCHED_START_HOUR = 0, SCHED_END_HOUR = 24, SCHED_PX_PER_HOUR = 28;
 
   // ── schedule blocks for day notes and deadlines ───────────────────────────
-  // Every day note and every deadline is a real span on the hour grid, and it
-  // is so AUTOMATICALLY. A deadline's block ENDS at its due time — it is the
-  // run-up to the deadline, not the deadline itself — while a day note's block
-  // STARTS at its time.
+  // A day note or a deadline goes on the hour grid from ★ Forced and from
+  // nowhere else (the user's rule since 2026-10-21): every pick adds ONE block
+  // on the day the panel was opened from, exactly as ● Learn and ■ Core
+  // Routine add theirs. Each block is one record in the item's `parts`, with a
+  // tick of its own, and an item with no parts has NO block at all. Until
+  // 2026-10-21 every item had one automatically; nothing was written to take
+  // it away — the readers simply stopped drawing it, so the keys it left
+  // behind are all still there. A note or a deadline can also have
+  // SUB-TASKS, its child tasks, each put on one day from ★ Forced (see
+  // itemSubtasks).
   //
-  // ABSENCE IS THE AUTOMATIC DEFAULT, four times over, and that is precisely
-  // what puts a block on every item stored long before any of these keys
-  // existed without writing a single byte to one of them. There is nothing to
-  // migrate because nothing needs to be written:
-  //   * no `blockOff`      → the item HAS a block. THIS is the on-grid switch,
-  //     not `blockDuration`. Removing a block therefore writes `blockOff` and
-  //     deletes nothing, so putting it back RESTORES the length, day and anchor
-  //     the user chose rather than guessing them again — the same reasoning
-  //     that already makes `reset to due time` a restore.
-  //   * no `blockDuration` → DEFAULT_BLOCK_MINS. It is only a remembered
-  //     length now, never a switch.
-  //   * no `blockTime`     → still anchored: a deadline's block ends at its due
-  //     time, a note's starts at its own time. Reset DELETES the key rather
-  //     than storing the value it would have computed.
-  //   * no `blockDate`     → the block sits on the item's own `date`.
+  // The item still has a SPAN (noteBlockSpan / dlBlockSpan below), but it is
+  // never drawn. It is where a new block STARTS: a deadline's run-up ends at
+  // its due time, a note's block starts at its time, and a part with no `time`
+  // or `blockDuration` of its own inherits both. Every absence is still the
+  // default, and the four keys are all legacy now — read, never written:
+  //   * no `blockOff`      → the item's blocks are drawn. A stored `true`, left
+  //     by the old `remove from schedule`, still hides every one of them; a
+  //     pick in ★ Forced writes `false`, so adding a block shows them again.
+  //   * no `blockDuration` → DEFAULT_BLOCK_MINS, the length a new block starts at.
+  //   * no `blockTime`     → anchored: a deadline's run-up ends at its due time,
+  //     a note's block starts at its own (08:00 when it has none).
+  //   * no `blockDate`     → a part with no `date` sits on the item's own `date`.
   //
   // The item's own `date` and `time` are NOT block geometry. They are where the
   // note or deadline belongs, and its strip chip, due line and caution run-up
-  // stay there however far the block is moved — which is why a drag writes
-  // `blockDate`/`blockTime` and never `date`/`time`.
+  // stay there however far a block is moved — which is why a drag writes the
+  // part's own `date`/`time` and never the item's.
   const MIN_BLOCK = 5;
   const DEFAULT_BLOCK_MINS = 60;      // the length every block starts at
   const DEFAULT_NOTE_TIME = '08:00';  // where a note with no time of its own sits
@@ -423,7 +426,8 @@
     return String(Math.floor(c / 60)).padStart(2, '0') + ':' + String(c % 60).padStart(2, '0');
   };
 
-  // The one on-grid switch. Never spell `!item.blockOff` at a call site — this
+  // Whether an item's blocks are drawn at all — false only for the legacy
+  // `blockOff: true`. Never spell `!item.blockOff` at a call site — this
   // repository has paid twice for a predicate written out per call site.
   const blockOn = item => !(item && item.blockOff);
   const blockLen = item => { const m = blockMins(item && item.blockDuration); return m === null ? DEFAULT_BLOCK_MINS : m; };
@@ -443,11 +447,11 @@
     return { time: hhmmOf(start), duration: blockLen(n) };
   }
 
-  // The deadline block's span, or null when it has been taken off the grid. A
-  // run-up that would start before 00:00 is clipped at the top rather than
-  // pushed past its due time, so the end stays where the user put it. A due
-  // time that cannot be read leaves nothing to end at, so it falls back to the
-  // note default rather than producing NaN geometry.
+  // The deadline's span — where its blocks start — or null while `blockOff`
+  // hides them. A run-up that would start before 00:00 is clipped at the top
+  // rather than pushed past its due time, so the end stays where the user put
+  // it. A due time that cannot be read leaves nothing to end at, so it falls
+  // back to the note default rather than producing NaN geometry.
   function dlBlockSpan(d) {
     if (!blockOn(d)) return null;
     const mins = blockLen(d);
@@ -467,16 +471,17 @@
   const blockDay = item => (item && DAY_RE.test(item.blockDate || '')) ? item.blockDate : (item && item.date);
   const partDay = (p, item) => (p && DAY_RE.test(p.date || '')) ? p.date : blockDay(item);
 
-  // Dissecting an item stores its steps in `parts`, mirroring a goal task's
-  // `children`. Never throws on a malformed stored value: a nested list is
-  // exactly where hand-edited, imported or synced data goes wrong.
+  // An item's blocks are stored in `parts` — one record per block, each with
+  // its own day, start, length and tick. Never throws on a malformed stored
+  // value: a nested list is exactly where hand-edited, imported or synced data
+  // goes wrong.
   function itemParts(item) {
     const raw = item && item.parts;
     return Array.isArray(raw) ? raw.filter(p => p && typeof p === 'object' && !Array.isArray(p)) : [];
   }
-  // A part resolves its own start and length, falling back to the parent
-  // block's. Null when neither yields a time, so a part can never be drawn at
-  // a position nobody chose.
+  // A part resolves its own start and length, falling back to the item's span.
+  // Null when neither yields a time, so a part can never be drawn at a
+  // position nobody chose.
   function partSpan(p, fbTime, fbDur) {
     const own = TIME_RE.test((p && p.time) || '') ? p.time : null;
     const time = own !== null ? own : (TIME_RE.test(fbTime || '') ? fbTime : null);
@@ -484,6 +489,40 @@
     const dur = blockMins(p && p.blockDuration);
     return { time, duration: dur !== null ? dur : fbDur };
   }
+
+  // ── sub-tasks: a note's or a deadline's child tasks ──────────────────────
+  // The user's rule (2026-10-22): in ★ Forced a note or a deadline can be
+  // dissected into named SUB-TASKS — child tasks of the original, which is
+  // NOT gone: its own blocks stay on the grid beside them. A sub-task is a
+  // part WITH a title; a part without one is a block of the original (a ★
+  // pick). A sub-task starts `unscheduled`, is put on ONE day by clicking it
+  // in that day's ★ Forced — never on two — and is drawn only while it is on
+  // the schedule. Every part stored before this reads as it did: the old `＋`
+  // composer's titled parts are sub-tasks already on the schedule.
+  const partIsSub = p => !!(p && typeof p.title === 'string' && p.title.trim());
+  const partScheduled = p => !(p && p.unscheduled);
+  // THE parts drawn as blocks: every part on the schedule. Nothing is hidden
+  // for having sub-tasks — the original is never gone.
+  const drawnParts = item => itemParts(item).filter(partScheduled);
+  // Every sub-task of the item, on the schedule or not.
+  const itemSubtasks = item => itemParts(item).filter(partIsSub);
+  // A block of the original is done when every sub-task is, once it has any
+  // — a parent task's rule, and it carries no tick of its own then. A
+  // sub-task, and a block of an item with none, reads its own tick.
+  function partDone(item, p) {
+    if (!p || partIsSub(p)) return !!(p && p.done);
+    const subs = itemSubtasks(item);
+    return subs.length ? subs.every(s => !!s.done) : !!p.done;
+  }
+
+  // THE days an item's blocks sit on: its DRAWN parts' days and nothing else,
+  // and none at all while the legacy `blockOff` hides them, so a sub-task off
+  // the schedule holds no day. Duplicates are kept; a caller that wants a set
+  // builds one. ONE definition, because the rule it replaced — "an item
+  // without parts sits on its own day" — was spelled at four sites, and the
+  // day it stopped being true each of them had to change. dlStrandedBlockDays
+  // and both caution pickers' "holds prep" marks read it.
+  const blockDays = item => (blockOn(item) ? drawnParts(item).map(p => partDay(p, item)) : []);
 
   // A deadline's prep belongs on a day the deadline actually OCCUPIES: one of
   // the caution days the user chose, or the due day itself. With a sparse set
@@ -508,19 +547,18 @@
   // call this instead of re-spelling the comparison, which is exactly the shape
   // that cost this project the deadline caution predicate once already.
   function dlStrandedBlockDays(d, span) {
-    if (!d || !blockOn(d)) return [];
-    // Block days are read off the PROPOSED record, not the stored one. An
-    // absent blockDate means the block follows the item's own `date`, so it
-    // MOVES WITH a due-day change and cannot be stranded by one; reading
-    // blockDay(d) here would report the old due day as orphaned and refuse
-    // every move of an un-anchored deadline. Only dlBlockDayValid's own probe
-    // decides membership — this probe decides which days to ask about.
+    if (!d) return [];
+    // Block days are read off the PROPOSED record, not the stored one. A part
+    // with no `date` of its own follows the item's `date`, so it MOVES WITH a
+    // due-day change and cannot be stranded by one; reading the stored day
+    // here would report the old due day as orphaned and refuse every such
+    // move. Only dlBlockDayValid's own probe decides membership — this probe
+    // decides which days to ask about. A deadline with no blocks has nothing
+    // to strand, so no edit of it is ever refused.
     const probe = Object.assign({}, d);
     if (span && span.date) probe.date = span.date;
-    const parts = itemParts(probe);
-    const days = parts.length ? parts.map(p => partDay(p, probe)) : [blockDay(probe)];
     const out = [];
-    days.forEach(day => {
+    blockDays(probe).forEach(day => {
       if (!dlBlockDayValid(d, day, span) && out.indexOf(day) === -1) out.push(day);
     });
     return out.sort();
@@ -725,81 +763,44 @@
     // still read docPageId to decide highlighting and edit rights.
     const allDl = slot.deadlines || [];
 
-    // A day note's `time` is optional and its ABSENCE is meaningful: a note
-    // without one has no position on an hour grid, so it stays a chip in the
-    // day strip — exactly how every day note behaved before the field existed.
-    // One WITH a time joins `blocks`, which buys it hour placement and overlap
-    // layout on every surface for free.
-    // `calNotes` is therefore the strip's list and `calNotesAll` is the whole
-    // day's, for callers that list notes for editing rather than by position.
+    // Every note belonging to this day is in the strip, timed or not and
+    // whatever its blocks are doing — `calNotes` is the strip's list and
+    // `calNotesAll` the same list, kept for callers that ask for it by name.
     const dayNotes = (slot.calendarNotes || []).filter(n => n.date === ds && show(originKey(n, 'daynote')));
 
-    // Blocks are collected by the day the BLOCK sits on, which is not
-    // necessarily the day its item belongs to: `blockDate` on the item and
-    // `date` on a part each move work elsewhere without moving the note or the
-    // deadline. So this scans the WHOLE array rather than the day's items,
-    // while the strip and due lists below keep filtering on the item's own
-    // date — that split is what leaves a chip where the user left it.
-    (slot.calendarNotes || []).filter(n => n && show(originKey(n, 'daynote'))).forEach(n => {
-      const span = noteBlockSpan(n);
+    // A note's or a deadline's blocks are its PARTS and nothing else — the
+    // ones ★ Forced added, each on the day it was added to. An item with no
+    // parts is not on the hour grid at all; it is still in the strip, and a
+    // deadline still draws its due line and its caution run-up.
+    //
+    // Blocks are collected by the day each BLOCK sits on, which is not
+    // necessarily the day its item belongs to, so this scans the WHOLE array
+    // rather than the day's items, while the strip and due lists keep
+    // filtering on the item's own date — that split is what leaves a chip
+    // where the user left it. A part with no title is labelled by its item,
+    // which is what every ★ Forced pick stores; a titled one is a sub-task,
+    // drawn under its own name beside the original — and only while it is on
+    // the schedule (drawnParts).
+    const pushParts = (item, span, kind, fallback, color) => {
       if (!span) return;
-      // Dissected: the parts stand in for the parent, exactly as a goal task's
-      // scheduled children hide the parent block in progress.html.
-      const parts = itemParts(n);
-      if (parts.length) {
-        parts.forEach(p => {
-          if (partDay(p, n) !== ds) return;
-          const s = partSpan(p, span.time, span.duration);
-          if (!s) return;
-          blocks.push({
-            id: n.id + ':' + p.id, title: p.title || 'Part', kind: 'Day note part',
-            time: s.time, duration: s.duration, done: !!p.done,
-            color: NOTE_COLOR, item: n, part: p
-          });
+      drawnParts(item).forEach(p => {
+        if (partDay(p, item) !== ds) return;
+        const s = partSpan(p, span.time, span.duration);
+        if (!s) return;
+        blocks.push({
+          id: item.id + ':' + p.id, title: p.title || item.title || fallback, kind,
+          time: s.time, duration: s.duration, done: partDone(item, p),
+          color, item, part: p
         });
-        return;
-      }
-      if (blockDay(n) !== ds) return;
-      blocks.push({
-        id: n.id,
-        title: n.title || 'Note',
-        kind: 'Day note',
-        time: span.time,
-        duration: span.duration,
-        done: false,
-        color: NOTE_COLOR,
-        item: n
       });
-    });
-
-    // A deadline's run-up block, on whichever caution day it was placed.
-    // `deadlines` and `deadlinesCaution` below are deliberately blind to all of
-    // it, because the due-time hairline and the caution run-up are a different
-    // concern from where the work sits.
-    allDl.filter(d => d && show(originKey(d, 'deadline'))).forEach(d => {
-      const span = dlBlockSpan(d);
-      if (!span) return;
-      const parts = itemParts(d);
-      if (parts.length) {
-        parts.forEach(p => {
-          if (partDay(p, d) !== ds) return;
-          const s = partSpan(p, span.time, span.duration);
-          if (!s) return;
-          blocks.push({
-            id: d.id + ':' + p.id, title: p.title || 'Part', kind: 'Deadline part',
-            time: s.time, duration: s.duration, done: !!p.done,
-            color: DL_BLOCK_COLOR, item: d, part: p
-          });
-        });
-        return;
-      }
-      if (blockDay(d) !== ds) return;
-      blocks.push({
-        id: d.id, title: d.title || 'Deadline', kind: 'Deadline prep',
-        time: span.time, duration: span.duration, done: dlDone(d),
-        color: DL_BLOCK_COLOR, item: d
-      });
-    });
+    };
+    (slot.calendarNotes || []).filter(n => n && show(originKey(n, 'daynote')))
+      .forEach(n => pushParts(n, noteBlockSpan(n), 'Day note', 'Note', NOTE_COLOR));
+    // `deadlines` and `deadlinesCaution` below are deliberately blind to all
+    // of this, because the due-time hairline and the caution run-up are a
+    // different concern from where the work sits.
+    allDl.filter(d => d && show(originKey(d, 'deadline')))
+      .forEach(d => pushParts(d, dlBlockSpan(d), 'Deadline prep', 'Deadline', DL_BLOCK_COLOR));
 
     return {
       blocks,
@@ -880,7 +881,8 @@
     // documented exception it relies on for noteTimed and dlDone; the two must
     // agree, and tests/browser.test.js asserts each surface separately.
     noteBlockDuration, dlBlockDuration, dlBlockSpan, dlBlockTime, itemParts, partSpan,
-    blockOn, noteBlockSpan, noteBlockStart, blockDay, partDay,
+    blockOn, noteBlockSpan, noteBlockStart, blockDay, partDay, blockDays,
+    partIsSub, partScheduled, drawnParts, itemSubtasks, partDone,
     dlBlockDayValid, dlStrandedBlockDays,
     refSpan, refOccupies, refSkips, refSkipped, refOn, REF_COLOR,
     DEFAULT_BLOCK_MINS, DEFAULT_NOTE_TIME,

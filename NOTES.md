@@ -842,7 +842,8 @@ notes and deadlines". One piece is still deliberately **not** built:
   `calendar-core.js`.** The twinned set grew again with the chosen-caution-day work and now
   runs to roughly twenty helpers — `blockOn`, `noteBlockStart`, `noteBlockDuration`,
   `dlBlockDuration`, `noteBlockSpan`, `dlBlockSpan`, `blockDay`, `partDay`, `itemParts`,
-  `partSpan`, `dlBlockDayValid`, `dlStrandedBlockDays`, `dlCautionDays`, `dlCautionSet`,
+  `partSpan`, `blockDays`, `partIsSub`, `partScheduled`, `drawnParts`, `itemSubtasks`, `partDone`,
+  `dlBlockDayValid`, `dlStrandedBlockDays`, `dlCautionDays`, `dlCautionSet`,
   `dlCautionCount`, `dlWithCautionDays`, `dlToggleCautionDay`, `daysBetween`, plus `noteTimed`,
   `dlStart`, `dlDone`, `dlValid`, `dlDraftValid` and `deadlinesCautionOn` — all duplicated for
   one reason: `progress.html` does not load `calendar-core.js`. Making it load that file would
@@ -853,7 +854,8 @@ notes and deadlines". One piece is still deliberately **not** built:
   the per-surface browser cases are what would catch a silent difference.
 
   Note that `dlWithCautionDays` is now a twinned **writer**, not just a reader, which raises
-  the cost of a silent divergence: the migration in `progress.html` runs through its copy.
+  the cost of a silent divergence: the migration in `progress.html` runs through its copy, and
+  so does every ★ Forced pick that makes its day a caution day.
 - **A note's block is unrestricted; a deadline's is not.** A note block may be dragged to any
   day at all, which is deliberate — a note has no days to belong to. If notes ever grow them,
   the deadline rule (`dlBlockDayValid` membership plus a refusal at every writer) is the shape
@@ -1011,8 +1013,9 @@ header measures ~57px at ≤720px, not the 52px `h-screen-nav` subtracts
 Decided with the user on 2026-10-08. The reasoning is in [docs/CONCEPTS.md](docs/CONCEPTS.md).
 Items 1–3 are built: a Procedural MM has no SIR (README, "Spaced Interval Review"), a new Kolb
 sends it back to S1 (README, "Kolb learning records"), and it is judged by its MG level alone
-(README, "Goals, tasks, and milestones"). What is left is naming and level criteria, which
-the user put off on 2026-10-13 ("later") — do not start either until they bring them up.
+(README, "Goals, tasks, and milestones"). What is left is naming and level criteria. The user
+put both off on 2026-10-13 ("later"), then sent the level descriptions on 2026-10-19, so level
+criteria are under way. Naming still waits until they bring it up.
 
 ### 4. Names still to choose
 
@@ -1024,10 +1027,36 @@ the user put off on 2026-10-13 ("later") — do not start either until they brin
 
 ### 5. Levels with checkable criteria
 
-Waiting on the user's level descriptions. The aim is to describe each level by things that
-can be checked ("did it without the guide", "three clean runs in a row") rather than judged
-by feel, because rating yourself is least reliable at the lowest and highest levels of the
-four stages of competence.
+The aim is to describe each level by things that can be checked ("did it without the guide",
+"three clean runs in a row") rather than judged by feel, because rating yourself is least
+reliable at the lowest and highest levels of the four stages of competence.
+
+The user's descriptions arrived on 2026-10-19 and are in docs/CONCEPTS.md ("Levels 1–10").
+**Their own wording stays the definition.** The user said they could not frame it better than
+the descriptions, but that the reading below "wasn't wrong". So treat it as an agreed reading
+of those descriptions, never a replacement for them. It rests on one idea: **each level's MG
+trains the check of the level above it**, and your level is the highest one whose check you
+pass.
+
+| Level | You are here if… |
+|---|---|
+| 1 | Nothing yet — you cannot say before an action what it will lead to |
+| 2 | Before an attempt, you can say what an action will lead to |
+| 3 | In a Kolb you can name a moment it fell off and the cue just before it — in some sessions, not all |
+| 4 | You have a written cue list, each cue with its scripted response, and you write a prediction before a run and can say afterwards whether it held |
+| 5 | You keep a mistake list from running the procedure, and each Kolb names the listed mistake it targets |
+| 6 | At least one clean run |
+| 7 | Your last 3 deliberately locked-in runs were clean |
+| 8 | 3 clean runs in a row without reading the mistake list first |
+| 9 | 3 clean runs in a row with only a one-line, vague MG |
+| 10 | 3 clean runs in a row with no MG and no guide |
+
+Drop rule, from level 10's own MG: a new mistake that repeats sends you back to 5.
+
+Left open, and not to be pressed on: what a **clean run** is (proposed: none of the listed
+mistakes), the number (3 is a placeholder), and whether level 5's question "when do I take
+more theory?" gets a rule. If the checks are confirmed, the natural app change is to show each level's check
+beside the level picker in the Kolb's step 1. That is a separate decision.
 
 ### 6. One arrow, two meanings
 
@@ -1217,14 +1246,6 @@ supporting actions") and **not** changed there:
 Found while making timetable classes editable on the Schedule (README "A pasted timetable") and
 **not** changed there:
 
-- **A deadline drag snaps to the caution days the page MOUNTED with.** `handlePointerMove` lives in
-  the Schedule's mount-only pointer effect and reads the `deadlines` prop, which is therefore the
-  first render's value for the rest of the session. A deadline created after the Schedule opened
-  is not found and its block is pinned to its own column; a deadline whose caution days changed
-  since can be dropped on a day it no longer occupies, and `handlePointerUp` writes that
-  `blockDate` without asking again — the one rule ("a block sits on a day the deadline occupies")
-  a drag was never supposed to be able to break. The fix is the one the class drag already uses:
-  stash the allowed days in the ghost at drag start (`refGhostFor`), with a case seen failing first.
 - **The block notes panel now exists four times** — goal task, supporting action, MM entry and
   class — each ~70 lines differing in colour and writer. A shared component would remove three of
   them, but it touches three surfaces with cases of their own, so it is its own change.
@@ -1235,6 +1256,43 @@ Found while making timetable classes editable on the Schedule (README "A pasted 
   add the day to the weekly entry's `skips` and mint a one-off carrying that day's change and notes.
 - **The +LIN LOG's editable day title was not copied** into the Timetable tab: it is a stored field
   of the LIN log, and the timetable has no equivalent. Ask before adding one.
+
+### ★ Forced picks: found along the way, and left out
+
+Found while making ★ Forced add blocks (README "Schedule blocks for day notes and deadlines") and
+**not** changed there:
+
+- **The Timetable tab keeps `remove from schedule` and `＋ add back`.** The user's complaint
+  (2026-10-21) named the notes-and-deadlines controls, and the class rules were set by the user on
+  2026-10-15 (✕ removes one day; the tab puts it back). Ask before changing them.
+- **A note or deadline block has no `✎` notes panel**, though a goal task block has one in day view.
+  The ask was "able to become a normal task block", and a fifth copy of the notes panel is the
+  duplication listed under "Editable timetable classes" below. Offer it only if asked.
+- **Removing a block keeps the caution day its pick added.** Deliberate: a day the user picked —
+  by a pick — is not ours to drop. It is un-picked in the deadline's popup like any other.
+- **An automatic block someone had moved or resized is gone from the grid**, with its `blockDate`,
+  `blockTime` and `blockDuration` still stored. A new pick starts at the remembered time and
+  length, but on the day the panel was opened from rather than the remembered day. Nothing was
+  deleted; nothing reads the remembered day back as a block.
+- **A drag still writes the part's own `date` even when it equals the day it would inherit**, a
+  small exception to "written only when it differs" that predates this work.
+
+### Sub-tasks in ★ Forced: found along the way, and left out
+
+Found while building sub-tasks (README "Sub-tasks (`✂` in ★ Forced)") and **not** changed there:
+
+- **Sub-tasks are ticked on the grid only.** The ★ Forced rows show ✓ but carry no checkbox, so one
+  off the schedule cannot be ticked, and its original cannot read done until it is put on a day and
+  ticked. Consistent with "done when every sub-task is", but the user has not seen it yet.
+- **A note's sub-task can only be put, from ★ Forced, on a day up to the note's own date**, because
+  the panel lists nothing dated before the day it is opened from. A drag still takes it anywhere, as
+  it does any note block. A deadline's sub-task cannot go past its due day either way.
+- **One level.** Sub-tasks have no sub-tasks. Ask before nesting.
+- **A few stored parts may carry a dead `parentId`**, from the `✂`-on-the-block build the user rejected
+  the day it shipped (2026-10-22). Nothing reads it, and nothing removes it; a migration for a key
+  that changes nothing is not worth its risk.
+- **A sub-task's block shows its own name only**; its original is named in the block's tooltip. Show
+  the original on the block itself only if asked — a dense day is already crowded.
 
 ### Finish routing the canvas pages' hard-coded UI accents through the theme
 
