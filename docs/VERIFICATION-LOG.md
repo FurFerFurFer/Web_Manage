@@ -4190,3 +4190,294 @@ in; that paragraph still quotes the superseded `✂` run until then.
 - A sub-task cannot be ticked off the schedule (NOTES), so an original whose sub-task was never
   placed never reads done — by the rule, but unseen by the user so far.
 - Multi-device sync and the live Firebase project.
+
+### Journey: the read-only book of Eternal days (2026-10-22 / 24)
+
+The user asked for **Journey**: a mode of the Journal, opened full screen from a button, that
+mirrors every **Eternal** day as an old fantasy-journal book. Each day starts a fresh page headed
+`Tuesday dd/mm/yyyy` and runs on as long as it needs. The book opens on a title page reading *To
+myself, For myself, The Finest of FIn*, and it moves only by page flipping, "like the ones in
+reading apps". The phone design was left to me.
+
+**What the user chose.** Asked four questions in plan mode, they chose:
+- the fonts **embedded in the repository** — an exception to `styles.css`'s no-font-fetch rule;
+- **quill handwriting**: Fondamento, IM Fell English SC and Cinzel Decorative;
+- **Thai too**: Charm's Thai subset, under the body's family name;
+- the title **exactly as typed**, capital I included — they turned down my "Fin" correction.
+
+**What I chose.** Chosen without asking, and named in the hand-off:
+- Eternal days only, oldest first;
+- one page or two decided by fit, not by "phone";
+- a phone page full screen, hinged on the left;
+- a hand-built fold curl, with no library;
+- paper drawn procedurally;
+- no remembered page and no contents page.
+
+**Where it lives.** Nothing is stored: no field, no key, no migration.
+- `notes-core.js` (`?v=4`): `eternalDays` and `journeyDayLabel`.
+- `journey-core.js` (new, `?v=1`, `window.TrackJourney`), pure and holding no `Date`: the title,
+  `breakPoints` / `clusterEnds` / `cutText`, `buildPages` / `sidesFor` / the anchors,
+  `chooseLayout` / `typeFor`, and `clampCorner` / `fold` / `flipPath` / `settlePath` /
+  `dragPoint` / `releaseCompletes` / `tapIntent` / `gradientFrame` / `marks`.
+- `journey-book.js` (new, `?v=1`): the overlay, the measuring cut, the turn, input and the
+  refresh.
+- `journey-fonts.js` (generated) and its generator, `tools/build-journey-fonts.js`.
+- `notes-widget.js` (`?v=7`): the `Journey` button.
+- `styles.css` (`?v=19`): the `#nw-journey` block, the scroll lock, a print-hide line and the
+  font-rule comment.
+- The five pages: the two new tags and three bumps.
+- `tests/run.js`: the new suite, in the unswept list.
+
+**The fonts are not embedded yet.** The one-time download was refused by this session's
+permission layer: the session cannot prompt, so it did not ask the user again or route around
+the refusal. The committed `journey-fonts.js` is therefore the empty placeholder, and everything
+below ran on the serif fallback. The generator's stylesheet parser was checked offline against a
+synthetic Google-shaped sheet; the generator itself has never run.
+
+**Offline.** `notes-core` 33 → **37**, identical under all five zones:
+- `eternalDays` binding only written real days that show Eternal, oldest first, and total;
+- `journeyDayLabel` in the user's format, and total.
+
+`journey-core` is a new suite of **34** cases, run once. The last asserts the module holds no
+`Date`, document or storage, comments stripped. A shape case passes on the placeholder, and on a
+generated file checks for woff2 bytes, the three private family names, Thai coverage and the
+licence. One harness trap: that case first failed on `deepStrictEqual([], [])`, because the list
+came from a `vm` context with its own `Array` prototype; it now compares `.length`.
+
+**Browser.** Ten JOURNEY cases:
+1. the title page, full screen, with the title verbatim and nothing written — `track_db`
+   byte-identical AND the key set unchanged;
+2. Eternal days only, oldest first, each starting a fresh page under its heading;
+3. a long day rejoining to its words, no page overflowing, the next day fresh;
+4. read only and flip only — no field, nothing that scrolls; a key turn seen mid-turn, one wheel
+   gesture making one turn, a mouse drag turning, a short slow drag falling back;
+5. PHONE: one full-screen page, a real CDP swipe and tap, `✕` at 44px;
+6. Escape and `✕` returning focus with the Journal still open;
+7. a day made Eternal in another tab bound into the open book;
+8. the empty book's how-to page;
+9. a desktop-to-phone switch keeping the passage, no page overflowing;
+10. PHONE Thai: pages rejoining exactly, each starting on a word boundary from Chrome's own
+    segmenter, never on a mark.
+
+Most cases emulate reduced motion; case 4 runs the full animation.
+
+**Two failures on the way, and what they were.**
+- **Case 7, first run.** It timed out mid-turn. Opening the second tab hid the first, and a
+  hidden tab runs no animation frames. Test fix: `Page.bringToFront` plus a `visibilityState`
+  check.
+- **Case 9, against the code as it then stood.** The day and the passage were kept, but the new
+  page overflowed by **364px**: a real bug. The cut had put 1,380 characters on a page that holds
+  about 925. A `cutText` wrapper logged the moment of the cut: the root's `--jr-pw` was already
+  372px, the measuring host's `--jr-pw` too, yet its computed width was 520px. The book's rect
+  was 1040px under an inline `width: 372px`, and the fixed root had already resized to 390.
+  Controls, one variable each:
+  - removing `contain: strict` from the host: still 364;
+  - an inline pixel size on it: still 364;
+  - one `requestAnimationFrame` before the re-cut: still 364;
+  - a plain desktop resize, 1280×900 to 600×900: clean;
+  - a phone rotation, 844×390 to 390×844 (mobile both): clean.
+
+  So layout lagged style for that subtree through the emulated device switch. Fix: the re-cut
+  takes its anchor once, checks the measuring page's laid-out size (`laidOut`) and retries a
+  frame at a time, up to 45 frames. Turning is held meanwhile, a storage refresh defers to the
+  pending re-cut, and `data-jr-ready` waits for the first cut. Two new baselines below pin it.
+
+**Baselines.** Each tree is a real copy of the five pages, `scripts/`, `styles/`, `assets/` and
+`tests/`, with ONE rule reversed in ONE file. The builder refuses an edit that does not match
+exactly once, and refuses a tree that differs from the repository in any file but that one.
+Runs went one at a time through a task-owned `--require` preload (ONLY_PATTERN `^JOURNEY`; plan
+`1..10` read off each run), behind an undoctored CONTROL. The whole set ran twice: once during
+development, and once against the final code, with the code's md5 identical before and after.
+Results are from the final pass, at UTC+7, the machine's zone.
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL | none | nothing (offline and 10/10) |
+| ETERNAL_ADMITS_CLEARED | `eternalDays` admits cleared | offline `eternalDays`; browser 1 (the count), 2, 3 (the next day), 7, 8 |
+| NEWEST_FIRST | no `.reverse()` | offline `eternalDays`; browser 2, 3, 5 (the swipe lands on the newest day), 7 |
+| DAYS_FLOW_TOGETHER | all days cut as one flow under the first heading | browser 2, 3 ("the long day runs over 0 pages"), 7, 9 |
+| LABEL_FROM_UTC_PARSE | the weekday from `new Date(day)` | offline only, under Pacific/Midway and Los Angeles, not UTC; every browser case passes at UTC+7 — the sweep is what catches it |
+| THAI_BY_CODE_UNIT | no Thai word breaks, clusters by code unit | offline 5 Thai/cluster cases; browser 10 ("page 1 starts between two words, at 898: ดตอนเช") |
+| REMEMBERS_PAGE | a `track_journey_page` key per turn | browser 1 alone, on "it left no key of its own" |
+| WRITES_DB_ON_OPEN | a `saveDB` with an extra key on open | browser 1 on "byte-identical", and 4 on "nothing was written" |
+| NO_STORAGE_LISTENER | the `storage` listener not added | browser 7 alone |
+| PHONE_OPENS_FLAT | `chooseLayout` always spread | offline `chooseLayout` on 390x844; browser 5, and 9 waiting for a single page |
+| RELEASE_ALWAYS_TURNS | `releaseCompletes` always true | offline release case; browser 4 on "it fell back" |
+| WHEEL_UNLOCKED | no lock after a wheel turn | browser 4 alone, on "one gesture, one page" |
+| TITLE_TIDIED | "FIn" corrected to "Fin" | offline title case; browser 1 on "the user's title, verbatim" |
+| FOCUS_NOT_RETURNED | no focus back on close | browser 6 alone |
+| CUTS_ON_STALE_LAYOUT | the `laidOut` wait skipped | browser 9 alone, overflow 364 — the original bug |
+| ANCHOR_LOST_ON_RECUT | view 0 after a re-cut | browser 9 alone, on "a day page lies open after the re-cut" |
+
+Case 1 is reversed by four trees and fails at four different assertions. Each assertion is
+therefore proven separately: the count, the title, the byte-identical database, and the key set.
+
+**Visual pass.** CDP screenshots at 1440×900 and 390×844, at rest, mid-turn and mid-drag, with a
+task-owned script. They found and fixed three things:
+- **Rectangular seams across every page.** The SVG noise tiles' filter region defaults to 120%
+  of the tile, so `stitchTiles` wrapped at the wrong period. Each filter region is now the tile.
+- **An endpaper that read as a lava lamp.** Four candidates were compared side by side and the
+  combed marble kept. Two of them first rendered washed out in the filters' default linearRGB,
+  and were redone in sRGB before judging.
+- **A steep upward drag folding the whole sheet over.** Vertical drag now counts 0.6.
+
+The book's look is the user's to judge, on the embedded fonts once generated.
+
+**Speed.** A synthetic 300-day book (120–500 words a day) opened, cut and rendered in 0.8–1.0s on
+a 1440×900 desktop (594 spreads) and 0.6–0.7s on a phone (725 pages), at load 3.7–4.6, fallback
+fonts.
+
+**One tooling trap.** The editing tools turned the `\u` escapes in a written file into the
+characters themselves; a U+2028 inside a regex literal then failed `node --check`. The character
+classes are now numeric code points; the durable rule is in AGENTS' Testing Lessons.
+
+**Full run.** `node tests/run.js` on the REPOSITORY, 08:27:01–09:05:00 (≈2,279s, load 3.2 at the
+start). This is the joint run with both changes in — the one the Sub-tasks entry above records as
+**still owed**. That session (`track-website-44`) held its edits for the window. Exit 0, "all 26
+suites passed":
+- swept, identical under all five timezones: `calendar-core` 126, `schema` 68, `notes-core` **37**;
+- once: `true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+  `schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, `viewport` 10, `journey-core`
+  **34**, `cdp-cleanup` 13;
+- browser: plan `1..442`, **442** ok and 0 not ok — that session's 432 and these 10.
+
+Every page, script, stylesheet, test and `tests/lib` file had the same md5 before and after, and
+HEAD was `c6e986c` at both ends. The laptop was on mains, and journalctl shows no suspend in the
+window: the first, a lid close, came at 10:22, and the other session checked the journal
+independently. AGENTS.md's "What a passing run looks like" now quotes this run.
+
+**Not covered.**
+- The embedded fonts. Nothing here ran on them: not a generated file's metrics, not Thai in Charm,
+  not Cinzel Decorative's drop initial.
+- Real touch hardware and real iOS/Android browsers: Pointer Events, safe areas, and the curl's
+  speed on a phone GPU.
+- Print. The book is hidden there by rule.
+
+### Journey: the lettering embedded, and the writing inked into the paper (2026-10-24, second pass)
+
+The user looked at the book and found the lettering "too solid or perfect for the old book
+style": they wanted the font to be ink that fits the paper.
+
+**What they had seen.** The fallback serif, not the chosen hand. On this laptop that is P052,
+URW's Palatino. `scripts/journey-fonts.js` was still the placeholder, because the download had
+been refused in the first pass. Asked at the point of action, they said yes, and
+`node tools/build-journey-fonts.js` ran for the first time, writing five faces:
+
+| Face | Bytes |
+| --- | --- |
+| Fondamento, latin | 23,536 |
+| Fondamento, latin-ext | 10,848 |
+| Charm, thai | 16,840 |
+| IM Fell English SC | 56,956 |
+| Cinzel Decorative | 14,416 |
+
+That is 120 KB of fonts and 180 KB on disk, with all four licences in the header. The file
+holds one `*/`, its own. `node --check` is clean, and the fonts-shape case in `journey-core`
+passed on a generated file for the first time. `FONTS_V` went 1 → 2, because a browser that
+had opened the book cached the placeholder under `?v=1`.
+
+**The ink, chosen on screenshots.** A task-owned lab in the scratchpad opened the book on
+synthetic days and injected each candidate's CSS and SVG. It screenshotted the whole view and
+a close crop at 1440×900 (DPR 1 and 2) and at 390×844 (DPR 3). Six rounds:
+- **Displacement alone:** jagged at DPR 1, like a low-resolution scan.
+- **A blurred-alpha noise cut alone:** organic edges; the best single step.
+- **The cut, plus thin strokes lightened, grain and sway:** convincing, but it thinned strokes
+  and broke hairlines at DPR 1. The cut sat at 0.47 and eroded.
+- **The cut lowered to 0.36:** weight kept. A halo pass added nothing visible, for one more
+  blur. Grain pooled at a low frequency read better than a fine one.
+- **Quill dips:** carried in colour, not alpha, which the cut would throw away.
+- **The title page's frame and flourishes** broke into dashes under the cut, because their
+  faint strokes sit below it. That is why there is a second filter, `#jr-ink-line` (sway and
+  pooling, no cut), and why the frame moved to `::before`.
+- **Fewer noise octaves** (fibre 2 → 1, pool 3 → 2) looked the same at every size, and were
+  kept.
+
+**Speed, measured on the GPU.** The test Chrome runs `--disable-gpu`. There, the ink halved a
+drag's frame rate (median frame 17 → 33 ms at desktop DPR 1), and compositing the shades
+changed nothing.
+
+A second headless Chrome used this laptop's AMD Radeon instead: RADV RENOIR, via
+`--use-angle=vulkan --enable-features=Vulkan`. `SystemInfo.getInfo` on the browser target
+reported rasterization `enabled_force`. It told a different story. Before any ink, the book
+dragged at a median 50 ms a frame (20 fps) on the desktop. Every frame of a turn repainted
+the slot page under a shade that was not its own layer. `will-change: transform` on
+`.jr-shade` brought the drag to 17 ms (60 fps), with the ink or without it. The first frame
+of a turn took 50–100 ms at desktop sizes and 33 ms in the phone emulation. Each figure comes
+from a drag of 60 moves at 16 ms, timed with `requestAnimationFrame` in the page.
+
+**Where it lives.** Nothing is stored.
+- `journey-core.js` (`?v=2`): `inkRuns` and `inkSlice`. A run begins only at a break point and
+  is seeded by the day. A dip lasts 28–72 visible characters and is full strength for its first
+  30%. It then fades by at most 0.8, in steps of 0.05.
+- `journey-book.js` (`?v=2`):
+  - the two filters, in the overlay (`.jr-inkwell`);
+  - each day's runs, computed once per read;
+  - `inkInto`, which draws a page as text nodes plus `.jr-dip` spans carrying `--jr-wet`;
+  - `FONTS_V` 2.
+- `styles.css` (`?v=20`):
+  - `--jr-ink` #2f1d10 → #26170b, and a new `--jr-ink-dry`;
+  - `isolation` on the page, and the two filter rules, each with multiply;
+  - `.jr-dip`'s `color-mix`;
+  - the title frame on `::before`, and `will-change` on the shades;
+  - the body's text-shadow removed, since the filter is its bleed now.
+- The five pages: three bumps each.
+
+**Offline.** `journey-core` 34 → **39**. The five new cases:
+- every character in exactly one stretch, each beginning at a break point, in whole steps;
+- every day starting fresh, fading, and dipped again;
+- the same day always in the same ink, and another day in another rhythm;
+- no Thai word or grapheme split, with or without the segmenter;
+- a page carrying exactly its own part of its day's ink.
+
+**Browser.** JOURNEY went from 10 to **11** cases:
+- **Case 9** now also asserts that the same words keep the same ink after the desktop-to-phone
+  re-cut.
+- **Case 10** asserts that the Thai ink changes only between Chrome's own word boundaries.
+- **Case 11 is new.** It checks:
+  - both filters are SVG filters inside the book;
+  - the hand's filter, with multiply, sits on the title, date, body and folio;
+  - the line's filter sits on the rule, the flourish and the frame's `::before`;
+  - each shade of a sheet held mid-drag has `will-change: transform`;
+  - every stretch of the long day is drawn in `TrackJourney.inkRuns(day)`'s ink, and is a span
+    exactly when that ink is below full;
+  - each change of ink falls on whitespace, and the day begins fresh;
+  - every thinning span is lighter than the full ink.
+
+Narrowed run: plan `1..11`, all ok, 29 s.
+
+**Baselines.** Each is a real copy of the five pages, `scripts/`, `styles/`, `assets/` and
+`tests/`, with ONE rule reversed in ONE file. Each tree is proven to differ from the repository
+in that file alone, and the runs went one at a time behind an undoctored CONTROL. The code's
+md5 was the same before and after.
+
+| Tree | Rule reversed | Failed |
+| --- | --- | --- |
+| CONTROL | none | nothing (offline, and 11/11) |
+| INK_BY_PAGE | the runs keyed by `day#part` over the page's own text | case 9, "the same words in the same ink after the re-cut, at 1820"; case 11, "drawn in that run's ink, at 92" |
+| DIPS_SPLIT_WORDS | stretches cut every 7 code units | offline, the ink-contract and Thai cases; case 10, "a change of ink falls between two words, at 28: ดตอนเช"; case 11, "between words, at 28" |
+| NO_INKWELL | the filters never added to the overlay | case 11 alone, "both inks are SVG filters inside the book" |
+| SHADES_FLAT | no `will-change` on `.jr-shade` | case 11 alone, "each shade is a layer of its own" |
+| LINES_CUT | the ruled lines given `#jr-ink` | case 11 alone, "its frame is ruled in the line's ink" |
+| DIP_NOT_LIGHTER | no `.jr-dip` colour | case 11 alone, "lighter than the full ink: 0.0993 > 0.0993" |
+
+Case 11 is reversed by five trees and fails at five different assertions, so each assertion is
+proven on its own. The two core rules fail different case sets.
+
+**Full run.** `node tests/run.js` on the REPOSITORY, 13:24:37–14:03:30 (≈2,333 s), load 1.65
+at the start and about 3 during the run, on mains. Exit 0, "all 26 suites passed":
+- swept, identical under all five timezones: `calendar-core` 126, `schema` 68, `notes-core` 37;
+- once: `true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+  `schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, `viewport` 10, `journey-core`
+  **39**, `cdp-cleanup` 13;
+- browser: plan `1..443`, **443** ok and 0 not ok. That is the joint run's 442 plus case 11, and
+  every Journey case now runs on the embedded fonts.
+
+Every page, script, stylesheet, test and `tests/lib` file had the same md5 before and after.
+HEAD was `c6e986c` at both ends, and the journal shows no suspend in the window. The four other
+sessions on this machine were idle throughout.
+
+**Not covered.**
+- **Safari on a real iPhone.** It may draw the filters' noise on the CPU, which would delay
+  the first frame of each turn. Unmeasured, and noted in NOTES.
+- **Firefox's rendering of the filters.**
+- **The look itself.** That is the user's judgement, on their own screens.

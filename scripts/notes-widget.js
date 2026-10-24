@@ -10,7 +10,9 @@
              Eternal LOCK the text: it can be selected, copied, sent from and
              opened beside, but not edited or cleared until it is unclear
              again. Days are chosen in a calendar pop-up that fills every
-             written day with its colour.
+             written day with its colour. `Journey` opens every Eternal day
+             as a read-only book (journey-book.js), which this file only
+             opens: the book reads, and writes nothing.
 
    Side opening: ⧉ on any note opens another beside it, full screen, up to
    TrackNotes.MAX_PANES at once — left/right above 720px, stacked below it
@@ -226,7 +228,8 @@
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
     prev: '<path d="M15 6l-6 6 6 6"/>',
     next: '<path d="M9 6l6 6-6 6"/>',
-    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    book: '<path d="M3 6.5C5.6 5 9 5 12 7c3-2 6.4-2 9-.5V19c-2.6-1.5-6-1.5-9 .5-3-2-6.4-2-9-.5V6.5Z"/><path d="M12 7v12.5"/>'
   };
 
   function iconBtn(icon, label, hook) {
@@ -516,6 +519,7 @@
         onDay: function (day) { openDetail({ kind: DATE, key: day, slotId: slot.id }); }
       }, opener);
     }));
+    if (window.TrackJourneyBook) body.appendChild(journeyOpener(slot, map));
 
     var days = N.datedDays(map).filter(function (d) { return d.day !== today; });
     if (!days.length) {
@@ -528,6 +532,26 @@
       row.onclick = function () { openDetail({ kind: DATE, key: d.day, slotId: slot.id }); };
       body.appendChild(row);
     });
+  }
+
+  // The way into Journey (journey-book.js): every Eternal day bound as a book,
+  // full screen and read only. It opens on the slot this list shows, and the
+  // count is TrackNotes.eternalDays, the one definition of what the book holds.
+  // Its own class and hook, never .nw-note-row, data-nw-row or .nw-cal-opener,
+  // which existing cases select broadly.
+  function journeyOpener(slot, map) {
+    var count = N.eternalDays(map).length;
+    var b = el('button', 'nw-journey-btn nw-tag-eternal');
+    b.type = 'button';
+    b.setAttribute('data-nw-journey-open', '');
+    b.title = 'Open Journey — every Eternal day, bound as a book';
+    b.innerHTML = '<svg class="nw-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' + ICONS.book + '</svg>';
+    b.appendChild(el('span', 'nw-journey-label', 'Journey'));
+    var c = el('span', 'nw-journey-count', count === 1 ? '1 Eternal day' : count + ' Eternal days');
+    c.setAttribute('data-nw-journey-count', String(count));
+    b.appendChild(c);
+    b.onclick = function () { window.TrackJourneyBook.open({ slotId: slot.id, opener: b }); };
+    return b;
   }
 
   // The button that opens the calendar pop-up — in the Date list, and in the

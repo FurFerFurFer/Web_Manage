@@ -950,8 +950,8 @@ draft freely under the day, then sort what survives into a note of its own.
   is never mistaken for a calendar **day note** (`calendarNotes`, on the Schedule and
   the calendars), which is a different thing. Only the visible word changed. Nothing is
   created ahead of time. The **Journal** tab always shows
-  **Today** first, then `Go to day`, which opens the calendar pop-up, then every other
-  day holding text, newest first, each with its tag. A day is written on its first
+  **Today** first, then `Go to day`, which opens the calendar pop-up, then `Journey`
+  (below), then every other day holding text, newest first, each with its tag. A day is written on its first
   non-blank text, and its key is **deleted** when the text is emptied, so an empty day
   and an untouched day are the same state. `🗑` clears a day after a confirmation; on a
   day holding nothing it asks nothing, and on a locked day (below) it is unavailable.
@@ -979,6 +979,46 @@ draft freely under the day, then sort what survives into a note of its own.
   the arrow keys and PageUp/PageDown; Escape, `✕` or a click outside closes it.
   Choosing a day opens it. In the picker, a day already open beside another is
   disabled. The pop-up itself writes nothing.
+- **Journey.** The Journal tab's `Journey` button, with how many days are Eternal,
+  opens every **Eternal** day as a book: full screen, **read only**, and always on its
+  title page, *To myself, / For myself, / The Finest of FIn*. It reads `dateNotes` and
+  writes nothing anywhere — no `track_db` change, no key of its own, so it remembers no
+  page. Only Eternal days are bound, **oldest first**. Each starts a **fresh page**
+  headed with its date as `Tuesday 20/10/2026`, and a long day runs on over as many
+  pages as it needs.
+  - **Two layouts, by fit.** Where two pages of a readable width fit side by side (a
+    desktop, a landscape tablet), the book lies open like a real one: the marbled inside
+    of the cover on the left, the title page on the right. On a phone, a portrait
+    tablet or a narrow window, one page fills the screen.
+  - **It moves only by turning a page.** Drag or swipe a page, tap or click its side,
+    press the arrow keys, PageUp/PageDown or Space, or roll the wheel. Each turns
+    exactly one sheet, which curls over with the next page on its back; alone, the
+    back shows the page's own ink through the paper. A sheet let go before a quarter
+    turn falls back. A mouse resting near a corner lifts it a little. There is no
+    scrolling and no contents page.
+  - `✕` or Escape closes it, back to the Journal.
+  - **It stays current.** A day made Eternal, or unmade, in another tab is bound in or
+    taken out while the book is open. A change of screen size cuts the pages again.
+    Both keep the reader on the same passage.
+  - **Thai** breaks between words, never inside one, and never parts a vowel or tone
+    mark from its letter.
+  - **The look.** The paper, leather and marbled endpaper are drawn, not photographed,
+    and look the same in Grit and Night. The lettering is three open-licence typefaces
+    embedded in `scripts/journey-fonts.js`:
+    - Fondamento, with Charm for Thai;
+    - IM Fell English SC, for the dates;
+    - Cinzel Decorative, for the title.
+
+    `node tools/build-journey-fonts.js` writes that file, from Google Fonts. Should it
+    ever be the empty placeholder again, the book uses a serif fallback.
+  - **Ink, not print.** The writing is drawn into the paper rather than laid on it. Each
+    stroke wavers a little, as a hand does. Its edge spreads unevenly into the fibre,
+    its thinnest strokes carry less ink, and the ink pools unevenly. The paper's grain
+    shows through even the darkest stroke. The rules and the title page's frame waver
+    the same way without breaking up. And each day is written in **quill dips**: dark
+    from the well, thinner toward the end of a line or so, dark again after the next
+    dip. The dips fall between words (Thai words included), follow the day rather than
+    the page, and so stay where they were when the pages are cut again.
 - **Side by side.** `⧉` on any note opens a picker (tabs `Sorted | Journal`, a filter,
   `+ New sorted note`). A Journal day opens it on Sorted and a Sorted note on Journal.
   Picking a note turns the widget into a **full-screen view** of both, left and right
@@ -1542,6 +1582,7 @@ Each page writes only the keys it owns, merging them into a fresh read of the st
 | `documentations.html` | `docPages`, plus `calendarNotes`, `deadlines` and `refSchedules` through a fresh read-modify-write |
 | `true-storage.html` | `trueStorages`, `trueStoragePos`, plus `sourceDumps` through a fresh read-modify-write |
 | `notes-widget.js` | `notes`, `dateNotes` |
+| `journey-book.js` | nothing — the Journey book reads `dateNotes` and writes no key at all |
 | `index.html` | the slot list itself — create, rename, delete, import |
 
 `sir-ks02.html` reads `mgSchedule` but never writes it; that key belongs to `progress.html`. It also reads `trueStorages`, and writes it in exactly one narrow case — adding or removing a source-dump tag — through a fresh single-key read-modify-write (`_mutateSlotKey`), never through its autosave patch. `true-storage.html` is the mirror image: `sourceDumps` belongs to KS02, and True Storage's SOURCE DUMP tab writes it only through a fresh single-key read-modify-write (`_mutateSourceDumps`) of the **stored** list, never through its autosave and never from its React copy; it reads `mms` and never writes it. Adding a key to a page's write set means adding it to this table.
@@ -1555,7 +1596,7 @@ refused.
 
 #### Reading the stored database
 
-Every page reads `track_db` through one boundary, `TrackStorage.loadDB()` in `storage-guard.js`. The five readers — `getDB` (`index.html`), `_getTrackDB` (`progress.html`, `sir-ks02.html`, `documentations.html`) and `_twDB` (`notes-widget.js`) — are now one-line delegates to it. They each used to carry the same unchecked `JSON.parse(localStorage.getItem('track_db') || '{}')`, whose `catch` never fired for `'null'`, `'42'` or `'[…]'` because those parse successfully.
+Every page reads `track_db` through one boundary, `TrackStorage.loadDB()` in `storage-guard.js`. The five readers — `getDB` (`index.html`), `_getTrackDB` (`progress.html`, `sir-ks02.html`, `documentations.html`) and `_twDB` (`notes-widget.js`) — are now one-line delegates to it. `journey-book.js`, which only reads, calls it directly. They each used to carry the same unchecked `JSON.parse(localStorage.getItem('track_db') || '{}')`, whose `catch` never fired for `'null'`, `'42'` or `'[…]'` because those parse successfully.
 
 `loadDB()` parses once, judges the result with `TrackSchema.validateDatabase`, and returns a plain object. The verdict has four states:
 
@@ -1612,8 +1653,12 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | `scripts/schema.js` | The canonical slot definition — the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` (`window.TrackSchema`) |
 | `scripts/storage-guard.js` | The one `track_db` load boundary (parse, validate, freeze writes on damage) and the `localStorage` quota guard for every whole-database write, plus both banners (`window.TrackStorage`) |
 | `scripts/firebase-sync.js` | Firebase initialization, authentication overlay, local write interception, gzipped/chunked cloud synchronization, sync status surface (`window.TrackSync`) |
-| `scripts/notes-widget.js` | Floating per-slot notes widget — the Sorted and Journal tabs, the picker, the full-screen side-by-side view and Send |
-| `scripts/notes-core.js` | The one definition of what a note is (`window.TrackNotes`): the total `dateNotes` reader, the delete-on-empty writer, the Date-note tags (`TAGS`, the `dateNoteTag` reader, the `dateNoteLocked` test and the `withDateTag` writer), the Sorted patch writer that never recreates a deleted note, `appendSent`, the local-day labels, and the month grid the calendar pop-up draws |
+| `scripts/notes-widget.js` | Floating per-slot notes widget — the Sorted and Journal tabs, the picker, the full-screen side-by-side view and Send, and the `Journey` button |
+| `scripts/notes-core.js` | The one definition of what a note is (`window.TrackNotes`): the total `dateNotes` reader, the delete-on-empty writer, the Date-note tags (`TAGS`, the `dateNoteTag` reader, the `dateNoteLocked` test and the `withDateTag` writer), the Sorted patch writer that never recreates a deleted note, `appendSent`, the local-day labels, the month grid the calendar pop-up draws, and what the Journey book binds (`eternalDays`, oldest first) and how each day is headed (`journeyDayLabel`, `Tuesday 20/10/2026`) |
+| `scripts/journey-core.js` | The one definition of how the Journey book is made (`window.TrackJourney`) — the title, where a page may end (whitespace, Thai word and grapheme boundaries), the cutter, the book's pages and sides, the reader's anchor across a re-cut, which layout fits, the fold of a turning sheet, and the ink each stretch of a day is written in (`inkRuns`, the quill dips). Pure; holds no date code |
+| `scripts/journey-book.js` | The Journey book itself (`window.TrackJourneyBook`) — the full-screen overlay and its two ink filters, measuring and cutting pages once the fonts have loaded, drawing each day in its quill dips, the page turn, and pointer, key and wheel input. Reads `dateNotes` through `TrackStorage.loadDB` and writes nothing |
+| `scripts/journey-fonts.js` | Journey's lettering, embedded as base64 woff2 with each typeface's SIL OFL licence (`window.TrackJourneyFonts`). Generated by `tools/build-journey-fonts.js`, never edited by hand; loaded by `journey-book.js` on the book's first open, never by a page |
+| `tools/build-journey-fonts.js` | Writes `scripts/journey-fonts.js` from Google Fonts' served subsets, unmodified. Needs the network once; writes nothing unless every download checks out |
 | `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship — the pair matcher, the pure tag writers, and the parent/child tree (`window.TrackTrueStorage`) |
 | `scripts/source-dump-core.js` | The one definition of how a source dump is read and edited (`window.TrackSourceDump`) — the breadcrumb path, the legacy text-block fallback, which MMs a dump may link, and every writer KS02's page and True Storage's SOURCE DUMP tab share. Holds no date code; a new title's day is a parameter |
 | `scripts/graph-layout.js` | The one radial canvas layout behind KS03's multiverse and the True Storage canvas — `computeLayerLayout`, `applyRepulsion`, and the cycle guards both need (`window.TrackGraphLayout`) |
@@ -1651,6 +1696,9 @@ Track-website/
 │   ├── doc-table-core.js
 │   ├── firebase-sync.js
 │   ├── graph-layout.js
+│   ├── journey-book.js
+│   ├── journey-core.js
+│   ├── journey-fonts.js       # generated by tools/build-journey-fonts.js
 │   ├── notes-core.js
 │   ├── notes-widget.js
 │   ├── schedule-paste-core.js
@@ -1667,6 +1715,8 @@ Track-website/
 │   ├── TABLE-PASTE.md
 │   └── VERIFICATION-LOG.md
 ├── World/                     # Separate game; see World/README.md
+├── tools/
+│   └── build-journey-fonts.js # writes scripts/journey-fonts.js, once
 └── tests/
     ├── run.js
     ├── calendar-core.test.js
@@ -1677,6 +1727,7 @@ Track-website/
     ├── graph-layout.test.js
     ├── doc-table-core.test.js
     ├── viewport.test.js
+    ├── journey-core.test.js
     ├── cdp-cleanup.test.js
     ├── browser.test.js
     └── lib/
@@ -2049,6 +2100,23 @@ http://127.0.0.1:8765/documentations.html
 
 Stop the server with `Ctrl+C`.
 
+### Journey's lettering, once
+
+The Journey book's three typefaces are embedded in `scripts/journey-fonts.js` so it
+works offline and opened from disk. That file is generated, not written by hand:
+
+```bash
+node tools/build-journey-fonts.js
+```
+
+It downloads Google Fonts' served subsets once — Fondamento (Latin) and Charm (Thai),
+IM Fell English SC, Cinzel Decorative, each under the SIL Open Font License 1.1 — and
+writes them, unmodified, with every licence in the file's header. It writes nothing
+unless every download checks out. It last ran on 2026-10-24: five faces, 120 KB of fonts,
+180 KB on disk. Run it again only to refresh them; without the file's faces the book
+draws in a serif fallback. A copy that replaces one already deployed needs `FONTS_V` in
+`scripts/journey-book.js` bumped, and `journey-book.js`'s own `?v=` on the five pages.
+
 ## Running the tests
 
 One command, no dependencies, no `package.json`:
@@ -2062,7 +2130,8 @@ It runs three layers:
 | Layer | File | What it covers |
 | --- | --- | --- |
 | Offline data tests | `tests/calendar-core.test.js` | Every collector in `calendar-core.js` against a synthetic slot: local-day correctness, month and leap-year lengths, dot buckets, milestone lane packing, per-source filtering, `doc` as one key over both notes and deadlines, the chosen-caution-day resolver and its writer, the legacy `startDate` fallback, deadline validation, `dayShift` across month/year/DST boundaries, an inverted set being impossible rather than merely inert, MG 30-day carry-forward, the optional day-note time, and bare or pre-calendar-block slots returning empty rather than throwing |
-| Offline notes tests | `tests/notes-core.test.js` | What a note is, in `notes-core.js`: the delete-on-empty `dateNotes` writer and its identity-when-unchanged contract, spreading so an unknown key survives, a JSON-parsed `__proto__` kept as data, the total reader over any value, `datedDays` skipping a bad key without deleting it, the Sorted patch reporting a missing note instead of recreating it, `appendSent`, and the day labels — weekday, Today/Yesterday, month, year and DST boundaries — in every swept zone. Tags: unclear as the default of a written day, no tag on an unwritten one, an inherited name never a tag, choosing unclear deleting the key, refusal by identity, a bare string upgraded with its text, and an unknown tag carried through an edit and gone with an emptied day. The lock: a cleared or Eternal day refusing every change to its text, emptying included; only a written day showing one of those two counting as locked; and unclear unlocking it. The month grid: 42 consecutive days from a Sunday across leap, year and DST boundaries, which fails west of UTC if seeded from a parsed string |
+| Offline notes tests | `tests/notes-core.test.js` | What a note is, in `notes-core.js`: the delete-on-empty `dateNotes` writer and its identity-when-unchanged contract, spreading so an unknown key survives, a JSON-parsed `__proto__` kept as data, the total reader over any value, `datedDays` skipping a bad key without deleting it, the Sorted patch reporting a missing note instead of recreating it, `appendSent`, and the day labels — weekday, Today/Yesterday, month, year and DST boundaries — in every swept zone. Tags: unclear as the default of a written day, no tag on an unwritten one, an inherited name never a tag, choosing unclear deleting the key, refusal by identity, a bare string upgraded with its text, and an unknown tag carried through an edit and gone with an emptied day. The lock: a cleared or Eternal day refusing every change to its text, emptying included; only a written day showing one of those two counting as locked; and unclear unlocking it. The month grid: 42 consecutive days from a Sunday across leap, year and DST boundaries, which fails west of UTC if seeded from a parsed string. Journey: `eternalDays` binding only written real days that show Eternal, oldest first, and reading nothing else as Eternal — no unwritten day, bare string, unknown tag or inherited name; and `journeyDayLabel` writing `Tuesday 20/10/2026` with the weekday from components in every swept zone |
+| Offline Journey tests | `tests/journey-core.test.js` | How the Journey book is made, in `journey-core.js`, run once: it holds no date code, and a structural case proves it. The user's title, verbatim. Where a page may end: whitespace runs (never a no-break space), Thai word boundaries from `Intl.Segmenter`, and grapheme clusters with or without it. The cutter keeping every character exactly once, greedily, under a smaller first page, through a word longer than a page and a measure that never fits; Thai cut between words and rejoining exactly. Each day starting a fresh page; folios; the spread opening on the inside cover and the title page. The reader's anchor across a re-cut and a change of layout. Which layout fits at phone, tablet and desktop sizes, and type that is a whole number of lines. The fold: the clamp keeping paper on its spine, the crease reflecting the corner onto the pointer, area conserved, the back page a rotation and the see-through ink a reflection, and a full turn landing on the left page; the turn paths, drag gains, release, taps and gradient frame. The ink: every character in exactly one stretch, each beginning where a page may end, in whole steps; every day starting fresh from the well, fading and dipped again; the same day always in the same ink and another day in another rhythm; no Thai word or grapheme split, with or without the segmenter; and a page carrying exactly its own part of its day's ink. And `journey-fonts.js`, placeholder or generated, in the shape the book reads |
 | Offline schema tests | `tests/schema.test.js` | The canonical slot definition in `schema.js`: defaults and ids, legacy normalization and unknown-key survival, canonical field and recursive goal-tree validation, fatal-versus-warning classification, ambiguous slot identity, and validation reporting without repair |
 | Offline storage-relationship tests | `tests/true-storage-core.test.js` | The storage↔source-dump pair in `true-storage-core.js`: the matcher including both negative directions, exact id comparison, damaged input, the pure tag writers and their identity-when-unchanged contract, `repointDump` moving a tag when its content moves, and the parent/child tree including cycles |
 | Offline source-dump tests | `tests/source-dump-core.test.js` | Every source-dump writer both Source Dump pages share, in `source-dump-core.js`: KS02's record shapes, a new title taking over its parent's MM sections, a parent that no longer exists refused, a duplicated parent id losing no section, the descendant delete and the breadcrumb path across a parentId cycle, transfers into an existing and a new section with a self-transfer refused, the legacy `text` block, which MMs a dump may link, identity when nothing changes, spreading so unknown keys survive, totality over damaged input — all with numeric and string ids mixed, as KS02 and True Storage mint them |
@@ -2072,7 +2141,7 @@ It runs three layers:
 | Offline quest tests | `tests/quest-core.test.js` | What a Quest is, in `quest-core.js`: membership and the `starred ⊆ quests` gate that makes un-questing a restore, the boolean-writes-`false` versus list-deletes-when-empty split, the `toLearn` membership gate, **numeric** mind-map ids surviving every reader and writer, the transfer helpers the three goal-nesting sites depend on, the pruned tree and the one-row starred rollup, goal cycles, and the routine tick expiring with its stored day |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone. For day-note and deadline blocks: an item nobody added draws no block, asserted on each of the three grids separately; a ★ Forced pick adding exactly one untitled, untimed block on the opened day and closing the panel, a second pick a second block, and a pick on a day a deadline does not occupy making it a caution day in the same write; a deadline with no real due day listed but refused; a block's `✕` asking, with Cancel writing nothing; its tick writing only its own `done`; a ★ Forced `✂` adding a named sub-task off the schedule, its row putting it on that day with its date always written and moving it from another day — one block, never two — the caution day arriving in the same write, a deadline with no real due day refusing it, the original's block untickable and done only when every sub-task is, a sub-task's `✕` unscheduling it and its row `×` deleting it, both asking, and Home and Documentations each drawing a scheduled sub-task beside its original and none for one off the schedule; a legacy `blockOff` hiding blocks until a pick; a deadline with no blocks never refusing an un-pick, on Progress and in Documentations; and a block dragged by mouse and by touch onto a caution day added since the page mounted. For the timetable: a class drawn on its own day on all three grids and not on a day it was removed from, each surface asserted separately; moved, resized and armed like a task block by mouse and by touch, with a weekly class taking a new weekday only inside its range; removed from one day behind a confirmation whose Cancel writes nothing; given notes of its own; listed, edited, restored and added on ★ Forced → Timetable; deleted for good in Documentations; and a class deleted there not written back by Progress's next edit |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone. For day-note and deadline blocks: an item nobody added draws no block, asserted on each of the three grids separately; a ★ Forced pick adding exactly one untitled, untimed block on the opened day and closing the panel, a second pick a second block, and a pick on a day a deadline does not occupy making it a caution day in the same write; a deadline with no real due day listed but refused; a block's `✕` asking, with Cancel writing nothing; its tick writing only its own `done`; a ★ Forced `✂` adding a named sub-task off the schedule, its row putting it on that day with its date always written and moving it from another day — one block, never two — the caution day arriving in the same write, a deadline with no real due day refusing it, the original's block untickable and done only when every sub-task is, a sub-task's `✕` unscheduling it and its row `×` deleting it, both asking, and Home and Documentations each drawing a scheduled sub-task beside its original and none for one off the schedule; a legacy `blockOff` hiding blocks until a pick; a deadline with no blocks never refusing an un-pick, on Progress and in Documentations; and a block dragged by mouse and by touch onto a caution day added since the page mounted. For the timetable: a class drawn on its own day on all three grids and not on a day it was removed from, each surface asserted separately; moved, resized and armed like a task block by mouse and by touch, with a weekly class taking a new weekday only inside its range; removed from one day behind a confirmation whose Cancel writes nothing; given notes of its own; listed, edited, restored and added on ★ Forced → Timetable; deleted for good in Documentations; and a class deleted there not written back by Progress's next edit. For Journey: the Journal tab opening the book full screen on its title page, with the user's title verbatim and nothing written — `track_db` byte-identical and no key added; only Eternal days, oldest first, each starting a fresh page under its heading; a long day rejoining to its words with no page overflowing; no field and nothing that scrolls, with a key, a wheel gesture and a drag each turning one sheet and a short drag falling back; a phone showing one page that fills the screen, turned by a real swipe and a tap; Escape and `✕` returning focus to the button; a day made Eternal in another tab bound into the open book; the empty book's how-to page; a desktop-to-phone switch keeping the reader's passage, and its words their ink, with no page overflowing; a Thai day cut only between words and changing ink only between them; and the writing inked into the paper — both filters inside the book, the hand's on the lettering and the line's on the rules and the title's frame, every stretch drawn in its day's own quill dip, lighter where the quill runs dry, the day beginning fresh, and a turning sheet's shades on layers of their own |
 
 The first three offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
@@ -2082,9 +2151,11 @@ into *local* calendar days, `schema.js` stamps a new slot with one and
 usual way to get that wrong (`toISOString().split('T')[0]`) is invisible on a
 machine running in UTC. `true-storage-core.test.js`, `source-dump-core.test.js`,
 `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`,
-`quest-core.test.js`, `milestone-core.test.js`, `viewport.test.js` and `cdp-cleanup.test.js` run
-**once**: none of those modules holds any date code, so a sweep would cost five runs and prove the
-same thing. Four of them have to *earn* that rather than merely claim it —
+`quest-core.test.js`, `milestone-core.test.js`, `viewport.test.js`, `journey-core.test.js` and
+`cdp-cleanup.test.js` run **once**: none of those modules holds any date code, so a sweep would cost
+five runs and prove the same thing. (Journey's one date-shaped job, the heading each day starts its
+page with, is `notes-core.js`'s `journeyDayLabel`, which is swept; `journey-core.test.js` greps its
+module for a `Date` like the four below.) Four of them have to *earn* that rather than merely claim it —
 `schedule-paste-core.js` reads days, `quest-core.js` expires a tick at the end of one,
 `source-dump-core.js` stamps a new title with one, and `milestone-core.js` decides whether a
 milestone is late — so each suite carries a structural case that greps its module, with comments
@@ -2221,6 +2292,9 @@ node --check scripts/doc-table-core.js
 node --check scripts/schedule-paste-core.js
 node --check scripts/quest-core.js
 node --check scripts/viewport.js
+node --check scripts/journey-core.js
+node --check scripts/journey-book.js
+node --check scripts/journey-fonts.js
 ```
 
 Then the committed suite, which is the fastest way to find out whether a change

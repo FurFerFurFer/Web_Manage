@@ -1142,6 +1142,33 @@ in README. These are the edges they leave open:
 - **Delete lives only in the single-note view.** Panes offer close, which deletes nothing,
   but not delete. That keeps the confirmation surface where it already was.
 
+### Journey: what the book leaves open
+
+The book works and is documented in README ("Floating notes"). These are its open edges:
+
+- **The ink's cost on a real phone is unmeasured.** Its two filters are repainted whenever a
+  page is drawn, which is at the start and end of every turn. On this laptop's GPU a drag holds
+  60 fps, and the first frame of a turn comes within 50–100 ms. Safari on an iPhone may run
+  the noise on its CPU, so a turn could start late there. If it does, there are cheaper
+  routes, such as dropping the hand's sway or baking the noise into an image tile, and each
+  would trade some of the look away. That is a decision for the user.
+- **Every day is written in the same ink.** Days in visibly different inks — fresher,
+  browner, greyer, as a real journal kept over months would show — is an idea, not built. It
+  would be a few `--jr-*` tokens, chosen per day by `TrackJourney.marks`.
+- **The book cannot be printed or exported.** A printed Journey — title page first, one
+  day per fresh page — would reuse the cutter at the paper's size. It is not built;
+  `#nw-journey` is hidden by the Documentations print rules.
+- **It always opens on the title page,** as the user asked. Remembering the page last read
+  would be a per-device view key like `track_home_cal_hidden`, never slot data, and needs
+  the user's say-so.
+- **There is no way to jump to a day.** Every move is one page turn, by the user's rule, so
+  a long book is read page by page. A contents page or a day picker would break that rule
+  and is the user's decision.
+- **Text in the book cannot be selected.** Selection would fight the drag that turns a
+  page; copying stays in the Journal, where an Eternal day is read-only but selectable.
+- **The paper is drawn, not photographed.** If it ever reads as too clean, a CC0 paper
+  photograph is the alternative: an image asset, which means a download and a decision.
+
 ### Quest: what was deliberately left out
 
 The feature works and is documented in README. These are the edges it does not cover:

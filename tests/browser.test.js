@@ -12968,6 +12968,511 @@ test('browser suites', skipUnlessChrome, async t => {
     }
   });
 
+  /* ── JOURNEY: the book of Eternal days ────────────────────────────────────
+     journey-book.js binds every Eternal Journal day into a book that opens on
+     its title page and moves only a sheet at a time. It is a READER: nothing it
+     does may write track_db or any other key. Most cases emulate reduced
+     motion, which keeps every turn a turn but a short one; one runs the full
+     animation and catches a sheet mid-turn. Input is real (CDP mouse, touch and
+     keys): the book listens for pointer events, which a synthetic TouchEvent
+     never produces. A turn sets data-jr-flipping the moment it starts, so every
+     case waits for the book to SETTLE and then asserts where it is — a turn
+     that never happened reports the wrong page instead of timing out. */
+
+  const JOURNEY_LONG = Array.from({ length: 64 }, (_, i) => 'Line ' + (i + 1) +
+    ' of a long synthetic day on the old road past the mill and the river' + (i % 6 === 5 ? '.\n\n' : ',')).join(' ').trim();
+  const JOURNEY_THAI = 'วันนี้อากาศดีมากฉันเดินไปตลาดตอนเช้าและซื้อดอกไม้มาหนึ่งกำ'.repeat(40);
+  const JOURNEY_SEED = over => seedDb(Object.assign({
+    notes: [],
+    dateNotes: {
+      '2026-03-06': F.dateNote('A short Eternal day.\nIts second line.', F.localTs(2026, 3, 6), { tag: 'eternal' }),
+      '2026-03-04': F.dateNote(JOURNEY_LONG, F.localTs(2026, 3, 4), { tag: 'eternal' }),
+      '2026-03-05': F.dateNote('Cleared, so never bound.', F.localTs(2026, 3, 5), { tag: 'cleared' }),
+      '2026-03-07': F.dateNote('Unclear, so never bound.', F.localTs(2026, 3, 7)),
+      '2026-03-02': F.dateNote('The oldest Eternal day.', F.localTs(2026, 3, 2), { tag: 'eternal' })
+    }
+  }, over || {}));
+  const JOURNEY_DAYS = { '2026-03-02': 'Monday 02/03/2026', '2026-03-04': 'Wednesday 04/03/2026', '2026-03-06': 'Friday 06/03/2026' };
+
+  const OPEN_JOURNEY = function () {
+    if (!document.getElementById('nw-panel') || document.getElementById('nw-panel').style.display === 'none') {
+      document.getElementById('nw-btn').click();
+    }
+    document.querySelector('[data-nw-tab="date"]').click();
+    document.querySelector('[data-nw-journey-open]').click();
+    return true;
+  };
+  const JOURNEY_READY = function () { return !!document.querySelector('#nw-journey[data-jr-ready]'); };
+  const SETTLED = function () { var r = document.getElementById('nw-journey'); return !!r && !r.hasAttribute('data-jr-flipping'); };
+  const VIEW = function () { return document.getElementById('nw-journey').getAttribute('data-jr-view'); };
+  const KEYS_IN = function () { return Object.keys(localStorage).sort(); };
+  // What lies open: every visible page, left then right, and what is on it.
+  const SHOWN = function () {
+    var r = document.getElementById('nw-journey');
+    return Array.prototype.map.call(r.querySelectorAll('[data-jr-slot] > [data-jr-kind]'), function (p) {
+      var d = p.querySelector('[data-jr-date]'), b = p.querySelector('[data-jr-body]'), t = p.querySelector('[data-jr-title]');
+      var box = p.querySelector('.jr-text');
+      return {
+        kind: p.getAttribute('data-jr-kind'), day: p.getAttribute('data-jr-day'),
+        date: d ? d.textContent : null, title: t ? t.textContent.replace(/\s+/g, ' ') : null,
+        text: b ? b.textContent : (box ? box.textContent : null),
+        // the heading is the first thing on its page: nothing of another day above it
+        headFirst: d ? box.firstElementChild === d.parentNode : null,
+        over: box ? box.scrollHeight - box.clientHeight : null
+      };
+    });
+  };
+  // The ink of every open day page, stretch by stretch: `at` and `end` are
+  // offsets in the stretch's DAY, `wet` its --jr-wet (100 is a plain run in
+  // the full ink), `pageStart` where its page begins in that day.
+  const INKS = function () {
+    var out = [];
+    document.querySelectorAll('#nw-journey [data-jr-slot] > [data-jr-kind="day"]').forEach(function (p) {
+      var start = +p.getAttribute('data-jr-start'), at = start;
+      p.querySelector('[data-jr-body]').childNodes.forEach(function (n) {
+        var len = n.textContent.length;
+        out.push({ day: p.getAttribute('data-jr-day'), pageStart: start, at: at, end: at + len,
+          wet: n.nodeType === 1 ? parseFloat(n.style.getPropertyValue('--jr-wet')) : 100,
+          span: n.nodeType === 1 ? n.className : null });
+        at += len;
+      });
+    });
+    return out;
+  };
+  const KEY_CODES = { ArrowRight: [39, 'ArrowRight'], ArrowLeft: [37, 'ArrowLeft'], Escape: [27, 'Escape'], ' ': [32, 'Space'] };
+  const keyDown = async (page, k) => {
+    const [vk, code] = KEY_CODES[k];
+    await page.session.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, text: k === ' ' ? ' ' : undefined });
+    await page.session.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk });
+  };
+  const press = async (page, k) => {
+    await keyDown(page, k);
+    await page.waitFor(SETTLED, { message: 'the book settling after ' + k });
+  };
+  const openJourney = async ({ db, viewport = [1280, 900], fullSpeed = false } = {}) => {
+    const page = await open('index.html', { db, viewport });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    if (!fullSpeed) {
+      await page.session.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    }
+    return page;
+  };
+  const showJourney = async page => {
+    await page.evaluate(OPEN_JOURNEY);
+    await page.waitFor(JOURNEY_READY, { message: 'the book open and cut' });
+  };
+  // Turns forward to the last page, recording every view on the way.
+  const readBook = async page => {
+    const views = [];
+    for (let i = 0; i < 60; i++) {
+      const view = await page.evaluate(VIEW);
+      views.push({ view, pages: await page.evaluate(SHOWN), inks: await page.evaluate(INKS) });
+      await press(page, 'ArrowRight');
+      if (await page.evaluate(VIEW) === view) return views;
+    }
+    throw new Error('the book never ended');
+  };
+  const dayPages = views => views.flatMap(v => v.pages).filter(p => p.kind === 'day');
+  const norm = s => String(s).replace(/\s+/g, ' ').trim();
+
+  await t.test('JOURNEY: the Journal tab opens the book full screen on its title page, and writes nothing anywhere', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED() });
+    const raw = await page.evaluate(READ_RAW);
+    const keys = await page.evaluate(KEYS_IN);
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-tab="date"]').click();
+      return true;
+    });
+    const count = await page.evaluate(function () {
+      var c = document.querySelector('[data-nw-journey-count]');
+      return c ? [c.getAttribute('data-nw-journey-count'), c.textContent] : null;
+    });
+    assert.deepEqual(count, ['3', '3 Eternal days'], 'the Journal tab says how many days the book holds');
+    await showJourney(page);
+    const first = await page.evaluate(function () {
+      var r = document.getElementById('nw-journey'), b = r.getBoundingClientRect();
+      var hit = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+      return {
+        rect: [b.left, b.top, b.right, b.bottom].map(Math.round), vw: innerWidth, vh: innerHeight,
+        onTop: r.contains(hit), mode: r.getAttribute('data-jr-mode'),
+        locked: document.documentElement.classList.contains('nw-journey-open') && getComputedStyle(document.body).overflow === 'hidden'
+      };
+    });
+    assert.deepEqual(first.rect, [0, 0, first.vw, first.vh], 'it covers the whole screen');
+    assert.equal(first.onTop, true, 'above the page and the notes panel');
+    assert.equal(first.locked, true, 'and the page behind does not scroll');
+    assert.equal(first.mode, 'spread', 'a desktop opens the book flat');
+    const shown = await page.evaluate(SHOWN);
+    assert.deepEqual(shown.map(p => p.kind), ['endpaper', 'title'], 'like a real book: the inside cover, then the title page');
+    assert.equal(shown[1].title, 'To myself, For myself, The Finest of FIn', 'the user\'s title, verbatim');
+
+    await press(page, 'ArrowRight');
+    await press(page, 'ArrowRight');
+    await press(page, 'ArrowLeft');
+    await page.evaluate(function () { document.querySelector('[data-jr-close]').click(); return true; });
+    await page.waitFor(function () { return !document.getElementById('nw-journey'); }, { message: 'the book closing' });
+    await sleep(400);
+    assert.equal(await page.evaluate(READ_RAW), raw, 'track_db is byte-identical: the book only reads');
+    assert.deepEqual(await page.evaluate(KEYS_IN), keys, 'and it left no key of its own — not even a page to reopen at');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY: only Eternal days are bound, oldest first, each starting a fresh page under its "Weekday dd/mm/yyyy"', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED() });
+    await showJourney(page);
+    const pages = dayPages(await readBook(page));
+    const headed = pages.filter(p => p.date !== null);
+    assert.deepEqual(headed.map(p => [p.day, p.date]), Object.keys(JOURNEY_DAYS).map(d => [d, JOURNEY_DAYS[d]]),
+      'every Eternal day once, oldest first, headed in the user\'s format');
+    headed.forEach(p => assert.equal(p.headFirst, true, p.day + '\'s heading is the first thing on its page'));
+    const seen = new Set();
+    pages.forEach(p => {
+      if (!seen.has(p.day)) assert.notEqual(p.date, null, p.day + ' begins on a page of its own, under its heading');
+      else assert.equal(p.date, null, p.day + ' is headed once');
+      seen.add(p.day);
+    });
+    const all = pages.map(p => p.text).join(' ');
+    assert.equal(/Cleared, so never bound|Unclear, so never bound/.test(all), false, 'a cleared or unclear day is not in the book');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY: a long day runs over pages that rejoin to its words, none overflows, and the next day starts a fresh page', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED() });
+    await showJourney(page);
+    const pages = dayPages(await readBook(page));
+    const long = pages.filter(p => p.day === '2026-03-04');
+    assert.ok(long.length >= 2, 'the long day runs over ' + long.length + ' pages');
+    assert.equal(norm(long.map(p => p.text).join(' ')), norm(JOURNEY_LONG), 'its pages hold its words, every one, in order');
+    pages.forEach((p, i) => assert.ok(p.over <= 0, 'page ' + i + ' (' + p.day + ') does not overflow: ' + p.over));
+    const next = pages[pages.indexOf(long[long.length - 1]) + 1];
+    assert.deepEqual([next.day, next.date, next.headFirst], ['2026-03-06', JOURNEY_DAYS['2026-03-06'], true],
+      'the day after it starts a fresh page');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY: read only, and only a turned sheet moves it — keys, wheel and a drag turn one page, a short drag falls back', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED(), fullSpeed: true });
+    const raw = await page.evaluate(READ_RAW);
+    await showJourney(page);
+    const still = await page.evaluate(function () {
+      var r = document.getElementById('nw-journey');
+      return {
+        fields: r.querySelectorAll('textarea, input, select, [contenteditable]').length,
+        scrollers: Array.prototype.filter.call(r.querySelectorAll('*'), function (e) {
+          var o = getComputedStyle(e).overflowY;
+          return (o === 'auto' || o === 'scroll') && e.scrollHeight > e.clientHeight;
+        }).length
+      };
+    });
+    assert.deepEqual(still, { fields: 0, scrollers: 0 }, 'nothing to type into and nothing that scrolls');
+
+    // A key turns one sheet — and it is seen turning, not swapped.
+    await keyDown(page, 'ArrowRight');
+    assert.equal(await page.evaluate(function () { return document.getElementById('nw-journey').getAttribute('data-jr-flipping'); }),
+      'next', 'the sheet is mid-turn');
+    await page.waitFor(SETTLED, { message: 'the turn ending' });
+    assert.equal(await page.evaluate(VIEW), '1');
+
+    // A wheel gesture — three quick ticks — turns exactly one sheet.
+    const box = await page.evaluate(function () {
+      var b = document.querySelector('.jr-book').getBoundingClientRect();
+      return { l: b.left, t: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height };
+    });
+    const scrollBefore = await page.evaluate(function () { return document.scrollingElement.scrollTop; });
+    for (let i = 0; i < 3; i++) {
+      await page.session.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: box.l + box.w / 2, y: box.t + box.h / 2, deltaX: 0, deltaY: 120 });
+    }
+    await sleep(80);
+    await page.waitFor(SETTLED, { message: 'the wheel turn ending' });
+    await sleep(350);
+    assert.equal(await page.evaluate(VIEW), '2', 'one gesture, one page');
+    assert.equal(await page.evaluate(function () { return document.scrollingElement.scrollTop; }), scrollBefore, 'and nothing scrolled');
+
+    // A drag from the right page's corner, well past a quarter turn, turns it.
+    const mouse = (type, x, y, buttons) => page.session.send('Input.dispatchMouseEvent',
+      { type, x, y, button: 'left', buttons, clickCount: 1 });
+    await mouse('mouseMoved', box.r - 14, box.b - 14, 0);
+    await mouse('mousePressed', box.r - 14, box.b - 14, 1);
+    for (let k = 1; k <= 10; k++) { await mouse('mouseMoved', box.r - 14 - k * box.w * 0.035, box.b - 14 - k * 3, 1); await sleep(20); }
+    await mouse('mouseReleased', box.r - 14 - box.w * 0.35, box.b - 44, 0);
+    await page.waitFor(SETTLED, { message: 'the dragged sheet landing' });
+    assert.equal(await page.evaluate(VIEW), '3', 'the dragged sheet turned');
+
+    // A short, slow drag lets go before a quarter turn: the sheet falls back.
+    const y = box.t + box.h / 2;
+    await mouse('mouseMoved', box.r - 14, y, 0);
+    await mouse('mousePressed', box.r - 14, y, 1);
+    for (let k = 1; k <= 6; k++) { await mouse('mouseMoved', box.r - 14 - k * 6, y, 1); await sleep(60); }
+    await sleep(150);
+    await mouse('mouseReleased', box.r - 50, y, 0);
+    await page.waitFor(SETTLED, { message: 'the let-go sheet settling' });
+    assert.equal(await page.evaluate(VIEW), '3', 'it fell back: the page did not change');
+    assert.equal(await page.evaluate(READ_RAW), raw, 'and nothing was written');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY PHONE: one page at a time filling the screen — a swipe turns it, a tap on the left goes back, ✕ is a finger target', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED(), viewport: PHONE });
+    await showJourney(page);
+    const geo = await page.evaluate(function () {
+      var r = document.getElementById('nw-journey'), x = r.querySelector('[data-jr-close]').getBoundingClientRect();
+      var p = r.querySelector('[data-jr-slot] > [data-jr-kind]').getBoundingClientRect();
+      return { mode: r.getAttribute('data-jr-mode'), vw: document.documentElement.clientWidth, vh: innerHeight,
+        sw: document.documentElement.scrollWidth, page: [p.left, p.right, p.top, p.bottom].map(Math.round),
+        x: [x.left, x.top, x.right, x.bottom, x.width, x.height].map(Math.round) };
+    });
+    assert.equal(geo.mode, 'single', 'a phone shows one page at a time');
+    assert.ok(geo.page[1] - geo.page[0] >= geo.vw * 0.9 && geo.page[3] - geo.page[2] >= geo.vh * 0.9,
+      'and that page fills the screen: ' + geo.page + ' in ' + geo.vw + 'x' + geo.vh);
+    assert.ok(geo.x[4] >= 44 && geo.x[5] >= 44 && geo.x[0] >= 0 && geo.x[2] <= geo.vw, '✕ is a 44px target on screen: ' + geo.x);
+    assert.ok(geo.sw <= geo.vw, 'nothing scrolls sideways');
+    assert.deepEqual((await page.evaluate(SHOWN)).map(p => p.kind), ['title'], 'it opens on the title page');
+
+    const touch = (type, x, yy) => page.session.send('Input.dispatchTouchEvent',
+      { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y: yy }] });
+    await touch('touchStart', geo.vw * 0.85, geo.vh * 0.6);
+    for (let k = 1; k <= 10; k++) { await touch('touchMove', geo.vw * (0.85 - k * 0.075), geo.vh * 0.6); await sleep(16); }
+    await touch('touchEnd');
+    await page.waitFor(SETTLED, { message: 'the swipe landing' });
+    const turned = await page.evaluate(SHOWN);
+    assert.deepEqual(turned.map(p => [p.kind, p.date]), [['day', JOURNEY_DAYS['2026-03-02']]], 'a swipe turned to the first day');
+
+    await touch('touchStart', geo.vw * 0.12, geo.vh * 0.5);
+    await touch('touchEnd');
+    await page.waitFor(SETTLED, { message: 'the tap turn landing' });
+    assert.deepEqual((await page.evaluate(SHOWN)).map(p => p.kind), ['title'], 'a tap on the left turned back');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY: Escape and ✕ close it — focus goes back to the Journey button, the Journal stays open, the page scrolls again', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED() });
+    const AFTER = function () {
+      var a = document.activeElement;
+      return {
+        open: !!document.getElementById('nw-journey'),
+        lock: document.documentElement.classList.contains('nw-journey-open'),
+        focus: !!a && a.hasAttribute('data-nw-journey-open'),
+        journal: document.getElementById('nw-panel').style.display === 'flex' && !!document.querySelector('[data-nw-journey-open]')
+      };
+    };
+    await showJourney(page);
+    await keyDown(page, 'Escape');
+    await page.waitFor(function () { return !document.getElementById('nw-journey'); }, { message: 'Escape closing the book' });
+    assert.deepEqual(await page.evaluate(AFTER), { open: false, lock: false, focus: true, journal: true }, 'Escape');
+    await showJourney(page);
+    await page.evaluate(function () { document.querySelector('[data-jr-close]').click(); return true; });
+    await page.waitFor(function () { return !document.getElementById('nw-journey'); }, { message: '✕ closing the book' });
+    assert.deepEqual(await page.evaluate(AFTER), { open: false, lock: false, focus: true, journal: true }, '✕');
+    assert.notEqual(await page.evaluate(function () { return getComputedStyle(document.body).overflowY; }), 'hidden');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY: a day made Eternal in another tab is bound into the open book without reopening it', async () => {
+    const a = await openJourney({ db: JOURNEY_SEED() });
+    let b = null;
+    try {
+      await showJourney(a);
+      b = await open('index.html', { fresh: false });
+      await b.waitFor(function () { return !!window.TrackStorage; }, { message: 'the second tab' });
+      const map = await b.evaluate(function () { return JSON.parse(localStorage.getItem('track_db')).slots[0].dateNotes; });
+      map['2026-03-08'] = { content: 'Bound while the book was open.', createdAt: 1, updatedAt: 1, tag: 'eternal' };
+      assert.equal(await b.evaluate(WRITE_SLOT_KEY, 'dateNotes', map), true, 'the other tab wrote it');
+      await a.waitFor(function () { return (localStorage.getItem('track_db') || '').indexOf('Bound while the book was open.') >= 0; },
+        { message: 'the write landing in the first tab' });
+      await sleep(500);
+      // Opening the second tab hid the first, and a hidden tab runs no
+      // animation frames: its turns would never land. Bring it back to the
+      // front, as the reader would, before turning its pages.
+      await a.session.send('Page.bringToFront');
+      await a.waitFor(function () { return document.visibilityState === 'visible'; }, { message: 'the book\'s tab in front' });
+      const headed = dayPages(await readBook(a)).filter(p => p.date !== null);
+      assert.deepEqual(headed.map(p => p.date), Object.values(JOURNEY_DAYS).concat(['Sunday 08/03/2026']),
+        'the new Eternal day is bound, in its place, without reopening');
+      assert.deepEqual(realErrors(a), []);
+    } finally {
+      await a.close();
+      if (b) await b.close();
+    }
+  });
+
+  await t.test('JOURNEY: with no Eternal day the title page is followed by the page saying how to bind one', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED({ dateNotes: {
+      '2026-03-05': F.dateNote('Cleared, so never bound.', F.localTs(2026, 3, 5), { tag: 'cleared' }),
+      '2026-03-07': F.dateNote('Unclear, so never bound.', F.localTs(2026, 3, 7))
+    } }) });
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-tab="date"]').click();
+      return true;
+    });
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-nw-journey-count]').getAttribute('data-nw-journey-count');
+    }), '0');
+    await showJourney(page);
+    assert.deepEqual((await page.evaluate(SHOWN)).map(p => p.kind), ['endpaper', 'title']);
+    await press(page, 'ArrowRight');
+    const next = await page.evaluate(SHOWN);
+    assert.deepEqual(next.map(p => p.kind), ['empty', 'blank']);
+    assert.match(norm(next[0].text), /Mark a Journal day ∞ Eternal, and it is written into this book\./);
+    await press(page, 'ArrowRight');
+    assert.equal(await page.evaluate(VIEW), '1', 'and that is the end of the book');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY: turning the screen re-cuts the pages and keeps the reader on the same passage', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED() });
+    await showJourney(page);
+    const LEFTMOST = function () {
+      var p = document.querySelector('#nw-journey [data-jr-slot] > [data-jr-kind="day"]');
+      return p ? { day: p.getAttribute('data-jr-day'), start: +p.getAttribute('data-jr-start'), end: +p.getAttribute('data-jr-end') } : null;
+    };
+    for (let i = 0; i < 3; i++) await press(page, 'ArrowRight');
+    const before = await page.evaluate(LEFTMOST);
+    assert.equal(before.day, '2026-03-04', 'reading inside the long day');
+    assert.ok(before.start > 0, 'past its first page');
+    const inkBefore = await page.evaluate(INKS);
+    // A desktop window becoming a phone: one page instead of two, cut afresh.
+    await page.setViewport(...PHONE);
+    await page.waitFor(function () { var r = document.getElementById('nw-journey'); return r && r.getAttribute('data-jr-mode') === 'single'; },
+      { message: 'the book re-laid out for a phone' });
+    await page.waitFor(SETTLED, { message: 'the book settling' });
+    await sleep(200);
+    const after = await page.evaluate(LEFTMOST);
+    assert.ok(after, 'a day page lies open after the re-cut, not the title page');
+    assert.equal(after.day, before.day, 'still the same day');
+    assert.ok(after.start <= before.start && before.start < after.end,
+      'the page shown holds the passage that was being read: ' + JSON.stringify({ before, after }));
+    const over = await page.evaluate(SHOWN);
+    over.forEach(p => assert.ok(p.over <= 0, 'and the new page does not overflow: ' + p.over));
+    // The ink is the day's, not the page's: words a re-cut moved to another
+    // page are written in the ink they were written in before.
+    const inkAfter = await page.evaluate(INKS);
+    let shared = 0;
+    inkAfter.forEach(a => inkBefore.forEach(b => {
+      if (a.day !== b.day || Math.max(a.at, b.at) >= Math.min(a.end, b.end)) return;
+      shared++;
+      assert.equal(a.wet, b.wet, 'the same words in the same ink after the re-cut, at ' + Math.max(a.at, b.at));
+    }));
+    assert.ok(shared > 0, 'the page after the re-cut shares words with the pages before it');
+    assert.ok(inkAfter.some(s => s.wet < 100), 'and its quill still runs dry somewhere');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY PHONE: a Thai day is cut between words — no page starts with a vowel or tone mark torn from its letter', async () => {
+    const page = await openJourney({ viewport: PHONE, db: JOURNEY_SEED({ dateNotes: {
+      '2026-03-03': F.dateNote(JOURNEY_THAI, F.localTs(2026, 3, 3), { tag: 'eternal' })
+    } }) });
+    await showJourney(page);
+    const views = await readBook(page);
+    const pages = dayPages(views);
+    assert.ok(pages.length >= 2, 'the Thai day runs over ' + pages.length + ' pages');
+    assert.equal(pages.map(p => p.text).join(''), JOURNEY_THAI, 'its pages rejoin exactly: no space was there to drop');
+    const MARKS = [0x0e31, 0x0e33, 0x0e34, 0x0e35, 0x0e36, 0x0e37, 0x0e38, 0x0e39, 0x0e3a,
+      0x0e47, 0x0e48, 0x0e49, 0x0e4a, 0x0e4b, 0x0e4c, 0x0e4d, 0x0e4e];
+    // Word boundaries from this browser's own dictionary, as the book used them.
+    const words = await page.evaluate(function (s) {
+      return Array.from(new Intl.Segmenter('th', { granularity: 'word' }).segment(s), function (x) { return x.index; });
+    }, JOURNEY_THAI);
+    let at = 0;
+    pages.forEach((p, i) => {
+      assert.equal(MARKS.includes(p.text.charCodeAt(0)), false, 'page ' + i + ' starts on a letter: ' + p.text.slice(0, 6));
+      assert.ok(words.includes(at), 'page ' + i + ' starts between two words, at ' + at + ': ' + p.text.slice(0, 6));
+      assert.ok(p.over <= 0, 'page ' + i + ' does not overflow');
+      at += p.text.length;
+    });
+    // The quill runs dry in Thai too, and never in the middle of a word.
+    const ink = views.flatMap(v => v.inks).filter(s => s.day === '2026-03-03');
+    assert.ok(ink.some(s => s.wet < 100), 'the Thai hand fades and darkens like any other');
+    ink.forEach(s => {
+      if (s.at !== s.pageStart) assert.ok(words.includes(s.at), 'a change of ink falls between two words, at ' + s.at + ': ' + JOURNEY_THAI.slice(s.at, s.at + 6));
+    });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('JOURNEY: the writing is inked into the paper — the hand on the lettering, the line on the rules, each day in its own quill dips', async () => {
+    const page = await openJourney({ db: JOURNEY_SEED() });
+    await showJourney(page);
+    // Both inks live in the book: a CSS filter can name only an element of its own document.
+    const well = await page.evaluate(function () {
+      var r = document.getElementById('nw-journey');
+      return ['jr-ink', 'jr-ink-line'].map(function (id) {
+        var f = document.getElementById(id);
+        return [id, f instanceof SVGFilterElement && r.contains(f), f ? f.querySelectorAll('feTurbulence').length > 0 : false];
+      });
+    });
+    assert.deepEqual(well, [['jr-ink', true, true], ['jr-ink-line', true, true]], 'both inks are SVG filters inside the book');
+    const INKED = function (sel, pseudo) {
+      var e = document.querySelector('#nw-journey [data-jr-slot] ' + sel);
+      if (!e) return null;
+      var cs = getComputedStyle(e, pseudo || null);
+      return [cs.filter, cs.mixBlendMode];
+    };
+    const HAND = ['url("#jr-ink")', 'multiply'], LINE = ['url("#jr-ink-line")', 'multiply'];
+    assert.deepEqual(await page.evaluate(INKED, '.jr-title'), HAND, 'the title is written by hand, into the paper');
+    assert.deepEqual(await page.evaluate(INKED, '.jr-title-page', '::before'), LINE, 'its frame is ruled in the line\'s ink');
+    assert.deepEqual(await page.evaluate(INKED, '.jr-orn-top'), LINE, 'and so is its flourish');
+
+    await press(page, 'ArrowRight');
+    for (const sel of ['.jr-date', '.jr-body', '.jr-folio']) {
+      assert.deepEqual(await page.evaluate(INKED, sel), HAND, sel + ' is written by hand');
+    }
+    assert.deepEqual(await page.evaluate(INKED, '.jr-rule'), LINE, 'the rule under a date is ruled, not written — the hand\'s cut would dash it');
+
+    // The shades of a turning sheet are layers of their own: drawn with the
+    // pages, every frame of a turn repainted the inked page beneath them.
+    const box = await page.evaluate(function () { var b = document.querySelector('.jr-book').getBoundingClientRect(); return { r: b.right, b: b.bottom }; });
+    const mouse = (type, x, y, buttons) => page.session.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons, clickCount: 1 });
+    await mouse('mousePressed', box.r - 14, box.b - 14, 1);
+    for (let k = 1; k <= 5; k++) { await mouse('mouseMoved', box.r - 14 - k * 12, box.b - 14 - k * 2, 1); await sleep(20); }
+    const shades = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('#nw-journey .jr-shade'), function (s) { return getComputedStyle(s).willChange; });
+    });
+    for (let k = 4; k >= 0; k--) { await mouse('mouseMoved', box.r - 14 - k * 12, box.b - 14 - k * 2, 1); await sleep(20); }
+    await mouse('mouseReleased', box.r - 14, box.b - 14, 0);
+    await page.waitFor(SETTLED, { message: 'the held sheet falling back' });
+    assert.equal(shades.length, 3, 'a sheet was held mid-turn, with its three shades');
+    shades.forEach(w => assert.match(w, /transform/, 'each shade is a layer of its own'));
+    // A thinning stretch is drawn lighter than the full ink.
+    const tones = await page.evaluate(function () {
+      function lum(c) {
+        var n = (c.match(/[\d.]+/g) || []).map(Number), k = /^color\(srgb/.test(c) ? 1 : 1 / 255;
+        return 0.2126 * n[0] * k + 0.7152 * n[1] * k + 0.0722 * n[2] * k;
+      }
+      var b = document.querySelector('#nw-journey [data-jr-slot] [data-jr-day="2026-03-04"] [data-jr-body]');
+      return { body: lum(getComputedStyle(b).color),
+        dips: Array.prototype.map.call(b.querySelectorAll('.jr-dip'), function (s) { return lum(getComputedStyle(s).color); }) };
+    });
+
+    // Quill dips: every page draws its day's own runs, keyed by the DAY, and
+    // a change of ink falls between words.
+    const views = await readBook(page);
+    const long = views.flatMap(v => v.inks).filter(s => s.day === '2026-03-04');
+    const runs = await page.evaluate(function (text) { return TrackJourney.inkRuns(text, '2026-03-04'); }, JOURNEY_LONG);
+    assert.ok(long.some(s => s.wet < 100) && long.some(s => s.wet === 100), 'the quill runs dry and is dipped again');
+    long.forEach(s => {
+      const r = runs.find(x => x.start <= s.at && s.end <= x.end);
+      assert.ok(r, 'the stretch at ' + s.at + ' lies inside one of the day\'s runs');
+      assert.equal(s.wet, Math.round(r.ink * 100), 'and is drawn in that run\'s ink, at ' + s.at);
+      assert.equal(s.span, s.wet < 100 ? 'jr-dip' : null, 'a stretch is a span exactly when its ink runs thin, at ' + s.at);
+      if (s.at !== s.pageStart) assert.match(JOURNEY_LONG.charAt(s.at), /\s/, 'a change of ink falls between words, at ' + s.at);
+    });
+    assert.equal(long.find(s => s.at === 0).wet, 100, 'the day begins fresh from the well, under its red initial');
+    assert.ok(tones.dips.length > 0, 'the long day\'s first page holds thinning stretches');
+    tones.dips.forEach(l => assert.ok(l > tones.body, 'a thinning stretch is lighter than the full ink: ' + l + ' > ' + tones.body));
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
   // ── 17. The phone interface ───────────────────────────────────────────────
   /* Every case here runs at 390x844 with touch, set BEFORE goto (see open()).
 

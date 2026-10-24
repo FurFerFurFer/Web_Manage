@@ -22,7 +22,8 @@ days. It is the count of them."* **MG always means Marginal Gains** — never "m
 | **KS** | "Knowledge System", the old name behind KS02 and KS03 | — |
 | **Declarative** / **Procedural** | The two learnable kinds of mind map. Stored as type `1` / `2`; shown as "T1" / "T2" until 2026-10-08. | SIR's review numbers T1–T5 |
 | **Phase** (S1–S4) | One step of building a mind map | an SIR review |
-| **Journal** | The notes widget's one free draft per day (`dateNotes`; its tab was called "Date") | a day note |
+| **Journal** | The notes widget's one free draft per day (`dateNotes`; its tab was called "Date") | a day note; the Journey |
+| **Journey** | The read-only book every **Eternal** Journal day is bound into, opened from the Journal tab: one day per fresh page, oldest first, turned only page by page, under the title *To myself, For myself, The Finest of FIn* (the user's words, capital I included; confirmed 2026-10-22) | the Journal, which is where days are written |
 | **Day note** | A note placed on a day of the Schedule or a calendar (`calendarNotes`) | the Journal |
 | **MG** | One change of focus (see below) | a goal |
 | **Storage** | A source: a real place where material lives | knowledge |

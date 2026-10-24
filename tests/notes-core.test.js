@@ -31,7 +31,7 @@ test('module surface', () => {
   assert.ok(N, 'notes-core.js published window.TrackNotes under TZ=' + TZ);
   for (const name of ['dateNoteText', 'withDateNote', 'datedDays', 'withSortedPatch', 'appendSent',
     'dayLabel', 'firstLine', 'isBlank', 'isTag', 'tagInfo', 'dateNoteTag', 'dateNoteLocked', 'withDateTag',
-    'monthOf', 'shiftMonth', 'addDays', 'addMonths', 'monthLabel', 'monthGrid']) {
+    'monthOf', 'shiftMonth', 'addDays', 'addMonths', 'monthLabel', 'monthGrid', 'eternalDays', 'journeyDayLabel']) {
     assert.equal(typeof N[name], 'function', name + ' is exported');
   }
   assert.equal(N.MAX_PANES, 4);
@@ -291,6 +291,40 @@ test('datedDays entries carry the tag each day shows', () => {
   ], 'an unwritten record is still not listed');
 });
 
+// ── Journey: which days the book binds ─────────────────────────────────────
+
+test('eternalDays: only WRITTEN real days that SHOW Eternal, oldest first, as {day, text}', () => {
+  const map = {
+    '2026-10-22': { content: 'newest eternal', tag: 'eternal' },
+    '2026-10-20': { content: 'oldest eternal', tag: 'eternal' },
+    '2026-10-21': { content: 'cleared is not bound', tag: 'cleared' },
+    '2026-10-19': { content: 'unclear by default' },
+    '2026-10-18': { content: 'unclear on purpose', tag: 'unclear' },
+    '2026-10-17': { content: '   ', tag: 'eternal' },
+    '2026-10-16': { tag: 'eternal' },
+    '2026-10-15': 'a bare string reads as unclear',
+    '2026-10-14': { content: 'a tag from a later version', tag: 'golden' },
+    '2026-02-30': { content: 'not a real day', tag: 'eternal' },
+    'constructor': { content: 'an inherited name is not a day', tag: 'eternal' }
+  };
+  assert.deepEqual(N.eternalDays(map), [
+    { day: '2026-10-20', text: 'oldest eternal' },
+    { day: '2026-10-22', text: 'newest eternal' }
+  ], 'nothing written means no tag, and an unknown tag shows unclear — neither is Eternal');
+});
+
+test('eternalDays reads, never writes, and is total', () => {
+  const map = { '2026-10-20': { content: 'kept', tag: 'eternal', createdAt: 1, updatedAt: 2 } };
+  const before = JSON.stringify(map);
+  N.eternalDays(map);
+  assert.equal(JSON.stringify(map), before, 'the map is untouched');
+  for (const junk of [undefined, null, 42, 'text', [], [{ content: 'x', tag: 'eternal' }]]) {
+    assert.deepEqual(N.eternalDays(junk), [], JSON.stringify(junk) + ' binds nothing');
+  }
+  assert.deepEqual(N.eternalDays(JSON.parse('{"__proto__": {"content": "x", "tag": "eternal"}}')), [],
+    'a JSON-parsed __proto__ key is data, and not a day');
+});
+
 // ── Sorted notes ───────────────────────────────────────────────────────────
 
 test('withSortedPatch spreads into the ONE matching note', () => {
@@ -352,6 +386,23 @@ test('the label agrees with the local day TrackSchema stamps, at both ends of a 
 test('dayLabel is total', () => {
   assert.equal(N.dayLabel('not-a-day', '2026-09-27'), 'not-a-day');
   assert.equal(N.dayLabel('2026-09-27', undefined), 'Sun 27 Sep 2026', 'no today: the year is always shown');
+});
+
+test('journeyDayLabel: the user\'s "Tuesday dd/mm/yyyy", the weekday from components in every timezone', () => {
+  assert.equal(N.journeyDayLabel('2026-10-20'), 'Tuesday 20/10/2026');
+  // 1 March 2026 is a Sunday. new Date('2026-03-01') would say Saturday west of UTC.
+  assert.equal(N.journeyDayLabel('2026-03-01'), 'Sunday 01/03/2026', 'day and month keep their leading zero');
+  assert.equal(N.journeyDayLabel('2026-12-31'), 'Thursday 31/12/2026');
+  assert.equal(N.journeyDayLabel('2027-01-01'), 'Friday 01/01/2027', 'across the year');
+  assert.equal(N.journeyDayLabel('2024-02-29'), 'Thursday 29/02/2024', 'a leap day');
+  assert.equal(N.journeyDayLabel('2026-03-08'), 'Sunday 08/03/2026', 'the March DST change in Los Angeles');
+  assert.equal(N.journeyDayLabel('2026-11-01'), 'Sunday 01/11/2026', 'and the November one');
+});
+
+test('journeyDayLabel is total', () => {
+  assert.equal(N.journeyDayLabel('2026-02-30'), '2026-02-30', 'not a real day: echoed, never guessed');
+  assert.equal(N.journeyDayLabel('not-a-day'), 'not-a-day');
+  assert.equal(N.journeyDayLabel(undefined), 'undefined');
 });
 
 test('firstLine is the first non-blank line, capped', () => {

@@ -50,6 +50,11 @@
    - COLOURS ARE NOT HERE. Red, green and orchid are presentation, spelled once
      in styles.css as --color-tag-<id>. This file says what a tag IS.
 
+   JOURNEY. The read-only book of every Eternal day (journey-book.js) asks this
+   file two things and nothing else: which days it binds (eternalDays) and the
+   heading each one starts its page with (journeyDayLabel). Both are here so no
+   page re-spells "is this day Eternal?" or a weekday name.
+
    Dates are LOCAL calendar days. A 'YYYY-MM-DD' string is never handed to the
    Date constructor, which parses it as UTC midnight and names the wrong weekday
    everywhere west of UTC; it is split into components instead. The month grid
@@ -62,6 +67,7 @@
   var MAX_PANES = 4;
 
   var WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var WEEKDAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
     'September', 'October', 'November', 'December'];
@@ -206,6 +212,23 @@
     return out;
   }
 
+  // ── Journey ───────────────────────────────────────────────────────────────
+
+  var ETERNAL = 'eternal';
+
+  // Every day the Journey book binds, OLDEST first — the order a book is read
+  // in — as {day, text}. The one definition: a caller never tests
+  // `tag === 'eternal'` itself, because what counts is the tag a day SHOWS.
+  // That goes through dateNoteTag, so an unwritten day, a bare string and a tag
+  // this version does not know are never Eternal, and datedDays has already
+  // skipped every key that is not a real day. Total, like everything here.
+  function eternalDays(map) {
+    return datedDays(map)
+      .filter(function (d) { return d.tag === ETERNAL; })
+      .reverse()
+      .map(function (d) { return { day: d.day, text: d.text }; });
+  }
+
   // ── Sorted notes ──────────────────────────────────────────────────────────
 
   // Pure. Spreads `patch` into the ONE note whose id matches. A missing id is
@@ -255,6 +278,16 @@
     var diff = Math.round((d - noonOf(today)) / 86400000);
     var rel = diff === 0 ? 'Today' : diff === -1 ? 'Yesterday' : diff === 1 ? 'Tomorrow' : '';
     return rel ? rel + ' · ' + text : text;
+  }
+
+  // The heading a Journey day starts its page with, in the user's own format:
+  // 'Tuesday 20/10/2026' — the weekday in full, then dd/mm/yyyy. The numbers
+  // are the stored day's own digits; only the weekday needs a Date, and that one
+  // is built at noon from components (noonOf), never by parsing the string.
+  function journeyDayLabel(day) {
+    if (!isDay(day)) return String(day);
+    return WEEKDAYS_LONG[noonOf(day).getDay()] + ' ' +
+      day.slice(8, 10) + '/' + day.slice(5, 7) + '/' + day.slice(0, 4);
   }
 
   // The first non-blank line, trimmed and capped — a list row's preview.
@@ -340,9 +373,11 @@
     dateNoteTag: dateNoteTag,
     dateNoteLocked: dateNoteLocked,
     withDateTag: withDateTag,
+    eternalDays: eternalDays,
     withSortedPatch: withSortedPatch,
     appendSent: appendSent,
     dayLabel: dayLabel,
+    journeyDayLabel: journeyDayLabel,
     firstLine: firstLine,
     isBlank: isBlank,
     monthOf: monthOf,
