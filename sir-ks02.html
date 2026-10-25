@@ -1236,11 +1236,11 @@
                   onKeyDown={e=>{if(e.key==="Enter"){onAddComment(mm.id,newComment);setNewComment("");}}}
                   className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-white placeholder-gray-600 text-xs"/>
                 <button onClick={()=>{onAddComment(mm.id,newComment);setNewComment("");}} className="bg-gray-700 hover:bg-gray-600 text-white px-3 rounded text-xs">+</button>
-                <button onClick={()=>onToggleUnclear&&onToggleUnclear(mm.id)} className="flex items-center gap-1.5 shrink-0 focus:outline-none" title={mm.unclear?"UNCLEAR: ON":"UNCLEAR: OFF"}>
+                <button onClick={()=>onToggleUnclear&&onToggleUnclear(mm.id)} className="flex items-center gap-1.5 shrink-0 focus:outline-none" title={mm.unclear?"IN PROGRESS: ON":"IN PROGRESS: OFF"}>
                   <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${mm.unclear?"bg-red-600":"bg-gray-700"}`}>
                     <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${mm.unclear?"translate-x-4":""}`}/>
                   </div>
-                  <span className={`text-[10px] font-bold tracking-wide transition-colors duration-200 ${mm.unclear?"text-red-400":"text-gray-600"}`}>UNCLEAR</span>
+                  <span className={`text-[10px] font-bold tracking-wide transition-colors duration-200 ${mm.unclear?"text-red-400":"text-gray-600"}`}>IN PRO</span>
                 </button>
               </div>
             </div>
@@ -1327,11 +1327,11 @@
                   onKeyDown={e=>{if(e.key==="Enter"){onAddComment(mm.id,newComment);setNewComment("");}}}
                   className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-white placeholder-gray-600 text-xs"/>
                 <button onClick={()=>{onAddComment(mm.id,newComment);setNewComment("");}} className="bg-gray-700 hover:bg-gray-600 text-white px-3 rounded text-xs">+</button>
-                <button onClick={()=>onToggleUnclear&&onToggleUnclear(mm.id)} className="flex items-center gap-1.5 shrink-0 focus:outline-none" title={mm.unclear?"UNCLEAR: ON":"UNCLEAR: OFF"}>
+                <button onClick={()=>onToggleUnclear&&onToggleUnclear(mm.id)} className="flex items-center gap-1.5 shrink-0 focus:outline-none" title={mm.unclear?"IN PROGRESS: ON":"IN PROGRESS: OFF"}>
                   <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${mm.unclear?"bg-red-600":"bg-gray-700"}`}>
                     <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${mm.unclear?"translate-x-4":""}`}/>
                   </div>
-                  <span className={`text-[10px] font-bold tracking-wide transition-colors duration-200 ${mm.unclear?"text-red-400":"text-gray-600"}`}>UNCLEAR</span>
+                  <span className={`text-[10px] font-bold tracking-wide transition-colors duration-200 ${mm.unclear?"text-red-400":"text-gray-600"}`}>IN PRO</span>
                 </button>
               </div>
             </div>
@@ -2072,7 +2072,7 @@
             <div className="w-2 h-2 rounded-full shrink-0"
               style={{backgroundColor: mm.type==="1" ? "#ef4444" : mmColor(mm.id)}}/>
             <span className="text-sm">{mm.name}</span>
-            {mm.unclear&&<span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-900 text-red-400 ml-1">UNCLEAR</span>}
+            {mm.unclear&&<span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-900 text-red-400 ml-1" title="In progress">IN PRO</span>}
             <span className="text-xs text-gray-600">T{mm.type}</span>
             {children.length > 0 && (
               <span

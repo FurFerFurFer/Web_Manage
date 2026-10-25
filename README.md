@@ -247,6 +247,10 @@ thing from the page and keeps its name. It currently supports:
 - Transfer of source content between mind maps.
 - Ratings and level templates.
 - Mind-map stage tracking.
+- An **IN PRO** (in progress) switch beside a mind map's comment box, and a red `IN PRO`
+  badge on its SRCH row while the switch is on. It was labelled UNCLEAR until 2026-10-25;
+  only the word changed — the flag is still stored as the mind map's `unclear` key, so a
+  mind map switched on before still shows it.
 - Connections between related learning material.
 - Two links in: `sir-ks02.html?dump=<dump>[&mm=<mm>]#ks03` opens KS03 → SOURCE DUMP on that dump
   (briefly ringing the MM's card), and `sir-ks02.html?mm=<mm>#ks03` — no `dump` — opens that MM's

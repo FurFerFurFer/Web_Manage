@@ -4554,3 +4554,25 @@ was `2ca116d` at both ends, and the journal shows no suspend in the window.
   ends in, so iPadOS gesture arbitration is unverified. A device pass by the user is owed.
 - **The swipe and hold variants.** That a swipe or a hold starting on a control no longer drags or
   resizes follows from the same early return, and has no case of its own.
+
+### Knowledge Record: the mind map's UNCLEAR switch reads IN PRO (2026-10-25)
+
+The user's request: the word on the mind-map switch changes from UNCLEAR to **IN PRO** (in
+progress). Display only. `sir-ks02.html` spells it at three sites — the switch beside the comment
+box in an anchor's INFO tab and in a mind map's KS03 tab, and the red badge on a SRCH row — and all
+three changed; the switch's tooltip now reads `IN PROGRESS: ON` / `OFF`. The stored flag keeps its
+name, `mm.unclear`: renaming it would be a data contract change with no `schemaVersion` behind it,
+and every mind map switched on before would silently read as off. No other page reads the flag
+(`rg -i unclear` across the persistence boundaries), and no test selected on the old word.
+
+**Check.** A task-owned scratch script (outside the repository) drove `sir-ks02.html` in headless
+Chrome through `tests/lib/cdp.js`, seeded with `F.populatedSlot()` and Mind Map A switched on: SRCH
+drew exactly one badge, `IN PRO`, on Mind Map A; its KS03 tab drew the switch titled
+`IN PROGRESS: ON` and labelled `IN PRO`, with no `UNCLEAR` anywhere on the page; a click wrote
+`unclear: false` to `track_db` and the title became `IN PROGRESS: OFF`; `realErrors` empty. PASS.
+
+**Not run.** The full `node tests/run.js`. The laptop was on battery (`ACAD/online` = 0), where it
+suspends after 15 idle minutes, and a ~37-minute run spanning a suspend is void. The change is
+three string literals in JSX that no case reads, and the page mounted and compiled clean above, so
+the risk the suite would add coverage for is a syntax error the smoke already rules out — but the
+suite was not run, and that is the gap.
