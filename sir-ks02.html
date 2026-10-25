@@ -14,6 +14,7 @@
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
   <script src="scripts/source-dump-core.js?v=1"></script>
+  <script src="scripts/strat-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -1086,8 +1087,84 @@
       );
     }
 
+    /* A mind map's STRAT (strategy) and every one it inherits — which ones,
+       and in what order, is TrackStrat.stratsFor in strat-core.js, the one
+       definition the Schedule's ◎ STRAT button reads too. Drawn under COMMENTS
+       on the KS03 tab and on an anchor's INFO tab.
+
+       Ancestors' STRATs come first, farthest first, and are READ-ONLY here:
+       each belongs to the mind map it names and is edited there (the user's
+       choice, 2026-10-25), so an edit made inside one child cannot quietly
+       change the strategy of every other mind map under that parent. The
+       mind map's own — at most one, its ORIGINAL — comes last with ✎ and ×,
+       and while it has none the comment-style box and + stand in its place.
+
+       The origin is a label, not a link: MMDetail is not keyed by mind map,
+       so opening another one in place would keep this tab, and an anchor
+       opened on KS03 draws nothing. The caller keys THIS by mm.id, so a draft
+       never follows the panel to another mind map. */
+    function StratSection({mm,mms,mmColor,onSaveStrat,onRemoveStrat}){
+      const [draft,setDraft]=React.useState("");
+      const [editing,setEditing]=React.useState(false);
+      const [editDraft,setEditDraft]=React.useState("");
+      const strats=TrackStrat.stratsFor(mm.id,mms);
+      const own=strats.find(s=>s.own)||null;
+      // gone while being edited (deleted in another tab): leave the editor
+      React.useEffect(()=>{if(!own)setEditing(false);},[!!own]);
+      const dot=m=>m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id);
+      const add=()=>{if(!draft.trim())return;onSaveStrat(mm.id,draft);setDraft("");};
+      const startEdit=()=>{setEditDraft(own.text);setEditing(true);};
+      const save=()=>{if(!editDraft.trim())return;onSaveStrat(mm.id,editDraft);setEditing(false);};
+      return (
+        <div data-strat-section className="mb-4">
+          <div className="text-xs text-gray-500 mb-1 tracking-widest">STRAT</div>
+          {strats.filter(s=>!s.own).map(s=>(
+            <div key={s.mm.id} data-strat-inherited={s.mm.id} className="bg-gray-900 border border-gray-800 rounded px-3 py-2 mb-1">
+              <div className="flex items-center gap-1.5 mb-1 min-w-0">
+                <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:dot(s.mm)}}/>
+                <span className="text-xs font-semibold text-gray-400 tracking-wide truncate">{s.mm.name}</span>
+              </div>
+              <div className="text-xs text-gray-300 whitespace-pre-wrap break-words">{s.text}</div>
+            </div>
+          ))}
+          {own?(
+            <div data-strat-own className="bg-gray-900 border border-gray-700 rounded px-3 py-2 mb-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-bold tracking-widest text-violet-300">ORIGINAL</span>
+                {!editing&&(
+                  <div className="flex items-center gap-2">
+                    <button data-strat-edit onClick={startEdit} className="text-gray-500 hover:text-white text-xs" title="Edit this STRAT">✎</button>
+                    <button data-strat-remove onClick={()=>onRemoveStrat(mm.id)} className="text-gray-600 hover:text-red-400 text-xs" title="Delete this STRAT">×</button>
+                  </div>
+                )}
+              </div>
+              {editing?(<>
+                <textarea data-strat-draft autoFocus value={editDraft} rows={3}
+                  onChange={e=>setEditDraft(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Escape")setEditing(false);}}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white placeholder-gray-600 text-xs resize-y outline-none focus:border-gray-500"/>
+                <div className="flex gap-2 mt-1">
+                  <button data-strat-save onClick={save} disabled={!editDraft.trim()} className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs font-bold disabled:opacity-40">SAVE</button>
+                  <button data-strat-cancel onClick={()=>setEditing(false)} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1 rounded text-xs">CANCEL</button>
+                </div>
+              </>):(
+                <div className="text-xs text-gray-200 whitespace-pre-wrap break-words cursor-text" title="Double-click to edit" onDoubleClick={startEdit}>{own.text}</div>
+              )}
+            </div>
+          ):(
+            <div className="flex gap-2 mt-1">
+              <input data-strat-input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Add strat..."
+                onKeyDown={e=>{if(e.key==="Enter")add();}}
+                className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-white placeholder-gray-600 text-xs"/>
+              <button data-strat-add onClick={add} className="bg-gray-700 hover:bg-gray-600 text-white px-3 rounded text-xs">+</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function MMDetail({mm,mms,mgChanges,kolbs,mmColor,sirSessionsMap,initialMode,levelTemplates,
-      onBack,onNavigate,onSaveParents,onDetachChild,onAddComment,onRemoveComment,onToggleComment,
+      onBack,onNavigate,onSaveParents,onDetachChild,onAddComment,onRemoveComment,onToggleComment,onSaveStrat,onRemoveStrat,
       onAddLink,onRemoveLink,onNewKolb,onDupeKolb,onDelete,onSetRating,onChangeType,onRename,onUpdateExplanation,onOpenLin,
       sourceDumps,onAddDumpURLLink,onRemoveDumpURLLink,onGoToSourceDump,
       onAddDumpMMLink,onUpdateMMSCOrder,onUpdateMMSCAggOrder,onAddDumpTextBlock,onRemoveDumpTextBlock,onToggleSourceDumpActivation,onToggleUnclear,
@@ -1244,6 +1321,7 @@
                 </button>
               </div>
             </div>
+            <StratSection key={mm.id} mm={mm} mms={mms} mmColor={mmColor} onSaveStrat={onSaveStrat} onRemoveStrat={onRemoveStrat}/>
           </>)}
 
           {mm.type!=="anchor"&&mode==="ks03"&&(<>
@@ -1335,6 +1413,7 @@
                 </button>
               </div>
             </div>
+            <StratSection key={mm.id} mm={mm} mms={mms} mmColor={mmColor} onSaveStrat={onSaveStrat} onRemoveStrat={onRemoveStrat}/>
           </>)}
 
           {mm.type!=="anchor"&&mode==="mg"&&(<>
@@ -3231,6 +3310,17 @@
       function addComment(mmId,text){if (!text.trim()) return;setMms(p=>p.map(m=>m.id===mmId?{...m,comments:[...(m.comments||[]),{id:nid(),text:text.trim(),date:today()}]}:m));}
       function removeComment(mmId,cid){setMms(p=>p.map(m=>m.id===mmId?{...m,comments:(m.comments||[]).filter(c=>c.id!==cid)}:m));}
       function toggleComment(mmId,cid){setMms(p=>p.map(m=>m.id===mmId?{...m,comments:(m.comments||[]).map(c=>c.id===cid?{...c,done:!c.done}:c)}:m));}
+      // A STRAT is written only through TrackStrat (strat-core.js): withStrat
+      // adds or edits and refuses blank text, so no save can delete; deleting
+      // is withoutStrat, from the × alone. Every path through removeStrat
+      // deletes, so its prompt lives HERE, before the setMms the autosave
+      // writes from (AGENTS.md, "Confirm before deleting or clearing").
+      function saveStrat(mmId,text){const now=Date.now();setMms(p=>TrackStrat.withStrat(p,mmId,text,now));}
+      function removeStrat(mmId){
+        const target=mmMap[mmId];
+        if(!window.confirm(`Delete the STRAT on "${target?target.name:"this mind map"}"? Every mind map under it stops showing it too. This cannot be undone.`)) return;
+        setMms(p=>TrackStrat.withoutStrat(p,mmId));
+      }
       function toggleUnclear(mmId){setMms(p=>p.map(m=>m.id===mmId?{...m,unclear:!m.unclear}:m));}
       function addLink(mmId,link){if (!link.url.trim()) return;setMms(p=>p.map(m=>m.id===mmId?{...m,links:[...(m.links||[]),{id:nid(),label:link.label||link.url,url:link.url}]}:m));}
       function removeLink(mmId,lid){
@@ -3337,6 +3427,7 @@
         onBack:()=>setSelectedMM(null),onNavigate:(id,mode)=>openMM(id,mode||selectedMMMode),
         onSaveParents:saveParents,onDetachChild:detachChild,
         onAddComment:addComment,onRemoveComment:removeComment,onToggleComment:toggleComment,
+        onSaveStrat:saveStrat,onRemoveStrat:removeStrat,
         onAddLink:addLink,onRemoveLink:removeLink,
         onNewKolb:()=>setKolbModal({mmId:selectedMM}),
         onDupeKolb:duplicateKolb,

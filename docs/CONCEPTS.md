@@ -27,11 +27,12 @@ days. It is the count of them."* **MG always means Marginal Gains** — never "m
 | **Day note** | A note placed on a day of the Schedule or a calendar (`calendarNotes`) | the Journal |
 | **MG** | One change of focus (see below) | a goal |
 | **Storage** | A source: a real place where material lives | knowledge |
+| **STRAT** | A strategy written on a mind map; every mind map under it shows it too (see below) | a **comment**, which is ticked off and belongs to its mind map alone |
 | **Core Routine** | The supporting actions — the Schedule's ■ button (see below) | a **routine task**: a goal task repeated on chosen days, which belongs to **Chosen** |
 
 Still to be renamed (NOTES, Proposal 17): the **KS02** tab, which shows mind maps by phase,
 and the two screens both called **KS03** — the panel inside a mind map (phase, SIR,
-connections, links, comments) and the top tab "MIND MAP STORAGE" (Multiverse and Source
+connections, links, comments, STRAT) and the top tab "MIND MAP STORAGE" (Multiverse and Source
 Dump).
 
 ## Mind maps
@@ -58,6 +59,13 @@ Dump).
   (README, "Kolb learning records"), and Progress judges it by its MG level alone (README,
   "Goals, tasks, and milestones"). An old Kolb moved onto a Procedural MM counts as a new one
   there and resets it too (decided 2026-10-13).
+- **STRAT** — a strategy (the user's word, 2026-10-25). A mind map has **at most one STRAT of its
+  own**, its *original*, and it is edited rather than added again. **Whatever is registered on a
+  parent is shown on all its children, however deep the lineage goes**, the way Source Dump
+  content passes down — so a mind map can show several STRATs, but only one of them is its own.
+  An inherited STRAT is changed only in the mind map it belongs to. On the Schedule, a study
+  block shows a STRAT button whenever its mind map has at least one. The app works this way since
+  2026-10-25 (README, "Mind maps and knowledge structure").
 
 ## Phases S1–S4
 

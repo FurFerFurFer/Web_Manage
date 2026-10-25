@@ -64,8 +64,8 @@ const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.te
 
 // Swept once, not per zone: true-storage-core.js, source-dump-core.js,
 // graph-layout.js, doc-table-core.js, schedule-paste-core.js, quest-core.js,
-// milestone-core.js, viewport.js, journey-core.js and the cdp cleanup path hold
-// no date code at all, so five runs would cost five times as long and prove
+// milestone-core.js, viewport.js, journey-core.js, strat-core.js and the cdp
+// cleanup path hold no date code at all, so five runs would cost five times as long and prove
 // exactly the same thing. (journey-core.js's one date-shaped job, the heading a
 // Journey day starts with, is notes-core.js's journeyDayLabel, which IS swept;
 // its suite asserts the module constructs no Date.) Four of them have to earn their place here rather than merely claiming
@@ -77,9 +77,11 @@ const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.te
 // calendar-core.js, which is swept, and the local day for a routine tick, a new
 // entry or a lateness check is computed by the page. milestone-core.js counts
 // the days between two of them with integer arithmetic, never a Date.
+// strat-core.js stamps a STRAT's createdAt and updatedAt, so it carries the
+// same structural case: the page passes `now` in.
 const UNSWEPT_FILES = ['true-storage-core.test.js', 'source-dump-core.test.js', 'graph-layout.test.js',
   'doc-table-core.test.js', 'schedule-paste-core.test.js', 'quest-core.test.js', 'milestone-core.test.js',
-  'viewport.test.js', 'journey-core.test.js', 'cdp-cleanup.test.js'];
+  'viewport.test.js', 'journey-core.test.js', 'strat-core.test.js', 'cdp-cleanup.test.js'];
 
 for (const tz of zones)
   for (const file of OFFLINE_FILES)

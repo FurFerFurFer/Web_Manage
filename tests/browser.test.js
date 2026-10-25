@@ -15959,4 +15959,339 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual((await page.evaluate(MOCK_ROWS, MOCK_KEY)).map(r => r.selected), [true, false]);
     assert.deepEqual(realErrors(page), []);
   });
+
+  /* ── 20. STRAT — a mind map's strategy, and every ancestor's (2026-10-25) ──
+     A mind map may carry ONE STRAT of its own, `strat: {text, createdAt,
+     updatedAt}`, and shows every ancestor's above it, however deep — the user's
+     rule, "whatever is registered in a parent is shown in all the children".
+     Which ones, in what order, is TrackStrat.stratsFor in strat-core.js, and
+     BOTH surfaces read it: the Knowledge Record's panel, which writes the key,
+     and the Schedule's ◎ STRAT button, which only reads. That makes them one
+     door for the inheritance rule, not two — asserted on each surface, never
+     claimed disjoint.
+
+     The user's choices: an inherited STRAT is READ-ONLY inside a child (it is
+     edited in the mind map it names), and on the Schedule it is a button and
+     a panel, like `comment`.
+
+     Seed, with numeric ids as nid() mints them: Music (anchor) → Guitar →
+     Picking → Tremolo, where Picking has no STRAT of its own; Drums, with a
+     STRAT and outside that lineage; Bare, with none anywhere above it; and
+     Loop A ⇄ Loop B, each the other's parent. Every STRAT is stamped STRAT_AT,
+     so a write that landed is one whose updatedAt moved. */
+  const STRAT_AT = 1761300000000;
+  const SREC = text => ({ text, createdAt: STRAT_AT, updatedAt: STRAT_AT });
+  const STRAT_MMS = () => [
+    F.mm(30, 'Music', { type: 'anchor', strat: SREC('Slow first') }),
+    F.mm(31, 'Guitar', { type: '2', ksStage: '1', parentIds: [30], strat: SREC('Chords before strumming') }),
+    F.mm(32, 'Picking', { type: '2', ksStage: '1', parentIds: [31] }),
+    F.mm(33, 'Tremolo', { ksStage: '2', parentIds: [32], strat: SREC('Metronome at 60') }),
+    F.mm(34, 'Drums', { ksStage: '1', strat: SREC('Count aloud') }),
+    F.mm(35, 'Bare', { ksStage: '1' }),
+    F.mm(36, 'Loop A', { ksStage: '1', parentIds: [37], strat: SREC('Loop A strategy') }),
+    F.mm(37, 'Loop B', { ksStage: '1', parentIds: [36], strat: SREC('Loop B strategy') })
+  ];
+  const STRAT_ENTRIES = () => [
+    F.mmEntry('me-32', MONDAY, 32, { time: '08:00', duration: 60 }),
+    F.mmEntry('me-33', MONDAY, 33, { time: '09:30', duration: 60 }),
+    F.mmEntry('me-34', MONDAY, 34, { time: '11:00', duration: 60 }),
+    F.mmEntry('me-35', MONDAY, 35, { time: '12:30', duration: 60 })
+  ];
+  const stratDb = () => seedDb({ mms: STRAT_MMS(), sessions: [], mmEntries: STRAT_ENTRIES() });
+  // Loop A's block on the same day. Kept out of stratDb on purpose: an
+  // unguarded walk throws inside the Schedule's render and takes the whole
+  // page down, so only the cases that are ABOUT the cycle seed it.
+  const stratLoopDb = () => seedDb({ mms: STRAT_MMS(), sessions: [],
+    mmEntries: STRAT_ENTRIES().concat([F.mmEntry('me-36', MONDAY, 36, { time: '14:00', duration: 60 })]) });
+  // { has, strat } for one stored mind map: `has` is whether the KEY exists,
+  // which is the thing a delete must change.
+  const STRAT_OF = function (id) {
+    var slot = ((JSON.parse(localStorage.getItem('track_db') || '{}').slots) || [])[0] || {};
+    var m = (slot.mms || []).filter(function (x) { return x && x.id === id; })[0];
+    if (!m) return null;
+    return { has: Object.prototype.hasOwnProperty.call(m, 'strat'), strat: m.strat === undefined ? null : m.strat };
+  };
+  // What the panel's STRAT section draws, in order.
+  const STRAT_VIEW = function () {
+    var sec = document.querySelector('[data-strat-section]');
+    if (!sec) return null;
+    var own = sec.querySelector('[data-strat-own]');
+    return {
+      inherited: Array.prototype.map.call(sec.querySelectorAll('[data-strat-inherited]'), function (e) {
+        return { id: e.getAttribute('data-strat-inherited'), name: e.querySelector('span').textContent,
+          text: e.lastElementChild.textContent, controls: e.querySelectorAll('button, input, textarea').length };
+      }),
+      own: own && !own.querySelector('[data-strat-draft]') ? own.lastElementChild.textContent : null,
+      input: !!sec.querySelector('[data-strat-input]')
+    };
+  };
+  const HAS_SEL = function (sel) { return !!document.querySelector(sel); };
+  const typeInto = (page, sel, value) => page.evaluate(function (setterSrc, s, v) {
+    var set = new Function('return ' + setterSrc)();
+    set(document.querySelector(s), v);
+    return true;
+  }, SET_REACT_INPUT, sel, value);
+  // A mind map's panel on `mode` — KS03, or INFO for an anchor — with its
+  // STRAT section drawn. ?mm= opens the panel on S&C, so the tab is clicked.
+  const openStratMM = async (tc, id, mode = 'ks03', db = null) => {
+    const page = await openHere(tc, 'sir-ks02.html', { db: db || stratDb(), hash: withQuery('?mm=' + id, '#ks03') });
+    await page.waitFor(function (m) { return !!document.querySelector('[data-mm-mode="' + m + '"]'); },
+      { args: [mode], message: 'MM ' + id + "'s panel" });
+    await page.evaluate(CLICK_SEL, '[data-mm-mode="' + mode + '"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-section]'], message: 'the STRAT section of MM ' + id });
+    // The page's mount writes (its migrations and first autosave) land
+    // before anything here is measured against them.
+    await sleep(300);
+    return page;
+  };
+  // The Schedule in DAY mode on MONDAY, where a ◎ block's toolbar is drawn.
+  const openStratDay = async (tc, db = null) => {
+    const page = await openHere(tc, 'progress.html', { db: db || stratDb(), hash: '?date=' + MONDAY + '#schedule', viewport: [1280, 900] });
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-notes-btn="me-35"]'], message: "the ◎ blocks' toolbars" });
+    return page;
+  };
+
+  await t.test('STRAT KS02: + adds the one original — exactly {text, createdAt, updatedAt} — and the add box goes', async tc => {
+    const page = await openStratMM(tc, 35);
+    assert.deepEqual(await page.evaluate(STRAT_VIEW), { inherited: [], own: null, input: true },
+      'precondition: Bare has no STRAT anywhere, so it shows only the add box');
+    const before = Date.now();
+    await typeInto(page, '[data-strat-input]', '  Short sessions, daily  ');
+    await page.evaluate(CLICK_SEL, '[data-strat-add]');
+    const got = await page.waitFor(function (f) { var s = new Function('return ' + f)()(35); return s && s.has ? s : false; },
+      { args: [STRAT_OF.toString()], message: 'the STRAT landing in track_db' });
+    assert.deepEqual(Object.keys(got.strat).sort(), ['createdAt', 'text', 'updatedAt'], 'nothing else is stored');
+    assert.equal(got.strat.text, 'Short sessions, daily', 'trimmed');
+    assert.equal(got.strat.createdAt, got.strat.updatedAt);
+    assert.ok(got.strat.createdAt >= before && got.strat.createdAt <= Date.now() + 1000, 'epoch ms, now: ' + got.strat.createdAt);
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-own]'], message: 'the original being drawn' });
+    assert.deepEqual(await page.evaluate(STRAT_VIEW), { inherited: [], own: 'Short sessions, daily', input: false },
+      'one original: once it exists there is nothing to add, only it to edit — a + left there would overwrite it');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT KS02: a mind map shows every ancestor’s STRAT read-only, farthest first, its own last — and nothing from outside its lineage', async tc => {
+    const page = await openStratMM(tc, 33);
+    const v = await page.evaluate(STRAT_VIEW);
+    assert.deepEqual(v.inherited.map(i => [i.id, i.name, i.text]),
+      [['30', 'Music', 'Slow first'], ['31', 'Guitar', 'Chords before strumming']],
+      'Music and Guitar, from two and three levels up, through Picking which has none');
+    assert.deepEqual(v.inherited.map(i => i.controls), [0, 0],
+      'no ✎, no ×, no box on an inherited STRAT — it is edited in the mind map it names');
+    assert.equal(v.own, 'Metronome at 60', 'its own comes last');
+    assert.equal(v.input, false, 'it has its original, so there is no add box');
+    assert.equal(JSON.stringify(v).indexOf('Count aloud'), -1, 'Drums is outside the lineage');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT KS02: a mind map with no STRAT of its own shows its ancestors’ above the add box', async tc => {
+    const page = await openStratMM(tc, 32);
+    const v = await page.evaluate(STRAT_VIEW);
+    assert.deepEqual(v.inherited.map(i => i.id), ['30', '31']);
+    assert.equal(v.own, null);
+    assert.equal(v.input, true, 'inherited STRATs are not its original, so it may still add one');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT KS02: ✎ edits the original in place — createdAt kept, updatedAt moved', async tc => {
+    const page = await openStratMM(tc, 33);
+    await page.evaluate(CLICK_SEL, '[data-strat-edit]');
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-draft]'], message: 'the STRAT editor' });
+    assert.equal(await page.evaluate(function () { return document.querySelector('[data-strat-draft]').value; }),
+      'Metronome at 60', 'the editor opens on the text');
+    await typeInto(page, '[data-strat-draft]', 'Metronome at 60\nthen 80');
+    await page.evaluate(CLICK_SEL, '[data-strat-save]');
+    const got = await page.waitFor(function (f, at) {
+      var s = new Function('return ' + f)()(33); return s && s.strat && s.strat.updatedAt !== at ? s : false;
+    }, { args: [STRAT_OF.toString(), STRAT_AT], message: 'the edit landing in track_db' });
+    assert.equal(got.strat.text, 'Metronome at 60\nthen 80', 'several lines are kept');
+    assert.equal(got.strat.createdAt, STRAT_AT, 'createdAt is kept');
+    assert.ok(got.strat.updatedAt > STRAT_AT, 'updatedAt moved');
+    await page.waitFor(function () { return !document.querySelector('[data-strat-draft]'); }, { message: 'the editor closing' });
+    assert.equal((await page.evaluate(STRAT_VIEW)).own, 'Metronome at 60\nthen 80');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT KS02: an unchanged SAVE writes nothing, and a blank one cannot be pressed', async tc => {
+    const page = await openStratMM(tc, 33);
+    const before = await page.evaluate(RAW_DB);
+    await page.evaluate(CLICK_SEL, '[data-strat-edit]');
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-draft]'], message: 'the STRAT editor' });
+    await page.evaluate(CLICK_SEL, '[data-strat-save]');
+    await page.waitFor(function () { return !document.querySelector('[data-strat-draft]'); }, { message: 'the editor closing' });
+    await sleep(400);
+    assert.equal(await page.evaluate(RAW_DB), before, 'the same text: track_db is byte-identical');
+    await page.evaluate(CLICK_SEL, '[data-strat-edit]');
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-draft]'], message: 'the STRAT editor again' });
+    await typeInto(page, '[data-strat-draft]', '   ');
+    assert.equal(await page.evaluate(function () { return document.querySelector('[data-strat-save]').disabled; }), true,
+      'SAVE is disabled on blank text — a save is never a delete');
+    await page.evaluate(CLICK_SEL, '[data-strat-save]');
+    await sleep(400);
+    assert.equal(await page.evaluate(RAW_DB), before, 'pressing it anyway writes nothing');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT KS02: × asks, and Cancel leaves track_db byte-identical', async tc => {
+    const page = await openStratMM(tc, 31);
+    const before = await page.evaluate(RAW_DB);
+    const asked = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(CLICK_SEL, '[data-strat-remove]');
+    await sleep(600);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, asked + 1, '× asked, once');
+    assert.match(page.dialogs[page.dialogs.length - 1], /STRAT on "Guitar"/, 'it names the mind map');
+    assert.match(page.dialogs[page.dialogs.length - 1], /Every mind map under it stops showing it/);
+    assert.equal(await page.evaluate(RAW_DB), before, 'Cancel left track_db byte-identical');
+    assert.equal((await page.evaluate(STRAT_VIEW)).own, 'Chords before strumming', 'and the STRAT is still drawn');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT KS02: OK deletes the KEY — not "" — the add box returns, and the mind maps under it stop showing it', async tc => {
+    const page = await openStratMM(tc, 31);
+    const asked = page.dialogs.length;
+    await page.evaluate(CLICK_SEL, '[data-strat-remove]');
+    // Waits for the STRAT to stop READING as one, not for the key to go, so a
+    // writer that left '' behind reports itself below instead of timing out.
+    const got = await page.waitFor(function (f) {
+      var s = new Function('return ' + f)()(31); return s && !(s.strat && s.strat.text) ? s : false;
+    }, { args: [STRAT_OF.toString()], message: 'the delete landing in track_db' });
+    assert.equal(got.has, false, 'the key is gone — it read ' + JSON.stringify(got.strat));
+    assert.equal(page.dialogs.length, asked + 1, 'it asked first');
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-input]'], message: 'the add box coming back' });
+    assert.deepEqual((await page.evaluate(STRAT_VIEW)).inherited.map(i => i.id), ['30'], "Music's is still inherited");
+    const below = await page.evaluate(function () {
+      var mms = JSON.parse(localStorage.getItem('track_db')).slots[0].mms;
+      return window.TrackStrat.stratsFor(33, mms).map(function (s) { return s.text; });
+    });
+    assert.deepEqual(below, ['Slow first', 'Metronome at 60'], 'Tremolo no longer shows Guitar’s — it never held a copy');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT KS02: a parent cycle draws each STRAT once, and the page stays up', async tc => {
+    const page = await openStratMM(tc, 36);
+    const v = await page.evaluate(STRAT_VIEW);
+    assert.deepEqual(v.inherited.map(i => [i.id, i.text]), [['37', 'Loop B strategy']], "Loop B's once — and Loop A's own never as inherited");
+    assert.equal(v.own, 'Loop A strategy');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT KS02: an anchor has the same section on its INFO tab', async tc => {
+    const page = await openStratMM(tc, 30, 'info');
+    assert.deepEqual(await page.evaluate(STRAT_VIEW), { inherited: [], own: 'Slow first', input: false });
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT PROGRESS: a ◎ block whose STRATs are all inherited has the button, and one whose lineage has none does not', async tc => {
+    const page = await openStratDay(tc);
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-strat-btn="me-32"]'), true,
+      'Picking has no STRAT of its own, but Music and Guitar above it do');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-strat-btn="me-35"]'), false,
+      "Bare has none anywhere above it — its toolbar is drawn, and has no STRAT button");
+    assert.deepEqual(await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-mm-strat-btn]'),
+        function (b) { return b.getAttribute('data-mm-strat-btn'); }).sort();
+    }), ['me-32', 'me-33', 'me-34']);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT PROGRESS: a ◎ block in a parent cycle lists each STRAT once, and the Schedule stays up', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: stratLoopDb(), hash: '?date=' + MONDAY + '#schedule', viewport: [1280, 900] });
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-notes-btn="me-36"]'],
+      message: "Loop A's ◎ toolbar — none at all means the Schedule's render died" });
+    await page.evaluate(CLICK_SEL, '[data-mm-strat-btn="me-36"]');
+    const items = await page.waitFor(function () {
+      var p = document.querySelector('[data-mm-strat-panel="me-36"]');
+      return p ? Array.prototype.map.call(p.querySelectorAll('[data-mm-strat-item]'), function (e) {
+        return [e.getAttribute('data-mm-strat-item'), e.querySelector('p').textContent];
+      }) : false;
+    }, { message: "Loop A's STRAT panel" });
+    assert.deepEqual(items, [['37', 'Loop B strategy'], ['36', 'Loop A strategy']]);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT PROGRESS: the panel lists the lineage farthest first and the mind map’s own last, by name — and writes nothing', async tc => {
+    const page = await openStratDay(tc);
+    await sleep(300);
+    const before = await page.evaluate(RAW_DB);
+    await page.evaluate(CLICK_SEL, '[data-mm-strat-btn="me-33"]');
+    const items = await page.waitFor(function () {
+      var p = document.querySelector('[data-mm-strat-panel="me-33"]');
+      return p ? Array.prototype.map.call(p.querySelectorAll('[data-mm-strat-item]'), function (e) {
+        return [e.getAttribute('data-mm-strat-item'), e.querySelector('div span:last-child').textContent, e.querySelector('p').textContent];
+      }) : false;
+    }, { message: "Tremolo's STRAT panel" });
+    assert.deepEqual(items, [['30', 'Music', 'Slow first'], ['31', 'Guitar', 'Chords before strumming'], ['33', 'Tremolo', 'Metronome at 60']]);
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-mm-strat-panel="me-33"]').querySelectorAll('button, input, textarea').length;
+    }), 1, 'read-only: its one control is the × that closes it');
+    await page.evaluate(CLICK_SEL, '[data-mm-strat-btn="me-33"]');
+    await page.waitFor(function () { return !document.querySelector('[data-mm-strat-panel="me-33"]'); }, { message: 'the button closing it again' });
+    assert.equal(await page.evaluate(RAW_DB), before, 'opening and closing it wrote nothing');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT PROGRESS: the STRAT and comment panels close each other', async tc => {
+    const page = await openStratDay(tc);
+    await page.evaluate(CLICK_SEL, '[data-mm-comment-btn="me-33"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-comments-panel="me-33"]'], message: 'the comment panel' });
+    await page.evaluate(CLICK_SEL, '[data-mm-strat-btn="me-33"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-strat-panel="me-33"]'], message: 'the STRAT panel' });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-comments-panel="me-33"]'), false, 'STRAT closed the comment panel');
+    await page.evaluate(CLICK_SEL, '[data-mm-comment-btn="me-33"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-comments-panel="me-33"]'], message: 'the comment panel again' });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-strat-panel="me-33"]'), false, 'comment closed the STRAT panel');
+    await page.evaluate(CLICK_SEL, '[data-mm-notes-btn="me-33"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-notes-panel="me-33"]'], message: 'the notes panel' });
+    await page.evaluate(CLICK_SEL, '[data-mm-strat-btn="me-33"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-strat-panel="me-33"]'], message: 'the STRAT panel over notes' });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-notes-panel="me-33"]'), false, 'STRAT closed the notes panel');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT PROGRESS: a STRAT added in the Knowledge Record reaches an open Schedule without a reload', async () => {
+    const sched = await open('progress.html', { db: stratDb(), hash: '?date=' + MONDAY + '#schedule', viewport: [1280, 900] });
+    let ks = null;
+    try {
+      await sched.waitFor(HAS_SEL, { args: ['[data-mm-notes-btn="me-35"]'], message: "the ◎ blocks' toolbars" });
+      assert.equal(await sched.evaluate(HAS_SEL, '[data-mm-strat-btn="me-35"]'), false, 'precondition: Bare has no button');
+      ks = await open('sir-ks02.html', { hash: withQuery('?mm=35', '#ks03'), fresh: false });
+      await ks.waitFor(HAS_SEL, { args: ['[data-mm-mode="ks03"]'], message: "Bare's panel in the second tab" });
+      await ks.evaluate(CLICK_SEL, '[data-mm-mode="ks03"]');
+      await ks.waitFor(HAS_SEL, { args: ['[data-strat-input]'], message: 'the add box' });
+      await typeInto(ks, '[data-strat-input]', 'Written in the other tab');
+      await ks.evaluate(CLICK_SEL, '[data-strat-add]');
+      await sched.waitFor(function () { return (localStorage.getItem('track_db') || '').indexOf('Written in the other tab') >= 0; },
+        { message: 'the write landing where the Schedule reads' });
+      await sleep(500);
+      await sched.session.send('Page.bringToFront');
+      await sched.waitFor(function () { return document.visibilityState === 'visible'; }, { message: "the Schedule's tab in front" });
+      await sleep(300);
+      assert.equal(await sched.evaluate(HAS_SEL, '[data-mm-strat-btn="me-35"]'), true, 'the open Schedule adopted it');
+      await sched.evaluate(CLICK_SEL, '[data-mm-strat-btn="me-35"]');
+      const text = await sched.waitFor(function () {
+        var p = document.querySelector('[data-mm-strat-panel="me-35"] [data-mm-strat-item="35"] p'); return p ? p.textContent : false;
+      }, { message: "Bare's STRAT panel" });
+      assert.equal(text, 'Written in the other tab');
+      assert.deepEqual(realErrors(sched), []);
+      assert.deepEqual(realErrors(ks), []);
+    } finally {
+      await sched.close();
+      if (ks) await ks.close();
+    }
+  });
+
+  await t.test('TOUCH: STRAT inside an armed MM block opens its panel, and the block stays armed', async tc => {
+    // A guard, and it passes on both sides by design: the STRAT button is a
+    // <button>, which touchOnBlockControl already treats as the control's.
+    // It fails the day the button stops being one.
+    const B = '[data-mm-block="me-33"]';
+    const page = await openStratDay(tc);
+    assert.equal(await page.evaluate(ARMED_RING, B), false, B + ' does not start armed');
+    assert.equal(await page.evaluate(TAP_REAL, B), 'ok');
+    await page.waitFor(ARMED_RING, { args: [B], message: 'the tap arming ' + B });
+    await tapKeepsArmed(page, B, '[data-mm-strat-btn="me-33"]', '[data-mm-strat-panel="me-33"]', 'STRAT');
+    assert.deepEqual(realErrors(page), []);
+  });
 });

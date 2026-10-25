@@ -4576,3 +4576,153 @@ suspends after 15 idle minutes, and a ~37-minute run spanning a suspend is void.
 three string literals in JSX that no case reads, and the page mounted and compiled clean above, so
 the risk the suite would add coverage for is a syntax error the smoke already rules out — but the
 suite was not run, and that is the gap.
+
+### STRAT: a mind map's strategy, shown on every mind map under it (2026-10-25)
+
+**The request.** A second feature beside a mind map's COMMENTS box, called **STRAT** (strategy),
+with the same add interface: a box and `+`. In the user's words:
+
+- "One MM can only have one ORIGINAL block", so the added STRAT is edited, not added again.
+- "Whatever registered in a parent will be shown in all the children no matter how deep the
+  lineage goes — similarly to how source dump works". A mind map can therefore show several
+  STRATs, but only one is its own.
+- "The STRAT block will appear on any MM task block that has at least one."
+
+From two questions the user chose:
+
+- An inherited STRAT is **read-only** inside a child. It is edited only in the mind map it
+  belongs to.
+- On the Schedule it is a **button plus a panel**, like `comment`, not text chips on the block.
+
+**The change.**
+
+- `scripts/strat-core.js` (`window.TrackStrat`), new:
+  - `stratText` reads a mind map's own STRAT, and reads anything as text or as nothing.
+  - `stratsFor` walks breadth-first over `parentIds`, marking each mind map when it is queued,
+    with ids in a `Map`. It returns ancestors farthest first, then the mind map's own.
+  - `withStrat` refuses blank text, returns its input when nothing changes, and keeps `createdAt`
+    and unknown keys.
+  - `withoutStrat` deletes the key.
+  - Pure, and no `Date`: the page passes `now`.
+- `sir-ks02.html`:
+  - `StratSection` sits under COMMENTS on the KS03 tab and on an anchor's INFO tab, keyed by mind
+    map.
+  - `saveStrat` / `removeStrat` back it. `removeStrat`'s `window.confirm` is in the handler,
+    before the `setMms` the autosave writes from.
+- `progress.html`:
+  - On each ◎ block, `TrackStrat.stratsFor(entry.mmId, mms)` gates a violet `STRAT` button and
+    feeds a read-only panel.
+  - `openMMStrats` holds the panel open. The comment, ⊕ and ✎ handlers close it, and it closes
+    theirs.
+  - New hooks: `data-mm-strat-btn`, `-panel` and `-item`, plus `data-mm-comment-btn` and
+    `data-mm-comments-panel` on the existing comment UI, for the exclusivity case.
+- Data:
+  - `mm.strat = {text, createdAt, updatedAt}` is an item-level key in `mms`: no slot field, no
+    migration, not validated.
+  - Export, import and sync move whole slots. A task-owned scratch check ran an exported slot
+    through `JSON.parse`, then `validateSlot` (`ok`, no errors), then `normalizeSlot`. `strat` came
+    back byte-identical, with an unknown key inside it intact, and a mind map without one still had
+    none.
+
+**Cases.**
+
+- `tests/strat-core.test.js`: 33, run once (no date code).
+- `tests/browser.test.js`, section 20: 15 new — 9 on the Knowledge Record, 5 on the Schedule, and
+  a TOUCH guard that passes on both sides by design.
+
+**Fail-first.** Every run was narrowed through a task-owned `--require` preload that wraps the
+parent `TestContext` in a Proxy. Every browser run read plan `1..15` and every offline run
+`1..33`, about 80 s per tree. Each tree was set up the same way:
+
+- a REAL copy of the repository, `tests/` included and `.git` and `World/` left out;
+- exactly one rule reversed, with the runner refusing a doctored file byte-identical to the
+  repository's and printing the root it served;
+- run one at a time, in two sets, each behind its own undoctored CONTROL.
+
+Every code file had the same md5 before and after each set.
+
+| Tree | One rule reversed | Browser cases failed | Offline |
+| --- | --- | --- | --- |
+| CONTROL (set 1) | none | none (15/15) | 33/33 |
+| OWN_ONLY | `stratsFor` never walks: own STRAT only | KS02 lineage (2), inherited-only (3), delete reaching descendants (7), cycle (8); Progress inherited-only button (10), cycle panel (11), panel order (12) | 15 fail |
+| EMPTY_STRING | `withoutStrat` leaves `''` | delete (7) only, at `the key is gone — it read ""` | `withoutStrat` (31) only |
+| NO_CONFIRM | `×` never asks | Cancel (6) and OK (7), both at "asked … 0 !== 1" | 33/33 |
+| OWN_GATE | Schedule button gated on the mind map's OWN STRAT | inherited-only button (10) only, at "false !== true" | 33/33 |
+| ADD_BOX_STAYS | the add box stays beside an original | add (1), lineage (2), anchor (9), all at `input: true` | 33/33 |
+| INHERITED_EDITABLE | an inherited STRAT gets a `✎` | lineage (2) only, at `controls [1, 1]` | 33/33 |
+| CONTROL (set 2) | none | none (15/15) | 33/33 |
+| UNGUARDED2 | the walk without its visited set | the two cycle cases, KS02 (8) and Progress (11), as dead renders | diamond (13), two depths (14), the three cycles (16–18) |
+| CONFIRM_IGNORED | `×` asks, then deletes whatever the answer | Cancel (6) only, at "Cancel left track_db byte-identical" | 33/33 |
+
+How to read the table:
+
+- **OWN_ONLY is one door seen on two surfaces, not seven.** The Knowledge Record and the Schedule
+  read the same `stratsFor`, so there is no disjointness to claim.
+- **The singletons each prove a separate rule.** EMPTY_STRING, OWN_GATE, INHERITED_EDITABLE and
+  CONFIRM_IGNORED each failed a different single browser case.
+- **CONFIRM_IGNORED exists because of NO_CONFIRM.** NO_CONFIRM fires case 6's dialog assertion
+  first, so it proves nothing about case 6's Cancel half. CONFIRM_IGNORED is a prompt that displays
+  and deletes anyway, and it fails on that half.
+- **UNGUARDED2's failures were confirmed by a probe.** A task-owned probe against that tree found
+  `#root` empty on BOTH pages after `RangeError: Maximum call stack size exceeded` out of
+  `strat-core.js`. That is the failure the visited set prevents.
+- **The first UNGUARDED tree was discarded.** It added the recursion but kept the breadth-first
+  loop, so it re-walked every queued node and blew up exponentially on the 60-level chain. That is
+  two changes, not one: it crashed the offline file outright and failed non-cycle cases.
+
+**A flake.** The first CONTROL failed case 1 alone, at `waitFor … MM 35's panel (last value:
+false)` after 21 s. That case is the run's first page load, from a fresh profile with every CDN
+cold. Both later CONTROLs passed 15/15 with the same case first.
+
+**Visual check** (task-owned screenshots, not in the repository):
+
+- the Knowledge Record section in Night and Grit, with the editor open and in the inherited-only
+  state with the add box;
+- the Schedule panel at 1280 px in both appearances and at a 390 px phone, with 0 px of
+  horizontal overflow;
+- the ◎ toolbar at both widths: `STRAT` sits in front of `comment` on a block whose only STRAT is
+  inherited, and is absent on a block with none in its lineage.
+
+`realErrors` was empty throughout.
+
+**The first full run is VOID.** It ran 17:46:37–18:53:20 and started on mains.
+
+- `history-charge-Primary-31-SerialNumber.dat` flips from `charging` (17:58:14) to `discharging`
+  (18:03:00): the charger came out.
+- After the 15 idle minutes allowed on battery, `The system will suspend now!` at 18:16:59, then
+  `PM: suspend exit` at 18:44:04. There was no `Lid closed` line.
+- The Wi-Fi reconnected 18:44:05–18:44:09.
+
+In that run 26 of 27 suites passed. The browser suite went `1..463` with 460 ok, every STRAT case
+among them. The three failures were all Milestones cases in the resume window:
+
+- `navigation … CDP connection closed`;
+- a mount timeout;
+- `SLIP GUARD: an on-time milestone typed through an earlier day …` at "it was on time when the
+  edit began". That is the documented shape of a leaked live tab rewriting a later case's seed.
+
+The Milestones/SLIP section, re-run narrowed on the unchanged tree, passed 12/12 (plan `1..12`).
+
+**Full run.** `node tests/run.js` on the REPOSITORY, 18:57:08–19:35:35 (≈2,307 s):
+
+- On mains at both ends, load ~1.4 at the start and ~2.1 at the end.
+- No `suspend entry`, `will suspend` or `Lid closed` line in the journal over the window.
+
+Exit 0, "all 27 suites passed":
+
+- swept, identical under all five timezones: `calendar-core` 126, `schema` 68, `notes-core` 37;
+- once: `true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+  `schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, `viewport` 10, `journey-core`
+  39, `strat-core` 33, `cdp-cleanup` 13;
+- browser: plan `1..463`, **463** ok and 0 not ok. That is 448 plus the 15 new cases.
+
+Every page, script, stylesheet and test file had the same md5 before and after, HEAD was
+`c8f949a` at both ends, and no test Chrome or `/tmp/track-cdp-*` profile was left behind.
+
+**Not covered.**
+
+- **Real touch hardware.** The TOUCH guard uses synthesised touches.
+- **A STRAT edited in two KS02 tabs on the same mind map at once.** The two autosaves race over
+  the whole `mms` array, exactly as they already do for comments. Nothing new is exposed, and
+  nothing is pinned.
+- **The live Firebase project.**
