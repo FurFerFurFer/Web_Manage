@@ -1199,17 +1199,18 @@ it describes. **Read it when you need it**: to audit what was verified and when,
 work in an area whose entry records a defect or a known gap, or to check whether something
 is covered by a test or only by code reading. A new entry is appended there, not here.
 
-What a passing run looks like, as of 2026-10-24, with the "Sub-tasks in ★ Forced", "Journey"
-and "Journey: the lettering embedded, and the writing inked" entries in the repository —
+What a passing run looks like, as of 2026-10-25, with the "Sub-tasks in ★ Forced", "Journey",
+"Journey: the lettering embedded, and the writing inked" and "A tap on a control inside a
+Schedule block" entries in the repository —
 `node tests/run.js`, **26 suites**: `calendar-core` (126), `schema` (68) and `notes-core` (37)
 swept under five timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) with
 identical results, then `true-storage-core` (24), `source-dump-core` (33), `graph-layout` (21),
 `doc-table-core` (103), `schedule-paste-core` (35), `quest-core` (54), `milestone-core` (63),
 `viewport` (10), `journey-core` (39) and `cdp-cleanup` (13) once each — they hold no date code —
-then **443 browser subtests** in headless Chrome. At load ~1.5–3 the whole run took 21–27
+then **448 browser subtests** in headless Chrome. At load ~1.5–3 the whole run took 21–27
 minutes, 29.5–30 at load ~2–4.5, 36 at load ~5.5–6.5, 39 at load ~3.3–4 with 417, 35 with 424,
-37 with 428 at load ~1.3, 38 with 442 at load ~3.2, and 39 with 443 at load ~1.7–3. Treat that
-range as a load measurement, not a property of the suite.
+37 with 428 at load ~1.3, 38 with 442 at load ~3.2, 39 with 443 at load ~1.7–3, and 37 with 448
+at load ~1–1.8. Treat that range as a load measurement, not a property of the suite.
 
 Still unverified, across everything: real touch hardware, the live Firebase project, real
 multi-device behaviour, and print output. Those gaps are permanent features of this

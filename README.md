@@ -840,6 +840,15 @@ reaching that handler, which is what lets a tap arm something rather than instan
 A *drag* cannot cancel either, for a different reason: it calls `preventDefault`, so the browser
 synthesizes no click at all.
 
+**A tap on a control inside a block is the control's alone.** ✎, a 📌 or 📎 chip, the tick, ✂, ⓘ
+and × do what they do and leave the block's armed state exactly as it was: a tap neither arms nor
+un-arms the block, holding a control opens no resize handles, and a swipe that starts on one scrolls
+the grid instead of moving an armed block. That is what the mouse always did, because each control
+stops its own `mousedown`. On touch, each block's `onTouchStart` asks `touchOnBlockControl` first.
+That one test covers every button and input inside a block plus anything marked
+`data-block-control` (the chip containers), so a control added later is covered without a
+`stopPropagation` of its own.
+
 Dropping **on a chip** inserts before it and dropping anywhere else in a quadrant appends, exactly as
 under a mouse; releasing a chip back on itself is not a move. A ghost label follows the finger, the
 quadrant under it outlines (a finger covers the chip it is over, so an append needs a target that is

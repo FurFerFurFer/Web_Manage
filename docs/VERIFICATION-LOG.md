@@ -4481,3 +4481,76 @@ sessions on this machine were idle throughout.
   the first frame of each turn. Unmeasured, and noted in NOTES.
 - **Firefox's rendering of the filters.**
 - **The look itself.** That is the user's judgement, on their own screens.
+
+### A tap on a control inside a Schedule block is the control's, not the block's (2026-10-25)
+
+**The report.** On a touchscreen, a tap on a day-view block arms it, which is intended. A tap on
+that block's ✎ *add note* or one of its 📌 notes then re-armed or un-armed the block as well.
+
+**The cause.** Every control inside a block stops its own `mousedown` and `click`, but none stopped
+`touchstart`. The touch therefore bubbled to the block's `onTouchStart`, which filled `touchRef` and
+started the 600 ms long-press timer. The document `touchend` then saw an unmoved touch on the block
+and toggled its armed state. The control's click still fired after that, so the user got both. The
+same gap had two more effects: a hold on a control opened the resize handles, and a swipe from a
+control dragged an armed block. It covered every control (✎, 📌/📎 chips, the tick, ✂, ⓘ, ×) on all
+five block kinds.
+
+**The change** (`progress.html`):
+- `touchOnBlockControl(e)` sits beside `startResize`. It is true when the touch began on a
+  `button, input, select, textarea, a, [data-block-control]` strictly inside the block.
+- It is the first statement of each of the five block `onTouchStart` handlers: goal task, SA entry,
+  MM entry, class, note/deadline part.
+- `data-block-control` is on the four 📌/📎 chip containers. Those chips are clickable `div`s.
+- Resize handles are untouched, because `startResize` already stops propagation.
+- Test hooks were landed first, with no behaviour change. They are `data-task-*`, `data-sa-*` and
+  `data-mm-*` (block, ✎ button, notes panel), `data-task-note-chip`, `data-task-note-view` and
+  `data-ref-note-view`. They are deliberately **not** `data-block-kind`/`data-block-id`: three
+  existing helpers select `[data-block-kind]` generically.
+
+**Browser cases** (5 new, one per block kind, beside the class touch case). Each case does the
+following:
+1. Arms the block with `TAP_REAL`.
+2. Taps the control with `TAP_REAL`.
+3. Waits for the control's own effect to land (a notes panel, a note view, or the tick written to
+   `track_db`).
+4. Plain-asserts the block is still armed.
+
+The task case also taps a 📌, checks that ✎ on an *unarmed* block does not arm it, and checks that
+`track_db` is byte-identical. The class case also taps a 📌.
+
+**Fail-first**, narrowed to the five through a task-owned `--require` Proxy preload. Each run read
+plan `1..5`. Every tree was a symlinked repository with `tests/` copied for real and one
+`progress.html` variant, refused if byte-identical to the repository. The runs went one at a time,
+38–39 s each:
+
+| Tree | Variant | Failed |
+| --- | --- | --- |
+| CONTROL | the repository | nothing (5/5) |
+| PRE-FIX | hooks only, no guard anywhere | all 5, each at "a tap on ✎ / the tick left the block armed — false !== true" |
+| no-goal | guard removed from the task block only | task case alone |
+| no-entry | … SA entry only | SA case alone |
+| no-mmEntry | … MM entry only | MM case alone |
+| no-ref | … class only | class case alone |
+| no-kind | … note/deadline part only | note case alone |
+| no-ctlattr | guards kept, `data-block-control` removed from the 4 chip containers | task and class cases, both at "a tap on a 📌 left the block armed" |
+
+The single-site failure sets are disjoint singletons. The 📌 claim, which the ✎ assertion shadows
+in the PRE-FIX tree, is proven by its own tree. The task case's "✎ does not arm an unarmed block"
+step has no doctored tree of its own; it rides the same guard.
+
+**Full run.** `node tests/run.js` on the REPOSITORY, 09:35:52–10:12:46 (≈2,214 s), on mains, load
+~1 at the start and ~1.8 at the end. Exit 0, "all 26 suites passed":
+- swept, identical under all five timezones: `calendar-core` 126, `schema` 68, `notes-core` 37;
+- once: `true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+  `schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, `viewport` 10, `journey-core`
+  39, `cdp-cleanup` 13;
+- browser: plan `1..448`, **448** ok and 0 not ok. That is 443 plus the five new cases.
+
+Every page, script, stylesheet, test and `tests/lib` file had the same md5 before and after. HEAD
+was `2ca116d` at both ends, and the journal shows no suspend in the window.
+
+**Not covered.**
+- **Real touch hardware.** The cases dispatch synthesised TouchEvents plus the click a real tap
+  ends in, so iPadOS gesture arbitration is unverified. A device pass by the user is owed.
+- **The swipe and hold variants.** That a swipe or a hold starting on a control no longer drags or
+  resizes follows from the same early return, and has no case of its own.

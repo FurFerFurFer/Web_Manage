@@ -6788,6 +6788,22 @@
       // kinds, whose length comes from a computed span rather than from a plain
       // `duration` field — a deadline's run-up can be clipped by midnight, and a
       // part's may be inherited from its parent.
+      /* A touch that STARTS on a control inside a block — ✎, a 📌/📎 chip,
+         the tick, ✂, ⓘ, × — is that control's, never the block's. Each control
+         stops its own mousedown and click, but none stops touchstart, so the
+         block's onTouchStart used to record the touch and the document
+         touchend then armed or un-armed the block under a tap meant for ✎;
+         a hold opened the resize handles and a swipe dragged an armed block.
+         Every block's onTouchStart asks this FIRST. A new control that is not
+         one of these elements needs `data-block-control`, as the chip
+         containers have — the guard lives here so a control added later does
+         not have to remember a stopPropagation of its own. */
+      const BLOCK_CONTROL = 'button, input, select, textarea, a, [data-block-control]';
+      function touchOnBlockControl(e) {
+        const c = e.target && e.target.closest ? e.target.closest(BLOCK_CONTROL) : null;
+        return !!c && c !== e.currentTarget && e.currentTarget.contains(c);
+      }
+
       function startResize(e, item, edge, type, resolvedTime, dateStr, resolvedDuration, partId) {
         e.preventDefault();
         e.stopPropagation();
@@ -8332,6 +8348,7 @@
                       return (
                         <React.Fragment key={task.id}>
                         <div
+                          data-task-block={task.id}
                           style={{ top: top + 'px', height: height + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(task.id), ...(!done && { backgroundColor: '#4f46e530' }), ...(isPickedUp && { transform: 'translateY(-3px) scale(1.02)' }) }}
                           className={`rounded px-1.5 py-0.5 overflow-hidden group transition-transform duration-100 ${
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
@@ -8340,7 +8357,7 @@
                             : 'text-indigo-100 border border-indigo-700/60 hover:border-indigo-500'
                           } ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
                           onMouseDown={e => startDrag(e, task, ds)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, blockHeight: rect.height, resolvedTime: time, resizeDate: ds, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'goal', id: task.id, date: ds }); }, 600); }}
+                          onTouchStart={e => { if (touchOnBlockControl(e)) return; const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'goal', item:task, offsetY: t.clientY - rect.top, blockHeight: rect.height, resolvedTime: time, resizeDate: ds, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'goal', id: task.id, date: ds }); }, 600); }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(task.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'goal', id: task.id, date: ds }); }}
@@ -8374,7 +8391,7 @@
                             </div>
                           </div>
                           {timelineMode === 'day' && (
-                            <button
+                            <button data-task-notes-btn={task.id}
                               className={`absolute top-0.5 right-4 text-base leading-none p-1 rounded transition-colors ${task.notes?.length > 0 ? 'text-indigo-400' : 'text-gray-400 hover:text-indigo-400'}`}
                               onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; }); setViewingSource(null); }}
                               onMouseDown={e => e.stopPropagation()}
@@ -8382,11 +8399,11 @@
                             >✎</button>
                           )}
                           {timelineMode === 'day' && (task.notes?.length > 0 || task.sourcePins?.length > 0) && (
-                            <div className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
+                            <div data-block-control className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
                               style={{ flexFlow: 'column wrap' }}
                               onMouseDown={e => e.stopPropagation()}>
                               {task.notes?.map(nt => (
-                                <div key={nt.id}
+                                <div key={nt.id} data-task-note-chip={nt.id}
                                   className="bg-gray-800/90 border border-indigo-500/40 rounded px-1.5 py-0.5 cursor-pointer hover:border-indigo-400/70 transition-colors max-w-full"
                                   onClick={e => { e.stopPropagation(); setViewingNote(prev => prev?.noteId === nt.id ? null : { taskId: task.id, noteId: nt.id }); setOpenComments(prev => { const n = new Set(prev); n.delete(task.id); return n; }); setViewingSource(null); }}
                                 >
@@ -8427,7 +8444,8 @@
                           )}
                         </div>
                         {commentOpen && (
-                          <div style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30 }}
+                          <div data-task-notes-panel={task.id}
+                            style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30 }}
                             className="bg-gray-900 border border-indigo-700/60 rounded-b shadow-xl"
                             onMouseDown={e => e.stopPropagation()}
                             onClick={e => e.stopPropagation()}>
@@ -8494,7 +8512,8 @@
                           </div>
                         )}
                         {viewingNote?.taskId === task.id && !commentOpen && !openSourcePicker.has(task.id) && (
-                          <div style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30 }}
+                          <div data-task-note-view={viewingNote.noteId}
+                            style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30 }}
                             className="bg-gray-900 border border-indigo-700/60 rounded-b shadow-xl"
                             onMouseDown={e => e.stopPropagation()}
                             onClick={e => e.stopPropagation()}>
@@ -8537,6 +8556,7 @@
                       return (
                         <React.Fragment key={entry.id}>
                         <div
+                          data-sa-block={entry.id}
                           style={{
                             top: top + 'px', height: height + 'px', left: '3px', right: '3px',
                             position: 'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(entry.id),
@@ -8548,7 +8568,7 @@
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
                           } ${entry.done ? 'opacity-50' : ''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
                           onMouseDown={e => startDragEntry(e, entry)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'entry', item:entry, offsetY: t.clientY - rect.top, blockHeight: rect.height, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'entry', id: entry.id }); }, 600); }}
+                          onTouchStart={e => { if (touchOnBlockControl(e)) return; const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'entry', item:entry, offsetY: t.clientY - rect.top, blockHeight: rect.height, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'entry', id: entry.id }); }, 600); }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(entry.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'entry', id: entry.id }); }}
@@ -8582,7 +8602,7 @@
                             </div>
                           </div>
                           {timelineMode === 'day' && (
-                            <button
+                            <button data-sa-notes-btn={entry.id}
                               className={`absolute top-0.5 right-4 text-base leading-none p-0.5 rounded transition-colors ${(entry.notes||[]).length > 0 || entry.noteTitle ? 'text-yellow-400' : 'text-gray-500 hover:text-yellow-400'}`}
                               onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.has(entry.id) ? n.delete(entry.id) : n.add(entry.id); return n; }); setViewingNote(null); }}
                               onMouseDown={e => e.stopPropagation()}
@@ -8590,7 +8610,7 @@
                             >✎</button>
                           )}
                           {timelineMode === 'day' && ((entry.notes||[]).length > 0 || entry.noteTitle) && (
-                            <div className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
+                            <div data-block-control className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
                               style={{ flexFlow: 'column wrap' }}
                               onMouseDown={e => e.stopPropagation()}>
                               {(entry.notes || (entry.noteTitle ? [{id: entry.id+'_n0', title: entry.noteTitle}] : [])).map(nt => (
@@ -8615,7 +8635,8 @@
                           )}
                         </div>
                         {commentOpen && (
-                          <div style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: action.color + '99' }}
+                          <div data-sa-notes-panel={entry.id}
+                            style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: action.color + '99' }}
                             className="bg-gray-900 border rounded-b shadow-xl"
                             onMouseDown={e => e.stopPropagation()}
                             onClick={e => e.stopPropagation()}>
@@ -8734,12 +8755,13 @@
                       return (
                         <React.Fragment key={entry.id}>
                         <div
+                          data-mm-block={entry.id}
                           style={{ top: top+'px', height: height+'px', left:'3px', right:'3px', position:'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(entry.id),
                             backgroundColor: inCurrentMilestone ? '#22d3ee14' : col+'14', borderColor: entry.done ? col+'40' : inCurrentMilestone ? '#22d3ee99' : col+'99',
                             ...(isPickedUp && { transform: 'translateY(-3px) scale(1.02)' }) }}
                           className={`rounded px-1.5 py-0.5 overflow-hidden group border transition-transform duration-100 ${dragged?'opacity-20 cursor-grabbing':'cursor-grab'} ${entry.done?'opacity-50':''} ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : inCurrentMilestone ? 'ring-1 ring-cyan-400/60' : ''}`}
                           onMouseDown={e => startDragMMEntry(e, entry)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'mmEntry', item:entry, offsetY: t.clientY - rect.top, blockHeight: rect.height, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'mmEntry', id: entry.id }); }, 600); }}
+                          onTouchStart={e => { if (touchOnBlockControl(e)) return; const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type:'mmEntry', item:entry, offsetY: t.clientY - rect.top, blockHeight: rect.height, startX:t.clientX, startY:t.clientY, moved:false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type:'mmEntry', id: entry.id }); }, 600); }}
                           onClick={e=>{e.stopPropagation();setViewingMMBlock(prev=>prev?.id===entry.id?null:{id:entry.id});}}
                           onDoubleClick={e=>{e.stopPropagation();handleDblClickBlock(entry.id);}}
                           onContextMenu={e=>{e.preventDefault();e.stopPropagation();setSelectedForResize({type:'mmEntry',id:entry.id});}}>
@@ -8791,7 +8813,7 @@
                                 onClick={e => { e.stopPropagation(); setOpenSourcePicker(prev => { const n = new Set(prev); n.has(entry.id) ? n.delete(entry.id) : n.add(entry.id); return n; }); setSourcePickerMode(prev => ({...prev, [entry.id]: 'text'})); setOpenComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setOpenMMComments(prev => { const n = new Set(prev); n.delete(entry.id); return n; }); setViewingNote(null); setViewingSource(null); setViewingMMBlock(null); }}
                                 title="add source"
                               >⊕</button>
-                              <button
+                              <button data-mm-notes-btn={entry.id}
                                 className={`text-base leading-none p-1 rounded transition-colors ${(entry.notes||[]).length > 0 || entry.noteTitle ? 'text-indigo-400' : 'text-gray-400 hover:text-indigo-400'}`}
                                 onClick={e=>{e.stopPropagation();setOpenComments(prev=>{const n=new Set(prev);n.has(entry.id)?n.delete(entry.id):n.add(entry.id);return n;});setOpenSourcePicker(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setOpenMMComments(prev=>{const n=new Set(prev);n.delete(entry.id);return n;});setViewingNote(null);setViewingSource(null);setViewingMMBlock(null);}}
                                 title="add note"
@@ -8799,7 +8821,7 @@
                             </div>
                           )}
                           {timelineMode === 'day' && ((entry.notes||[]).length > 0 || entry.noteTitle || entry.sourcePins?.length > 0) && (
-                            <div className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
+                            <div data-block-control className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
                               style={{ flexFlow: 'column wrap' }}
                               onMouseDown={e=>e.stopPropagation()}>
                               {(entry.notes || (entry.noteTitle ? [{id: entry.id+'_n0', title: entry.noteTitle}] : [])).map(nt => (
@@ -8847,7 +8869,8 @@
                           )}
                         </div>
                         {commentOpen && (
-                          <div style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: col + '99' }}
+                          <div data-mm-notes-panel={entry.id}
+                            style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: col + '99' }}
                             className="bg-gray-900 border rounded-b shadow-xl"
                             onMouseDown={e => e.stopPropagation()}
                             onClick={e => e.stopPropagation()}>
@@ -9174,7 +9197,7 @@
                             dragged ? 'opacity-20 cursor-grabbing' : 'cursor-grab'
                           } ${isSelected ? 'ring-2 ring-white/60' : isArmed ? 'ring-2 ring-cyan-400/70' : ''}`}
                           onMouseDown={e => startDragRef(e, b, ds)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type: 'ref', item: b.entry, span: { time: b.time, duration: b.duration }, offsetY: t.clientY - rect.top, blockHeight: rect.height, resizeDate: ds, startX: t.clientX, startY: t.clientY, moved: false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type: 'ref', id: b.id }); }, 600); }}
+                          onTouchStart={e => { if (touchOnBlockControl(e)) return; const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type: 'ref', item: b.entry, span: { time: b.time, duration: b.duration }, offsetY: t.clientY - rect.top, blockHeight: rect.height, resizeDate: ds, startX: t.clientX, startY: t.clientY, moved: false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type: 'ref', id: b.id }); }, 600); }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(b.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: 'ref', id: b.id }); }}
@@ -9203,7 +9226,7 @@
                             >✎</button>
                           )}
                           {timelineMode === 'day' && notes.length > 0 && (
-                            <div className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
+                            <div data-block-control className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
                               style={{ flexFlow: 'column wrap' }}
                               onMouseDown={e => e.stopPropagation()}>
                               {notes.map(nt => (
@@ -9327,7 +9350,8 @@
                           const nt = notes.find(n => n.id === viewingNote.noteId);
                           if (!nt) return null;
                           return (
-                            <div style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: REF_COLOR + '99' }}
+                            <div data-ref-note-view={nt.id}
+                              style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: REF_COLOR + '99' }}
                               className="bg-gray-900 border rounded-b shadow-xl"
                               onMouseDown={e => e.stopPropagation()}
                               onClick={e => e.stopPropagation()}>
@@ -9416,7 +9440,7 @@
                           data-block-state={done ? 'done' : 'open'}
                           title={isSub ? label + ' — a sub-task of ' + (b.item.title || (isNote ? 'this note' : 'this deadline')) : undefined}
                           onMouseDown={e => startDragBlockItem(e, b.kind, b.item, b.span, b.part.id)}
-                          onTouchStart={e => { const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type: b.kind, item: b.item, part: b.part, span: b.span, offsetY: t.clientY - rect.top, blockHeight: rect.height, startX: t.clientX, startY: t.clientY, moved: false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type: b.kind, id: b.id }); }, 600); }}
+                          onTouchStart={e => { if (touchOnBlockControl(e)) return; const t = e.touches[0]; const rect = e.currentTarget.getBoundingClientRect(); touchRef.current = { type: b.kind, item: b.item, part: b.part, span: b.span, offsetY: t.clientY - rect.top, blockHeight: rect.height, startX: t.clientX, startY: t.clientY, moved: false }; if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); longPressTimerRef.current = setTimeout(() => { longPressTimerRef.current = null; touchRef.current = null; setSelectedForDrag(null); setSelectedForResize({ type: b.kind, id: b.id }); }, 600); }}
                           onClick={e => e.stopPropagation()}
                           onDoubleClick={e => { e.stopPropagation(); handleDblClickBlock(b.id); }}
                           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedForResize({ type: b.kind, id: b.id }); }}

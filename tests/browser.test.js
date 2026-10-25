@@ -9849,6 +9849,126 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
+  /* ── a control inside a block is the control's, not the block's ─────────
+     A tap arms a block. A tap on ✎, a 📌 chip or the tick — any control drawn
+     INSIDE a block — used to arm or un-arm it as well: each control stops its
+     own mousedown and click, but none stopped touchstart, so the block's
+     onTouchStart recorded the touch and the document touchend toggled the
+     block before the control's click landed. Five block kinds each ask
+     touchOnBlockControl from their OWN onTouchStart, so each kind has its own
+     case: one assertion would let a forgotten call site hide behind a passing
+     sibling.
+
+     Each case waits for the control's own effect to LAND, then judges the
+     ring with a plain assert, so a regression reads `false !== true` against
+     the message rather than a timeout. TAP_REAL fires the click a real tap
+     ends in. Synthesised touches, not hardware — the standing gap. */
+  const CTL_NOTE = (id, title) => ({ id, title, detail: 'synthetic', createdAt: 1 });
+  const CTL_SEED = () => seedDb({
+    goals: [F.task('g-ctl', { title: 'Task with a note', scheduledDate: MONDAY, scheduledTime: '08:00',
+      duration: 60, notes: [CTL_NOTE('tn-1', 'Task note')] })],
+    saActions: [F.saAction('a-ctl', { title: 'Stretch' })],
+    saEntries: [F.saEntry('e-ctl', MONDAY, 'a-ctl', { time: '10:00', duration: 60 })],
+    mmEntries: [F.mmEntry('me-ctl', MONDAY, 10, { time: '11:30', duration: 60 })],
+    refSchedules: [refOneOff({ notes: [CTL_NOTE('rn-1', 'Class note')] })],
+    calendarNotes: [F.calNote('n-ctl', MONDAY, { title: 'Note block', time: '15:00', parts: [BLOCK] })],
+    deadlines: [],
+    docPages: [F.docPage('p-1', { title: 'Term 1', blocks: [{ id: 'b-1', type: 'schedule' }] })]
+  });
+  // The ARMED ring exactly: an MM block in a current milestone wears a thinner
+  // cyan ring of its own, which a bare 'ring-cyan-400' would also match.
+  const ARMED_RING = function (sel) {
+    var e = document.querySelector(sel);
+    return !!e && e.className.indexOf('ring-2 ring-cyan-400') >= 0;
+  };
+  const CTL_SHOWN = function (sel) { return !!document.querySelector(sel); };
+
+  // Day view on MONDAY, with `block` armed by a tap. A failure here closes the
+  // tab: a Progress tab left open goes on writing into later cases' seeds.
+  const openArmedCtl = async block => {
+    const page = await openRefDay(CTL_SEED());
+    try {
+      await page.waitFor(CTL_SHOWN, { args: [block], message: 'the block ' + block });
+      assert.equal(await page.evaluate(ARMED_RING, block), false, block + ' does not start armed');
+      assert.equal(await page.evaluate(TAP_REAL, block), 'ok');
+      await page.waitFor(ARMED_RING, { args: [block], message: 'the tap arming ' + block });
+    } catch (e) { await page.close(); throw e; }
+    return page;
+  };
+  // Tap `control`, wait for `landed` to show it did its own job, judge the ring.
+  const tapKeepsArmed = async (page, block, control, landed, what) => {
+    assert.equal(await page.evaluate(TAP_REAL, control), 'ok');
+    await page.waitFor(CTL_SHOWN, { args: [landed], message: what + ' doing its own job' });
+    assert.equal(await page.evaluate(ARMED_RING, block), true, 'a tap on ' + what + ' left the block armed');
+  };
+
+  await t.test('TOUCH: ✎ and a 📌 inside an armed TASK block open what they open, and the block stays armed', async () => {
+    const B = '[data-task-block="g-ctl"]';
+    const page = await openArmedCtl(B);
+    try {
+      const before = await page.evaluate(RAW_DB);
+      await tapKeepsArmed(page, B, '[data-task-notes-btn="g-ctl"]', '[data-task-notes-panel="g-ctl"]', '✎');
+      await tapKeepsArmed(page, B, '[data-task-note-chip="tn-1"]', '[data-task-note-view="tn-1"]', 'a 📌');
+
+      // and the other direction: a control never ARMS an unarmed block
+      assert.equal(await page.evaluate(TAP_REAL, B), 'ok');
+      await page.waitFor(function (s) {
+        var e = document.querySelector(s); return !!e && e.className.indexOf('ring-2 ring-cyan-400') < 0;
+      }, { args: [B], message: 're-tapping the block un-arming it' });
+      assert.equal(await page.evaluate(TAP_REAL, '[data-task-notes-btn="g-ctl"]'), 'ok');
+      await page.waitFor(CTL_SHOWN, { args: ['[data-task-notes-panel="g-ctl"]'], message: '✎ reopening the notes panel' });
+      assert.equal(await page.evaluate(ARMED_RING, B), false, 'a tap on ✎ did not arm the unarmed block');
+
+      assert.equal(await page.evaluate(RAW_DB), before, 'arming and opening wrote nothing — track_db is byte-identical');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TOUCH: ✎ inside an armed SUPPORTING-ACTION block opens its notes, and the block stays armed', async () => {
+    const B = '[data-sa-block="e-ctl"]';
+    const page = await openArmedCtl(B);
+    try {
+      await tapKeepsArmed(page, B, '[data-sa-notes-btn="e-ctl"]', '[data-sa-notes-panel="e-ctl"]', '✎');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TOUCH: ✎ inside an armed MM block opens its notes, and the block stays armed', async () => {
+    const B = '[data-mm-block="me-ctl"]';
+    const page = await openArmedCtl(B);
+    try {
+      await tapKeepsArmed(page, B, '[data-mm-notes-btn="me-ctl"]', '[data-mm-notes-panel="me-ctl"]', '✎');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TOUCH: ✎ and a 📌 inside an armed CLASS block open what they open, and the block stays armed', async () => {
+    const B = '[data-ref-id="rs-o"]', key = 'rs-o@' + MONDAY;
+    const page = await openArmedCtl(B);
+    try {
+      await tapKeepsArmed(page, B, '[data-ref-notes-btn="' + key + '"]', '[data-ref-note-title="' + key + '"]', '✎');
+      await tapKeepsArmed(page, B, '[data-ref-note-chip="rn-1"]', '[data-ref-note-view="rn-1"]', 'a 📌');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TOUCH: the tick inside an armed NOTE block ticks it, and the block stays armed', async () => {
+    // The day-note block has no ✎; its tick is the control. The tick WRITES,
+    // so the wait is for that write to land in track_db.
+    const B = '[data-block-id="n-ctl:b"]';
+    const page = await openArmedCtl(B);
+    try {
+      assert.equal(await page.evaluate(TAP_REAL, '[data-block-done="n-ctl:b"]'), 'ok');
+      await page.waitFor(function () {
+        var n = ((((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).calendarNotes) || [])
+          .filter(function (x) { return x && x.id === 'n-ctl'; })[0];
+        return !!n && !!(n.parts || [])[0] && n.parts[0].done === true;
+      }, { message: 'the tick reaching track_db' });
+      assert.equal(await page.evaluate(ARMED_RING, B), true, 'a tap on the tick left the block armed');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
   await t.test('✕ removes a class from ONE day: Cancel writes nothing, OK writes that day alone', async () => {
     /* A removal deletes nothing — the day goes into `skips` and the Timetable
        tab adds it back — but a stray click would hide a lecture, so it asks
