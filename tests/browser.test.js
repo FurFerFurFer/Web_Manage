@@ -4416,7 +4416,12 @@ test('browser suites', skipUnlessChrome, async t => {
           // list must import intact, keys and all. index.html never runs the
           // migration, so this record arrives here exactly as it left.
           F.legacyDeadline('dl-legacy', '2026-03-10', '2026-03-07', { title: 'From an old export' })
-        ]
+        ],
+        // a page attached to a goal in Documentations' Projects tab: `goalId`
+        // and its link's place on the goal's page, `goalPlace`, are item
+        // keys no allow-list names, so they ride normalizeSlot's unknown-key
+        // path like the rest
+        docPages: [F.docPage('p-1'), F.docPage('p-at', { title: 'Attached', goalId: 'g-1', goalPlace: { parentId: 'g-1', afterId: 'g-1a' } })]
       })
     });
     await page.waitFor(function () { return !!window.exportSlot && !!window.importSlot; },
@@ -4486,6 +4491,10 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(qGoal.starLearn, [10], 'and its star');
     assert.equal(qGoal.children.find(k => k.id === 'g-1a').star, true,
       'a nested node kept its flags too');
+    assert.equal(imported.docPages.find(p => p.id === 'p-at').goalId, 'g-1',
+      'a page attached to a goal stays attached to it');
+    assert.deepEqual(imported.docPages.find(p => p.id === 'p-at').goalPlace, { parentId: 'g-1', afterId: 'g-1a' },
+      'and its link keeps its place on the goal\'s page');
     assert.deepEqual(qGoal.milestones[0].slips,
       [{ from: '2026-02-20', to: '2026-03-10', on: '2026-02-25' }, { from: '2026-01-31', on: '2026-02-02' }],
       'and a milestone\'s slip record, record for record, a cleared slip still without its `to`');
@@ -16293,5 +16302,930 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.waitFor(ARMED_RING, { args: [B], message: 'the tap arming ' + B });
     await tapKeepsArmed(page, B, '[data-mm-strat-btn="me-33"]', '[data-mm-strat-panel="me-33"]', 'STRAT');
     assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── PROJECTS: Documentations' goal tree, editable, synced with Progress ──
+  /* A goal or sub-goal IS a page in the Projects tab, found by its node id,
+     and every edit there is goal-core.js's writer over a FRESH read of
+     `goals` — Documentations does not own the key. These cases are one per
+     surface and rule, because a rule forgotten at one of several surfaces is
+     this repository's recurring bug. Mind-map ids are NUMBERS here, as in
+     real data; goal ids are strings. The milestone dates are in March 2026,
+     so the milestone is late on every day these cases can run. */
+  const PROJ_SEED = () => seedDb({
+    goals: [
+      F.task('pg-1', {
+        title: 'Pass the exam', toLearn: [10, 11], mmTargets: { '10': { level: 3 } }, milestones: [],
+        children: [
+          F.task('ps-a', {
+            title: 'Theory', isSubGoal: true, toLearn: [], mmTargets: {},
+            milestones: [F.milestone('pm-1', '2026-03-01', '2026-03-05')],
+            children: [
+              F.task('pt-1', { title: 'Read ch1', notes: [{ id: 'pn-1', title: 'Gist', detail: 'd', createdAt: 1 }] }),
+              { id: 'pb-1', title: 'Milestone pm-1', taskType: 'milestone', milestoneId: 'pm-1', completed: false,
+                children: [F.task('pt-m', { title: 'Inside milestone' })] }
+            ]
+          }),
+          F.task('ps-b', {
+            title: 'Practice', isSubGoal: true, toLearn: [], mmTargets: {}, milestones: [],
+            children: [F.task('pt-2', { title: 'Mock test' }), { id: 'pl-1', isLink: true, linkedTaskId: 'pt-1' }]
+          }),
+          { id: 'pl-g', isLink: true, isSubGoal: true, linkedTaskId: 'pg-2' }
+        ]
+      }),
+      F.task('pg-2', {
+        title: 'Get fit', toLearn: [11], questLearn: [11], mmTargets: {}, milestones: [],
+        children: [F.task('pt-3', { title: 'Run' }), { id: 'pl-loop', isLink: true, linkedTaskId: 'pg-2' }]
+      })
+    ],
+    docPages: [
+      F.docPage('pp-ev', { title: 'Event page' }),
+      F.docPage('pp-at', { title: 'Theory notes', goalId: 'ps-a' }),
+      F.docPage('pp-sub', { title: 'Sub page', parentId: 'pp-at' }),
+      F.docPage('pp-gone', { title: 'Orphan', goalId: 'pg-gone' })
+    ]
+  });
+
+  const GOAL_IN = function (id) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var slot = (db.slots || [])[0] || {};
+    function find(ns) {
+      for (var i = 0; i < (ns || []).length; i++) {
+        if (ns[i].id === id) return ns[i];
+        var r = find(ns[i].children); if (r) return r;
+      }
+      return null;
+    }
+    return find(slot.goals);
+  };
+  const PAGE_IN = function (id) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return ((((db.slots || [])[0] || {}).docPages) || []).filter(function (p) { return p.id === id; })[0] || null;
+  };
+  const SEL_ATTRS = function (sel, attr) {
+    return Array.prototype.map.call(document.querySelectorAll(sel), function (e) { return e.getAttribute(attr); });
+  };
+  // React's onFocus / onBlur listen for focusin / focusout, and a background
+  // headless tab fires NEITHER for el.focus() or el.blur() — measured: a
+  // milestone date field's focus-time baseline was never captured, and the
+  // case read like a product bug. So both are driven by the event itself.
+  const FOCUS_OUT = function (sel) {
+    var el = document.querySelector(sel);
+    if (!el) return false;
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    return true;
+  };
+  const FOCUS_SET = function (setterSrc, sel, value) {
+    var el = document.querySelector(sel);
+    if (!el) return false;
+    el.focus();
+    el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    new Function('return ' + setterSrc)()(el, value);
+    return true;
+  };
+  // The goal rows' touch drag, as TOUCH_DRAG drives the page rows: every event
+  // on the handle the touch started on, left to bubble.
+  const GOAL_TOUCH_DRAG = function (goalId, mode, targetId, half, endType) {
+    function fire(el, x, y, type) {
+      var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
+      var live = (type === 'touchend' || type === 'touchcancel') ? [] : [t];
+      el.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live, targetTouches: live, changedTouches: [t]
+      }));
+    }
+    var handle = document.querySelector('[data-goal-row="' + goalId + '"] [data-goal-handle="' + mode + '"]');
+    if (!handle) return 'no ' + mode + ' handle on ' + goalId;
+    var target = targetId === null
+      ? document.querySelector('[data-goal-root-drop]')
+      : document.querySelector('[data-goal-row="' + targetId + '"]');
+    if (!target) return 'no target ' + targetId;
+    var r = target.getBoundingClientRect();
+    var x = r.left + r.width / 2;
+    var y = half === 'top' ? r.top + 2 : half === 'bottom' ? r.bottom - 2 : r.top + r.height / 2;
+    var hr = handle.getBoundingClientRect();
+    fire(handle, hr.left + 1, hr.top + 1, 'touchstart');
+    fire(handle, x, y, 'touchmove');
+    fire(handle, x, y, endType || 'touchend');
+    return 'ok';
+  };
+
+  const openProjects = async (opts = {}) => {
+    const page = await open('documentations.html', Object.assign({ db: PROJ_SEED() }, opts));
+    await page.waitFor(function () { return !!document.querySelector('[data-doc-tab="projects"]'); },
+      { message: 'the Events | Projects tabs' });
+    if (!opts.hash) await page.evaluate(CLICK_SEL, '[data-doc-tab="projects"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-goal-row="pg-1"]'); },
+      { message: 'the Projects goal tree' });
+    return page;
+  };
+  const openGoalPage = async (page, id) => {
+    await page.evaluate(CLICK_SEL, '[data-goal-row="' + id + '"]');
+    await page.waitFor(function (g) { return !!document.querySelector('[data-proj-goal="' + g + '"]'); },
+      { args: [id], message: 'the goal page of ' + id });
+  };
+  const openTaskWindow = async (page, id) => {
+    await page.evaluate(CLICK_SEL, '[data-proj-task="' + id + '"]');
+    await page.waitFor(function (k) { return !!document.querySelector('[data-task-modal="' + k + '"]'); },
+      { args: [id], message: 'the task window of ' + id });
+  };
+
+  await t.test('PROJECTS: the tab draws the goal tree, and Events keeps only pages that name no goal', async () => {
+    const page = await open('documentations.html', { db: PROJ_SEED() });
+    await page.waitFor(function () { return !!document.querySelector('[data-doc-row="pp-ev"]'); },
+      { message: 'the Events tree' });
+    const before = await page.evaluate(READ_RAW);
+    assert.deepEqual(await page.evaluate(SEL_ATTRS, '[data-doc-row]', 'data-doc-row'), ['pp-ev'],
+      'an attached page, its sub-page and a detached page are not Events pages');
+    await page.evaluate(CLICK_SEL, '[data-doc-tab="projects"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-goal-row="pg-1"]'); },
+      { message: 'the Projects goal tree' });
+    assert.deepEqual(await page.evaluate(SEL_ATTRS, '[data-goal-row]', 'data-goal-row'), ['pg-1', 'ps-a', 'ps-b', 'pg-2'],
+      'every goal and sub-goal, in tree order');
+    assert.deepEqual(await page.evaluate(SEL_ATTRS, '[data-goal-alias]', 'data-goal-alias'), ['pg-2'],
+      'a linked sub-goal is an alias row opening the original, never a second page');
+    assert.deepEqual(await page.evaluate(SEL_ATTRS, '[data-doc-projects] [data-doc-row]', 'data-doc-row'), ['pp-at', 'pp-sub', 'pp-gone'],
+      'the attached page and its sub-page under their goal, then the detached one');
+    assert.deepEqual(await page.evaluate(SEL_ATTRS, '[data-doc-detached] [data-doc-row]', 'data-doc-row'), ['pp-gone'],
+      'a page whose goal is gone is kept and listed under Detached');
+    assert.equal(await page.evaluate(READ_RAW), before, 'reading the tree writes nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: a link that loops back is drawn once as ↻, and the page still renders', async () => {
+    const page = await openProjects();
+    await openGoalPage(page, 'pg-2');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-proj-loop="pl-loop"]'), true, 'the loop is drawn as one ↻ row');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-proj-task="pt-3"]'), true, 'and the rest of the goal still renders');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: a milestone is a highlighted area around its tasks, never a task block', async () => {
+    const page = await openProjects();
+    await openGoalPage(page, 'ps-a');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-proj-milestone="pm-1"] [data-proj-task="pt-m"]'), true,
+      'the milestone\'s task is drawn INSIDE its area');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-proj-task="pb-1"]'), false, 'the milestone block is not a task block');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-proj-milestone="pm-1"] [data-proj-task="pt-1"]'), false,
+      'a task beside the milestone is not swallowed by it');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: mind maps are read-only — TO LEARN holds links and no control', async () => {
+    const page = await openProjects();
+    await openGoalPage(page, 'pg-1');
+    assert.deepEqual(await page.evaluate(SEL_ATTRS, '[data-proj-mm]', 'data-proj-mm'), ['10', '11'],
+      'both mind maps, by their NUMERIC ids');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('[data-proj-learn] button, [data-proj-learn] input, [data-proj-learn] select, [data-proj-learn] textarea').length;
+    }), 0, 'nothing in TO LEARN can edit a mind map or its target');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: an edit writes `goals` from a FRESH read, and no other key', async () => {
+    /* The load-bearing case. A goal written by another tab after this page
+       mounted — Progress adding a task, say — fires no storage event in a
+       same-tab simulation, so this page's React copy never hears of it. A
+       write built from that copy would silently delete the other tab's task. */
+    const page = await openProjects();
+    await openGoalPage(page, 'ps-a');
+    await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db'));
+      var g = db.slots[0].goals;
+      g[0].children[1].children.push({ id: 'pt-ext', title: 'Added in Progress', children: [], completed: false });
+      localStorage.setItem('track_db', JSON.stringify(db));
+      return true;
+    });
+    const otherKeys = await page.evaluate(function () {
+      var s = JSON.parse(localStorage.getItem('track_db')).slots[0]; delete s.goals; return JSON.stringify(s);
+    });
+    await openTaskWindow(page, 'pt-1');
+    const before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(FOCUS_SET, SET_REACT_INPUT, '[data-task-title]', 'Read chapter one'), true);
+    await page.evaluate(FOCUS_OUT, '[data-task-title]');
+    await writeLanded(page, before, 'the title write');
+    assert.ok(await page.evaluate(GOAL_IN, 'pt-ext'), 'the task another tab added survived this page\'s write');
+    assert.equal((await page.evaluate(GOAL_IN, 'pt-1')).title, 'Read chapter one');
+    assert.equal(await page.evaluate(function () {
+      var s = JSON.parse(localStorage.getItem('track_db')).slots[0]; delete s.goals; return JSON.stringify(s);
+    }), otherKeys, 'every other slot key is byte-identical');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: the task window commits a typed title when Escape closes it', async () => {
+    const page = await openProjects();
+    await openGoalPage(page, 'ps-a');
+    await openTaskWindow(page, 'pt-1');
+    const before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(FOCUS_SET, SET_REACT_INPUT, '[data-task-title]', 'Typed then dismissed'), true);
+    await page.evaluate(function () { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true; });
+    await writeLanded(page, before, 'the title write on close');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-task-modal]'), false, 'Escape closed the window');
+    assert.equal((await page.evaluate(GOAL_IN, 'pt-1')).title, 'Typed then dismissed', 'and what was typed was kept');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: the task window has no date field — a task\'s day is set on the Schedule; its time and length stay', async () => {
+    const db = PROJ_SEED();
+    // pt-1 is on a day; pt-m is not
+    const theory = db.slots[0].goals[0].children[0];
+    theory.children[0] = Object.assign({}, theory.children[0], { scheduledDate: '2026-03-10', scheduledTime: '08:30', duration: 45 });
+    const page = await openProjects({ db });
+    try {
+      await openGoalPage(page, 'ps-a');
+      await openTaskWindow(page, 'pt-1');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-task-modal] input[type="date"]'), false, 'no date field in the window');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-task-time]'), true, 'its time stays');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-task-duration]'), true, 'and its length');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-task-when] a[href="progress.html#schedule"]'), true,
+        'and the window points at the Schedule, where its day is set');
+      await page.evaluate(CLICK_SEL, '[data-task-close]');
+      await page.waitFor(function () { return !document.querySelector('[data-task-modal]'); }, { message: 'the window closed' });
+      await openTaskWindow(page, 'pt-m');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-task-modal] input[type="date"]'), false, 'a task with no day has none either');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-task-time]'), false, 'nor a time to set until it has a day');
+      assert.match(await page.evaluate(function () { return document.querySelector('[data-task-when]').textContent; }), /Schedule/);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('PROJECTS: deleting a task, a note or a goal asks first — Cancel leaves track_db byte-identical', async () => {
+    const page = await openProjects();
+    await openGoalPage(page, 'ps-a');
+    await openTaskWindow(page, 'pt-1');
+    const before = await page.evaluate(READ_RAW);
+    page.rejectDialogs = true;
+    try {
+      assert.equal(await page.evaluate(CLICK_SEL, '[data-task-delete]'), true);
+      assert.equal(await page.evaluate(CLICK_SEL, '[data-task-note-delete="pn-1"]'), true);
+      await page.evaluate(CLICK_SEL, '[data-task-close]');
+      assert.equal(await page.evaluate(CLICK_SEL, '[data-proj-delete-goal]'), true);
+      await sleep(400);
+    } finally { page.rejectDialogs = false; }
+    assert.equal(await page.evaluate(READ_RAW), before, 'three prompts answered Cancel, nothing written');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: deleting a goal keeps its pages, listed under Detached', async () => {
+    const page = await openProjects();
+    await openGoalPage(page, 'ps-a');
+    const before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(CLICK_SEL, '[data-proj-delete-goal]'), true);
+    await writeLanded(page, before, 'the goal delete');
+    assert.equal(await page.evaluate(GOAL_IN, 'ps-a'), null, 'the sub-goal is gone');
+    assert.equal((await page.evaluate(PAGE_IN, 'pp-at')).goalId, 'ps-a', 'its page is untouched, still naming it');
+    await page.waitFor(function () { return !!document.querySelector('[data-doc-detached] [data-doc-row="pp-at"]'); },
+      { message: 'the page listed under Detached' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: ⠿ onto a goal with work files it as Progress does — a "default" sub-goal, flags travelling', async () => {
+    const page = await openProjects();
+    const before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(GOAL_TOUCH_DRAG, 'ps-b', 'nest', 'pg-2', 'mid', 'touchend'), 'ok');
+    await writeLanded(page, before, 'the nest');
+    const g2 = await page.evaluate(GOAL_IN, 'pg-2');
+    assert.deepEqual(g2.children.map(c => (c.title || c.id) + (c.isSubGoal ? '*' : '')), ['default*', 'Practice*'],
+      'the target\'s own work moved into a new "default" sub-goal, the dragged one after it');
+    const made = g2.children[0];
+    assert.deepEqual(made.children.map(c => c.id), ['pt-3', 'pl-loop'], 'its tasks went with it');
+    assert.deepEqual(made.toLearn, [11], 'its to-learn — a NUMBER — went with it');
+    assert.deepEqual(made.questLearn, [11], 'and the quest flag travelled with its to-learn');
+    assert.equal(Object.prototype.hasOwnProperty.call(g2, 'questLearn'), false, 'leaving no flag behind');
+    assert.equal((await page.evaluate(GOAL_IN, 'pg-1')).children.some(c => c.id === 'ps-b'), false, 'it left its old parent');
+    await page.waitFor(function () {
+      var ids = Array.prototype.map.call(document.querySelectorAll('[data-goal-row]'), function (e) { return e.getAttribute('data-goal-row'); });
+      return ids.indexOf('ps-b') > ids.indexOf('pg-2');
+    }, { message: 'the sidebar following the nest' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: ⠿ onto the parent a goal is already in is refused — byte-identical', async () => {
+    /* Re-nesting into the same parent moved nothing, but the writer removes
+       first and re-adds: a parent left with no sub-goal for that moment folds
+       its own work into a new "default". goalDropValid refuses the gesture. */
+    const page = await openProjects();
+    const before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(GOAL_TOUCH_DRAG, 'ps-b', 'nest', 'pg-1', 'mid', 'touchend'), 'ok');
+    await sleep(500);
+    assert.equal(await page.evaluate(READ_RAW), before);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: ⠿ into a goal\'s own sub-goal is refused — byte-identical', async () => {
+    // a guard: goal-core's writer refuses this too, so it passes both sides
+    const page = await openProjects();
+    const before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(GOAL_TOUCH_DRAG, 'pg-1', 'nest', 'ps-a', 'mid', 'touchend'), 'ok');
+    await sleep(500);
+    assert.equal(await page.evaluate(READ_RAW), before);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: ⇅ reorders siblings, and ⠿ on the Goals header makes a sub-goal a goal', async () => {
+    const page = await openProjects();
+    let before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(GOAL_TOUCH_DRAG, 'ps-b', 'arrange', 'ps-a', 'top', 'touchend'), 'ok');
+    await writeLanded(page, before, 'the arrange');
+    assert.deepEqual((await page.evaluate(GOAL_IN, 'pg-1')).children.map(c => c.id), ['ps-b', 'ps-a', 'pl-g'],
+      'the sub-goal moved before its sibling and kept its parent');
+    before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(GOAL_TOUCH_DRAG, 'ps-b', 'nest', null, 'mid', 'touchend'), 'ok');
+    await writeLanded(page, before, 'the promote');
+    const tops = await page.evaluate(function () {
+      return JSON.parse(localStorage.getItem('track_db')).slots[0].goals.map(function (g) { return g.id + (g.isSubGoal ? '*' : ''); });
+    });
+    assert.deepEqual(tops, ['pg-1', 'pg-2', 'ps-b'], 'it is now the last goal, no longer flagged a sub-goal');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: a page attaches to a goal and goes back to Events — only a top page names a goal', async () => {
+    const page = await openProjects();
+    // a page dropped (⠿) on a goal row attaches, sub-pages and all
+    let before = await page.evaluate(READ_RAW);
+    await page.evaluate(function () {
+      var dst = document.querySelector('[data-goal-row="pg-2"]');
+      var dt = new DataTransfer(); dt.setData('application/docpage-nest-id', 'pp-gone');
+      dst.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      return true;
+    });
+    await writeLanded(page, before, 'the attach');
+    assert.equal((await page.evaluate(PAGE_IN, 'pp-gone')).goalId, 'pg-2', 'the detached page joined Get fit');
+    // the toolbar: nest pp-sub's parent away to Events, then check pp-sub
+    await page.evaluate(CLICK_SEL, '[data-doc-row="pp-at"]');
+    await page.waitFor(function () { return !!document.querySelector('[data-page-to-events]'); }, { message: 'the page toolbar' });
+    before = await page.evaluate(READ_RAW);
+    await page.evaluate(CLICK_SEL, '[data-page-to-events]');
+    await writeLanded(page, before, 'the move to Events');
+    const at = await page.evaluate(PAGE_IN, 'pp-at');
+    assert.equal(Object.prototype.hasOwnProperty.call(at, 'goalId'), false, 'Events is the ABSENCE of the key, never null or ""');
+    assert.equal(Object.prototype.hasOwnProperty.call(await page.evaluate(PAGE_IN, 'pp-sub'), 'goalId'), false,
+      'a sub-page never carries one — it follows its top page');
+    await page.waitFor(function () { return !!document.querySelector('[data-doc-row="pp-sub"]') && !document.querySelector('[data-doc-projects]'); },
+      { message: 'the page followed to Events with its sub-page' });
+    // and back, through the toolbar's goal picker
+    before = await page.evaluate(READ_RAW);
+    await page.evaluate(function () {
+      var s = document.querySelector('[data-page-goal]');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, 'ps-b');
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    });
+    await writeLanded(page, before, 'the attach from the toolbar');
+    assert.equal((await page.evaluate(PAGE_IN, 'pp-at')).goalId, 'ps-b');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: a milestone area has no date fields — its dates are a tooltip, edited in Progress', async () => {
+    const page = await openProjects();
+    await openGoalPage(page, 'ps-a');
+    const MS = '[data-proj-milestone="pm-1"] ';
+    // the user's call: no mm/dd/yyyy on the goal's page. Every date input on
+    // it was a milestone's; a task's own date lives in its task window.
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('[data-proj-goal] input[type="date"]').length;
+    }), 0, 'no date field anywhere on the goal page');
+    assert.equal(await page.evaluate(HAS_SEL, MS + '[data-proj-ms-clear]'), false, 'and no clear');
+    assert.deepEqual(await page.evaluate(function (sel) {
+      return Array.prototype.map.call(document.querySelectorAll(sel + '[title]'), function (e) { return e.getAttribute('title'); })
+        .filter(function (t) { return /\d{4}-\d{2}-\d{2}/.test(t); });
+    }, MS), ['2026-03-01 → 2026-03-05 — dates are set in Progress → Milestones', '2026-03-01 → 2026-03-05'],
+      'what the dates are is still one hover away, on ⚑ and on the late label');
+    assert.match(await page.evaluate(function (sel) { return document.querySelector(sel).textContent; }, MS + '[data-proj-ms-label]'),
+      /^OVERDUE · /, 'and the lateness they cause still shows');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* A mouse drag on a goal's page, as the browser fires one: dragstart on the
+     handle, then dragover and drop on the target row at its top, middle or
+     bottom, one DataTransfer through all of them, then dragend. Handles are
+     display:none until a row is hovered — events reach them regardless. */
+  const PROJ_MOUSE_DRAG = function (handleSel, targetSel, half) {
+    var h = document.querySelector(handleSel);
+    if (!h) return 'no handle ' + handleSel;
+    var t = document.querySelector(targetSel);
+    if (!t) return 'no target ' + targetSel;
+    var dt = new DataTransfer();
+    h.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    var r = t.getBoundingClientRect();
+    var x = r.left + r.width / 2;
+    var y = half === 'top' ? r.top + 2 : half === 'bottom' ? r.bottom - 2 : r.top + r.height / 2;
+    var over = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y });
+    t.dispatchEvent(over);
+    var accepted = over.defaultPrevented;
+    t.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y }));
+    h.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    return accepted ? 'ok' : 'refused';
+  };
+  // The same move by finger: every event on the handle the touch started on.
+  const PROJ_TOUCH_DRAG = function (handleSel, targetSel, half) {
+    function fire(el, x, y, type) {
+      var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
+      var live = type === 'touchend' ? [] : [t];
+      el.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        touches: live, targetTouches: live, changedTouches: [t]
+      }));
+    }
+    var h = document.querySelector(handleSel);
+    if (!h) return 'no handle ' + handleSel;
+    var t = document.querySelector(targetSel);
+    if (!t) return 'no target ' + targetSel;
+    var r = t.getBoundingClientRect();
+    var x = r.left + r.width / 2;
+    var y = half === 'top' ? r.top + 2 : half === 'bottom' ? r.bottom - 2 : r.top + r.height / 2;
+    var hr = h.getBoundingClientRect();
+    fire(h, hr.left + 1, hr.top + 1, 'touchstart');
+    fire(h, x, y, 'touchmove');
+    fire(h, x, y, 'touchend');
+    return 'ok';
+  };
+  // The directory's rows, top to bottom, as their data-proj-row keys.
+  const PROJ_ROWS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-proj-dir] [data-proj-row]'),
+      function (e) { return e.getAttribute('data-proj-row'); });
+  };
+  const DOCPAGES_RAW = function () {
+    return JSON.stringify(((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).docPages);
+  };
+  const docPagesLanded = (page, before, message) => page.waitFor(function (b) {
+    return JSON.stringify(((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).docPages) !== b;
+  }, { args: [before], message });
+  const placeOf = async (page, id) => {
+    const p = await page.evaluate(PAGE_IN, id);
+    return Object.prototype.hasOwnProperty.call(p, 'goalPlace') ? p.goalPlace : 'absent';
+  };
+  const LINK = id => '[data-proj-page-link="' + id + '"]';
+  const HANDLE = (rowSel, mode) => rowSel + ' [data-proj-handle="' + mode + '"]';
+
+  await t.test('PROJECTS: a page link moves anywhere on its goal\'s page — between tasks, into one, into a milestone — and stays', async () => {
+    let page = await openProjects();
+    await openGoalPage(page, 'ps-a');
+    assert.deepEqual(await page.evaluate(PROJ_ROWS), ['page:pp-at', 'task:pt-1', 'ms:pb-1', 'task:pt-m'],
+      'a page attached before links could be placed is drawn FIRST — where the old Pages list stood');
+    // ⇅ to the bottom half of a task: after it
+    let before = await page.evaluate(DOCPAGES_RAW);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE(LINK('pp-at'), 'arrange'), '[data-proj-task="pt-1"]', 'bottom'), 'ok');
+    await docPagesLanded(page, before, 'the move after pt-1');
+    assert.deepEqual(await placeOf(page, 'pp-at'), { parentId: 'ps-a', afterId: 'pt-1' });
+    assert.deepEqual(await page.evaluate(PROJ_ROWS), ['task:pt-1', 'page:pp-at', 'ms:pb-1', 'task:pt-m']);
+    // ⠿ onto a task: inside it, indented under it
+    before = await page.evaluate(DOCPAGES_RAW);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE(LINK('pp-at'), 'nest'), '[data-proj-task="pt-1"]', 'mid'), 'ok');
+    await docPagesLanded(page, before, 'the move into pt-1');
+    assert.deepEqual(await placeOf(page, 'pp-at'), { parentId: 'pt-1' }, 'first in a list: no afterId key at all');
+    assert.equal(await page.evaluate(function () {
+      return Math.round(document.querySelector('[data-proj-page-link="pp-at"]').getBoundingClientRect().left
+        - document.querySelector('[data-proj-task="pt-1"]').getBoundingClientRect().left);
+    }), 20, 'drawn one level in, under the task it is inside');
+    // ⇅ to the top half of a task inside a milestone: into the milestone's list
+    before = await page.evaluate(DOCPAGES_RAW);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE(LINK('pp-at'), 'arrange'), '[data-proj-task="pt-m"]', 'top'), 'ok');
+    await docPagesLanded(page, before, 'the move into the milestone');
+    assert.deepEqual(await placeOf(page, 'pp-at'), { parentId: 'pb-1' });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-proj-milestone="pm-1"] ' + LINK('pp-at')), true, 'inside the milestone area');
+    assert.equal((await page.evaluate(PAGE_IN, 'pp-at')).goalId, 'ps-a', 'and still the same goal\'s page');
+    // the link opens its page
+    await page.evaluate(CLICK_SEL, LINK('pp-at'));
+    await page.waitFor(function () { return !!document.querySelector('[data-proj-crumb="ps-a"]'); }, { message: 'the page opened from its link' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+    // and it is stored, not a view state: a new tab draws it in the same place
+    page = await open('documentations.html', { fresh: false, hash: '?goal=ps-a' });
+    try {
+      await page.waitFor(function () { return !!document.querySelector('[data-proj-milestone="pm-1"] [data-proj-page-link="pp-at"]'); },
+        { message: 'the link where it was put, after a reload' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('PROJECTS: a page link moves by finger too, and the handles show outright on a touch screen', async () => {
+    const page = await open('documentations.html', { db: PROJ_SEED(), viewport: PHONE, hash: '?goal=ps-a' });
+    await page.waitFor(function () { return !!document.querySelector('[data-proj-page-link="pp-at"]'); }, { message: 'the goal page on a phone' });
+    assert.equal(await page.evaluate(function () {
+      return getComputedStyle(document.querySelector('[data-proj-page-link="pp-at"] .proj-handles')).display;
+    }), 'flex', 'a finger raises no hover: ⠿ ⇅ are shown without it');
+    let before = await page.evaluate(READ_RAW);
+    // a node is never dropped beside a page link: the goal tree holds no pages
+    assert.equal(await page.evaluate(PROJ_TOUCH_DRAG, HANDLE('[data-proj-task="pt-1"]', 'arrange'), LINK('pp-at'), 'top'), 'ok');
+    await sleep(400);
+    assert.equal(await page.evaluate(READ_RAW), before, 'a task dropped on a page link moves nothing');
+    before = await page.evaluate(DOCPAGES_RAW);
+    assert.equal(await page.evaluate(PROJ_TOUCH_DRAG, HANDLE(LINK('pp-at'), 'arrange'), '[data-proj-task="pt-m"]', 'bottom'), 'ok');
+    await docPagesLanded(page, before, 'the finger move after pt-m');
+    assert.deepEqual(await placeOf(page, 'pp-at'), { parentId: 'pb-1', afterId: 'pt-m' });
+    assert.deepEqual(await page.evaluate(PROJ_ROWS), ['task:pt-1', 'ms:pb-1', 'task:pt-m', 'page:pp-at']);
+    assert.equal(await page.evaluate(HAS_SEL, '.doc-drag-ghost'), false, 'the ghost is gone after the drop');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: ⇅ and ⠿ move tasks on the goal page — and a link beside a moved task stays where it was', async () => {
+    const db = PROJ_SEED();
+    db.slots[0].docPages = db.slots[0].docPages.map(p =>
+      p.id === 'pp-at' ? Object.assign({}, p, { goalPlace: { parentId: 'ps-a', afterId: 'pb-1' } }) : p);
+    const page = await openProjects({ db });
+    await openGoalPage(page, 'ps-a');
+    assert.deepEqual(await page.evaluate(PROJ_ROWS), ['task:pt-1', 'ms:pb-1', 'task:pt-m', 'page:pp-at'], 'the link is last');
+    // ⇅ the milestone above pt-1: the link was anchored to the milestone, and
+    // stays LAST rather than following it to the top
+    // The goals write lands first; the link's re-placing is the docPages
+    // write the same render's autosave makes. Waiting for THAT write would
+    // turn a missing re-place into a timeout, so the case waits for the
+    // redraw, lets the autosave run, and asserts — a wrong place reports itself.
+    const settled = async (rows0, msg) => {
+      await page.waitFor(function (r) { return JSON.stringify((function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-proj-dir] [data-proj-row]'), function (e) { return e.getAttribute('data-proj-row'); });
+      })()) !== r; }, { args: [JSON.stringify(rows0)], message: msg });
+      await sleep(400);
+    };
+    let before = await page.evaluate(READ_RAW);
+    let rows0 = await page.evaluate(PROJ_ROWS);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE('[data-proj-row="ms:pb-1"]', 'arrange'), '[data-proj-task="pt-1"]', 'top'), 'ok');
+    await writeLanded(page, before, 'the arrange');
+    await settled(rows0, 'the page redrawn');
+    assert.deepEqual((await page.evaluate(GOAL_IN, 'ps-a')).children.map(c => c.id), ['pb-1', 'pt-1']);
+    assert.deepEqual(await placeOf(page, 'pp-at'), { parentId: 'ps-a', afterId: 'pt-1' },
+      'the link was after the milestone, which MOVED: it now follows the row that stood before it');
+    assert.deepEqual(await page.evaluate(PROJ_ROWS), ['ms:pb-1', 'task:pt-m', 'task:pt-1', 'page:pp-at'], 'the link is still last');
+    // ⠿ pt-1 onto pt-m: it leaves the list, and the link takes the row above
+    // (the row ORDER is the same before and after this one — pt-1 was below
+    // the milestone and is now inside it — so the redraw is waited on by place)
+    before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE('[data-proj-task="pt-1"]', 'nest'), '[data-proj-task="pt-m"]', 'mid'), 'ok');
+    await writeLanded(page, before, 'the nest');
+    await page.waitFor(function () { return !!document.querySelector('[data-proj-milestone="pm-1"] [data-proj-task="pt-1"]'); },
+      { message: 'pt-1 redrawn inside the milestone' });
+    await sleep(400);
+    assert.deepEqual((await page.evaluate(GOAL_IN, 'pt-m')).children.map(c => c.id), ['pt-1'], 'pt-1 is pt-m\'s sub-task');
+    assert.deepEqual(await placeOf(page, 'pp-at'), { parentId: 'ps-a', afterId: 'pb-1' });
+    assert.deepEqual(await page.evaluate(PROJ_ROWS), ['ms:pb-1', 'task:pt-m', 'task:pt-1', 'page:pp-at'],
+      'pt-1 is drawn under pt-m now, and the link is still last');
+    // ⠿ into the parent it is already in is refused — byte-identical
+    before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE('[data-proj-task="pt-1"]', 'nest'), '[data-proj-task="pt-m"]', 'mid'), 'refused');
+    await sleep(400);
+    assert.equal(await page.evaluate(READ_RAW), before, 'nothing written');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: a link sits between sub-goals too, and ⠿ onto a sub-goal row moves the page to that sub-goal', async () => {
+    const page = await openProjects();
+    // attach the Events page to pg-1 the sidebar's way, then open pg-1
+    let before = await page.evaluate(READ_RAW);
+    await page.evaluate(function () {
+      var dt = new DataTransfer(); dt.setData('application/docpage-nest-id', 'pp-ev');
+      document.querySelector('[data-goal-row="pg-1"]').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      return true;
+    });
+    await writeLanded(page, before, 'the attach');
+    await openGoalPage(page, 'pg-1');
+    assert.deepEqual(await page.evaluate(PROJ_ROWS), ['page:pp-ev', 'sub:ps-a', 'sub:ps-b', 'link:pl-g']);
+    let docs = await page.evaluate(DOCPAGES_RAW);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE(LINK('pp-ev'), 'arrange'), '[data-proj-row="sub:ps-a"]', 'bottom'), 'ok');
+    await docPagesLanded(page, docs, 'the link after Theory');
+    assert.deepEqual(await placeOf(page, 'pp-ev'), { parentId: 'pg-1', afterId: 'ps-a' });
+    // ⇅ a sub-goal row: the link stays after the sub-goal it follows
+    before = await page.evaluate(READ_RAW);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE('[data-proj-row="sub:ps-b"]', 'arrange'), '[data-proj-row="sub:ps-a"]', 'top'), 'ok');
+    await writeLanded(page, before, 'the sub-goal arrange');
+    assert.deepEqual((await page.evaluate(GOAL_IN, 'pg-1')).children.map(c => c.id), ['ps-b', 'ps-a', 'pl-g']);
+    await page.waitFor(function () { return document.querySelector('[data-proj-dir] [data-proj-row]').getAttribute('data-proj-row') === 'sub:ps-b'; },
+      { message: 'the page redrawn' });
+    assert.deepEqual(await page.evaluate(PROJ_ROWS), ['sub:ps-b', 'sub:ps-a', 'page:pp-ev', 'link:pl-g']);
+    // ⠿ onto a sub-goal row: the page now belongs to that sub-goal, at the top
+    docs = await page.evaluate(DOCPAGES_RAW);
+    assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE(LINK('pp-ev'), 'nest'), '[data-proj-row="sub:ps-b"]', 'mid'), 'ok');
+    await docPagesLanded(page, docs, 'the move to Practice');
+    const ev = await page.evaluate(PAGE_IN, 'pp-ev');
+    assert.equal(ev.goalId, 'ps-b');
+    assert.equal(Object.prototype.hasOwnProperty.call(ev, 'goalPlace'), false, 'a place on pg-1 means nothing on ps-b: deleted');
+    await page.waitFor(function () { return !document.querySelector('[data-proj-page-link="pp-ev"]'); }, { message: 'the link gone from pg-1' });
+    assert.match(await page.evaluate(function () { return document.querySelector('[data-proj-subgoal="ps-b"]').textContent; }), /📄1/,
+      'Practice now shows its page');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  // ⇅ draws its line on a row's WRAPPER — the row, and the links that follow
+  // it — so the drop is read in two halves of one gesture: HOVER (the line is
+  // drawn) and RELEASE (the write). Between the two a case can read the line.
+  const PROJ_MOUSE_HOVER = function (handleSel, targetSel, half) {
+    var h = document.querySelector(handleSel);
+    if (!h) return 'no handle ' + handleSel;
+    var t = document.querySelector(targetSel);
+    if (!t) return 'no target ' + targetSel;
+    var dt = new DataTransfer();
+    h.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    var r = t.getBoundingClientRect();
+    var x = r.left + r.width / 2;
+    var y = half === 'top' ? r.top + 2 : r.bottom - 2;
+    var over = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y });
+    t.dispatchEvent(over);
+    window.__projHover = { h: h, t: t, dt: dt, x: x, y: y };
+    return over.defaultPrevented ? 'ok' : 'refused';
+  };
+  const PROJ_MOUSE_RELEASE = function () {
+    var s = window.__projHover;
+    window.__projHover = null;
+    s.t.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: s.dt, clientX: s.x, clientY: s.y }));
+    s.h.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: s.dt }));
+    return true;
+  };
+  // the ⇅ line as drawn: which edge, and the rows it is drawn above or under
+  const PROJ_LINE = function () {
+    var el = document.querySelector('[data-proj-dir] .border-b-2, [data-proj-dir] .border-t-2');
+    if (!el) return null;
+    return {
+      side: el.classList.contains('border-b-2') ? 'bottom' : 'top',
+      rows: Array.prototype.map.call(el.querySelectorAll('[data-proj-row]'), function (e) { return e.getAttribute('data-proj-row'); })
+    };
+  };
+
+  await t.test('PROJECTS: a link dropped beside a row lands where ⇅ drew its line — under the links already there, directly above the row', async () => {
+    const db = PROJ_SEED();
+    db.slots[0].docPages.push(
+      F.docPage('pp-x', { title: 'Lab sheet', goalId: 'ps-a', goalPlace: { parentId: 'ps-a', afterId: 'pt-1' } }),
+      F.docPage('pp-y', { title: 'Past paper', goalId: 'ps-a', goalPlace: { parentId: 'ps-a', afterId: 'pt-1' } }));
+    const page = await openProjects({ db });
+    try {
+      await openGoalPage(page, 'ps-a');
+      assert.deepEqual(await page.evaluate(PROJ_ROWS), ['page:pp-at', 'task:pt-1', 'page:pp-x', 'page:pp-y', 'ms:pb-1', 'task:pt-m'],
+        'two links already follow pt-1, in the pages\' order');
+      const drop = async (handleSel, targetSel, half, what) => {
+        assert.equal(await page.evaluate(PROJ_MOUSE_HOVER, handleSel, targetSel, half), 'ok', what + ': accepted');
+        await page.waitFor(function () { return !!document.querySelector('[data-proj-dir] .border-b-2, [data-proj-dir] .border-t-2'); },
+          { message: what + ': the line drawn' });
+        const line = await page.evaluate(PROJ_LINE);
+        const before = await page.evaluate(DOCPAGES_RAW);
+        await page.evaluate(PROJ_MOUSE_RELEASE);
+        await docPagesLanded(page, before, what);
+        return line;
+      };
+      // ⇅ AFTER pt-1: the line is drawn under pt-1 AND the links that follow it,
+      // so the link lands under them — never first among them
+      let line = await drop(HANDLE(LINK('pp-at'), 'arrange'), '[data-proj-task="pt-1"]', 'bottom', 'after pt-1');
+      assert.deepEqual(await page.evaluate(PROJ_ROWS), ['task:pt-1', 'page:pp-x', 'page:pp-y', 'page:pp-at', 'ms:pb-1', 'task:pt-m'],
+        'it lands under the last row the line was drawn under');
+      assert.deepEqual(line, { side: 'bottom', rows: ['task:pt-1', 'page:pp-x', 'page:pp-y'] }, 'the line was drawn under pt-1 and both its links');
+      assert.deepEqual(await placeOf(page, 'pp-at'), { parentId: 'ps-a', afterId: 'pt-1' });
+      // ⇅ BEFORE the milestone: the line is drawn over the milestone, so the
+      // link lands directly above it — under every link that follows pt-1
+      line = await drop(HANDLE(LINK('pp-y'), 'arrange'), '[data-proj-row="ms:pb-1"]', 'top', 'before pb-1');
+      assert.deepEqual(await page.evaluate(PROJ_ROWS), ['task:pt-1', 'page:pp-x', 'page:pp-at', 'page:pp-y', 'ms:pb-1', 'task:pt-m'],
+        'it lands directly above the row the line was drawn over');
+      assert.deepEqual(line, { side: 'top', rows: ['ms:pb-1', 'task:pt-m'] }, 'the line was drawn over the milestone');
+      assert.deepEqual(await placeOf(page, 'pp-y'), { parentId: 'ps-a', afterId: 'pt-1' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  // What another tab writes, written straight to storage: this tab hears no
+  // `storage` event for it, so its React state stays a step behind — the
+  // window every case below is about.
+  const WRITE_ELSEWHERE = function (src) {
+    var db = JSON.parse(localStorage.getItem('track_db'));
+    (new Function('slot', src))(db.slots[0]);
+    localStorage.setItem('track_db', JSON.stringify(db));
+    return true;
+  };
+
+  await t.test('PROJECTS: the task window\'s move refuses a destination deleted in another tab — the task is KEPT', async () => {
+    const page = await openProjects();
+    try {
+      await openGoalPage(page, 'ps-b');
+      await page.evaluate(CLICK_SEL, '[data-proj-task="pt-2"]');
+      await page.waitFor(function () { return !!document.querySelector('[data-task-move]'); }, { message: 'the task window' });
+      await page.evaluate(function () {
+        var s = document.querySelector('[data-task-move]');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, 'pt-1');
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      });
+      await page.waitFor(function () { return !document.querySelector('[data-task-move-go]').disabled; }, { message: 'pt-1 picked' });
+      // another tab deletes pt-1 (Theory's task) after it was picked
+      await page.evaluate(WRITE_ELSEWHERE, 'slot.goals[0].children[0].children = slot.goals[0].children[0].children.filter(function (c) { return c.id !== "pt-1"; });');
+      const before = await page.evaluate(READ_RAW);
+      await page.evaluate(CLICK_SEL, '[data-task-move-go]');
+      await sleep(400);
+      assert.ok(await page.evaluate(GOAL_IN, 'pt-2'), 'pt-2 is still in the goals — a move to a destination that is gone never drops it');
+      assert.equal(await page.evaluate(READ_RAW), before, 'nothing written');
+      assert.match(await page.evaluate(function () { var n = document.querySelector('[data-task-notice]'); return n ? n.textContent : ''; }),
+        /Not moved/, 'and the window says so');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('PROJECTS: a link re-placed after a move is healed from what is STORED — pages another tab just wrote survive', async () => {
+    const db = PROJ_SEED();
+    db.slots[0].docPages = db.slots[0].docPages.map(p =>
+      p.id === 'pp-at' ? Object.assign({}, p, { goalPlace: { parentId: 'ps-a', afterId: 'pb-1' } }) : p);
+    const page = await openProjects({ db });
+    try {
+      await openGoalPage(page, 'ps-a');
+      // another tab renames the Events page and adds one
+      await page.evaluate(WRITE_ELSEWHERE, 'slot.docPages = slot.docPages.map(function (p) { return p.id === "pp-ev" ? Object.assign({}, p, { title: "Renamed elsewhere" }) : p; })'
+        + '.concat([{ id: "pp-new", title: "Added elsewhere", parentId: null, blocks: [], favorite: false }]);');
+      // ⇅ the milestone above pt-1: the link that followed it is re-placed
+      const before = await page.evaluate(READ_RAW);
+      assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE('[data-proj-row="ms:pb-1"]', 'arrange'), '[data-proj-task="pt-1"]', 'top'), 'ok');
+      await writeLanded(page, before, 'the arrange');
+      await sleep(400);
+      const pages = await page.evaluate(function () { return JSON.parse(localStorage.getItem('track_db')).slots[0].docPages; });
+      assert.ok(pages.some(p => p.id === 'pp-new'), 'the page another tab added is still stored');
+      assert.equal(pages.find(p => p.id === 'pp-ev').title, 'Renamed elsewhere', 'and so is its rename');
+      assert.deepEqual(pages.find(p => p.id === 'pp-at').goalPlace, { parentId: 'ps-a', afterId: 'pt-1' }, 'and the link WAS re-placed');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('PROJECTS: two tasks sharing an id draw a link placed in it ONCE — under the first', async () => {
+    const db = PROJ_SEED();
+    // pt-1 gains a sub-task whose id repeats pt-m's, the task inside the milestone below it
+    db.slots[0].goals[0].children[0].children[0].children = [F.task('pt-m', { title: 'Same id' })];
+    db.slots[0].docPages = db.slots[0].docPages.map(p =>
+      p.id === 'pp-at' ? Object.assign({}, p, { goalPlace: { parentId: 'pt-m' } }) : p);
+    const page = await openProjects({ db });
+    try {
+      await openGoalPage(page, 'ps-a');
+      assert.equal(await page.evaluate(function () { return document.querySelectorAll('[data-proj-page-link="pp-at"]').length; }), 1,
+        'one page, one link');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-proj-milestone="pm-1"] [data-proj-page-link="pp-at"]'), false,
+        'not under the second pt-m, inside the milestone');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('PROJECTS: a link\'s ⠿ dropped on a sidebar goal row by finger moves the page there, as the mouse does', async () => {
+    const page = await openProjects();
+    try {
+      await openGoalPage(page, 'ps-a');
+      const before = await page.evaluate(DOCPAGES_RAW);
+      assert.equal(await page.evaluate(PROJ_TOUCH_DRAG, HANDLE(LINK('pp-at'), 'nest'), '[data-goal-row="ps-b"]', 'mid'), 'ok');
+      await docPagesLanded(page, before, 'the attach by finger');
+      assert.equal((await page.evaluate(PAGE_IN, 'pp-at')).goalId, 'ps-b', 'the page is Practice\'s now');
+      assert.equal((await page.evaluate(PAGE_IN, 'pp-sub')).parentId, 'pp-at', 'with its sub-page');
+      assert.equal(await page.evaluate(HAS_SEL, '.doc-drag-ghost'), false, 'the ghost is gone after the drop');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('PROJECTS: Progress\'s ↗ Projects opens the goal\'s page, and a sub-goal row has the same link', async () => {
+    const prog = await open('progress.html', { db: PROJ_SEED() });
+    try {
+      await waitMounted(prog, 'progress.html');
+      await prog.waitFor(function () { return !!document.querySelector('[data-goal-projects-link="pg-1"]'); }, { message: 'the ↗ Projects button' });
+      const links = await prog.evaluate(function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-goal-projects-link]'),
+          function (a) { return a.getAttribute('data-goal-projects-link') + ' ' + a.getAttribute('href'); });
+      });
+      assert.deepEqual(links, ['pg-1 documentations.html?goal=pg-1', 'ps-a documentations.html?goal=ps-a', 'ps-b documentations.html?goal=ps-b'],
+        'the active goal\'s button, then one per sub-goal row');
+      assert.deepEqual(realErrors(prog), []);
+    } finally { await prog.close(); }
+    // the href lands on that goal's page in Projects
+    const docs = await open('documentations.html', { db: PROJ_SEED(), hash: '?goal=pg-1' });
+    try {
+      await docs.waitFor(function () { return !!document.querySelector('[data-proj-goal="pg-1"]') && !!document.querySelector('[data-doc-projects]'); },
+        { message: 'the goal page in Projects' });
+      assert.deepEqual(realErrors(docs), []);
+    } finally { await docs.close(); }
+  });
+
+  await t.test('PROJECTS: ＋ milestone makes its definition and its area in one write; ✕ keeps its tasks', async () => {
+    const page = await openProjects();
+    await openGoalPage(page, 'ps-a');
+    await page.evaluate(CLICK_SEL, '[data-proj-add-milestone]');
+    await page.waitFor(function () { return !!document.querySelector('[data-proj-add-milestone-title]'); }, { message: 'the milestone form' });
+    await page.evaluate(SET_SEL, SET_REACT_INPUT, '[data-proj-add-milestone-title]', 'Mocks');
+    let before = await page.evaluate(READ_RAW);
+    await page.evaluate(CLICK_SEL, '[data-proj-add-milestone-go]');
+    await writeLanded(page, before, 'the new milestone');
+    const owner = await page.evaluate(GOAL_IN, 'ps-a');
+    const def = owner.milestones.find(m => m.title === 'Mocks');
+    assert.ok(def, 'the definition is on its owner');
+    assert.ok(owner.children.some(c => c.taskType === 'milestone' && c.milestoneId === def.id && c.title === 'Mocks'),
+      'and its area is in the task list');
+    await page.waitFor(function (id) { return !!document.querySelector('[data-proj-milestone="' + id + '"]'); },
+      { args: [def.id], message: 'the new area' });
+    // ✕ on pm-1: Cancel first, then OK — the area becomes a task holding pt-m
+    const MS = '[data-proj-milestone="pm-1"] ';
+    before = await page.evaluate(READ_RAW);
+    page.rejectDialogs = true;
+    try { await page.evaluate(CLICK_SEL, MS + '[data-proj-ms-delete]'); await sleep(400); }
+    finally { page.rejectDialogs = false; }
+    assert.equal(await page.evaluate(READ_RAW), before, 'Cancel deletes nothing');
+    await page.evaluate(CLICK_SEL, MS + '[data-proj-ms-delete]');
+    await writeLanded(page, before, 'the milestone delete');
+    const block = await page.evaluate(GOAL_IN, 'pb-1');
+    assert.equal(block.taskType, 'task', 'the area became an ordinary task');
+    assert.deepEqual(block.children.map(c => c.id), ['pt-m'], 'holding the tasks it held');
+    assert.equal((await page.evaluate(GOAL_IN, 'ps-a')).milestones.some(m => m.id === 'pm-1'), false);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: ?goal= opens that goal in Projects, and ?page= an attached page there', async () => {
+    let page = await openProjects({ hash: '?goal=ps-b' });
+    await page.waitFor(function () { return !!document.querySelector('[data-proj-goal="ps-b"]'); }, { message: 'the deep-linked goal' });
+    await page.close();
+    page = await open('documentations.html', { db: PROJ_SEED(), hash: '?page=pp-sub' });
+    await page.waitFor(function () {
+      return !!document.querySelector('[data-doc-projects]') && !!document.querySelector('[data-proj-crumb="ps-a"]');
+    }, { message: 'the attached sub-page, opened in Projects under its goal' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: Progress draws a 📄 chip on a goal with pages, and none on one without', async () => {
+    const page = await open('progress.html', { db: PROJ_SEED() });
+    await waitMounted(page, 'progress.html');
+    await page.waitFor(function () { return !!document.querySelector('[data-goal-doc-chip]'); },
+      { message: 'a goal row\'s 📄 chip' });
+    assert.deepEqual(await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-goal-doc-chip]'),
+        function (a) { return a.getAttribute('data-goal-doc-chip') + ' ' + a.getAttribute('href'); });
+    }), ['ps-a documentations.html?page=pp-at'],
+      'one page opens that page; a sub-page does not count; goals without pages have no chip');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('PROJECTS: two tabs — an edit in Projects reaches an open Progress, which does not revert it', async () => {
+    const prog = await open('progress.html', { db: PROJ_SEED() });
+    let docs = null;
+    try {
+      await waitMounted(prog, 'progress.html');
+      await sleep(800);
+      docs = await openProjects({ fresh: false });
+      await openGoalPage(docs, 'ps-b');
+      await openTaskWindow(docs, 'pt-2');
+      const before = await docs.evaluate(READ_RAW);
+      await docs.evaluate(FOCUS_SET, SET_REACT_INPUT, '[data-task-title]', 'Mock test, timed');
+      await docs.evaluate(FOCUS_OUT, '[data-task-title]');
+      await writeLanded(docs, before, 'the Projects edit');
+      await prog.session.send('Page.bringToFront');
+      await prog.waitFor(function () { return document.visibilityState === 'visible'; }, { message: 'Progress in front' });
+      await sleep(1500);   // Progress's refresh and any autosave it triggers
+      assert.equal((await prog.evaluate(GOAL_IN, 'pt-2')).title, 'Mock test, timed',
+        'Progress adopted the edit and its autosave wrote nothing stale over it');
+      assert.deepEqual(realErrors(prog), []);
+      assert.deepEqual(realErrors(docs), []);
+    } finally {
+      await prog.close();
+      if (docs) await docs.close();
+    }
+  });
+
+  await t.test('PROJECTS (phone): a goal row arms before it opens, and the task window fits the screen', async () => {
+    const page = await open('documentations.html', { db: PROJ_SEED(), viewport: PHONE, hash: '?goal=ps-a' });
+    await page.waitFor(function () { return !!document.querySelector('[data-proj-goal="ps-a"]'); }, { message: 'the deep-linked goal' });
+    await openTaskWindow(page, 'pt-1');
+    const box = await page.evaluate(function () {
+      var r = document.querySelector('[data-task-modal] [role="dialog"]').getBoundingClientRect();
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, vw: innerWidth, vh: innerHeight,
+        scroll: document.documentElement.scrollWidth };
+    });
+    assert.ok(box.left >= 0 && box.right <= box.vw && box.top >= 0 && box.bottom <= box.vh,
+      'the window is entirely on screen: ' + JSON.stringify(box));
+    assert.ok(box.scroll <= box.vw, 'and nothing scrolls sideways');
+    await page.evaluate(CLICK_SEL, '[data-task-close]');
+    // the drawer: one tap on a goal row arms it (reveals ⠿ ⇅ +), the second opens
+    await page.evaluate(CLICK_SEL, '[data-tabbar-tab="pages"]');
+    await page.waitFor(function () { return !!document.querySelector('.docs-sidebar-full [data-goal-row="pg-2"]'); },
+      { message: 'the drawer open with goal rows' });
+    const tapTitle = function () {
+      var t = document.querySelector('[data-goal-row="pg-2"] span.flex-1');
+      var r = t.getBoundingClientRect();
+      var el = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+      if (el) el.click();
+      return !!el;
+    };
+    await page.evaluate(tapTitle);
+    await page.waitFor(function () { return document.querySelector('[data-goal-row="pg-2"]').classList.contains('doc-row-armed'); },
+      { message: 'the first tap arming the row' });
+    assert.equal(await page.evaluate(function () {
+      return getComputedStyle(document.querySelector('[data-goal-row="pg-2"] .doc-row-acts')).display;
+    }), 'flex', 'arming reveals the row\'s controls');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-proj-goal="pg-2"]'), false, 'the first tap did not open it');
+    await page.evaluate(tapTitle);
+    await page.waitFor(function () { return !!document.querySelector('[data-proj-goal="pg-2"]'); }, { message: 'the second tap opening it' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
   });
 });

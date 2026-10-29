@@ -10,7 +10,10 @@
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=9"></script>
+  <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/milestone-core.js?v=3"></script>
+  <script src="scripts/goal-core.js?v=1"></script>
+  <script src="scripts/project-core.js?v=1"></script>
   <script src="scripts/calendar-core.js?v=14"></script>
   <script src="scripts/doc-table-core.js?v=4"></script>
   <script src="scripts/schedule-paste-core.js?v=2"></script>
@@ -21,7 +24,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=20">
+  <link rel="stylesheet" href="styles/styles.css?v=21">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -72,6 +75,26 @@
       return next;
     }
 
+    // `goals` is progress.html's too. The Projects tab edits it ONLY through
+    // this: a fresh read of the stored tree, one goal-core.js writer (the
+    // function Progress itself calls) applied to it, and that one key written
+    // back — so an edit Progress made a moment ago is never rebuilt away, and
+    // an open Progress tab adopts this one on the storage event. A writer that
+    // changes nothing returns its input, and then nothing is written at all.
+    // Returns whether the change is stored; a refused write (quota, damaged
+    // database) shows its banner and leaves the stored tree as it was.
+    function _mutateGoals(fn) {
+      const db=_getTrackDB(), slots=db.slots||[];
+      if (!slots.length) return false;
+      const id=(slots.find(s=>s.id===db.activeSlotId)||slots[0]).id;
+      const cur=slots.find(s=>s.id===id);
+      const prev=(cur && Array.isArray(cur.goals)) ? cur.goals : [];
+      const next=fn(prev);
+      if (next === prev) return true;
+      db.slots=slots.map(s=>s.id===id?{...s,goals:next}:s);
+      return TrackStorage.saveDB(db);
+    }
+
     // ── local calendar dates (never toISOString — that is a UTC day) ─────────
 
     function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
@@ -106,18 +129,30 @@
         return id && _readP('docPages', []).some(p => p.id === id) ? id : null;
       } catch { return null; }
     }
+    // ?goal=<goal node id> opens that goal's page in Projects, and ?page= of a
+    // page attached to a goal opens it there too. An unknown id is ignored.
+    function _deepLinkProjSel() {
+      try {
+        const q = new URLSearchParams(location.search);
+        const goalId = q.get('goal');
+        if (goalId) {
+          const n = TrackGoals.findNode(_readP('goals', []), goalId);
+          if (n && !n.isLink) return {kind: 'goal', id: goalId};
+        }
+        const pageId = _deepLinkPageId();
+        if (pageId && TrackProject.projectOf(_readP('docPages', []), pageId) !== null) return {kind: 'page', id: pageId};
+      } catch {}
+      return null;
+    }
+    function _deepLinkTab() { return _deepLinkProjSel() ? 'projects' : 'events'; }
 
     // every page at or under `id`, walked as a fixed point over the flat parentId
     // links (a subtree is not contiguous in the array, so adjacency proves nothing).
     // used both for cascade delete and as the drag cycle guard.
+    // A delegate to project-core.js, which also refuses a sidebar move into a
+    // page's own subtree with it — one walk, not two.
     function docDescendantIds(pages, id) {
-      const set = new Set([id]);
-      let grew = true;
-      while (grew) {
-        grew = false;
-        for (const p of pages) if (!set.has(p.id) && set.has(p.parentId)) { set.add(p.id); grew = true; }
-      }
-      return set;
+      return TrackProject.descendantIds(pages, id);
     }
 
     // ── DB size readout ──────────────────────────────────────────────────────
@@ -2447,6 +2482,1153 @@
       );
     }
 
+    /* ── PROJECTS ────────────────────────────────────────────────────────────
+       The Projects tab draws the goal tree LIVE from the slot's `goals`. A goal
+       or sub-goal IS a page there, found by its node id, and nothing about it
+       is copied into docPages — which is why a sub-goal can be nested,
+       promoted or reordered in Progress, or here, with nothing to keep in
+       step: the page follows the id. Every goal-tree reader and writer used
+       here is goal-core.js's (TrackGoals), the same functions Progress calls,
+       and which documentation pages hang under a goal is project-core.js's
+       (TrackProject). Mind maps are drawn, never edited: `mms` is the
+       Knowledge Record's, and their targets are Progress's to set. */
+
+    // A goal node's sub-goal children (links to a sub-goal included), and
+    // everything else under it, which is that goal's task directory.
+    const subGoalKids = n => ((n && n.children) || []).filter(c => c && c.isSubGoal);
+    const taskKids    = n => ((n && n.children) || []).filter(c => c && !c.isSubGoal);
+
+    const STAGE_TEXT = { 1: 'S1', 2: 'S2', 3: 'S3', 4: 'S4', sir: 'SIR', finished: 'done' };
+    const stageText = s => STAGE_TEXT[s] || (/^sir\d$/.test(s || '') ? 'SIR ' + s.slice(3) : '—');
+    const MM_KIND = { 1: 'Declarative', 2: 'Procedural', anchor: 'Anchor' };
+
+    // "8:30am" from "08:30", for a task block's meta line.
+    function time12(t) {
+      if (!/^\d{2}:\d{2}$/.test(t || '')) return '';
+      const [h, m] = t.split(':').map(Number);
+      return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + (h >= 12 ? 'pm' : 'am');
+    }
+
+    // Which goal-row drops are moves. NEST: anywhere except into itself, its
+    // own subtree (goal-core's writers refuse that too) or the parent it is
+    // already in — re-nesting there would empty the parent of sub-goals for a
+    // moment, and the writer would then fold the parent's own work into a new
+    // "default" sub-goal for a gesture that moved nothing. ARRANGE: beside a
+    // SIBLING only; reorderSibling reorders within one parent and never moves
+    // a goal between parents, which is what nest is for. Read by the mouse
+    // dragover, the touch hit test and the drop alike, so a row lights up
+    // exactly when releasing over it would do something.
+    function goalDropValid(goals, draggedId, targetId, mode) {
+      if (draggedId == null || draggedId === targetId) return false;
+      const dp = TrackGoals.findNodePath(goals, draggedId);
+      const tp = TrackGoals.findNodePath(goals, targetId);
+      if (!dp || !tp) return false;
+      if (tp.some(n => n.id === draggedId)) return false;
+      const parentOf = p => p.length > 1 ? p[p.length - 2].id : null;
+      if (mode === 'nest') return parentOf(dp) !== targetId;
+      return parentOf(dp) === parentOf(tp);
+    }
+
+    // A goal node that sits under another node (a sub-goal), by where it is
+    // in the tree rather than by its isSubGoal flag.
+    function goalIsSub(goals, id) {
+      const p = TrackGoals.findNodePath(goals, id);
+      return !!p && p.length > 1;
+    }
+
+    /* Which drops on a goal's PAGE are moves. One rule, read by the mouse
+       dragover, the finger's hit test and the commit (against a fresh read)
+       alike, so a row lights up exactly when releasing over it would do
+       something. The moves themselves are Progress's own writers, with
+       Progress's meanings: ⠿ onto a row is nestTaskIntoTask (the dragged
+       node becomes the target's last child), ⇅ beside a row is
+       reorderSibling, which reorders within ONE parent and never moves a
+       node between parents — that is what ⠿ is for.
+
+       NEST: anywhere the writer itself would move it, except into its own
+       subtree and except the parent it is already in (that would only send
+       it to the end: an arrange, not a nest). Asking the pure writer is what
+       keeps its milestone refusals — no milestone inside a milestone — the
+       one definition rather than a copy here. */
+    function projNestValid(goals, draggedId, targetId) {
+      if (draggedId == null || draggedId === targetId) return false;
+      const dp = TrackGoals.findNodePath(goals, draggedId);
+      const tp = TrackGoals.findNodePath(goals, targetId);
+      if (!dp || !tp) return false;
+      if (tp.some(n => n.id === draggedId)) return false;
+      if (dp.length > 1 && dp[dp.length - 2].id === targetId) return false;
+      return TrackGoals.nestTaskIntoTask(goals, draggedId, targetId) !== goals;
+    }
+    // ARRANGE: beside a SIBLING only.
+    function projArrangeValid(goals, draggedId, targetId) {
+      if (draggedId == null || draggedId === targetId) return false;
+      const dp = TrackGoals.findNodePath(goals, draggedId);
+      const tp = TrackGoals.findNodePath(goals, targetId);
+      if (!dp || !tp || dp.length < 2 || tp.length < 2) return false;
+      return dp[dp.length - 2].id === tp[tp.length - 2].id;
+    }
+    /* `d` is what is dragged — {rowKind, id, mode}, rowKind one of page /
+       task / ms (a milestone block) / link (a link node, by its own id) / sub
+       — and `rk`, `rid` the row under the pointer, as its data-proj-row says.
+       A PAGE LINK goes anywhere: ⇅ beside any row, ⠿ into a task or a
+       milestone, onto a sub-goal (the page moves to it) or onto another page
+       (it becomes that page's sub-page, the sidebar's ⠿). Nothing else drops
+       on a page link — a node's place is in the goal tree, which holds no
+       pages. A SUB-GOAL nests only into a sub-goal, by the sidebar's rule. */
+    function projDropValid(goals, d, rk, rid) {
+      if (!d || (rk === d.rowKind && rid === String(d.id))) return false;
+      if (d.rowKind === 'page') return d.mode === 'arrange' || ['task', 'ms', 'sub', 'page'].includes(rk);
+      if (rk === 'page') return false;
+      if (d.rowKind === 'sub') return d.mode === 'nest'
+        ? rk === 'sub' && goalDropValid(goals, d.id, rid, 'nest')
+        : goalDropValid(goals, d.id, rid, 'arrange');
+      if (d.mode === 'nest') return ['task', 'ms', 'sub'].includes(rk) && projNestValid(goals, d.id, rid);
+      return projArrangeValid(goals, d.id, rid);
+    }
+
+    // One row of the Projects sidebar: a goal or sub-goal, then its sub-goals,
+    // then the documentation pages attached to it. A LINKED sub-goal is drawn
+    // as an alias row that opens the one original page — never a second page
+    // — and a link back to a goal already on this branch is drawn once and
+    // ends there, the per-path guard every goal-tree walker carries.
+    //
+    // The row carries the Events rows' gestures: ⠿ nests, ⇅ arranges, ＋ adds
+    // a page under the goal, and a page's ⠿ dropped on the row attaches the
+    // page to this goal. `ops` is App's, shared by every row so the recursion
+    // passes one prop.
+    function GoalTreeItem({node, goals, depth, ancestry, sel, collapsed, onToggleCollapse, onSelectGoal, renderPages, ops}) {
+      const path = [...ancestry, node.id];
+      const kids = subGoalKids(node);
+      const pages = renderPages(node.id, depth + 1);
+      const ck = 'g:' + node.id;
+      const isCollapsed = !!collapsed[ck];
+      const active = sel.kind === 'goal' && sel.id === node.id;
+      const indent = n => ({paddingLeft: 'calc(4px + ' + n + ' * var(--doc-indent, 14px))'});
+      const [nestDragOver, setNestDragOver] = useState(false);
+      const [arrangeDragOver, setArrangeDragOver] = useState(null); // null | 'before' | 'after'
+      const tDrop = ops.touchDrop && ops.touchDrop.goalTargetId === node.id ? ops.touchDrop : null;
+      const nestOn = nestDragOver || (tDrop && tDrop.mode === 'nest');
+      const arrangeOn = arrangeDragOver
+        || (tDrop && tDrop.mode === 'arrange' ? (tDrop.before ? 'before' : 'after') : null);
+      const armKey = 'g:' + node.id;
+      // the Events rows' arm model: one tap opens where hover exists; where it
+      // does not, the first tap reveals ⠿ ⇅ ＋ and the second opens
+      function rowTap() {
+        if (!touchPrimary() || ops.armedId === armKey) { onSelectGoal(node.id); return; }
+        ops.onArm(armKey);
+      }
+      const child = k => (
+        <GoalTreeItem key={k.id} node={k} goals={goals} depth={depth + 1} ancestry={path}
+          sel={sel} collapsed={collapsed} onToggleCollapse={onToggleCollapse}
+          onSelectGoal={onSelectGoal} renderPages={renderPages} ops={ops} />
+      );
+      return (
+        <div>
+          <div data-goal-row={node.id} onClick={rowTap} style={indent(depth)}
+            className={"group flex items-center gap-1 rounded px-1 py-0.5 text-xs cursor-pointer "
+              + (active ? 'bg-gray-800 text-gray-100' : 'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')
+              + (ops.armedId === armKey ? ' doc-row-armed' : '')
+              + (nestOn ? ' ring-1 ring-indigo-500 bg-indigo-950/30' : '')
+              + (arrangeOn === 'before' ? ' border-t-2 border-green-500' : arrangeOn === 'after' ? ' border-b-2 border-green-500' : '')}
+            onDragOver={e => {
+              // the payload is unreadable during dragover: sniff the type, and
+              // ask App which goal is in flight
+              const types = e.dataTransfer.types;
+              if (types.includes('application/goal-arrange-id')) {
+                if (!ops.mouseDropOk(node.id, 'arrange')) return;
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                setArrangeDragOver(e.clientY < rect.top + rect.height / 2 ? 'before' : 'after');
+              } else if (types.includes('application/goal-nest-id')) {
+                if (!ops.mouseDropOk(node.id, 'nest')) return;
+                e.preventDefault(); e.stopPropagation(); setNestDragOver(true);
+              } else if (types.includes('application/docpage-nest-id')) {
+                e.preventDefault(); e.stopPropagation(); setNestDragOver(true);
+              }
+            }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) { setNestDragOver(false); setArrangeDragOver(null); } }}
+            onDrop={e => {
+              const dt = e.dataTransfer;
+              const arrangeId = dt.getData('application/goal-arrange-id');
+              const nestId = dt.getData('application/goal-nest-id');
+              const pageId = dt.getData('application/docpage-nest-id');
+              if (arrangeId) {
+                e.preventDefault(); e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                ops.onArrange(arrangeId, node.id, e.clientY < rect.top + rect.height / 2);
+              } else if (nestId) {
+                e.preventDefault(); e.stopPropagation(); ops.onNest(nestId, node.id);
+              } else if (pageId) {
+                e.preventDefault(); e.stopPropagation(); ops.onAttachPage(pageId, node.id);
+              }
+              setNestDragOver(false); setArrangeDragOver(null);
+            }}>
+            <button onClick={e => { e.stopPropagation(); onToggleCollapse(ck); }}
+              className={"doc-row-caret w-3 text-[9px] " + ((kids.length || pages.length) ? 'text-gray-500 hover:text-gray-200' : 'invisible')}>
+              {isCollapsed ? '▸' : '▾'}
+            </button>
+            <span>{depth === 0 ? '🎯' : '◆'}</span>
+            <span className={"flex-1 truncate " + (depth === 0 ? 'font-semibold' : '')}>{node.title || 'Untitled'}</span>
+            <span className="doc-row-acts hidden shrink-0 gap-0.5 group-hover:flex">
+              <span draggable onClick={e => e.stopPropagation()} data-goal-handle="nest"
+                onDragStart={e => { e.dataTransfer.setData('application/goal-nest-id', node.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); ops.onMouseDrag(node.id); }}
+                onDragEnd={() => ops.onMouseDrag(null)}
+                onTouchStart={e => ops.onTouchDragStart(e, 'nest', node, 'goal')}
+                title="Drag onto another goal to make this its sub-goal"
+                className="doc-row-handle cursor-grab select-none rounded px-1 text-gray-500 hover:text-indigo-400">⠿</span>
+              <span draggable onClick={e => e.stopPropagation()} data-goal-handle="arrange"
+                onDragStart={e => { e.dataTransfer.setData('application/goal-arrange-id', node.id); e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); ops.onMouseDrag(node.id); }}
+                onDragEnd={() => ops.onMouseDrag(null)}
+                onTouchStart={e => ops.onTouchDragStart(e, 'arrange', node, 'goal')}
+                title="Drag to reorder among its siblings"
+                className="doc-row-handle cursor-grab select-none rounded px-1 text-gray-500 hover:text-green-400">⇅</span>
+              <button data-goal-add-page={node.id} title="Add a page under this goal"
+                onClick={e => { e.stopPropagation(); ops.onAddPage(node.id); }}
+                className="rounded px-1 text-gray-500 hover:text-white">+</button>
+            </span>
+            {pages.length > 0 && <span className="text-[9px] text-gray-600" title={pages.length + ' attached page' + (pages.length > 1 ? 's' : '')}>📄{pages.length}</span>}
+          </div>
+          {!isCollapsed && (
+            <>
+              {kids.map(k => {
+                if (!k.isLink) return child(k);
+                const orig = TrackGoals.resolveLinkedTask(k, goals);
+                if (!orig) return (
+                  <div key={k.id} style={indent(depth + 1)} className="px-1 py-0.5 text-[11px] italic text-gray-600">↗ linked goal removed</div>
+                );
+                if (path.includes(orig.id)) return (
+                  <div key={k.id} data-goal-loop={k.id} style={indent(depth + 1)} className="px-1 py-0.5 text-[11px] text-amber-400">
+                    ↻ "{orig.title}" is already above — this link loops back
+                  </div>
+                );
+                return (
+                  <div key={k.id} data-goal-alias={orig.id} style={indent(depth + 1)} onClick={() => onSelectGoal(orig.id)}
+                    title="A linked sub-goal — this opens the original"
+                    className="flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-gray-200">
+                    <span className="w-3"></span><span>↗</span><span className="truncate">{orig.title || 'Untitled'}</span>
+                  </div>
+                );
+              })}
+              {pages}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // "＋ task" wherever tasks can be added: a goal's directory, a milestone
+    // area. The new task is minted here (id and time outside the writer) and
+    // filed through addChildAndTransferNotes — Progress's own add.
+    function AddTaskRow({parentId, ctx, label}) {
+      const [open, setOpen] = useState(false);
+      const [title, setTitle] = useState('');
+      const [type, setType] = useState('task');
+      if (!ctx.mutate) return null;
+      if (!open) return (
+        <button data-proj-add-task={parentId} onClick={() => setOpen(true)}
+          className="mt-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-gray-200">＋ {label || 'task'}</button>
+      );
+      const add = () => {
+        const v = title.trim();
+        if (!v) return;
+        const child = {id: genId(), title: v, children: [], completed: false, createdAt: Date.now(), scheduledDate: null, taskType: type};
+        if (ctx.mutate(g => TrackGoals.addChildAndTransferNotes(g, parentId, child))) { setTitle(''); }
+      };
+      return (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <input autoFocus data-proj-add-task-title value={title} onChange={e => setTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') add(); if (e.key === 'Escape') { setOpen(false); setTitle(''); } }}
+            placeholder="New task…" className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-sm text-gray-200 placeholder-gray-600" />
+          <select value={type} onChange={e => setType(e.target.value)} className="rounded border border-gray-700 bg-gray-950 px-1 py-1 text-xs text-gray-300">
+            <option value="task">task</option>
+            <option value="routine">routine</option>
+          </select>
+          <button data-proj-add-task-go disabled={!title.trim()} onClick={add}
+            className="rounded bg-gray-700 px-2 py-1 text-xs text-gray-100 hover:bg-gray-600 disabled:opacity-40">add</button>
+          <button onClick={() => { setOpen(false); setTitle(''); }} className="px-1 text-xs text-gray-500 hover:text-gray-200">✕</button>
+        </div>
+      );
+    }
+
+    // A milestone is drawn as an AREA holding its tasks, never as a task
+    // block. Its dates and state are the owner's milestone definition read
+    // through TrackMilestone.statusOf — the rule the Milestones tab, the
+    // Schedule and every calendar tail read — so "late" cannot mean one
+    // thing here and another there.
+    // The new ids and times a creating goal-core writer is handed: one per
+    // node carrying the target id, as Progress's goalCreations mints them —
+    // the old writers minted once per match, so a duplicated id in stored
+    // data still gets distinct records. Called inside a _mutateGoals updater,
+    // which runs once over a fresh read: not a React updater, never replayed.
+    const goalCreations = (goals, id) =>
+      TrackGoals.flattenAll(goals).filter(n => n && n.id === id).map(() => ({id: genId(), now: Date.now()}));
+
+    // Progress's milestone block record, for a definition placed in a tree.
+    const milestoneBlockFor = def => ({id: genId(), title: def.title, children: [], completed: false,
+      createdAt: Date.now(), scheduledDate: null, taskType: 'milestone', milestoneId: def.id});
+
+    /* A milestone, drawn as a highlighted AREA around its tasks — never as a
+       task block. Its definition lives on its owner (the nearest goal-like
+       node, Progress's own rule), so the area edits the definition: its name,
+       and deleting it. Its DATES are not edited here (the user's 2026-10-29
+       call: no date fields on the goal's page) — they are set in Progress's
+       Milestones tab, the one place a late milestone's moved end is recorded
+       as a slip. What the dates mean still shows: the status label (late,
+       days left), with the dates themselves in its tooltip. */
+    function MilestoneArea({block, def, owner, ctx, children, onPlace, rowKey, handles}) {
+      const st = def ? TrackMilestone.statusOf(owner, def, ctx.goals, ctx.mms, ctx.sirDone, ctx.today) : null;
+      const late = st && st.state === 'overdue';
+      const label = st ? TrackMilestone.label(st) : '';
+      const editable = !!(def && owner && ctx.mutate);
+      const [titleDraft, setTitleDraft] = useState(def ? def.title || '' : '');
+      useEffect(() => { setTitleDraft(def ? def.title || '' : ''); }, [def && def.id, def && def.title]);
+      const span = def && def.startDate && def.endDate
+        ? (def.startDate === def.endDate ? def.startDate : def.startDate + ' → ' + def.endDate) : 'no dates';
+      const hit = rowKey && ctx.hit && ctx.hit.key === rowKey && ctx.hit.mode === 'nest';
+
+      const commitTitle = () => {
+        const v = titleDraft.trim();
+        if (!v) { setTitleDraft(def.title || ''); return; }
+        if (v !== def.title) ctx.mutate(g => TrackGoals.renameMilestoneType(g, owner.id, def.id, v));
+      };
+      const remove = () => {
+        if (!window.confirm(`Delete milestone "${def.title || 'Milestone'}"?\n\nIts tasks are kept: each highlighted area becomes an ordinary task holding them.`)) return;
+        ctx.mutate(g => TrackGoals.deleteMilestoneType(g, owner.id, def.id));
+      };
+
+      return (
+        <div data-proj-milestone={(def && def.id) || (block && block.milestoneId) || ''}
+          className={"my-2 rounded-lg border px-3 pb-2 pt-1.5 "
+            + (late ? 'border-red-700/70 bg-red-950/20' : st && st.state === 'done' ? 'border-emerald-800/60 bg-emerald-950/15' : 'border-cyan-800/60 bg-cyan-950/25')}>
+          <div data-proj-row={rowKey || undefined}
+            className={"group mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded text-[11px]"
+              + (hit ? ' ring-1 ring-indigo-500 bg-indigo-950/30' : '')}>
+            <span title={span + ' — dates are set in Progress → Milestones'} className={late ? 'text-red-300' : 'text-cyan-200'}>⚑</span>
+            {editable ? (
+              <input data-proj-ms-title value={titleDraft} onChange={e => setTitleDraft(e.target.value)}
+                onBlur={commitTitle} onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { setTitleDraft(def.title || ''); } }}
+                size={Math.max(8, Math.min(40, titleDraft.length + 1))}
+                className={"min-w-0 rounded bg-transparent px-0.5 font-semibold outline-none focus:bg-gray-950 " + (late ? 'text-red-300' : 'text-cyan-200')} />
+            ) : (
+              <span className={"font-semibold " + (late ? 'text-red-300' : 'text-cyan-200')}>{(def && def.title) || (block && block.title) || 'Milestone'}</span>
+            )}
+            {st && !st.empty && <span className="text-gray-500">{st.tasks.done}/{st.tasks.total} tasks{st.learn.total ? ` · ${st.learn.met}/${st.learn.total} to-learn` : ''}</span>}
+            {label && <span data-proj-ms-label title={span} className={late ? 'text-red-300' : 'text-gray-500'}>{label}</span>}
+            {editable && (
+              <span className="ml-auto flex items-center gap-1">
+                {handles}
+                {onPlace && (
+                  <button data-proj-ms-place onClick={onPlace} title="Put this milestone in the task list, so tasks can be added inside it"
+                    className="rounded px-1 text-gray-500 hover:text-cyan-200">＋ place</button>
+                )}
+                <button data-proj-ms-delete onClick={remove} title="Delete this milestone (its tasks are kept)"
+                  className="rounded px-1 text-gray-600 hover:text-red-400">✕</button>
+              </span>
+            )}
+          </div>
+          {children}
+        </div>
+      );
+    }
+
+    // ＋ milestone: a new definition on this goal AND its area in the task
+    // list, in one write — Progress makes the two in two steps, but here a
+    // milestone that is not in the list has nowhere to hold tasks.
+    function AddMilestoneRow({owner, ctx}) {
+      const [open, setOpen] = useState(false);
+      const [title, setTitle] = useState('');
+      if (!ctx.mutate) return null;
+      if (!open) return (
+        <button data-proj-add-milestone onClick={() => setOpen(true)}
+          className="mt-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-cyan-200">＋ milestone</button>
+      );
+      const add = () => {
+        const v = title.trim();
+        if (!v) return;
+        const ok = ctx.mutate(g => {
+          const creations = goalCreations(g, owner.id);
+          if (!creations.length) return g;
+          const next = TrackGoals.addMilestoneType(g, owner.id, v, creations);
+          return TrackGoals.addChild(next, owner.id, milestoneBlockFor({id: creations[0].id, title: v}));
+        });
+        if (ok) { setTitle(''); setOpen(false); }
+      };
+      return (
+        <div className="mt-1 flex items-center gap-1.5">
+          <input autoFocus data-proj-add-milestone-title value={title} onChange={e => setTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') add(); if (e.key === 'Escape') setOpen(false); }}
+            placeholder="New milestone…" className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-sm text-gray-200 placeholder-gray-600" />
+          <button data-proj-add-milestone-go disabled={!title.trim()} onClick={add}
+            className="rounded bg-gray-700 px-2 py-1 text-xs text-gray-100 hover:bg-gray-600 disabled:opacity-40">add</button>
+          <button onClick={() => setOpen(false)} className="px-1 text-xs text-gray-500 hover:text-gray-200">✕</button>
+        </div>
+      );
+    }
+
+    /* ⠿ and ⇅ on a row of the goal's page — the sidebar's two gestures, with
+       the sidebar's meanings: ⠿ drops ONTO a row (into it), ⇅ drops BESIDE
+       one (before or after it). `ctx.drag` is App's, shared by the mouse and
+       the finger; hidden until the row is hovered, and always shown where
+       the pointer is a finger (styles.css, `.proj-dir .proj-handles`). */
+    function DragHandles({ctx, item, nest = true, arrange = true, nestTitle, arrangeTitle}) {
+      if (!ctx.drag) return null;
+      const handle = mode => (
+        <span key={mode} draggable data-proj-handle={mode}
+          onClick={e => e.stopPropagation()}
+          onDragStart={e => ctx.drag.mouseStart(e, mode, item)}
+          onDragEnd={ctx.drag.mouseEnd}
+          onTouchStart={e => ctx.drag.touchStart(e, mode, item)}
+          title={mode === 'nest' ? nestTitle : arrangeTitle}
+          className={"doc-row-handle cursor-grab select-none rounded px-1 text-gray-500 "
+            + (mode === 'nest' ? 'hover:text-indigo-400' : 'hover:text-green-400')}>{mode === 'nest' ? '⠿' : '⇅'}</span>
+      );
+      return (
+        <span className="proj-handles hidden shrink-0 items-center gap-0.5 group-hover:flex" onClick={e => e.stopPropagation()}>
+          {nest && handle('nest')}
+          {arrange && handle('arrange')}
+        </span>
+      );
+    }
+
+    // The highlight a row shows while something is dragged over it: a ring
+    // for ⠿ (into it), a line for ⇅ (before or after it).
+    const hitOf = (ctx, key) => (key && ctx.hit && ctx.hit.key === key ? ctx.hit : null);
+    const nestRing = hit => (hit && hit.mode === 'nest' ? ' ring-1 ring-indigo-500 bg-indigo-950/30' : '');
+    const arrangeLine = hit => (!hit || hit.mode !== 'arrange' ? ''
+      : hit.before ? ' border-t-2 border-green-500' : ' border-b-2 border-green-500');
+
+    /* A documentation page attached to this goal, drawn as a LINK in the
+       directory, wherever its place says (project-core.js). ⇅ puts it
+       before or after any row of the page, ⠿ puts it inside a task or a
+       milestone (or onto a sub-goal: the page moves to that sub-goal). */
+    function PageLinkRow({page, ctx}) {
+      const key = 'page:' + page.id;
+      const hit = hitOf(ctx, key);
+      const subs = TrackProject.descendantIds(ctx.docPages, page.id).size - 1;
+      return (
+        <div data-proj-row={key} data-proj-page-link={page.id} onClick={() => ctx.onSelectPage(page.id)}
+          className={"group my-1 flex cursor-pointer items-center gap-2 rounded-md border border-transparent px-3 py-1 text-sm text-sky-300 hover:border-gray-800 hover:bg-gray-900/60"
+            + nestRing(hit) + arrangeLine(hit)}>
+          <span className="shrink-0">{page.icon || '📄'}</span>
+          <span className="min-w-0 flex-1 truncate underline decoration-sky-800 underline-offset-4 group-hover:decoration-sky-400">{page.title || 'Untitled'}</span>
+          {subs > 0 && <span className="shrink-0 text-[10px] text-gray-500" title={subs + ' page' + (subs > 1 ? 's' : '') + ' inside'}>+{subs}</span>}
+          <DragHandles ctx={ctx} item={{rowKind: 'page', id: page.id, title: page.title, icon: page.icon || '📄'}}
+            nestTitle="Drag onto a task or milestone to put this link inside it — onto a sub-goal to move the page there"
+            arrangeTitle="Drag to move this link anywhere on the page — before or after any row" />
+        </div>
+      );
+    }
+
+    // A sub-goal in its parent's directory: a row that opens the sub-goal's
+    // own page. A LINKED sub-goal opens the one original; one that loops
+    // back to a goal already on this branch is drawn and never followed.
+    function SubGoalRow({sub, linkId, loop, ctx, rowKey}) {
+      const resolve = id => TrackGoals.findNode(ctx.goals, id);
+      const sp = !loop && (sub.children || []).length ? TrackMilestone.countLeaves(sub, resolve) : null;
+      const pages = loop ? 0 : TrackProject.pagesForGoal(ctx.docPages, sub.id).length;
+      const hit = hitOf(ctx, rowKey);
+      return (
+        <div data-proj-row={rowKey} data-proj-subgoal={sub.id} aria-disabled={loop || undefined}
+          onClick={() => { if (!loop) ctx.onSelectGoal(sub.id); }}
+          className={"group my-1 flex items-center gap-2 rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 "
+            + (loop ? 'cursor-default opacity-60' : 'cursor-pointer hover:border-gray-600') + nestRing(hit)}>
+          <span className="shrink-0 text-xs text-violet-300">{linkId ? '↗' : '◆'}</span>
+          <span className="min-w-0 flex-1 truncate text-sm text-gray-200">{sub.title || 'Untitled'}</span>
+          {pages > 0 && <span className="shrink-0 text-[10px] text-gray-500" title={pages + ' attached page' + (pages > 1 ? 's' : '')}>📄{pages}</span>}
+          <span className="shrink-0 text-[10px] text-gray-500">
+            {loop ? '↻ already above — this link loops back' : sp && sp.total ? `${sp.done}/${sp.total} tasks done` : 'no tasks yet'}
+          </span>
+          {!loop && (
+            <DragHandles ctx={ctx} item={{rowKind: linkId ? 'link' : 'sub', id: linkId || sub.id, title: sub.title, icon: linkId ? '↗' : '◆'}}
+              nest={!linkId}
+              nestTitle="Drag onto another sub-goal to make this its sub-goal"
+              arrangeTitle="Drag to reorder among its siblings" />
+          )}
+        </div>
+      );
+    }
+
+    /* The goal's directory: its children in stored order — sub-goals as rows,
+       tasks as blocks with their sub-tasks indented under them, milestones as
+       areas — and the goal's page links wherever they are placed
+       (TrackProject.interleave). Each node is drawn with the links that
+       follow it in one wrapper, so ⇅ "after" a row lands below them too,
+       where its line is drawn. `ancestry` is the per-path guard: a link that
+       leads back to a node already on this branch is drawn once, as the ↻
+       row, and not followed. `inLink`: a subtree drawn through a link is the
+       ORIGINAL's, elsewhere — it holds no page links and nothing in it drags. */
+    function TaskDirectory({nodes, parent, owner, ctx, ancestry, indent, inLink}) {
+      const placed = inLink ? [] : placedIn(ctx, parent);
+      const groups = [];
+      let cur = null;
+      TrackProject.interleave(nodes, placed).forEach(it => {
+        if (it.node) { cur = {node: it.node, pages: []}; groups.push(cur); }
+        else if (cur) cur.pages.push(it.page);
+        else groups.push({page: it.page});
+      });
+      const pad = indent ? {marginLeft: 20} : undefined;
+      return groups.map(g => {
+        if (g.page) return <div key={'p:' + g.page.id} style={pad}><PageLinkRow page={g.page} ctx={ctx} /></div>;
+        const n = g.node;
+        const key = inLink ? null : dirKey(n, ctx);
+        const hit = hitOf(ctx, key);
+        return (
+          <div key={n.id} style={pad} className={hit && hit.mode === 'arrange' ? arrangeLine(hit) : ''}>
+            <DirNode node={n} rowKey={key} owner={owner} ctx={ctx} ancestry={ancestry} inLink={inLink} />
+            {g.pages.map(p => <PageLinkRow key={p.id} page={p} ctx={ctx} />)}
+          </div>
+        );
+      });
+    }
+
+    // The links placed in `node`'s list. Only the directory's own node of an
+    // id holds them (TrackProject.directoryOf, first wins): a second node
+    // carrying the same id draws none, so a link is never drawn twice.
+    const placedIn = (ctx, node) => (ctx.places && ctx.dir && node && ctx.dir.get(node.id) === node
+      && ctx.places.get(node.id)) || [];
+
+    // The row kind a node is dragged and dropped as: a sub-goal, a task, a
+    // milestone block, or a LINK node (task or sub-goal) by its own id.
+    function dirKey(n, ctx) {
+      if (n.isLink) return 'link:' + n.id;
+      if (n.isSubGoal) return 'sub:' + n.id;
+      return (TrackGoals.isMilestoneNode(n) ? 'ms:' : 'task:') + n.id;
+    }
+
+    function DirNode({node: n, rowKey, owner, ctx, ancestry, inLink}) {
+      if (n.isLink) {
+        const orig = TrackGoals.resolveLinkedTask(n, ctx.goals);
+        if (!orig) return (
+          <div data-proj-row={rowKey || undefined} className="group my-1 flex items-center gap-2 rounded border border-dashed border-gray-800 px-3 py-1.5 text-xs italic text-gray-600">
+            <span className="flex-1">↗ linked {n.isSubGoal ? 'goal' : 'task'} removed</span>
+            {rowKey && <DragHandles ctx={ctx} item={{rowKind: 'link', id: n.id, title: 'linked task', icon: '↗'}} nest={false} arrangeTitle="Drag to reorder among its siblings" />}
+          </div>
+        );
+        const loop = ancestry.includes(orig.id);
+        if (n.isSubGoal || orig.isSubGoal) return <SubGoalRow sub={orig} linkId={n.id} loop={loop} ctx={ctx} rowKey={rowKey} />;
+        if (loop) return (
+          <div data-proj-loop={n.id} data-proj-row={rowKey || undefined} className="group my-1 flex items-center gap-2 px-3 py-1 text-xs text-amber-400">
+            <span className="flex-1">↻ "{orig.title}" is already above — this link loops back</span>
+            {rowKey && <DragHandles ctx={ctx} item={{rowKind: 'link', id: n.id, title: orig.title, icon: '↻'}} nest={false} arrangeTitle="Drag to reorder among its siblings" />}
+          </div>
+        );
+        return <TaskBlock node={orig} linkId={n.id} rowKey={rowKey} owner={owner} ctx={ctx} ancestry={ancestry} inLink={inLink} />;
+      }
+      if (n.isSubGoal) return <SubGoalRow sub={n} loop={false} ctx={ctx} rowKey={rowKey} />;
+      if (TrackGoals.isMilestoneNode(n)) {
+        const def = (owner && owner.milestones || []).find(m => m && m.id === n.milestoneId) || null;
+        const kids = n.children || [];
+        const inside = inLink ? [] : placedIn(ctx, n);
+        return (
+          <MilestoneArea block={n} def={def} owner={owner} ctx={ctx} rowKey={rowKey}
+            handles={rowKey && <DragHandles ctx={ctx} item={{rowKind: 'ms', id: n.id, title: (def && def.title) || n.title, icon: '⚑'}}
+              nestTitle="Drag onto a task to put this milestone inside it" arrangeTitle="Drag to reorder among its siblings" />}>
+            {kids.length || inside.length
+              ? <TaskDirectory nodes={kids} parent={n} owner={owner} ctx={ctx} ancestry={[...ancestry, n.id]} indent={false} inLink={inLink} />
+              : <div className="py-1 text-[11px] italic text-gray-600">no tasks in this milestone yet</div>}
+            {!inLink && <AddTaskRow parentId={n.id} ctx={ctx} label="task in this milestone" />}
+          </MilestoneArea>
+        );
+      }
+      return <TaskBlock node={n} rowKey={rowKey} owner={owner} ctx={ctx} ancestry={ancestry} inLink={inLink} />;
+    }
+
+    function TaskBlock({node, linkId, rowKey, owner, ctx, ancestry, inLink}) {
+      const kids = node.children || [];
+      const leaf = TrackGoals.isCountableLeaf(node);
+      const done = TrackGoals.isComplete(node, ctx.goals);
+      const resolve = id => TrackGoals.findNode(ctx.goals, id);
+      const prog = kids.length ? TrackMilestone.countLeaves(node, resolve) : null;
+      const routine = node.taskType === 'routine';
+      const when = !routine && node.scheduledDate
+        ? node.scheduledDate + (node.scheduledTime ? ' · ' + time12(node.scheduledTime) : '') : '';
+      const notes = (node.notes || []).length;
+      // a link's subtree is the original's: drawn, never placed into
+      const sub = inLink || !!linkId;
+      const inside = sub ? [] : placedIn(ctx, node);
+      const hit = hitOf(ctx, rowKey);
+      return (
+        <>
+          <div data-proj-task={node.id} data-proj-link={linkId || undefined} data-proj-row={rowKey || undefined}
+            onClick={() => ctx.onOpenTask && ctx.onOpenTask(node.id, linkId || null)}
+            className={"group my-1 flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors "
+              + (done ? 'border-gray-800 bg-gray-900/40 text-gray-500' : 'border-gray-700/80 bg-gray-900 text-gray-200 hover:border-gray-500')
+              + nestRing(hit)}>
+            <span className={"shrink-0 text-xs " + (done ? 'text-emerald-400' : 'text-gray-500')}>
+              {leaf ? (done ? '☑' : '☐') : (prog && prog.total ? prog.done + '/' + prog.total : '▾')}
+            </span>
+            {linkId && <span className="shrink-0 text-xs text-gray-500" title="A linked task — this is the original">↗</span>}
+            <span className={"min-w-0 flex-1 truncate " + (done ? 'line-through' : '')}>{node.title || 'Untitled'}</span>
+            {routine && <span className="shrink-0 rounded bg-amber-500/10 px-1 text-[10px] text-amber-400">routine</span>}
+            {when && <span className="shrink-0 text-[10px] text-gray-500">{when}</span>}
+            {notes > 0 && <span className="shrink-0 text-[10px] text-gray-500" title={notes + ' note' + (notes > 1 ? 's' : '')}>✎{notes}</span>}
+            {rowKey && (
+              <DragHandles ctx={ctx} item={{rowKind: linkId ? 'link' : 'task', id: linkId || node.id, title: node.title, icon: '☐'}}
+                nestTitle="Drag onto another task to make this its sub-task"
+                arrangeTitle="Drag to reorder among its siblings" />
+            )}
+          </div>
+          {(kids.length > 0 || inside.length > 0) && (
+            <TaskDirectory nodes={kids} parent={node} owner={owner} ctx={ctx} ancestry={[...ancestry, node.id]} indent inLink={sub} />
+          )}
+        </>
+      );
+    }
+
+    // The goal's mind maps, drawn read-only: phase, level, and the target the
+    // goal sets, all read through milestone-core.js (a Procedural mind map is
+    // judged by its level alone). Editing a mind map or its target is the
+    // Knowledge Record's and Progress's job, which is why each row links out.
+    function ToLearnTree({entries, goal, ctx, depth}) {
+      return entries.map(({mm, children}) => {
+        const target = TrackMilestone.targetFor(mm, ((goal.mmTargets || {})[mm.id]));
+        const hasTarget = !!(target && (target.stage || target.level || (target.milestones || []).length));
+        const met = hasTarget && TrackMilestone.targetMet(mm, target, ctx.sirDone);
+        const last = hasTarget && (target.milestones || []).length ? target.milestones[target.milestones.length - 1] : target;
+        const goalText = hasTarget ? [last.stage && stageText(last.stage), last.level && 'L' + last.level].filter(Boolean).join(' · ') : '';
+        return (
+          <React.Fragment key={mm.id}>
+            <div data-proj-mm={mm.id} style={{marginLeft: depth * 20}}
+              className="my-0.5 flex items-center gap-2 rounded px-2 py-1 text-xs text-gray-300">
+              <span className="text-gray-500">◎</span>
+              <a href={'sir-ks02.html?mm=' + encodeURIComponent(mm.id)} className="min-w-0 flex-1 truncate hover:text-white hover:underline"
+                title="Open in the Knowledge Record">{mm.name || 'Untitled mind map'}</a>
+              <span className="shrink-0 text-[10px] text-gray-600">{MM_KIND[mm.type] || ''}</span>
+              {mm.type !== 'anchor' && (
+                <span className="shrink-0 text-[10px] text-gray-500">
+                  {TrackMilestone.isProcedural(mm) ? '' : stageText(TrackMilestone.stageOf(mm)) + ' · '}L{mm.rating || 0}
+                </span>
+              )}
+              {hasTarget && (
+                <span className={"shrink-0 rounded px-1 text-[10px] " + (met ? 'bg-emerald-500/10 text-emerald-400' : 'bg-gray-800 text-gray-400')}>
+                  {met ? '✓ ' : '→ '}{goalText}
+                </span>
+              )}
+            </div>
+            {children.length > 0 && <ToLearnTree entries={children} goal={goal} ctx={ctx} depth={depth + 1} />}
+          </React.Fragment>
+        );
+      });
+    }
+
+    // A goal's title, edited in place. Commits on leaving the field; a blank
+    // title is refused and the stored one comes back, as in Progress.
+    function GoalTitle({node, ctx}) {
+      const [v, setV] = useState(node.title || '');
+      useEffect(() => { setV(node.title || ''); }, [node.id, node.title]);
+      const commit = () => {
+        const t = v.trim();
+        if (!t) { setV(node.title || ''); return; }
+        if (t !== node.title) ctx.mutate(g => TrackGoals.updateTitle(g, node.id, t));
+      };
+      return (
+        <input data-proj-title value={v} onChange={e => setV(e.target.value)} onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }} placeholder="Untitled"
+          className="min-w-0 flex-1 bg-transparent text-4xl font-bold text-gray-100 outline-none placeholder-gray-700" />
+      );
+    }
+
+    // "＋ sub-goal". addSubGoalAndMigrateTasks is Progress's own add, and its
+    // rule is said BEFORE the click: a goal that already holds work hands all
+    // of it — tasks, to-learn, milestones, and the quest flags that travel
+    // with to-learn — to its first sub-goal.
+    function AddSubGoalRow({node, ctx}) {
+      const [open, setOpen] = useState(false);
+      const [title, setTitle] = useState('');
+      const firstWithWork = subGoalKids(node).length === 0
+        && (taskKids(node).length > 0 || (node.toLearn || []).length > 0 || (node.milestones || []).length > 0);
+      if (!open) return (
+        <button data-proj-add-subgoal onClick={() => setOpen(true)}
+          className="mt-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-violet-300">＋ sub-goal</button>
+      );
+      const add = () => {
+        const v = title.trim();
+        if (!v) return;
+        const sub = {id: genId(), title: v, children: [], completed: false, createdAt: Date.now(),
+                     scheduledDate: null, isSubGoal: true, toLearn: [], mmTargets: {}, milestones: []};
+        if (ctx.mutate(g => TrackGoals.addSubGoalAndMigrateTasks(g, node.id, sub))) { setTitle(''); setOpen(false); }
+      };
+      return (
+        <div className="w-full rounded border border-gray-800 bg-gray-900/60 p-2">
+          <div className="flex items-center gap-1.5">
+            <input autoFocus data-proj-add-subgoal-title value={title} onChange={e => setTitle(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') add(); if (e.key === 'Escape') setOpen(false); }}
+              placeholder="New sub-goal…" className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-sm text-gray-200 placeholder-gray-600" />
+            <button data-proj-add-subgoal-go disabled={!title.trim()} onClick={add}
+              className="rounded bg-gray-700 px-2 py-1 text-xs text-gray-100 hover:bg-gray-600 disabled:opacity-40">add</button>
+            <button onClick={() => setOpen(false)} className="px-1 text-xs text-gray-500 hover:text-gray-200">✕</button>
+          </div>
+          {firstWithWork && (
+            <div className="mt-1 text-[11px] text-amber-300/90">
+              This {node.isSubGoal ? 'sub-goal' : 'goal'}'s tasks, to-learn and milestones will move into the new sub-goal — Progress's rule for a first sub-goal.
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function GoalPage({goalId, ctx: baseCtx, docPages, onSelectGoal, onSelectPage, onAddPage}) {
+      const goals = baseCtx.goals;
+      const node = TrackGoals.findNode(goals, goalId);
+      if (!node || node.isLink) return (
+        <div data-proj-missing className="flex h-full items-center justify-center p-6 text-center text-xs text-gray-600">
+          This goal is not in your goals any more — it was deleted, here or in Progress.
+        </div>
+      );
+      const path = TrackGoals.findNodePath(goals, goalId) || [node];
+      const ancestors = path.slice(0, -1);
+      const resolve = id => TrackGoals.findNode(goals, id);
+      const subs = subGoalKids(node);
+      const tasks = taskKids(node);
+      const prog = (node.children || []).length ? TrackMilestone.countLeaves(node, resolve) : null;
+      const pct = prog && prog.total ? Math.round(prog.done / prog.total * 100) : null;
+      const auto = TrackGoals.computeMMAutoComplete(node, baseCtx.mms, baseCtx.sirDone);
+      // where this goal's page links are drawn, per list (project-core.js)
+      const ctx = {...baseCtx, docPages, onSelectGoal, onSelectPage,
+        places: TrackProject.placesFor(docPages, node), dir: TrackProject.directoryOf(node)};
+      // Milestones defined on this goal that no block in its tree uses yet.
+      // They are still the goal's milestones, so they are drawn — empty.
+      const used = new Set(TrackGoals.flattenAll(tasks).filter(TrackGoals.isMilestoneNode).map(n => n.milestoneId));
+      const unplaced = (node.milestones || []).filter(m => m && !used.has(m.id));
+      const learn = TrackGoals.buildToLearnTree(node.toLearn || [], ctx.mms);
+      const section = "mb-2 mt-8 text-[10px] font-bold uppercase tracking-widest text-gray-600";
+      const empty = (node.children || []).filter(Boolean).length === 0 && unplaced.length === 0
+        && TrackProject.pagesForGoal(docPages, node.id).length === 0;
+      return (
+        <div data-proj-goal={node.id}>
+          <div className="docs-toolbar mb-2 flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
+            {ancestors.map(a => (
+              <React.Fragment key={a.id}>
+                <button onClick={() => onSelectGoal(a.id)} className="hover:text-gray-200">{a === path[0] ? '🎯' : '◆'} {a.title || 'Untitled'}</button>
+                <span>/</span>
+              </React.Fragment>
+            ))}
+            <span className="text-gray-400">{ancestors.length ? '◆' : '🎯'} {node.title || 'Untitled'}</span>
+            <a href="progress.html#goals" className="ml-auto rounded border border-gray-800 px-2 py-0.5 hover:border-gray-600 hover:text-gray-200">↗ Progress</a>
+          </div>
+          <div className="mb-1 flex items-baseline gap-3">
+            <GoalTitle node={node} ctx={ctx} />
+            {pct !== null && <span className="shrink-0 text-sm text-gray-400">{pct}%</span>}
+          </div>
+          <div className="mb-2 text-[11px] text-gray-500">
+            {ancestors.length ? 'Sub-goal' : 'Goal'}
+            {prog && prog.total ? ` · ${prog.done}/${prog.total} tasks done` : ''}
+            {auto !== null ? ` · mind-map targets ${auto ? 'all met' : 'not all met'}` : ''}
+          </div>
+
+          {/* ONE directory: sub-goals, tasks, milestones and this goal's page
+              links, in the order they are stored — the links wherever they
+              were placed. ⠿ and ⇅ on any row move it; drops are delegated
+              here, to App's ctx.drag, so the mouse and a finger answer every
+              drop with the same rule. */}
+          <div className={section}>Directory</div>
+          <div data-proj-tasks data-proj-dir className="proj-dir"
+            onDragOver={e => ctx.drag && ctx.drag.mouseOver(e)}
+            onDragLeave={e => { if (ctx.drag && !e.currentTarget.contains(e.relatedTarget)) ctx.drag.mouseLeave(); }}
+            onDrop={e => ctx.drag && ctx.drag.mouseDrop(e)}>
+            {empty && <div className="text-xs text-gray-600">Nothing here yet — add a sub-goal, a task or a page below.</div>}
+            <TaskDirectory nodes={node.children || []} parent={node} owner={node} ctx={ctx}
+              ancestry={path.map(n => n.id)} indent={false} inLink={false} />
+            {unplaced.map(def => (
+              <MilestoneArea key={def.id} def={def} owner={node} ctx={ctx}
+                onPlace={() => ctx.mutate(g => TrackGoals.addChild(g, node.id, milestoneBlockFor(def)))}>
+                <div className="py-1 text-[11px] italic text-gray-600">not in the task list yet — ＋ place it to add tasks inside</div>
+              </MilestoneArea>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap items-start gap-1">
+            <AddSubGoalRow node={node} ctx={ctx} />
+            {subs.length === 0 && <AddTaskRow parentId={node.id} ctx={ctx} />}
+            {subs.length === 0 && <AddMilestoneRow owner={node} ctx={ctx} />}
+            <button data-proj-add-page onClick={() => onAddPage(node.id)} title="A new documentation page, linked here"
+              className="mt-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-sky-300">＋ page</button>
+          </div>
+
+          {learn.length > 0 && (
+            <>
+              <div className={section}>To learn</div>
+              <div data-proj-learn>
+                <ToLearnTree entries={learn} goal={node} ctx={ctx} depth={0} />
+              </div>
+            </>
+          )}
+
+          {ctx.mutate && (
+            <div className="mt-12 border-t border-gray-800/70 pt-3">
+              <button data-proj-delete-goal className="text-xs text-gray-600 hover:text-red-400"
+                onClick={() => {
+                  // Everything under this goal goes with it, as in Progress.
+                  // The documentation pages attached anywhere in it do NOT:
+                  // `docPages` is not part of the goal tree, and those pages
+                  // are listed under Detached, where they can be re-attached.
+                  const inside = TrackGoals.flattenAll([node]).filter(n => n && !n.isLink);
+                  const subN = inside.filter(n => n !== node && n.isSubGoal).length;
+                  const taskN = inside.filter(n => n !== node && !n.isSubGoal && !TrackGoals.isMilestoneNode(n)).length;
+                  const pageN = inside.reduce((a, n) => a + TrackProject.pagesForGoal(docPages, n.id).length, 0);
+                  const what = [subN && `${subN} sub-goal${subN > 1 ? 's' : ''}`, taskN && `${taskN} task${taskN > 1 ? 's' : ''}`].filter(Boolean).join(' and ');
+                  const msg = `Delete "${node.title || 'Untitled'}"${what ? ` and its ${what}` : ''}? This cannot be undone.`
+                    + (pageN ? `\n\n${pageN} documentation page${pageN > 1 ? 's' : ''} attached here will be KEPT, listed under "Detached — goal deleted", where ${pageN > 1 ? 'they' : 'it'} can be attached to another goal or moved to Events.` : '');
+                  if (!window.confirm(msg)) return;
+                  const parent = ancestors.length ? ancestors[ancestors.length - 1] : null;
+                  if (ctx.mutate(g => TrackGoals.deleteNode(g, node.id))) ctx.onGoalDeleted(parent ? parent.id : null);
+                }}>delete this {ancestors.length ? 'sub-goal' : 'goal'}</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+
+    /* The task window: one task, centred over a dimmed page, everything about
+       it editable. Every field commits as it is left (or on Enter), so closing
+       it — ✕, Escape, a click outside — never loses anything. It finds the
+       task BY ID on every render, so a task moved in another tab is followed
+       there, and one deleted there is reported rather than written to (the
+       goal-core.js writers are no-ops on a missing id anyway). Every write is
+       `mutate`, i.e. _mutateGoals: a fresh read of the stored tree.
+
+       Opened from a LINK block, it edits the ORIGINAL — the one record — and
+       says so; "unlink" removes only the link. */
+    function TaskModal({taskId, linkId, ctx, mutate, onOpenTask, onClose}) {
+      const goals = ctx.goals;
+      const node = TrackGoals.findNode(goals, taskId);
+      const path = node ? (TrackGoals.findNodePath(goals, taskId) || [node]) : [];
+      const parent = path.length > 1 ? path[path.length - 2] : null;
+      const [title, setTitle] = useState(node ? node.title || '' : '');
+      const [durDraft, setDurDraft] = useState(node ? String(node.duration || 60) : '60');
+      const [noteDraft, setNoteDraft] = useState({title: '', detail: ''});
+      const [editingNote, setEditingNote] = useState(null);
+      const [kidTitle, setKidTitle] = useState('');
+      const [kidType, setKidType] = useState('task');
+      const [moveTo, setMoveTo] = useState('');
+      const [askDelete, setAskDelete] = useState(false);
+      const [notice, setNotice] = useState('');
+
+      // Follow the stored values when they change underneath (another tab).
+      useEffect(() => { setTitle(node ? node.title || '' : ''); }, [taskId, node && node.title]);
+      useEffect(() => { setDurDraft(node ? String(node.duration || 60) : '60'); }, [taskId, node && node.duration]);
+      /* Every way OUT commits what is typed. A field commits on blur, but
+         Escape and the backdrop close the window without moving focus — and
+         a focused input removed from the page fires no blur — so a title
+         typed and then dismissed would be silently dropped. `flushRef` holds
+         this render's commits; the delete paths close WITHOUT it, since the
+         node they would write to is gone. */
+      const flushRef = useRef(null);
+      const close = () => { if (flushRef.current) flushRef.current(); onClose(); };
+      const closeRef = useRef(close);
+      closeRef.current = close;
+      useEffect(() => {
+        const onKey = e => { if (e.key === 'Escape') closeRef.current(); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+      }, []);
+
+      // `moved`: the node a move moves, so the page links beside it stay put
+      const write = (fn, moved) => {
+        const ok = mutate(fn, moved);
+        setNotice(ok ? '' : 'Not saved — the database refused the write (see the banner). Nothing was changed.');
+        return ok;
+      };
+
+      const crumb = (
+        <div className="flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
+          {path.slice(0, -1).map((n, i) => (
+            <React.Fragment key={n.id + ':' + i}>
+              {n.isSubGoal || i === 0
+                ? <span>{i === 0 ? '🎯' : '◆'} {n.title || 'Untitled'}</span>
+                : TrackGoals.isMilestoneNode(n)
+                  ? <span className="text-cyan-300">⚑ {n.title || 'Milestone'}</span>
+                  : <button className="hover:text-gray-200 hover:underline" onClick={() => onOpenTask(n.id)}>{n.title || 'Untitled'}</button>}
+              <span>/</span>
+            </React.Fragment>
+          ))}
+        </div>
+      );
+
+      let body;
+      if (!node) {
+        flushRef.current = null;
+        body = (
+          <div data-task-missing className="py-8 text-center text-sm text-gray-400">
+            This task is not in your goals any more — it was deleted, here or in another tab.
+          </div>
+        );
+      } else {
+        const leaf = TrackGoals.isCountableLeaf(node);
+        const routine = node.taskType === 'routine';
+        const kids = node.children || [];
+        const resolve = id => TrackGoals.findNode(goals, id);
+        const prog = kids.length ? TrackMilestone.countLeaves(node, resolve) : null;
+        const notes = node.notes || [];
+        const siblings = parent ? (parent.children || []) : [];
+        const si = siblings.findIndex(c => c && c.id === node.id);
+        const moveOptions = TrackGoals.taskParentOptions(goals, goals)
+          .filter(o => o.id !== node.id && o.id !== (parent && parent.id) && !TrackGoals.containsId(kids, o.id));
+        const realKids = kids.filter(c => c && !c.isLink).length;
+
+        const commitTitle = () => {
+          const v = title.trim();
+          if (!v) { setTitle(node.title || ''); return; }
+          if (v !== node.title) write(g => TrackGoals.updateTitle(g, node.id, v));
+        };
+        const commitDur = () => {
+          const n = Math.round(Number(durDraft));
+          if (!Number.isFinite(n) || n < 5 || n > 1440) { setDurDraft(String(node.duration || 60)); return; }
+          if (n !== (node.duration || 60)) write(g => TrackGoals.updateTaskProps(g, node.id, {duration: n}));
+        };
+        flushRef.current = () => { commitTitle(); if (!routine) commitDur(); };
+        const addKid = () => {
+          const v = kidTitle.trim();
+          if (!v) return;
+          const child = {id: genId(), title: v, children: [], completed: false, createdAt: Date.now(),
+                         scheduledDate: null, taskType: kidType};
+          if (write(g => TrackGoals.addChildAndTransferNotes(g, node.id, child))) { setKidTitle(''); setKidType('task'); }
+        };
+        const deleteKid = c => {
+          if (c.isLink) {
+            if (window.confirm('Remove this linked task from the goal tree?\n\nThe original task is not deleted — only the link here goes.'))
+              write(g => TrackGoals.deleteNode(g, c.id));
+            return;
+          }
+          const n = (c.children || []).filter(x => x && !x.isLink).length;
+          if (n) { onOpenTask(c.id); return; }   // its own window asks which kind of delete
+          if (window.confirm(`Delete "${c.title}"?`)) write(g => TrackGoals.deleteNode(g, c.id));
+        };
+        const del = keepChildren => {
+          const ok = write(g => keepChildren ? TrackGoals.deleteNodeKeepChildren(g, node.id) : TrackGoals.deleteNode(g, node.id));
+          setAskDelete(false);
+          if (ok) onClose();
+        };
+        const section = "mb-1.5 mt-5 text-[10px] font-bold uppercase tracking-widest text-gray-500";
+
+        body = (
+          <>
+            {linkId && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 rounded border border-sky-900/60 bg-sky-950/30 px-2 py-1.5 text-[11px] text-sky-200">
+                <span>↗ This is a linked task — you are editing the original, which every link to it shows.</span>
+                <button data-task-unlink className="ml-auto rounded border border-sky-800 px-2 py-0.5 hover:border-sky-500"
+                  onClick={() => {
+                    if (!window.confirm('Remove this linked task from the goal tree?\n\nThe original task is not deleted — only the link here goes.')) return;
+                    if (write(g => TrackGoals.deleteNode(g, linkId))) onClose();
+                  }}>unlink from here</button>
+              </div>
+            )}
+            <div className="flex items-start gap-3">
+              {leaf ? (
+                <button data-task-tick aria-pressed={!!node.completed} title={node.completed ? 'Mark not done' : 'Mark done'}
+                  onClick={() => write(g => TrackGoals.toggleLeaf(g, node.id))}
+                  className={"mt-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded border text-sm "
+                    + (node.completed ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300' : 'border-gray-600 text-transparent hover:border-gray-400')}>✓</button>
+              ) : (
+                <span className="mt-2 shrink-0 text-xs text-gray-500" title="Done when every sub-task is">{prog && prog.total ? prog.done + '/' + prog.total : '—'}</span>
+              )}
+              <input data-task-title value={title} onChange={e => setTitle(e.target.value)}
+                onBlur={commitTitle} onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                className="min-w-0 flex-1 bg-transparent text-2xl font-bold text-gray-100 outline-none" />
+            </div>
+            <div className="mt-1 text-[11px] text-gray-500">
+              {routine ? 'Routine task' : TrackGoals.isMilestoneNode(node) ? 'Milestone' : 'Task'}
+              {!leaf && ' · done when every sub-task is'}
+            </div>
+
+            {routine ? (
+              <div className="mt-4 text-xs text-gray-500">
+                A routine's days are set on the <a href="progress.html#schedule" className="text-cyan-300 underline">Schedule</a>.
+              </div>
+            ) : (
+              <>
+                {/* No date field (the user's 2026-10-29 call: no "mm/dd/yyyy
+                    detail" in Projects): a task's DAY is set on the Schedule,
+                    as a routine's days are. Its time and length, once it has
+                    a day, are still edited here. */}
+                <div className={section}>When</div>
+                <div data-task-when className="flex flex-wrap items-center gap-2 text-xs">
+                  {node.scheduledDate ? (
+                    <>
+                      <input data-task-time type="time" value={node.scheduledTime || ''}
+                        onChange={e => { if (/^\d{2}:\d{2}$/.test(e.target.value)) write(g => TrackGoals.updateTaskProps(g, node.id, {scheduledTime: e.target.value})); }}
+                        className="rounded border border-gray-700 bg-gray-950 px-2 py-1 text-gray-200" />
+                      <label className="flex items-center gap-1 text-gray-500">
+                        <input data-task-duration type="number" min="5" max="1440" step="5" value={durDraft}
+                          onChange={e => setDurDraft(e.target.value)} onBlur={commitDur}
+                          onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                          className="w-20 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-gray-200" /> min
+                      </label>
+                      <span className="text-gray-500">— its day is set on the <a href="progress.html#schedule" className="text-cyan-300 underline">Schedule</a></span>
+                    </>
+                  ) : (
+                    <span className="text-gray-500">Not on a day yet — put it on one on the <a href="progress.html#schedule" className="text-cyan-300 underline">Schedule</a>.</span>
+                  )}
+                </div>
+              </>
+            )}
+
+            {(leaf || notes.length > 0) && (
+              <>
+                <div className={section}>Notes</div>
+                <div data-task-notes className="space-y-1.5">
+                  {notes.map(nt => editingNote && editingNote.id === nt.id ? (
+                    <div key={nt.id} className="rounded border border-indigo-600 bg-gray-950 p-2">
+                      <input value={editingNote.title} onChange={e => setEditingNote({...editingNote, title: e.target.value})}
+                        className="w-full bg-transparent text-sm font-semibold text-gray-100 outline-none" />
+                      <AutoTextarea value={editingNote.detail} onChange={e => setEditingNote({...editingNote, detail: e.target.value})}
+                        placeholder="Details…" className="w-full resize-none bg-transparent text-xs text-gray-300 outline-none" />
+                      <div className="mt-1 flex justify-end gap-2 text-[11px]">
+                        <button className="text-gray-500 hover:text-gray-200" onClick={() => setEditingNote(null)}>cancel</button>
+                        <button disabled={!editingNote.title.trim()} className="rounded bg-indigo-600 px-2 py-0.5 text-white disabled:opacity-40"
+                          onClick={() => {
+                            if (write(g => TrackGoals.updateNoteInTask(g, node.id, nt.id, {title: editingNote.title.trim(), detail: editingNote.detail.trim()})))
+                              setEditingNote(null);
+                          }}>save</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={nt.id} data-task-note={nt.id} className="group relative rounded border border-gray-800 bg-gray-950/60 px-2 py-1.5">
+                      <div className="pr-12 text-sm font-semibold text-indigo-200">📌 {nt.title}</div>
+                      {nt.detail && <div className="mt-0.5 whitespace-pre-wrap text-xs text-gray-400">{nt.detail}</div>}
+                      <div className="absolute right-1 top-1 flex gap-1 text-xs">
+                        <button title="Edit note" className="px-1 text-gray-500 hover:text-gray-200"
+                          onClick={() => setEditingNote({id: nt.id, title: nt.title || '', detail: nt.detail || ''})}>✎</button>
+                        <button data-task-note-delete={nt.id} title="Delete note" className="px-1 text-gray-500 hover:text-red-400"
+                          onClick={() => { if (window.confirm('Delete this note?')) write(g => TrackGoals.removeNoteFromTask(g, node.id, nt.id)); }}>×</button>
+                      </div>
+                    </div>
+                  ))}
+                  {leaf && (
+                    <div className="rounded border border-dashed border-gray-700 p-2">
+                      <input data-task-note-title value={noteDraft.title} onChange={e => setNoteDraft({...noteDraft, title: e.target.value})}
+                        placeholder="New note title…" className="w-full bg-transparent text-sm text-gray-100 outline-none placeholder-gray-600" />
+                      <AutoTextarea value={noteDraft.detail} onChange={e => setNoteDraft({...noteDraft, detail: e.target.value})}
+                        placeholder="Details…" className="w-full resize-none bg-transparent text-xs text-gray-300 outline-none placeholder-gray-600" />
+                      <div className="flex justify-end">
+                        <button data-task-note-add disabled={!noteDraft.title.trim()}
+                          className="rounded bg-indigo-600 px-2 py-0.5 text-[11px] text-white disabled:opacity-40"
+                          onClick={() => {
+                            const note = {id: genId(), title: noteDraft.title.trim(), detail: noteDraft.detail.trim(), createdAt: Date.now()};
+                            if (write(g => TrackGoals.addNoteToTask(g, node.id, note))) setNoteDraft({title: '', detail: ''});
+                          }}>add note</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            <div className={section}>Sub-tasks</div>
+            <div data-task-kids className="space-y-1">
+              {kids.map(c => {
+                if (!c) return null;
+                const orig = c.isLink ? TrackGoals.resolveLinkedTask(c, goals) : c;
+                if (!orig) return (
+                  <div key={c.id} className="flex items-center gap-2 rounded px-2 py-1 text-xs italic text-gray-600">
+                    <span className="flex-1">↗ linked task removed</span>
+                    <button className="not-italic hover:text-red-400" onClick={() => deleteKid(c)}>×</button>
+                  </div>
+                );
+                if (TrackGoals.isMilestoneNode(orig)) return (
+                  <div key={c.id} className="rounded border border-cyan-900/60 bg-cyan-950/20 px-2 py-1 text-xs text-cyan-200">⚑ {orig.title || 'Milestone'}</div>
+                );
+                const kidLeaf = TrackGoals.isCountableLeaf(orig);
+                return (
+                  <div key={c.id} data-task-kid={orig.id} className="flex items-center gap-2 rounded border border-gray-800 bg-gray-950/60 px-2 py-1 text-sm">
+                    {kidLeaf && !c.isLink ? (
+                      <button aria-pressed={!!orig.completed} onClick={() => write(g => TrackGoals.toggleLeaf(g, orig.id))}
+                        className={"text-xs " + (orig.completed ? 'text-emerald-400' : 'text-gray-500 hover:text-gray-200')}>{orig.completed ? '☑' : '☐'}</button>
+                    ) : <span className="text-xs text-gray-600">{c.isLink ? '↗' : '▾'}</span>}
+                    <button className={"min-w-0 flex-1 truncate text-left hover:underline " + (TrackGoals.isComplete(orig, goals) ? 'text-gray-500 line-through' : 'text-gray-200')}
+                      onClick={() => onOpenTask(orig.id, c.isLink ? c.id : null)}>{orig.title || 'Untitled'}</button>
+                    <button title={c.isLink ? 'Unlink' : 'Delete'} className="px-1 text-xs text-gray-500 hover:text-red-400" onClick={() => deleteKid(c)}>×</button>
+                  </div>
+                );
+              })}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <input data-task-kid-title value={kidTitle} onChange={e => setKidTitle(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') addKid(); }}
+                  placeholder="New sub-task…" className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-sm text-gray-200 placeholder-gray-600" />
+                <select value={kidType} onChange={e => setKidType(e.target.value)}
+                  className="rounded border border-gray-700 bg-gray-950 px-1 py-1 text-xs text-gray-300">
+                  <option value="task">task</option>
+                  <option value="routine">routine</option>
+                </select>
+                <button data-task-kid-add disabled={!kidTitle.trim()} onClick={addKid}
+                  className="rounded bg-gray-700 px-2 py-1 text-xs text-gray-100 hover:bg-gray-600 disabled:opacity-40">add</button>
+              </div>
+              {kids.length === 0 && notes.length > 0 && (
+                <div className="text-[11px] text-gray-500">This task's notes move to its first sub-task — the rule Progress follows.</div>
+              )}
+            </div>
+
+            <div className={section}>Move</div>
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <button data-task-up disabled={si <= 0} title="Move up among its siblings"
+                onClick={() => write(g => TrackGoals.reorderSibling(g, node.id, siblings[si - 1].id, true), [node.id])}
+                className="rounded border border-gray-700 px-2 py-1 text-gray-300 hover:border-gray-500 disabled:opacity-30">↑</button>
+              <button data-task-down disabled={si < 0 || si >= siblings.length - 1} title="Move down among its siblings"
+                onClick={() => write(g => TrackGoals.reorderSibling(g, node.id, siblings[si + 1].id, false), [node.id])}
+                className="rounded border border-gray-700 px-2 py-1 text-gray-300 hover:border-gray-500 disabled:opacity-30">↓</button>
+              <select data-task-move value={moveTo} onChange={e => setMoveTo(e.target.value)}
+                className="min-w-0 max-w-[16rem] flex-1 rounded border border-gray-700 bg-gray-950 px-1 py-1 text-gray-300">
+                <option value="">Move under…</option>
+                {moveOptions.map(o => (
+                  <option key={o.id} value={o.id}>{String.fromCharCode(160, 160).repeat(o.depth)}{o.isMilestone ? '⚑ ' : ''}{o.title}</option>
+                ))}
+              </select>
+              <button data-task-move-go disabled={!moveTo}
+                onClick={() => {
+                  // re-asked of the FRESH tree: a destination deleted in
+                  // another tab since it was picked would make the writer
+                  // drop this task — the goal page's drops ask the same
+                  let refused = false;
+                  const ok = write(g => {
+                    if (projNestValid(g, node.id, moveTo)) return TrackGoals.nestTaskIntoTask(g, node.id, moveTo);
+                    refused = true;
+                    return g;
+                  }, [node.id]);
+                  if (refused) setNotice('Not moved — your goals changed in another tab, and that move no longer fits. Nothing was changed.');
+                  else if (ok) setMoveTo('');
+                }}
+                className="rounded bg-gray-700 px-2 py-1 text-gray-100 hover:bg-gray-600 disabled:opacity-40">move</button>
+            </div>
+
+            <div className="mt-6 flex items-center justify-between border-t border-gray-800 pt-3">
+              {askDelete ? (
+                <div data-task-delete-choice className="flex flex-wrap gap-2 text-xs">
+                  <span className="w-full text-gray-400">"{node.title}" has {realKids} sub-task{realKids > 1 ? 's' : ''}.</span>
+                  <button className="rounded bg-gray-700 px-2 py-1 text-gray-100 hover:bg-gray-600" onClick={() => del(true)}>Delete only this task (keep sub-tasks)</button>
+                  <button className="rounded bg-red-900/60 px-2 py-1 text-red-200 hover:bg-red-800" onClick={() => del(false)}>Delete it and all sub-tasks</button>
+                  <button className="rounded px-2 py-1 text-gray-400 hover:text-gray-200" onClick={() => setAskDelete(false)}>Cancel</button>
+                </div>
+              ) : (
+                <button data-task-delete className="text-xs text-gray-500 hover:text-red-400"
+                  onClick={() => {
+                    if (realKids) { setAskDelete(true); return; }
+                    if (window.confirm(`Delete "${node.title}"?`)) del(false);
+                  }}>delete task</button>
+              )}
+              <button className="rounded bg-gray-700 px-3 py-1 text-xs text-gray-100 hover:bg-gray-600" onClick={close}>done</button>
+            </div>
+          </>
+        );
+      }
+
+      return (
+        <div data-task-modal={taskId} className="proj-modal fixed inset-0 z-[55] flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={e => { if (e.target === e.currentTarget) close(); }}>
+          <div role="dialog" aria-modal="true" aria-label={node ? node.title : 'Task'}
+            className="proj-modal-card flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
+            <div className="flex items-center gap-2 border-b border-gray-800 px-4 py-2">
+              <div className="min-w-0 flex-1">{crumb}</div>
+              <button data-task-close aria-label="Close" onClick={close} className="rounded px-2 py-1 text-gray-500 hover:bg-gray-800 hover:text-white">✕</button>
+            </div>
+            <div className="overflow-y-auto px-4 pb-4 pt-3 font-sans">
+              {notice && <div data-task-notice className="mb-2 rounded border border-red-800 bg-red-950/40 px-2 py-1 text-xs text-red-200">{notice}</div>}
+              {body}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // ── main app ─────────────────────────────────────────────────────────────
 
     function App() {
@@ -2455,6 +3637,14 @@
       // seeded from ?page= so the deep link wins over the "keep something
       // selected" effect below, which only fills in when nothing is selected
       const [activePageId, setActivePageId] = useState(() => slotReady ? _deepLinkPageId() : null);
+      /* EVENTS shows activePageId; PROJECTS shows projSel — a goal, or a page
+         attached under one. They are kept apart so switching tabs returns each
+         to where it was, and so the Events selection rule below never has to
+         reason about goals. Ephemeral: never written to track_db. */
+      const [docTab, setDocTab] = useState(() => slotReady ? _deepLinkTab() : 'events');
+      const [projSel, setProjSel] = useState(() => slotReady ? _deepLinkProjSel() : null);
+      // the task window: {id, linkId} — linkId when it was opened from a link
+      const [openTask, setOpenTask] = useState(null);
       const [activeBlockId, setActiveBlockId] = useState(null);
       // read-only mirror of the whole slot, for calendar blocks. docPages is
       // NOT read from here — that stays owned by the docPages state above.
@@ -2463,6 +3653,12 @@
       const [showDumpModal, setShowDumpModal] = useState(false);
       const [showPasteTable, setShowPasteTable] = useState(false);
       const [rootDragOver, setRootDragOver] = useState(false);
+      const [goalRootDragOver, setGoalRootDragOver] = useState(false);
+      // the goal a MOUSE drag carries: dragover cannot read the payload, and
+      // a row must know what is in flight to light up only where a drop moves
+      const goalMouseDragRef = useRef(null);
+      const [addingGoal, setAddingGoal] = useState(false);
+      const [newGoalTitle, setNewGoalTitle] = useState('');
       // the sidebar filling the viewport. Ephemeral: never written to track_db.
       const [sidebarFull, setSidebarFull] = useState(false);
       /* TAP TO ARM. A finger raises no :hover, so a page row's ⠿ ⇅ ＋ ☆ ✕
@@ -2489,6 +3685,12 @@
       const touchRef = useRef(null);
       const ghostRef = useRef(null);
       const asideRef = useRef(null);
+      // the goal page: what a MOUSE drag carries (dragover cannot read the
+      // payload), and the row it is over. A finger's lives in touchRef and
+      // touchDrop, as the sidebar's does.
+      const mainRef = useRef(null);
+      const projDragRef = useRef(null);
+      const [projHit, setProjHit] = useState(null);
       const [showEmoji, setShowEmoji] = useState(false);
       const [dbSize, setDbSize] = useState(() => dbSizeBytes());
       const [dumpsSnapshot, setDumpsSnapshot] = useState(() => ({
@@ -2546,28 +3748,78 @@
         };
       }, []);
 
-      // keep an active page selected: first favorite, else first root, else first
+      // keep an Events page selected: first favorite, else first root, else
+      // first. Only Events pages qualify — a page attached to a goal is shown
+      // by the Projects tab — so for a workspace with no attached pages this
+      // is exactly the rule it always was.
       useEffect(() => {
-        if (activePageId && docPages.some(p => p.id === activePageId)) return;
-        const fav = docPages.find(p => p.favorite);
-        const root = docPages.find(p => !p.parentId);
-        setActivePageId((fav || root || docPages[0] || {}).id || null);
+        const isEvent = p => TrackProject.projectOf(docPages, p.id) === null;
+        if (activePageId && docPages.some(p => p.id === activePageId && isEvent(p))) return;
+        const fav = docPages.find(p => p.favorite && isEvent(p));
+        const root = docPages.find(p => !p.parentId && isEvent(p));
+        setActivePageId((fav || root || docPages.find(isEvent) || {}).id || null);
       }, [docPages, activePageId]);
 
-      const activePage = docPages.find(p => p.id === activePageId) || null;
+      // The goal tree, read from the slot mirror and drawn with each goal's
+      // anchor mind maps expanded, exactly as Progress draws it. DISPLAY ONLY:
+      // every write re-reads the stored `goals` (mutateGoals below), so the
+      // expansion is never written from here.
+      const storedGoals = slot.goals || [];
+      const slotMms = slot.mms || [];
+      const viewGoals = useMemo(() => TrackGoals.expandAnchorToLearn(storedGoals, slotMms), [storedGoals, slotMms]);
+      const sirDone = useMemo(
+        () => TrackMilestone.sirDoneMap(TrackMilestone.liveSessions(slot.sessions || [], slotMms)),
+        [slot.sessions, slotMms]);
+      const liveGoalIds = useMemo(
+        () => new Set(TrackGoals.flattenAll(storedGoals).filter(n => n && !n.isLink).map(n => n.id)),
+        [storedGoals]);
+
+      // keep something selected in Projects: the first goal, when nothing is.
+      // A selected goal that disappears stays selected on purpose — its page
+      // says it was deleted rather than silently becoming another goal.
+      useEffect(() => {
+        if (docTab !== 'projects') return;
+        if (projSel && projSel.kind === 'page'
+            && !(docPages.some(p => p.id === projSel.id) && TrackProject.projectOf(docPages, projSel.id) !== null)) {
+          setProjSel(null);
+          return;
+        }
+        if (!projSel && viewGoals.length) setProjSel({kind: 'goal', id: viewGoals[0].id});
+      }, [docTab, projSel, docPages, viewGoals]);
+
+      const shownPageId = docTab === 'projects'
+        ? (projSel && projSel.kind === 'page' ? projSel.id : null)
+        : activePageId;
+      const activePage = docPages.find(p => p.id === shownPageId) || null;
+      const shownGoalId = docTab === 'projects' && projSel && projSel.kind === 'goal' ? projSel.id : null;
+
+      // Open any page, in whichever tab it belongs to.
+      function openPage(id, pages = docPages) {
+        if (TrackProject.projectOf(pages, id) !== null) { setDocTab('projects'); setProjSel({kind: 'page', id}); }
+        else { setDocTab('events'); setActivePageId(id); }
+      }
+      function openGoal(id) {
+        setDocTab('projects'); setProjSel({kind: 'goal', id});
+        setSidebarFull(false); setArmedRowId(null);
+      }
 
       // ── page mutations ──
       const touch = p => ({...p, updatedAt: Date.now()});
       const patchPage = (id, patch) => setDocPages(prev => prev.map(p => p.id===id ? touch({...p, ...patch}) : p));
       const patchBlocks = (id, fn) => setDocPages(prev => prev.map(p => p.id===id ? touch({...p, blocks: fn(p.blocks||[])}) : p));
 
-      function addPage(parentId) {
+      // `goalId` attaches a new TOP page to that goal (project-core.js's rule:
+      // only a top page names a goal). A sub-page names none — it belongs to
+      // whatever its parent belongs to — so the key is written only when given.
+      function addPage(parentId, goalId) {
         const p = {id: genId(), title: '', icon: '', parentId: parentId||null, favorite: false,
                    createdAt: localToday(), updatedAt: Date.now(),
                    blocks: [{id: genId(), type: 'p', text: ''}]};
+        if (!parentId && TrackProject.isId(goalId)) p.goalId = goalId;
         setDocPages(prev => [...prev, p]);
-        setActivePageId(p.id);
+        openPage(p.id, [...docPages, p]);
         if (parentId) setCollapsed(c => ({...c, [parentId]: false}));
+        if (goalId) setCollapsed(c => ({...c, ['g:' + goalId]: false}));
       }
       function toggleFav(id) { patchPage(id, {favorite: !(docPages.find(p=>p.id===id)||{}).favorite}); }
       function deletePage(id) {
@@ -2589,8 +3841,12 @@
           + (stranded ? `\n\n${stranded} scheduled item${stranded>1?'s':''} added from ${n?'these pages':'this page'} will stay on the schedule and lose ${stranded>1?'their':'its'} source page. ${stranded>1?'They':'It'} can then only be edited from the Schedule.` : '')
           + (classes ? `\n\n${classes} timetable class${classes>1?'es':''} pasted here will stay on every schedule. ${classes>1?'They':'It'} can then only be removed from a Timetable block, which lists classes whose page is gone.` : '');
         if (!window.confirm(msg)) return;
+        // A Projects page that goes leaves its goal's page showing, not a blank.
+        const goalId = TrackProject.projectOf(docPages, id);
         setDocPages(prev => prev.filter(p => !toDel.has(p.id)));
         if (toDel.has(activePageId)) setActivePageId(null);
+        if (projSel && projSel.kind === 'page' && toDel.has(projSel.id))
+          setProjSel(goalId !== null && liveGoalIds.has(goalId) ? {kind: 'goal', id: goalId} : null);
       }
 
       // ── drag to nest / drag to arrange ──
@@ -2599,39 +3855,25 @@
       // dropping a page into its own subtree would orphan both from every root, so
       // each mutation refuses that outright rather than repairing it later.
 
+      // The three moves are project-core.js's, which applies the top-page rule
+      // (a page with a parent names no goal; arranging or promoting inside a
+      // goal keeps the page in it) and is pinned offline against the splices
+      // that used to live here, so an Events page moves exactly as it did.
+      // `now` is read here, outside the updater, which stays pure.
+
       // nest: dragged becomes the LAST child of target
       function nestPage(draggedId, targetId) {
         if (draggedId === targetId) return;
-        setDocPages(prev => {
-          if (docDescendantIds(prev, draggedId).has(targetId)) return prev;
-          const di = prev.findIndex(p => p.id === draggedId);
-          if (di < 0 || !prev.some(p => p.id === targetId)) return prev;
-          const arr = [...prev];
-          const [moved] = arr.splice(di, 1);
-          const ti = arr.findIndex(p => p.id === targetId);   // re-find AFTER the removal
-          let at = ti;
-          for (let i = ti + 1; i < arr.length; i++) if (arr[i].parentId === targetId) at = i;
-          arr.splice(at + 1, 0, {...moved, parentId: targetId, updatedAt: Date.now()});
-          return arr;
-        });
+        const now = Date.now();
+        setDocPages(prev => TrackProject.nestPage(prev, draggedId, targetId, now));
         setCollapsed(c => ({...c, [targetId]: false}));
       }
 
       // arrange: dragged adopts the target's parent and lands immediately before/after it
       function arrangePage(draggedId, targetId, insertBefore) {
         if (draggedId === targetId) return;
-        setDocPages(prev => {
-          if (docDescendantIds(prev, draggedId).has(targetId)) return prev;
-          const di = prev.findIndex(p => p.id === draggedId);
-          const target = prev.find(p => p.id === targetId);
-          if (di < 0 || !target) return prev;
-          const arr = [...prev];
-          const [moved] = arr.splice(di, 1);
-          const ti = arr.findIndex(p => p.id === targetId);   // re-find AFTER the removal
-          arr.splice(insertBefore ? ti : ti + 1, 0,
-            {...moved, parentId: target.parentId || null, updatedAt: Date.now()});
-          return arr;
-        });
+        const now = Date.now();
+        setDocPages(prev => TrackProject.arrangePage(prev, draggedId, targetId, insertBefore, now));
       }
 
       /* ── the same three moves, by finger ──
@@ -2646,17 +3888,49 @@
          re-rendered, so a fast flick (and a synchronous test) would lose every
          touchmove that arrived first. */
 
+      /* A drop names its target by KIND, so a page id and a goal id can never
+         be mistaken for each other: `targetId` / `root` are a page row and the
+         Events header, `goalTargetId` / `goalRoot` a goal row and the Goals
+         header. A page's ⠿ dropped on a goal row ATTACHES it to that goal; a
+         goal is dropped only on goal rows. */
       function touchDropAt(x, y) {
         const d = touchRef.current;
         if (!d) return null;
         const el = document.elementFromPoint(x, y);
         if (!el) return null;
+        if (d.kind === 'proj') {
+          const prow = el.closest('[data-proj-row]');
+          if (prow || d.rowKind !== 'page' || d.mode !== 'nest') return projHitAt(d, prow, y);
+          // a page link's ⠿ is the sidebar's ⠿ too, as it is by mouse: onto
+          // a goal row it attaches the page there, onto a page row it nests
+          const grow = el.closest('[data-goal-row]');
+          if (grow) return { mode: 'nest', goalTargetId: grow.getAttribute('data-goal-row') };
+          const row = el.closest('[data-doc-row]');
+          const targetId = row && row.getAttribute('data-doc-row');
+          return targetId && targetId !== String(d.id) ? { mode: 'nest', targetId } : null;
+        }
+        if (d.kind === 'goal') {
+          // only ⠿ promotes to a top-level goal; ⇅ has no meaning on the header
+          if (d.mode === 'nest' && el.closest('[data-goal-root-drop]'))
+            return goalIsSub(viewGoals, d.id) ? { mode: 'nest', goalRoot: true } : null;
+          const grow = el.closest('[data-goal-row]');
+          if (!grow) return null;
+          const goalTargetId = grow.getAttribute('data-goal-row');
+          if (!goalDropValid(viewGoals, d.id, goalTargetId, d.mode)) return null;
+          if (d.mode === 'nest') return { mode: 'nest', goalTargetId };
+          const grect = grow.getBoundingClientRect();
+          return { mode: 'arrange', goalTargetId, before: y < grect.top + grect.height / 2 };
+        }
         // only ⠿ promotes to root; ⇅ has no meaning on the section header
         if (d.mode === 'nest' && el.closest('[data-doc-root-drop]')) return { mode: 'nest', root: true };
+        if (d.mode === 'nest') {
+          const grow = el.closest('[data-goal-row]');
+          if (grow) return { mode: 'nest', goalTargetId: grow.getAttribute('data-goal-row') };
+        }
         const row = el.closest('[data-doc-row]');
         if (!row) return null;
         const targetId = row.getAttribute('data-doc-row');
-        if (targetId === d.pageId) return null;   // onto itself is not a move
+        if (targetId === d.id) return null;   // onto itself is not a move
         if (d.mode === 'nest') return { mode: 'nest', targetId };
         const rect = row.getBoundingClientRect();
         return { mode: 'arrange', targetId, before: y < rect.top + rect.height / 2 };
@@ -2664,11 +3938,13 @@
 
       function sameDrop(a, b) {
         if (!a || !b) return a === b;
-        return a.mode === b.mode && a.root === b.root
-          && a.targetId === b.targetId && a.before === b.before;
+        return a.mode === b.mode && a.root === b.root && a.goalRoot === b.goalRoot && a.key === b.key
+          && a.targetId === b.targetId && a.goalTargetId === b.goalTargetId && a.before === b.before;
       }
 
-      function startTouchDrag(e, mode, page) {
+      // `kind` is 'page' (a docPages row) or 'goal' (a goal-tree row); `item`
+      // is the page or the goal node.
+      function startTouchDrag(e, mode, item, kind = 'page') {
         const t = e.touches[0];
         if (!t) return;
         /* No preventDefault here, deliberately: React 18 registers touchstart
@@ -2700,7 +3976,8 @@
           // near-edge auto-scroll is armed here but STEPPED by rAF below: a
           // finger held still at the edge fires no further touchmove, so
           // scrolling from this handler alone would stall after one nudge.
-          const aside = asideRef.current;
+          // A goal page's row scrolls the editor; a sidebar row, the sidebar.
+          const aside = kind === 'proj' ? mainRef.current : asideRef.current;
           if (aside) {
             const r = aside.getBoundingClientRect();
             touchRef.current.edge = p.clientY < r.top + 48 ? -1
@@ -2712,7 +3989,7 @@
         const step = () => {
           const d = touchRef.current;
           if (!d) return;
-          const aside = asideRef.current;
+          const aside = kind === 'proj' ? mainRef.current : asideRef.current;
           if (d.edge && aside) {
             aside.scrollTop += d.edge * 8;
             // rows moved under a stationary finger, so the target may differ
@@ -2736,12 +4013,26 @@
           const d = touchRef.current;
           const drop = d && d.drop;
           const mode = d && d.mode;
-          const pageId = d && d.pageId;
+          const id = d && d.id;
+          const dragKind = d && d.kind;
           detach();
           if (!drop) return;                          // released over nothing
-          if (drop.root) promotePageToRoot(pageId);
-          else if (mode === 'nest') nestPage(pageId, drop.targetId);
-          else arrangePage(pageId, drop.targetId, drop.before);
+          if (dragKind === 'proj') {
+            if (drop.key) commitProjDrop(d, drop);
+            else if (drop.goalTargetId) attachPageToGoal(id, drop.goalTargetId);
+            else if (drop.targetId) nestPage(id, drop.targetId);
+            return;
+          }
+          if (dragKind === 'goal') {
+            if (drop.goalRoot) promoteGoal(id);
+            else if (mode === 'nest') nestGoal(id, drop.goalTargetId);
+            else arrangeGoal(id, drop.goalTargetId, drop.before);
+            return;
+          }
+          if (drop.root) promotePageToRoot(id);
+          else if (drop.goalTargetId) attachPageToGoal(id, drop.goalTargetId);
+          else if (mode === 'nest') nestPage(id, drop.targetId);
+          else arrangePage(id, drop.targetId, drop.before);
         };
 
         /* iPadOS fires touchcancel instead of touchend whenever the system
@@ -2749,9 +4040,9 @@
            there would move a page the finger was only passing across. */
         const onCancel = () => detach();
 
-        touchRef.current = { mode, pageId: page.id, x: t.clientX, y: t.clientY, drop: null, edge: 0, raf: 0 };
-        setDragging({ mode, pageId: page.id, x: t.clientX, y: t.clientY,
-          label: (page.icon || '📄') + '  ' + (page.title || 'Untitled') });
+        touchRef.current = { mode, kind, id: item.id, rowKind: item.rowKind, x: t.clientX, y: t.clientY, drop: null, edge: 0, raf: 0 };
+        setDragging({ mode, kind, id: item.id, x: t.clientX, y: t.clientY,
+          label: (kind === 'goal' ? (item.isSubGoal ? '◆' : '🎯') : (item.icon || '📄')) + '  ' + (item.title || 'Untitled') });
         setTouchDrop(null);
 
         document.addEventListener('touchmove', onMove, { passive: false });
@@ -2760,16 +4051,178 @@
         touchRef.current.raf = requestAnimationFrame(step);
       }
 
-      // promote: dragged leaves its parent and becomes the last root page
+      // promote: dragged leaves its parent and becomes the last root page —
+      // of the same goal, when it was in one
       function promotePageToRoot(id) {
-        setDocPages(prev => {
-          const i = prev.findIndex(p => p.id === id);
-          if (i < 0 || !prev[i].parentId) return prev;
-          const arr = [...prev];
-          const [moved] = arr.splice(i, 1);
-          arr.push({...moved, parentId: null, updatedAt: Date.now()});
-          return arr;
-        });
+        const now = Date.now();
+        setDocPages(prev => TrackProject.promotePage(prev, id, now));
+      }
+
+      // From the page's own toolbar: attach (or re-attach) it to a goal, or
+      // send it to Events, and follow it to the tab it now lives in.
+      function movePageToGoal(pageId, goalId) {
+        const now = Date.now();
+        const next = TrackProject.attachToGoal(docPages, pageId, goalId, now);
+        if (next === docPages) return;
+        setDocPages(prev => TrackProject.attachToGoal(prev, pageId, goalId, now));
+        setCollapsed(c => ({...c, ['g:' + goalId]: false}));
+        openPage(pageId, next);
+      }
+      function movePageToEvents(pageId) {
+        const now = Date.now();
+        const next = TrackProject.detachToEvents(docPages, pageId, now);
+        if (next === docPages) return;
+        setDocPages(prev => TrackProject.detachToEvents(prev, pageId, now));
+        openPage(pageId, next);
+      }
+
+      // A page's ⠿ dropped on a goal row: the page, with everything under
+      // it, becomes that goal's last top page.
+      function attachPageToGoal(pageId, goalId) {
+        const now = Date.now();
+        setDocPages(prev => TrackProject.attachToGoal(prev, pageId, goalId, now));
+        setCollapsed(c => ({...c, ['g:' + goalId]: false}));
+      }
+
+      /* Goal moves from the Projects sidebar. Each is Progress's own writer
+         (goal-core.js) over a FRESH read of `goals` — this page does not own
+         the key, so it never writes a snapshot of it back — and each re-asks
+         goalDropValid of that fresh tree, so a goal moved in another tab
+         since the drag began is refused rather than moved somewhere it no
+         longer fits. The sub-goal a nest may create (the "original" /
+         "default" that keeps the target's own work) is minted by
+         goalCreations, outside the writer. Top goal onto top goal is Progress's goal-tab nest;
+         every other pairing is its sub-goal nest. */
+      function nestGoal(draggedId, targetId) {
+        mutateGoals(g => {
+          if (!goalDropValid(g, draggedId, targetId, 'nest')) return g;
+          const top = id => g.some(x => x && x.id === id);
+          const creations = goalCreations(g, targetId);
+          return top(draggedId) && top(targetId)
+            ? TrackGoals.nestGoalIntoGoal(g, draggedId, targetId, creations)
+            : TrackGoals.nestSubGoalIntoSubGoal(g, draggedId, targetId, creations);
+        }, [draggedId]);
+        setCollapsed(c => ({...c, ['g:' + targetId]: false}));
+      }
+      function arrangeGoal(draggedId, targetId, before) {
+        mutateGoals(g => goalDropValid(g, draggedId, targetId, 'arrange')
+          ? TrackGoals.reorderSibling(g, draggedId, targetId, before) : g, [draggedId]);
+      }
+      // dropped on the Goals header: a sub-goal becomes the last top goal
+      function promoteGoal(id) {
+        mutateGoals(g => goalIsSub(g, id) ? TrackGoals.promoteSubGoalToUltimate(g, id) : g, [id]);
+      }
+
+      /* ── moves on a goal's page ──
+         The row under the pointer, as a drop: {key, mode, before}, or null
+         when releasing there would move nothing (projDropValid). `before` is
+         the top half of the row. Shared by the mouse and the finger. */
+      function projHitAt(d, rowEl, y) {
+        if (!d || !rowEl) return null;
+        const key = rowEl.getAttribute('data-proj-row') || '';
+        const c = key.indexOf(':');
+        if (c < 0) return null;
+        const rk = key.slice(0, c), rid = key.slice(c + 1);
+        if (!projDropValid(viewGoals, d, rk, rid)) return null;
+        const r = rowEl.getBoundingClientRect();
+        return {key, rk, rid, mode: d.mode, before: d.mode === 'arrange' ? y < r.top + r.height / 2 : undefined};
+      }
+
+      // A page link's move, in its own goal's directory (project-core.js).
+      function movePageLink(pageId, target) {
+        const goalId = TrackProject.projectOf(docPages, pageId);
+        const goal = goalId !== null ? TrackProject.findGoal(viewGoals, goalId) : null;
+        if (!goal) return;
+        const now = Date.now();
+        setDocPages(prev => TrackProject.movePageTo(prev, pageId, goal, target, now));
+      }
+
+      /* What a drop on a goal's page writes. A page link: `docPages` only —
+         its place, or the sidebar's attach / nest. A node: `goals` only,
+         through Progress's writer over a FRESH read, re-asking the rule of
+         that read, so a node moved in another tab since the drag began is
+         refused rather than moved somewhere it no longer fits. The dragged
+         node is passed as `moved`, which is what lets the links beside it
+         stay where they were drawn (TrackProject.healPlaces). */
+      function commitProjDrop(d, hit) {
+        if (!d || !hit) return;
+        const {rk, rid, before} = hit;
+        if (d.rowKind === 'page') {
+          if (d.mode === 'nest') {
+            if (rk === 'sub') { attachPageToGoal(d.id, rid); return; }
+            if (rk === 'page') { nestPage(d.id, rid); return; }
+            const t = TrackGoals.findNode(viewGoals, rid);
+            const kids = ((t && t.children) || []).filter(Boolean);
+            movePageLink(d.id, {parentId: rid, afterId: kids.length ? kids[kids.length - 1].id : null, at: 'last'});
+            return;
+          }
+          if (rk === 'page') { movePageLink(d.id, {pageId: rid, before}); return; }
+          // before a row: after the row above it and every link below that
+          // one; after a row: below the links that follow it, where ⇅ drew
+          // its line (the row's wrapper holds them)
+          const path = TrackGoals.findNodePath(viewGoals, rid);
+          const parent = path && path.length > 1 ? path[path.length - 2] : null;
+          if (!parent) return;
+          if (!before) { movePageLink(d.id, {parentId: parent.id, afterId: rid, at: 'last'}); return; }
+          const sibs = (parent.children || []).filter(Boolean);
+          const i = sibs.findIndex(s => s.id === rid);
+          movePageLink(d.id, {parentId: parent.id, afterId: i > 0 ? sibs[i - 1].id : null, at: 'last'});
+          return;
+        }
+        if (d.rowKind === 'sub') {
+          if (d.mode === 'nest') nestGoal(d.id, rid); else arrangeGoal(d.id, rid, before);
+          return;
+        }
+        if (d.mode === 'nest') {
+          mutateGoals(g => projNestValid(g, d.id, rid) ? TrackGoals.nestTaskIntoTask(g, d.id, rid) : g, [d.id]);
+        } else {
+          mutateGoals(g => projArrangeValid(g, d.id, rid) ? TrackGoals.reorderSibling(g, d.id, rid, before) : g, [d.id]);
+        }
+      }
+
+      // The mouse half: the handles start it, the directory takes every
+      // dragover and drop (one delegated handler, so a row needs no wiring).
+      const projDragTypes = e => Array.prototype.includes.call(e.dataTransfer.types, 'application/proj-move');
+      const projRowOf = e => (e.target instanceof Element ? e.target.closest('[data-proj-row]') : null);
+      const setHitIfNew = hit => setProjHit(prev => sameDrop(prev, hit) ? prev : hit);
+      const projDrag = {
+        mouseStart(e, mode, item) {
+          e.stopPropagation();
+          e.dataTransfer.setData('application/proj-move', String(item.id));
+          // a page's ⠿ is also the sidebar's: dropped on a goal row it
+          // attaches there, on a page row it nests
+          if (item.rowKind === 'page' && mode === 'nest') e.dataTransfer.setData('application/docpage-nest-id', item.id);
+          e.dataTransfer.effectAllowed = 'move';
+          projDragRef.current = {...item, mode};
+        },
+        mouseEnd() { projDragRef.current = null; setProjHit(null); },
+        mouseOver(e) {
+          if (!projDragTypes(e)) return;
+          const hit = projHitAt(projDragRef.current, projRowOf(e), e.clientY);
+          if (hit) { e.preventDefault(); e.stopPropagation(); }
+          setHitIfNew(hit);
+        },
+        mouseLeave() { setProjHit(null); },
+        mouseDrop(e) {
+          if (!projDragTypes(e)) return;
+          e.preventDefault(); e.stopPropagation();
+          const d = projDragRef.current;
+          const hit = projHitAt(d, projRowOf(e), e.clientY);
+          projDragRef.current = null;
+          setProjHit(null);
+          commitProjDrop(d, hit);
+        },
+        touchStart(e, mode, item) { startTouchDrag(e, mode, item, 'proj'); },
+      };
+      // ＋ goal: Progress's new-goal record, appended like Progress's add
+      function addTopGoal(title) {
+        const v = (title || '').trim();
+        if (!v) return false;
+        const goal = {id: genId(), title: v, children: [], completed: false, createdAt: Date.now(),
+                      scheduledDate: null, toLearn: [], mmTargets: {}, milestones: []};
+        const ok = mutateGoals(g => [...g, goal]);
+        if (ok) openGoal(goal.id);
+        return ok;
       }
 
       // ── block mutations (on the active page) ──
@@ -2822,6 +4275,33 @@
       // progress.html owns. Each edit re-reads the stored array, applies fn to
       // it and writes only that key, so nothing another page or tab wrote in
       // the meantime is rebuilt from this page's snapshot.
+      // Every Projects edit of `goals`, through _mutateGoals' fresh
+      // read-modify-write. This tab hears no `storage` event for its own
+      // write, so the slot mirror is re-read here. A stored edit then
+      // re-places the page links it would have displaced — a link after a
+      // deleted task, or after the node a drag moved (`moved`), stays where
+      // it was drawn (TrackProject.healPlaces). That is a second write, of
+      // `docPages`, the key this page owns — and it is healed from a FRESH
+      // read, never from this tab's state: a page another tab edited or
+      // added a moment ago, before this tab heard of it, would otherwise be
+      // written back over (Astra's review, 2026-10-29). The stored list is
+      // then adopted, as the storage refresh would. If the write is refused
+      // the link falls back to the top of its list, which loses nothing.
+      function mutateGoals(fn, moved) {
+        let before = null, after = null;
+        const ok = _mutateGoals(g => { before = g; after = fn(g); return after; });
+        setSlot(_activeSlot() || {});
+        if (ok && before && after && after !== before) {
+          const stored = _readP('docPages', []);
+          const healed = TrackProject.healPlaces(stored, before, after, moved || [], Date.now());
+          if (healed !== stored) _writeSlotKey('docPages', healed);
+          const fresh = _readP('docPages', []);
+          setDocPages(prev => JSON.stringify(prev) === JSON.stringify(fresh) ? prev : fresh);
+        }
+        setDbSize(dbSizeBytes());
+        return ok;
+      }
+
       function mutateSlotArray(key, fn) {
         const next = _mutateSlotKey(key, fn);
         setSlot(s => ({...s, [key]: next}));
@@ -2862,10 +4342,58 @@
           out.unshift(parent); cur = parent;
         }
         return out;
-      }, [docPages, activePageId]);
+      }, [docPages, shownPageId]);
+
+      // Every goal and sub-goal a page can be attached to, in tree order.
+      // Links are skipped: a page attaches to the original goal, by its id.
+      const goalOptions = useMemo(() => {
+        const out = [];
+        const walk = (nodes, depth) => (nodes || []).forEach(n => {
+          if (!n || n.isLink || !(depth === 0 || n.isSubGoal)) return;
+          out.push({id: n.id, title: n.title || 'Untitled', depth});
+          walk(n.children, depth + 1);
+        });
+        walk(viewGoals, 0);
+        return out;
+      }, [viewGoals]);
+
+      // A page in Projects is headed by the goals above it, then its pages.
+      const pageGoalId = activePage ? TrackProject.projectOf(docPages, activePage.id) : null;
+      const pageGoalPath = pageGoalId !== null ? (TrackGoals.findNodePath(viewGoals, pageGoalId) || []) : [];
 
       const favorites = docPages.filter(p => p.favorite);
-      const roots = docPages.filter(p => !p.parentId || !docPages.some(x => x.id === p.parentId));
+      // The Events tree's roots: top pages naming no goal. With no page
+      // attached anywhere this is every top page, the rule it always was.
+      const roots = TrackProject.eventRoots(docPages);
+      const detached = TrackProject.detachedPages(docPages, liveGoalIds);
+      const projCtx = {goals: viewGoals, mms: slotMms, sirDone, today: localToday(),
+        mutate: mutateGoals,
+        onOpenTask: (id, linkId) => setOpenTask({id, linkId: linkId || null}),
+        onGoalDeleted: parentId => setProjSel(parentId ? {kind: 'goal', id: parentId} : null),
+        drag: projDrag,
+        hit: projHit || (touchDrop && touchDrop.key ? touchDrop : null)};
+      const selectProjectPage = id => { setDocTab('projects'); setProjSel({kind: 'page', id}); setSidebarFull(false); setArmedRowId(null); };
+      const pageRow = (p, depth) => (
+        <PageTreeItem key={p.id} page={p} pages={docPages} depth={depth}
+          activePageId={shownPageId} collapsed={collapsed}
+          onToggleCollapse={id=>setCollapsed(c=>({...c,[id]:!c[id]}))}
+          onSelect={selectProjectPage} onAddChild={addPage}
+          onToggleFav={toggleFav} onDelete={deletePage}
+          onNest={nestPage} onArrange={arrangePage}
+          onTouchDragStart={startTouchDrag} touchDrop={touchDrop}
+          armedId={armedRowId} onArm={setArmedRowId} />
+      );
+      const renderGoalPages = (goalId, depth) => TrackProject.pagesForGoal(docPages, goalId).map(p => pageRow(p, depth));
+      const goalOps = {
+        onNest: nestGoal, onArrange: arrangeGoal, onAttachPage: attachPageToGoal,
+        onAddPage: goalId => addPage(null, goalId),
+        onMouseDrag: id => { goalMouseDragRef.current = id; },
+        mouseDropOk: (targetId, mode) => goalDropValid(viewGoals, goalMouseDragRef.current, targetId, mode),
+        onTouchDragStart: startTouchDrag, touchDrop,
+        armedId: armedRowId, onArm: setArmedRowId,
+      };
+      const goalRootOn = goalRootDragOver || !!(touchDrop && touchDrop.goalRoot);
+      const submitNewGoal = () => { if (addTopGoal(newGoalTitle)) { setNewGoalTitle(''); setAddingGoal(false); } };
 
       if (!slotReady) {
         // Two different reasons land here and the advice is opposite. "Open Progress once
@@ -2916,7 +4444,7 @@
             <aside ref={asideRef}
               className={"docs-sidebar flex w-60 shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900/60 p-2"
                 +(sidebarFull?' docs-sidebar-full':'')}
-              onClick={e=>{ if (!e.target.closest('[data-doc-row]')) setArmedRowId(null); }}>
+              onClick={e=>{ if (!e.target.closest('[data-doc-row], [data-goal-row]')) setArmedRowId(null); }}>
               <div className="docs-sidebar-top mb-2 flex items-center justify-between gap-2">
                 <span className="doc-side-label text-[10px] font-bold uppercase tracking-widest text-gray-600">
                   {sidebarFull ? 'All pages' : ''}
@@ -2928,19 +4456,87 @@
                   {sidebarFull ? '✕' : '⛶'}
                 </button>
               </div>
+              {/* EVENTS | PROJECTS. Events is every page this sidebar always
+                  held; Projects is the goal tree, read live from `goals`. */}
+              <div className="docs-tabs mb-3 grid grid-cols-2 gap-0.5 rounded border border-gray-800 bg-gray-950/60 p-0.5" role="tablist">
+                {[['events', 'Events'], ['projects', 'Projects']].map(([k, label]) => (
+                  <button key={k} type="button" role="tab" data-doc-tab={k} aria-selected={docTab === k}
+                    onClick={()=>{ setDocTab(k); setArmedRowId(null); }}
+                    className={"rounded px-2 py-1 text-[11px] font-semibold tracking-wide "
+                      + (docTab === k ? 'bg-gray-800 text-gray-100' : 'text-gray-500 hover:text-gray-200')}>
+                    {label}
+                  </button>
+                ))}
+              </div>
               {favorites.length > 0 && (
                 <div className="mb-3">
                   <div className="doc-side-label mb-1 px-1 text-[10px] font-bold uppercase tracking-widest text-gray-600">Favorites</div>
                   {favorites.map(p => (
                     <div key={p.id}
-                      className={"doc-fav-row flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-xs "+(p.id===activePageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')}
-                      onClick={()=>{setActivePageId(p.id); setSidebarFull(false);}}>
+                      className={"doc-fav-row flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 text-xs "+(p.id===shownPageId?'bg-gray-800 text-gray-100':'text-gray-400 hover:bg-gray-800/60 hover:text-gray-200')}
+                      onClick={()=>{openPage(p.id); setSidebarFull(false);}}>
                       <span>{p.icon || '📄'}</span>
                       <span className="truncate">{p.title || 'Untitled'}</span>
                     </div>
                   ))}
                 </div>
               )}
+              {docTab === 'projects' ? (
+                <div data-doc-projects>
+                  <div className={"mb-1 flex items-center justify-between rounded border px-1 " + (goalRootOn ? 'border-violet-500 bg-violet-950/20' : 'border-transparent')}
+                    data-goal-root-drop
+                    onDragOver={e => {
+                      if (!e.dataTransfer.types.includes('application/goal-nest-id')) return;
+                      if (!goalIsSub(viewGoals, goalMouseDragRef.current)) return;
+                      e.preventDefault(); setGoalRootDragOver(true);
+                    }}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setGoalRootDragOver(false); }}
+                    onDrop={e => {
+                      const id = e.dataTransfer.getData('application/goal-nest-id');
+                      if (id) { e.preventDefault(); promoteGoal(id); }
+                      setGoalRootDragOver(false);
+                    }}>
+                    <span className="doc-side-label text-[10px] font-bold uppercase tracking-widest text-gray-600">Goals</span>
+                    {goalRootOn ? (
+                      <span className="doc-drop-hint text-[9px] text-violet-300">↑ drop to make it a goal</span>
+                    ) : (
+                      <button data-goal-add onClick={() => setAddingGoal(true)} title="Add goal"
+                        className="doc-side-add rounded px-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white">＋</button>
+                    )}
+                  </div>
+                  {addingGoal && (
+                    <div className="mx-1 mb-1 flex items-center gap-1">
+                      <input autoFocus data-goal-add-title value={newGoalTitle} onChange={e => setNewGoalTitle(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') submitNewGoal(); if (e.key === 'Escape') { setAddingGoal(false); setNewGoalTitle(''); } }}
+                        placeholder="New goal…" className="min-w-0 flex-1 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-xs text-gray-200 placeholder-gray-600" />
+                      <button data-goal-add-go disabled={!newGoalTitle.trim()} onClick={submitNewGoal}
+                        className="rounded bg-gray-700 px-2 py-1 text-xs text-gray-100 hover:bg-gray-600 disabled:opacity-40">add</button>
+                      <button onClick={() => { setAddingGoal(false); setNewGoalTitle(''); }} className="px-1 text-xs text-gray-500 hover:text-gray-200">✕</button>
+                    </div>
+                  )}
+                  {viewGoals.length === 0 && !addingGoal && (
+                    <button onClick={() => setAddingGoal(true)}
+                      className="mx-1 w-[calc(100%-0.5rem)] rounded border border-dashed border-gray-700 px-2 py-3 text-center text-xs text-gray-500 hover:border-gray-500 hover:text-gray-300">
+                      Create your first goal
+                    </button>
+                  )}
+                  {viewGoals.map(g => (
+                    <GoalTreeItem key={g.id} node={g} goals={viewGoals} depth={0} ancestry={[]}
+                      sel={projSel || {}} collapsed={collapsed}
+                      onToggleCollapse={k=>setCollapsed(c=>({...c,[k]:!c[k]}))}
+                      onSelectGoal={openGoal} renderPages={renderGoalPages} ops={goalOps} />
+                  ))}
+                  {detached.length > 0 && (
+                    <div className="mt-4" data-doc-detached>
+                      <div className="doc-side-label mb-1 px-1 text-[10px] font-bold uppercase tracking-widest text-gray-600"
+                        title="Pages whose goal was deleted. They are kept — attach them to another goal or move them to Events.">
+                        Detached — goal deleted
+                      </div>
+                      {detached.map(p => pageRow(p, 0))}
+                    </div>
+                  )}
+                </div>
+              ) : (<>
               <div className={"mb-1 flex items-center justify-between rounded border px-1 "+((rootDragOver||(touchDrop&&touchDrop.root))?'border-violet-500 bg-violet-950/20':'border-transparent')}
                 data-doc-root-drop
                 onDragOver={e=>{ if (e.dataTransfer.types.includes('application/docpage-nest-id')) { e.preventDefault(); setRootDragOver(true); } }}
@@ -2978,6 +4574,7 @@
                 className="doc-side-addrow mt-2 rounded px-2 py-1 text-left text-xs text-gray-600 hover:bg-gray-800 hover:text-gray-300">
                 ＋ Add page
               </button>
+              </>)}
             </aside>
             {/* follows the finger; moved imperatively so a drag costs no render */}
             {dragging && (
@@ -2989,23 +4586,40 @@
             )}
 
             {/* Editor */}
-            <main className="docs-editor min-w-0 flex-1 overflow-y-auto">
+            <main ref={mainRef} className="docs-editor min-w-0 flex-1 overflow-y-auto">
               {/* docs-editor-body below is a styling hook, not decoration: the
                   phone block in styles.css has to reach THAT column to drop
                   max-w-3xl and px-10, and `.docs-editor > div` would also match
                   the empty-state message in the other branch. */}
-              {!activePage ? (
+              {shownGoalId ? (
+                <div className="docs-editor-body mx-auto max-w-3xl px-10 py-10 font-sans">
+                  <GoalPage goalId={shownGoalId} ctx={projCtx} docPages={docPages}
+                    onSelectGoal={openGoal} onSelectPage={id=>openPage(id)}
+                    onAddPage={gid=>addPage(null, gid)} />
+                </div>
+              ) : !activePage ? (
                 <div className="flex h-full items-center justify-center text-xs text-gray-600">
-                  Select or create a page from the sidebar.
+                  {docTab === 'projects' ? 'Select a goal from the sidebar.' : 'Select or create a page from the sidebar.'}
                 </div>
               ) : (
                 <div className="docs-editor-body mx-auto max-w-3xl px-10 py-10 font-sans">
-                  {/* breadcrumb */}
-                  {ancestors.length > 0 && (
+                  {/* breadcrumb — in Projects, the goals above the page first */}
+                  {(ancestors.length > 0 || pageGoalId !== null) && (
                     <div className="docs-toolbar mb-2 flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
+                      {pageGoalId !== null && pageGoalPath.length === 0 && (
+                        <><span className="italic text-gray-600" title="This page's goal was deleted">detached</span><span>/</span></>
+                      )}
+                      {pageGoalPath.map((g, i) => (
+                        <React.Fragment key={g.id}>
+                          <button data-proj-crumb={g.id} onClick={()=>openGoal(g.id)} className="hover:text-gray-200">
+                            {i === 0 ? '🎯' : '◆'} {g.title || 'Untitled'}
+                          </button>
+                          <span>/</span>
+                        </React.Fragment>
+                      ))}
                       {ancestors.map(a => (
                         <React.Fragment key={a.id}>
-                          <button onClick={()=>setActivePageId(a.id)} className="hover:text-gray-200">
+                          <button onClick={()=>openPage(a.id)} className="hover:text-gray-200">
                             {a.icon || '📄'} {a.title || 'Untitled'}
                           </button>
                           <span>/</span>
@@ -3023,6 +4637,29 @@
                       ⤓ Export / PDF
                     </button>
                     <span className="text-[10px] text-gray-600">created {activePage.createdAt}</span>
+                    {/* Which tab the page lives in. Attaching makes it (with its
+                        sub-pages) a top page of the chosen goal; Events takes it
+                        back. Both are moves — nothing is deleted, each undoes the
+                        other — so neither asks. */}
+                    {goalOptions.length > 0 && (
+                      <select data-page-goal value="" onChange={e => { if (e.target.value) movePageToGoal(activePage.id, e.target.value); }}
+                        title={pageGoalId !== null ? 'Move this page under another goal' : 'Attach this page to a goal — it moves to Projects'}
+                        className="max-w-[12rem] rounded border border-gray-700 bg-gray-900 px-1 py-1 text-[11px] text-gray-300">
+                        <option value="">{pageGoalId !== null ? '🎯 Move to goal…' : '🎯 Attach to goal…'}</option>
+                        {goalOptions.map(o => (
+                          <option key={o.id} value={o.id} disabled={o.id === pageGoalId && !activePage.parentId}>
+                            {String.fromCharCode(160, 160).repeat(o.depth) + (o.depth ? '◆ ' : '') + o.title}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {pageGoalId !== null && (
+                      <button data-page-to-events onClick={() => movePageToEvents(activePage.id)}
+                        title="Move this page (and its sub-pages) to Events"
+                        className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-[11px] text-gray-300 hover:border-gray-500">
+                        → Events
+                      </button>
+                    )}
                     <button onClick={()=>toggleFav(activePage.id)}
                       title={activePage.favorite ? 'Remove from favorites' : 'Add to favorites'}
                       aria-label={activePage.favorite ? 'Remove from favorites' : 'Add to favorites'}
@@ -3071,7 +4708,7 @@
                         {b.type === 'calendar' && (
                           <CalendarBlock block={b} page={activePage} docPages={docPages} slot={slot}
                             onChange={updateBlock} onFocus={()=>setActiveBlockId(b.id)}
-                            onOpenPage={setActivePageId} onMutate={mutateSlotArray} />
+                            onOpenPage={id=>openPage(id)} onMutate={mutateSlotArray} />
                         )}
                         {b.type === 'schedule' && (
                           <ScheduleBlock block={b} page={activePage} docPages={docPages} slot={slot}
@@ -3127,6 +4764,13 @@
                 setShowDumpModal(false);
               }}
               onClose={()=>setShowDumpModal(false)} />
+          )}
+
+          {openTask && (
+            <TaskModal key={openTask.id} taskId={openTask.id} linkId={openTask.linkId} ctx={projCtx}
+              mutate={mutateGoals}
+              onOpenTask={(id, linkId) => setOpenTask({id, linkId: linkId || null})}
+              onClose={() => setOpenTask(null)} />
           )}
 
           {showPasteTable && (

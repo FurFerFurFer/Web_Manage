@@ -4726,3 +4726,356 @@ Every page, script, stylesheet and test file had the same md5 before and after, 
   the whole `mms` array, exactly as they already do for comments. Nothing new is exposed, and
   nothing is pinned.
 - **The live Firebase project.**
+
+### Documentations: Events and Projects — the goal tree as pages (2026-10-29)
+
+**The request.** A new Documentations tab, **Projects**, with the existing pages renamed
+**Events**. In the user's words:
+
+- Projects "is synced with PROGRESS: the page is goals or sub goals and the rest is the content in
+  the page which mirrors all the task and to learn in directory form".
+- "I can edit anything in the page including the tasks and under each tasks (but not MM)". A task
+  is its own block, and clicking it opens it "on the middle of the screen to clearly see I'm
+  editing".
+- "Milestones will be visualized as a highlighted area not a task block".
+- "The whole sub goal directory" can be added to and edited in Projects.
+- A page can be added under a sub-goal, linked from the sub-goal, "and from sub goal to goals
+  too".
+- "Make this usable in all situations eg when I nest or mess with the sub goal I don't need any
+  bugs".
+
+From one question the user chose **B**: the goal → page link also appears in Progress, as a `📄`
+link on the goal's row. Astra (GPT-6 Astra in Codex) built step 1, the goal-core extraction, from
+a hand-off prompt. Claude reviewed it and built the rest.
+
+**The change.**
+
+- `scripts/goal-core.js` (`window.TrackGoals`), new, by Astra:
+  - 47 goal-tree functions moved out of `progress.html`. Five creating writers take `creations`
+    (`[{id, now}]`) instead of calling `uid()` / `Date.now()`, so the module mints no ids and holds
+    no date code.
+  - Claude added `isMilestoneDay` and `periodWithDay`, the two rules both pages' milestone date
+    fields now commit by. They were inline in `MilestoneDateInput` and `handleDateInput`.
+- `progress.html`:
+  - The 47 functions became one-line delegates (−619 lines).
+  - `goalCreations` mints one `{id, now}` per node carrying the target id.
+  - The `📄` link reads `TrackProject.pagesForGoal` and is drawn at both goal-title sites.
+  - Loads `goal-core.js?v=1` and `project-core.js?v=1`.
+- `scripts/project-core.js` (`window.TrackProject`), new:
+  - Only the TOP page's `goalId` is read; absence is Events.
+  - The Events tab's three sidebar moves, rewritten to keep that rule, plus `attachToGoal` and
+    `detachToEvents`.
+- `documentations.html`:
+  - The Events / Projects tabs. The goal sidebar has mouse and touch drag (nest, reorder, promote,
+    attach a page) and `＋ goal`.
+  - The goal page: sub-goal cards, the task directory with link loops as `↻` rows, milestone
+    areas, and read-only to-learn.
+  - `TaskModal`, the task window.
+  - Milestone editing: `MsDateInput` (the twin of Progress's input), rename, `clear`, `✕` and
+    `＋ milestone`.
+  - Attached pages, *Detached — goal deleted*, and `?goal=`.
+  - Every goal edit goes through `_mutateGoals`, a fresh read-modify-write.
+- `styles/styles.css` (`?v=21` on all five pages): goal rows take the full-screen sidebar's row
+  sizing.
+- Data:
+  - `docPages[].goalId` is optional and item-level. There is no slot field, no migration and no
+    validation.
+  - The import/export round-trip case now seeds an attached page and asserts that its `goalId`
+    comes back.
+
+**Two product bugs found by the new cases, fixed before the fail-first runs:**
+
+- **The task window lost a typed title on Escape or a click outside.** The title committed only
+  on `blur`, and neither close path blurs. `close` now runs the pending drafts first, on every way
+  out.
+- **A goal row could never be armed on a touch device.** The sidebar's own click handler cleared
+  the arm on the same tap because it excluded only `[data-doc-row]`. It now excludes
+  `[data-goal-row]` too.
+
+**A test-harness finding.** In a background headless tab, `el.focus()` / `el.blur()` dispatch no
+`focusin` / `focusout`, so React's `onFocus` / `onBlur` never ran. A probe showed the milestone
+slip baseline, captured on focus, was never captured. The case was therefore exercising the
+no-baseline path, not the one it names. The helpers now dispatch the events (AGENTS, Testing
+Lessons).
+
+**Cases.**
+
+- `tests/goal-core.test.js`, run once: 89.
+  - Astra's 87 pin every function against a verbatim copy of the original from `1c111c5`. Astra
+    reports all 50 copies (three dependencies included) byte-identical to that commit.
+  - Six `EXISTING EDGE` cases pin pre-existing behaviour rather than fix it (NOTES, "Projects").
+  - Claude added two: `isMilestoneDay` and `periodWithDay` against their inline originals.
+- `tests/project-core.test.js`, run once: 25.
+- `tests/browser.test.js`: a new PROJECTS section of 19 cases, and one extended round-trip case.
+- `node tests/run.js --offline`: all 28 suites passed.
+
+**Fail-first, offline.** Each doctor was a fresh scratch tree with a REAL copy of the module and
+its test file, one rule reversed, behind an undoctored control:
+
+| Tree | One rule reversed | Failed |
+| --- | --- | --- |
+| project-core CONTROL | none | 0 of 25 |
+| child keeps its goalId | `placed` keeps a sub-page's own `goalId` | 4: nest under Events (10), arrange beside Events (13) and beside a sub-page (14), `detachToEvents` (20) |
+| promote sends to Events | promote drops the page's goal | 1: promoting inside a goal (16) |
+| pagesForGoal skips isTop | a sub-page's own `goalId` counts | 2: sub-page ignored (7), parent cycle (23) |
+| arrange ignores target goal | arrange never takes the target's goal | 2: beside a goal's top page (12), dangling parent (15) |
+| placed reorders keys | key order changes | 3: the three EVENTS parity cases (1–3) |
+| goal-core CONTROL | none | 0 of 89 |
+| day-no-realness | `isMilestoneDay` is format-only | 1: its parity case (88) |
+| period-no-drag | `periodWithDay` never moves the end | 1: its parity case (89) |
+
+"placed reorders keys" fails only the three parity cases. That is the proof that they compare
+whole records, key order included, against the Events-only originals.
+
+**Fail-first, browser.** These runs were narrowed through the task-owned `--require` preload, and
+every run read plan `1..19`. Each tree was a REAL copy of `tests/` and the doctored page, with the
+rest of the repository symlinked. The doctors ran one at a time, in two sets.
+
+| Tree | One rule reversed | Failed, at |
+| --- | --- | --- |
+| CONTROL (set 1) | none | none (19/19) |
+| snapshot-write | `_mutateGoals` handed the page's snapshot | 5 only, at "the task another tab added survived this page's write" |
+| no-flush-on-close | `close` skips the drafts | 6 only, at "the title write on close" |
+| nest-into-own-parent | `goalDropValid` allows any nest | 10 only, at the byte-identical assertion |
+| lax-ms-day | `MsDateInput` commits any `NNNN-NN-NN` | 14 only, at "a partial year is never written" |
+| no-focus-baseline | the end field captures no baseline | 14 only, at "ONE slip, from the late end the edit started at" |
+| chip-any-goalId | Progress draws the link if any page has a `goalId` | 17 only, at "a sub-page does not count; goals without pages have no chip" |
+| deep-link-ignored | `?goal=` ignored | 16, and 19, which uses `?goal=` as its setup |
+| aside-disarms-goal-rows | the aside's old selector | 19 only, at "the first tap arming the row" |
+| events-roots-unfiltered | Events lists every root page | 1 only, at "an attached page, its sub-page and a detached page are not Events pages" |
+| goal-delete-no-confirm | deleting a goal skips its prompt | 7 only, at "three prompts answered Cancel, nothing written" |
+
+How to read the table:
+
+- **Two cases pass on both sides by design.** Case 11 (into the goal's own sub-goal): the writer
+  refuses it as well as the page, so reversing one door proves nothing — the AGENTS "second path"
+  lesson. Case 18 (two tabs) has no baseline.
+- **lax-ms-day and no-focus-baseline both fail case 14, at different assertions.** That case
+  carries two claims, and each doctor fires a different one.
+- **Set 2 had no control of its own.** Set 1's CONTROL was 19/19 at 16:35, set 2 ran 16:38–16:47
+  with no code edit between, and the full run below re-runs all 19 on the repository. The journal
+  shows no suspend over the window, and the laptop was on mains.
+
+`realErrors` was empty in every passing run.
+
+**Full run.** `node tests/run.js` on the REPOSITORY, 16:47:47–17:31:43 (≈2,636 s), on mains
+throughout (upower: charging), load ~2.4–3.2, no suspend line in the journal over the window.
+Every page, script, stylesheet and test file had the same md5 before and after (`84006f45…`), and
+HEAD was `1c111c5` at both ends.
+
+- 28 of 29 suites passed:
+  - swept, identical under all five timezones: `calendar-core` 126, `schema` 68, `notes-core` 37;
+  - once: `true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+    `schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, **`goal-core` 89**,
+    **`project-core` 25**, `viewport` 10, `journey-core` 39, `strat-core` 33, `cdp-cleanup` 13.
+- Browser: plan `1..482`, **476 ok, 6 not ok**. 482 is 463, plus the 19 PROJECTS cases. All 19
+  PROJECTS cases passed, and so did the extended import/export round trip.
+- The six failures are the Home and Documentations twins of three timetable cases:
+  - `draws the same class` (242, 243);
+  - `does not draw a day a class was removed from` (258, 259);
+  - `carries the detail in the block tooltip` (272, 273).
+
+  Each timed out on its own `waitFor` for the class layer. Their Progress twins passed.
+
+**The six are a date bug in the suite, not a regression.**
+
+- Why they fail: the section seeds its classes on `MONDAY = nextDow(1)`, the next Monday from
+  today. On Thursday 2026-10-29 that is **2026-11-02**. Home and a Documentations calendar block
+  open on the current month, and `CLICK_CAL_DAY` matches a cell by its day number alone. So it
+  clicks **October 2**, and no class is drawn there.
+- Why Progress passes: its week view reaches next Monday.
+- When it bites: any day whose next Monday falls in the next month — the last one to six days of
+  a month. The STRAT run on Sunday 2026-10-25 (next Monday 10-26) could not see it.
+- A CONTROL proves it. The pristine HEAD tree (`git archive HEAD`, a real copy, served through
+  `TRACK_TEST_ROOT`) was run narrowed to the nine cases of those three families, with plan `1..9`:
+  - the same six failed, at the same six messages;
+  - the three Progress twins passed.
+
+The fix belongs in the test, not the product: open the calendar on `MONDAY`'s month, or match the
+cell by its full date. It was **not** made here, because it is outside this feature (NOTES,
+Proposal 7).
+
+No test Chrome process and no `/tmp/track-cdp-*` profile was left behind.
+
+**Not covered.**
+
+- **Real touch hardware.** The touch drags and the phone arm case use synthesised touches.
+- **The live Firebase project.** Projects writes only `goals` and `docPages`, which sync as part
+  of the whole database like every other key.
+- **Print output** of a goal page.
+- **Real multi-device behaviour.** The two-tab case is the only concurrency evidence: same browser,
+  same `localStorage`.
+
+### Projects, second request: the goal page rearranged, page links placed anywhere, no date fields (2026-10-29)
+
+**The request.** The same day as the entry above, in the user's words: "make a button linkin from
+progress to projects, in the project page make rearrange and nest feature and I don't need the
+mm/dd/yyyy detail AND the most important thing is that I have to be able to move the page's
+hyperlink all across the goal/subgoal's page even in between tasks".
+
+How each part was read — the third is an interpretation the user has not confirmed (NOTES, "Projects"):
+
+- **The button:** `↗ Projects` in the active goal's header on Progress's Goals tab, and a hover
+  `↗` on every sub-goal row, both to `documentations.html?goal=<id>`.
+- **Rearrange and nest:** `⠿` (onto a row: into it) and `⇅` (beside a row: before or after it)
+  on every row of the goal page's directory — tasks, milestone areas, sub-goal rows, link nodes,
+  page links — through the same `goal-core.js` writers Progress uses.
+- **"mm/dd/yyyy detail":** the milestone area's two date fields and `clear` are gone from the goal
+  page; its period is a tooltip. The task window's own date field was **kept**, because it sets
+  the day the Schedule draws a task on.
+- **The page hyperlink:** a new optional `docPages[].goalPlace = {parentId, afterId}`.
+
+**The change.**
+
+- `scripts/project-core.js`:
+  - `placed()` deletes `goalPlace` whenever a move changes the page's goal or makes it a
+    sub-page; `arrangePage`'s dangling-parent branch keeps it when the goal does not change.
+  - New: `findGoal`, `directoryOf`, `placeOf`, `placesFor`, `interleave`, `movePageTo` (the one
+    link writer) and `healPlaces`, with the helpers they share.
+- `documentations.html`:
+  - The goal page draws one **Directory** — sub-goal rows, task blocks, milestone areas and the
+    goal's page links, interleaved — in place of the old Pages chips and sub-goal cards.
+  - `DragHandles`, `PageLinkRow`, `SubGoalRow`, `TaskDirectory`, `DirNode`, `TaskBlock`.
+  - `projDropValid` / `projNestValid` / `projArrangeValid`: one rule for the indicator and the
+    commit, by mouse and by finger. `commitProjDrop`, `movePageLink` and the `projDrag` object.
+  - `mutateGoals(fn, moved)` heals page links after every goal write, and every moving writer —
+    the sidebar's nest, arrange and promote, the goal page's drops, and the task window's `↑`,
+    `↓` and `move` — names what it moved.
+  - `MsDateInput` removed.
+- `progress.html`: the two `↗` links (`data-goal-projects-link`).
+- `styles/styles.css`: `.proj-dir .proj-handles` shown outright under `(pointer: coarse)`.
+  `?v=21` was already bumped by the uncommitted first request, so this round needs no bump.
+- Data: `goalPlace` is item-level, with no slot field, no migration and no validation. The
+  import/export round-trip case now also seeds a nested place and asserts it comes back.
+
+**Astra's review.** Astra (GPT-6 Astra in Codex) reviewed the round read-only, with the files'
+md5 checked unchanged afterwards, and reported seven defects. Claude confirmed each one against
+the code before fixing it:
+
+| # | Defect | Fix |
+| --- | --- | --- |
+| 1 | The task window's **Move under…** dropped the task when its destination had been deleted in another tab: `nestTaskIntoTask` drops a node whose target is gone | it asks `projNestValid` of the fresh read, and says so when it refuses |
+| 2 | The heal ran over this tab's React `docPages`, which the autosave writes whole: a page another tab had just edited or added was written back over | the heal reads `docPages` fresh, writes that one key, and adopts the stored list |
+| 3 | Links that came to share one spot after a heal were drawn in `docPages` order, which could reverse the order they stood in | `healPlaces` re-deals each shared spot in the order the links were drawn (`drawnOrder`) |
+| 4 | A row dropped where it already stood (`reorderSibling` returns new arrays) counted as moved, so the link after it jumped past it | `healPlaces` ignores a "moved" node whose parent and previous sibling are unchanged (`positionOf`) |
+| 5 | Two nodes sharing an id each drew the links placed in that id | only the directory's own node of an id draws them (`placedIn`, by identity) |
+| 6 | A link's `⠿` dropped on the sidebar worked by mouse but not by finger | the touch path falls through to a goal row (attach) or a page row (nest) for that drag |
+| 7 | A drop that changed nothing on screen could still reorder `docPages` and stamp `updatedAt` | `movePageTo` judges a no-op by the place and the order among the links there |
+
+**Cases.**
+
+- `tests/project-core.test.js`, run once: 25 → **42**. Eleven PLACE cases (the directory, a place
+  resolving or read as the top, `interleave`, `movePageTo` landing exactly among other links,
+  refusing a no-op, and writing nothing for a drop in place) and six HEAL cases (a moved anchor, a
+  vanished one, a list that left the directory, links travelling inside a moved node, a node
+  dropped where it stood, links converging in drawn order).
+- `tests/browser.test.js`, PROJECTS: 19 → **29**. The milestone date-field case was replaced by
+  "a milestone area has no date fields — its dates are a tooltip, edited in Progress", and ten
+  are new: a page link moved anywhere (mouse, then a reload); by finger on a phone, with the
+  handles shown outright and a task dropped on a link refused byte-identical; tasks moved by `⇅`
+  and `⠿` with the link beside them staying put, and a nest into the row's own parent refused
+  byte-identical; a link between sub-goals, and `⠿` onto a sub-goal row moving the page there;
+  a link landing exactly where `⇅` drew its line when other links already sit at that spot;
+  and, from the review, the task window's move refusing a destination deleted in another tab, a
+  heal made from what is stored, a link drawn once under a duplicated id, and a link's `⠿` onto
+  a sidebar goal row by finger; Progress's `↗ Projects` links. The import/export round trip now
+  carries a `goalPlace`; it is a guard, passing on both sides by design, because no import or
+  export code changed.
+
+**Fail-first, offline.** Each doctor was a scratch tree with a REAL copy of `project-core.js` and
+the test file, one rule reversed, behind an undoctored control (39/39):
+
+| Tree | One rule reversed | Failed |
+| --- | --- | --- |
+| heal-ignores-moved | `healPlaces` treats a moved anchor as still in place | 1: HEAL, a moved anchor |
+| no-splice-among-peers | `movePageTo` appends instead of splicing beside its peers | 1: PLACE, landing exactly among other links |
+| place-survives-goal-change | `placed()` keeps `goalPlace` | 1: PLACE, a place belongs to its goal |
+| resolve-skips-directory | `resolvePlace` accepts any parent | 1: PLACE, a place that no longer resolves |
+| heal-no-climb | a link in a list that left the directory stays put | 1: HEAL, inside a list that left / climbing |
+| interleave-drops-unknown-anchor | an unknown anchor draws nothing | 1: the `interleave` junk case |
+
+Six doctors, six singleton failure sets, all disjoint. The review fixes had three more, behind a
+second control (42/42):
+
+| Tree | One rule reversed | Failed |
+| --- | --- | --- |
+| noop-by-index | the no-op test compares array indices again | 1: PLACE, a drop that leaves the drawing as it was |
+| moved-unfiltered | every id in `moved` counts as moved | 1: HEAL, a node named as moved that still stands where it stood |
+| no-drawn-order | shared spots are not re-dealt | 1: HEAL, links converging keep their drawn order |
+
+Three more singletons, disjoint from each other and from the six.
+
+**Fail-first, browser.** Narrowed through the task-owned `--require` preload (`ONLY_PATTERN:
+'^PROJECTS'`); each root a REAL copy of `tests/` and the doctored file, the rest symlinked; one at
+a time behind a CONTROL. The md5 of the five files under test was the same before and after.
+
+| Tree | One rule reversed | Failed, at |
+| --- | --- | --- |
+| CONTROL (set 1) | none | none (24/24) |
+| heal-ignores-moved | `healPlaces` ignores `moved` | 17 only, at "the link was after the milestone, which MOVED: it now follows the row that stood before it" |
+| no-heal | `mutateGoals` never heals | 17 only, at the same assertion |
+| nest-into-own-parent | `projNestValid` allows a nest into the current parent | 17 only, at `'ok' !== 'refused'` |
+| place-survives-goal-change | `placed()` keeps `goalPlace` | 18 only, at "a place on pg-1 means nothing on ps-b: deleted" |
+| no-coarse-handles | the `(pointer: coarse)` rule removed | 16 only, at "a finger raises no hover: ⠿ ⇅ are shown without it" |
+| CONTROL (set 2) | none | none (25/25) |
+| after-lands-first | ⇅ "after a row" lands FIRST among the links there | 19 only, at "it lands under the last row the line was drawn under" |
+| before-lands-first | ⇅ "before a row" lands FIRST among the links there | 19 only, at "it lands directly above the row the line was drawn over" |
+| CONTROL (set 3) | none | none (29/29) |
+| move-unguarded | the task window's move skips `projNestValid` | 20 only, at "pt-2 is still in the goals — a move to a destination that is gone never drops it" |
+| heal-from-state | the heal runs over this tab's React `docPages` again | 21 only, at "the page another tab added is still stored" |
+| places-by-id | links are drawn under every node carrying the id | 22 only, at "one page, one link" |
+| touch-proj-rows-only | the touch path tests only the goal page's rows | 23 only, timing out on "the attach by finger" — no write, which is the claim |
+
+How to read the table:
+
+- **heal-ignores-moved and no-heal fail at the same assertion.** They are not independent rules:
+  `no-heal` removes the heal outright, and `heal-ignores-moved` keeps it for vanished anchors.
+  The offline HEAL cases separate them, where `heal-ignores-moved` fails only the moved-anchor
+  case.
+- **The two landing doctors fail the same case at different assertions.** It carries one claim
+  per side of a row, and each doctor fires its own.
+- **Set 1 is numbered before the landing case was added**, set 2 after it, and set 3 after the
+  four review cases as well.
+- **Each review doctor fails the case written for its finding, and nothing else.** The second
+  finding's case puts the claim it is named for first, so a heal that never ran would still be
+  caught by its third assertion, "the link WAS re-placed".
+
+`realErrors` was empty in every passing run.
+
+**Full run.** `node tests/run.js` on the REPOSITORY, 20:59:35–21:44:37 (≈2,702 s), on mains
+throughout, load ~2.4–3.4, no suspend line in the journal over the window. All 83 page, script,
+stylesheet and test files had the same md5 before and after, and HEAD was `1c111c5` at both ends.
+
+- 28 of 29 suites passed:
+  - swept, identical under all five timezones: `calendar-core` 126, `schema` 68, `notes-core` 37;
+  - once: `true-storage-core` 24, `source-dump-core` 33, `graph-layout` 21, `doc-table-core` 103,
+    `schedule-paste-core` 35, `quest-core` 54, `milestone-core` 63, `goal-core` 89,
+    **`project-core` 42**, `viewport` 10, `journey-core` 39, `strat-core` 33, `cdp-cleanup` 13.
+- Browser: plan `1..492`, **486 ok, 6 not ok**. 492 is 482 plus the ten new PROJECTS cases. All
+  29 PROJECTS cases passed, and so did the extended import/export round trip.
+- The six failures are the same six as the entry above — the Home and Documentations twins of
+  three timetable cases (242, 243, 258, 259, 272, 273), each timing out on its own class or
+  backdrop layer — the month-end date bug in the suite (NOTES, Proposal 7), not a regression.
+
+No test Chrome process and no `/tmp/track-cdp-*` profile was left behind.
+
+**Not covered.**
+
+- **Real touch hardware.** The finger cases use synthesised touches.
+- **A link's `⠿` onto a sidebar PAGE row by finger** (nest). It is implemented beside the goal-row
+  drop, but only the goal-row drop has a case.
+- **A link healed after an edit made in Progress.** By design it is not (NOTES): the link is drawn
+  at the top of its list, which the offline resolve cases pin.
+- **The `⇅` line's pixels.** The landing case reads which rows the line is drawn on, not where it
+  is painted.
+- **Print output** of a goal page with links among its tasks.
+
+**The task window's date field, removed on the user's answer.** Asked whether "mm/dd/yyyy" also
+meant the task window, the user answered "remove it". `TaskModal` lost its date input, its draft,
+`commitDate` and the page's `committableDay` helper; its time and length stay, shown once the task
+has a day, and the window says the day is set on the Schedule. New case: "the task window has no
+date field — a task's day is set on the Schedule; its time and length stay". Fail-first, narrowed
+to it and its task-window sibling: the REPOSITORY passed 2/2; a scratch root serving the page as
+it was before the removal (a real copy, the rest symlinked, `tests/` copied) failed the new case
+only, at "no date field in the window" (`true !== false`), its sibling passing. The full run above
+predates this edit by one case; it was not re-run.

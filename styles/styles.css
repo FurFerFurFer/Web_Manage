@@ -4477,6 +4477,7 @@ button.cal-doc-origin:hover {
    injects its <style> into <head> AFTER this file's <link> — a tie would go
    the other way. */
 .docs-sidebar-full [data-doc-row],
+.docs-sidebar-full [data-goal-row],
 .docs-sidebar-full .doc-fav-row {
   gap: 0.5rem;
   padding-top: 0.4rem;
@@ -4572,6 +4573,15 @@ button.cal-doc-origin:hover {
      have put two stars in one row. */
   .docs-sidebar .doc-row-armed .doc-fav-badge {
     display: none;
+  }
+
+  /* A goal's page (Projects): ⠿ ⇅ on every row of the directory, shown
+     outright rather than armed. A tap on a row there opens the task or the
+     page — it has no second meaning to give up — and the editor column is
+     wide enough for two small handles. Two classes, to beat Tailwind's
+     `.hidden` on the same element. */
+  .proj-dir .proj-handles {
+    display: flex;
   }
 }
 

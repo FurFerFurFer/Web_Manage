@@ -29,6 +29,8 @@ days. It is the count of them."* **MG always means Marginal Gains** — never "m
 | **Storage** | A source: a real place where material lives | knowledge |
 | **STRAT** | A strategy written on a mind map; every mind map under it shows it too (see below) | a **comment**, which is ticked off and belongs to its mind map alone |
 | **Core Routine** | The supporting actions — the Schedule's ■ button (see below) | a **routine task**: a goal task repeated on chosen days, which belongs to **Chosen** |
+| **Events** | Documentations' tab of ordinary documentation pages — every page not attached to a goal. They were simply "pages" until **Projects** arrived beside them (built 2026-10-29) | **Projects** |
+| **Projects** | Documentations' tab where every goal and sub-goal from Progress **is** a page, "synced with Progress": the page "mirrors all the task and to learn in directory form", everything on it can be edited except mind maps, and a milestone is "a highlighted area, not a task block". A page added under a goal or sub-goal is an **attached page**, linked from that goal's row in both Documentations and Progress, and drawn on the goal's page as a **hyperlink the user places** — "all across the goal/subgoal's page even in between tasks" (2026-10-29). The goal's page carries no "mm/dd/yyyy detail": a milestone's dates are set in Progress, and a task's day on the Schedule | a documentation page *about* a goal, which would be a copy; a project page is the goal itself, so nesting or moving a sub-goal moves its page with it |
 
 Still to be renamed (NOTES, Proposal 17): the **KS02** tab, which shows mind maps by phase,
 and the two screens both called **KS03** — the panel inside a mind map (phase, SIR,
@@ -186,5 +188,5 @@ original is done when all its sub-tasks are.
 program, **iCanStudy**, and the user will explain it (noted 2026-10-19). Take it from them; do
 not fill the gaps from general knowledge of the program. The parts below probably rest on it.
 
-Progress (goals, milestones, quests), the rest of the Schedule, Documentations, Home, and where
-the Journal sits in the learning loop.
+Progress (goals, milestones, quests), the rest of the Schedule, Documentations (beyond the
+Events / Projects words above), Home, and where the Journal sits in the learning loop.

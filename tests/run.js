@@ -79,9 +79,13 @@ const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.te
 // the days between two of them with integer arithmetic, never a Date.
 // strat-core.js stamps a STRAT's createdAt and updatedAt, so it carries the
 // same structural case: the page passes `now` in.
+// goal-core.js likewise receives every new id and timestamp from the caller;
+// its structural case rejects both date code and id minting. project-core.js
+// is handed a move's `updatedAt` as `now` for the same reason.
 const UNSWEPT_FILES = ['true-storage-core.test.js', 'source-dump-core.test.js', 'graph-layout.test.js',
   'doc-table-core.test.js', 'schedule-paste-core.test.js', 'quest-core.test.js', 'milestone-core.test.js',
-  'viewport.test.js', 'journey-core.test.js', 'strat-core.test.js', 'cdp-cleanup.test.js'];
+  'goal-core.test.js', 'project-core.test.js', 'viewport.test.js', 'journey-core.test.js', 'strat-core.test.js',
+  'cdp-cleanup.test.js'];
 
 for (const tz of zones)
   for (const file of OFFLINE_FILES)

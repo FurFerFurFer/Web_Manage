@@ -607,6 +607,19 @@ beyond calendar aggregation and the currently covered browser regressions.
 - Same-key two-tab conflicts are visible.
 - Remote conflict decisions preserve the selected version.
 
+### A date bug in the suite: six timetable cases fail at the end of a month
+
+The timetable section of `tests/browser.test.js` seeds its classes on `MONDAY = nextDow(1)`, the
+next Monday from today. Home and a Documentations calendar block open on the current month, and
+`CLICK_CAL_DAY` matches a cell by its day number alone. When next Monday falls in the next month —
+the last one to six days of a month — the case clicks the wrong day, and six cases time out:
+the Home and Documentations twins of `draws the same class`, `does not draw a day a class was
+removed from` and `carries the detail in the block tooltip`. Their Progress twins pass. Seen on
+2026-10-29, where it failed identically on a pristine copy of `1c111c5`
+(docs/VERIFICATION-LOG.md, the Projects entry). The fix is in the test only: open the month
+calendar on `MONDAY`'s month first, or match the cell by its full date rather than its day number.
+Until then a run in that window reads six red cases that are not a regression.
+
 ### Interaction matrix still needed
 
 - Mouse and touch drag. The Progress goal tree and the KS02 and True Storage trees
@@ -713,7 +726,7 @@ This is a direction, not a requirement to create empty directories.
 3. Import/export and migrations.
 4. Repository and conflict logic.
 5. Firebase synchronization.
-6. Pure goal, mind-map, and scheduling functions.
+6. Pure mind-map and scheduling functions (the goal tree's are already in `goal-core.js`).
 7. Small leaf components.
 8. Large page components one page at a time.
 
@@ -1245,6 +1258,45 @@ Found while building the overdue-milestone warnings (README "Milestone accountab
 - **Declined by the user on 2026-10-08, not forgotten:** a Home alert card, a count on the
   MILESTONES tab, and an early "behind pace" warning before the end date. Offer them again only
   if asked.
+
+### Projects: what it does not cover yet
+
+Documentations' Projects tab works and is documented in README. These are the edges it
+leaves, each found while building it and **not** changed there:
+
+- **The task window cannot add a milestone under a task.** A milestone can be added beside a
+  goal's tasks with `＋ milestone`, but not inside a task, which Progress allows. Adding it means
+  reusing `addMilestoneType` + `addChild` inside the window's sub-task list, under the same
+  refusals (`TrackGoals` already refuses a milestone inside a milestone).
+- **A nest that would close a link loop is not refused; it is drawn.** Nesting goal A under B
+  when a task inside B links up to A stores a loop that every walker survives and the page
+  draws as one `↻` row. Progress behaves the same way. Refusing it would mean asking
+  `linkWouldLoop` about every link in the moved subtree before the write.
+- **Mind maps cannot be linked from Projects.** To-learn is read-only there by the user's
+  choice when the feature was planned; linking mind maps and setting targets stays in
+  Progress. A mind map's quest flags still travel correctly when its goal is nested from here.
+- **Pre-existing goal-tree edges, kept exactly as they were.** The extraction into
+  `goal-core.js` pinned these rather than fixing them, because Progress already behaved this
+  way: a nesting writer whose target has vanished drops the dragged node (another tab deleting
+  the target between the drag and the drop — Projects re-checks the drop against its fresh read
+  and refuses it, Progress does not); `addChildAndTransferNotes` replaces a first
+  child's notes rather than merging them; `reorderSibling` asked to place a node before itself
+  can still move it; `normalizeMilestonePeriod` accepts a well-formed day that does not exist
+  (the date inputs never send one); and `getMMDescendants` includes its start node when it sits
+  in a cycle. Each wants a case seen failing first if it is ever changed.
+- **`progress.html`'s `GoalTree` component is never rendered.** It is dead code beside the
+  goal-tree delegates and can be removed on its own.
+- **A goal edit made in Progress does not re-place page links.** Projects re-places a link
+  whose row moved or went (`TrackProject.healPlaces`) because it knows the tree before and after
+  its own write. Progress writes `goals` through its own autosave and never reads `docPages`'
+  places, so after a move there the link is drawn at the top of its list — reachable, never
+  lost, but not where it was. Healing there would mean Progress writing `docPages`, which it
+  does not own; the alternative is Projects healing on its `storage` refresh, from the tree it
+  last drew to the one it reads. Neither was asked for.
+- **Where a link cannot go.** Not into the to-learn list (mind maps are read-only there), not
+  into a milestone drawn under the directory because no block uses it yet (it has no list until
+  `＋ place`), and not into anything drawn through a link (that subtree is the original's,
+  elsewhere). Each is a choice that fell out of the design rather than one the user made.
 
 ### The four add buttons: found along the way, and left out
 

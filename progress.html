@@ -12,6 +12,8 @@
   <script src="scripts/schema.js?v=9"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/milestone-core.js?v=3"></script>
+  <script src="scripts/goal-core.js?v=1"></script>
+  <script src="scripts/project-core.js?v=1"></script>
   <script src="scripts/strat-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -20,7 +22,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=20">
+  <link rel="stylesheet" href="styles/styles.css?v=21">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -870,29 +872,30 @@
       if (dirty) TrackStorage.saveDB(db);
     })();
 
+    /* The goal tree's readers and writers live in scripts/goal-core.js
+       (window.TrackGoals), shared with Documentations' Projects tab, so a
+       goal edit made there and one made here are the same function. These
+       names stay as one-line delegates only so their call sites do not move;
+       never re-inline one — a second copy is how the two pages would come to
+       disagree about a nest, a quest flag or a milestone. The five writers
+       that create a record take the new ids and times as `creations`, minted
+       here: one per node carrying the target id, because the old writers
+       minted once per match and a duplicated id in stored data still gets
+       two distinct records. */
+    function goalCreations(goals, id) {
+      return TrackGoals.flattenAll(goals).filter(n => n.id === id).map(() => ({ id: uid(), now: Date.now() }));
+    }
+
     function isMilestoneNode(node) {
-      return node?.taskType === 'milestone';
+      return TrackGoals.isMilestoneNode(node);
     }
 
     function isCountableLeaf(node) {
-      return !node?.isLink && !isMilestoneNode(node) && (node.children || []).length === 0;
+      return TrackGoals.isCountableLeaf(node);
     }
 
-    // `_path` guards a link that resolves to a link that resolves back — only
-    // hand-edited or synced data can build one, but a stack overflow here is a
-    // white screen. Anything with children is counted by countProgress, which
-    // carries its own guard.
     function isComplete(node, allGoals, _path = []) {
-      if (!node || _path.includes(node)) return false;
-      if (node.isLink) {
-        const orig = resolveLinkedTask(node, allGoals);
-        return orig ? isComplete(orig, allGoals, [..._path, node]) : false;
-      }
-      if (isMilestoneNode(node) && (node.children || []).length === 0) return true;
-      if ((node.children || []).length === 0) return !!node.completed;
-      const progress = countProgress(node, allGoals ? id => findNode(allGoals, id) : null);
-      if (progress.total === 0) return false;
-      return progress.done >= progress.total;
+      return TrackGoals.isComplete(node, allGoals, _path);
     }
 
     /* One-line delegates to milestone-core.js (TrackMilestone), which is the one
@@ -911,11 +914,7 @@
     }
 
     function toggleLeaf(goals, id) {
-      return goals.map(g =>
-        g.id === id && isCountableLeaf(g)
-          ? { ...g, completed: !g.completed }
-          : { ...g, children: toggleLeaf(g.children || [], id) }
-      );
+      return TrackGoals.toggleLeaf(goals, id);
     }
 
     function toggleRoutineSchedForDate(goals, id, dateStr) {
@@ -934,58 +933,15 @@
     }
 
     function addChild(goals, parentId, child) {
-      function walk(nodes, insideMilestone = false) {
-        return nodes.map(g => {
-          const nextInsideMilestone = insideMilestone || isMilestoneNode(g);
-          if (g.id === parentId) {
-            if (
-              isMilestoneNode(child) &&
-              (nextInsideMilestone || parentHasMilestoneChild(g, child.milestoneId, child.id, goals))
-            ) return g;
-            return { ...g, children: [...(g.children || []), child] };
-          }
-          return { ...g, children: walk(g.children || [], nextInsideMilestone) };
-        });
-      }
-      return walk(goals);
+      return TrackGoals.addChild(goals, parentId, child);
     }
 
     function addSubGoalAndMigrateTasks(goals, parentId, subGoal) {
-      return goals.map(g => {
-        if (g.id === parentId) {
-          const existingTasks    = (g.children || []).filter(c => !c.isSubGoal);
-          const existingSubGoals = (g.children || []).filter(c =>  c.isSubGoal);
-          // questLearn/starLearn are in the same key space as mmTargets and
-          // MUST travel with toLearn. TrackQuest.questLearnOf gates on toLearn
-          // membership, so leaving them behind does not strand the quest — it
-          // silently DELETES it, as a side effect of adding a sub-goal.
-          const newSubGoal = {
-            ...subGoal,
-            children:  [...existingTasks],
-            toLearn:   [...(g.toLearn   || [])],
-            mmTargets: { ...(g.mmTargets || {}) },
-            milestones: [...(g.milestones || [])],
-            ...TrackQuest.learnFlagsOf(g),
-          };
-          return {
-            // withoutLearnFlags, not a spread: a spread can add a key but
-            // cannot delete one, and `questLearn: []` is not the same stored
-            // state as no key at all.
-            ...TrackQuest.withoutLearnFlags(g),
-            children:  [...existingSubGoals, newSubGoal],
-            toLearn:   [],
-            mmTargets: {},
-            milestones: [],
-          };
-        }
-        return { ...g, children: addSubGoalAndMigrateTasks(g.children || [], parentId, subGoal) };
-      });
+      return TrackGoals.addSubGoalAndMigrateTasks(goals, parentId, subGoal);
     }
 
     function deleteNode(goals, id) {
-      return goals
-        .filter(g => g.id !== id)
-        .map(g => ({ ...g, children: deleteNode(g.children || [], id) }));
+      return TrackGoals.deleteNode(goals, id);
     }
 
     // deleteNode stays PURE — onDelete calls it too, and a tree function that
@@ -999,209 +955,61 @@
     }
 
     function deleteNodeKeepChildren(goals, id) {
-      const result = [];
-      for (const g of goals) {
-        if (g.id === id) {
-          result.push(...(g.children || []));
-        } else {
-          result.push({ ...g, children: deleteNodeKeepChildren(g.children || [], id) });
-        }
-      }
-      return result;
+      return TrackGoals.deleteNodeKeepChildren(goals, id);
     }
 
     function updateTitle(goals, id, title) {
-      return goals.map(g =>
-        g.id === id ? { ...g, title }
-                    : { ...g, children: updateTitle(g.children || [], id, title) }
-      );
+      return TrackGoals.updateTitle(goals, id, title);
     }
 
     function updateDate(goals, id, date) {
-      return goals.map(g =>
-        g.id === id ? { ...g, scheduledDate: date }
-                    : { ...g, children: updateDate(g.children || [], id, date) }
-      );
+      return TrackGoals.updateDate(goals, id, date);
     }
 
     function flattenAll(goals) {
-      const out = [];
-      const walk = ns => ns.forEach(n => { out.push(n); walk(n.children || []); });
-      walk(goals);
-      return out;
+      return TrackGoals.flattenAll(goals);
     }
 
     function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
-    // A PER-PATH cycle guard, as TrackMilestone.countLeaves has: the "link
-    // existing task" picker used to offer a task's own ancestors, so a link
-    // back up the tree can be in stored data, and following it recursed until
-    // the stack gave out. A node already on the current path ends its branch;
-    // a diamond (one task linked from two places) still yields its leaves
-    // twice, because callers read `.length` and always have.
     function getLeaves(node, allGoals = null, _path = []) {
-      if (!node || _path.includes(node)) return [];
-      const path = [..._path, node];
-      if (node.isLink) {
-        const orig = resolveLinkedTask(node, allGoals);
-        return orig ? getLeaves(orig, allGoals, path) : [];
-      }
-      if (isMilestoneNode(node) && (node.children || []).length === 0) return [];
-      if ((node.children || []).length === 0) return [node];
-      return (node.children || []).flatMap(c => getLeaves(c, allGoals, path));
+      return TrackGoals.getLeaves(node, allGoals, _path);
     }
 
     function parentHasMilestoneChild(parent, milestoneId, excludeId = null, allGoals = null) {
-      const seen = new Set();
-      return (parent?.children || []).some(child => {
-        if (!child || child.id === excludeId) return false;
-        let node = child;
-        if (child.isLink) {
-          node = allGoals && findNode(allGoals, child.linkedTaskId);
-          if (!node || seen.has(node.id)) return false;
-          seen.add(node.id);
-        }
-        return node.id !== excludeId && isMilestoneNode(node) && node.milestoneId === milestoneId;
-      });
+      return TrackGoals.parentHasMilestoneChild(parent, milestoneId, excludeId, allGoals);
     }
 
     function findNodePath(nodes, id, path = []) {
-      for (const n of nodes) {
-        const next = [...path, n];
-        if (n.id === id) return next;
-        const found = findNodePath(n.children || [], id, next);
-        if (found) return found;
-      }
-      return null;
+      return TrackGoals.findNodePath(nodes, id, path);
     }
 
     function addMilestoneType(goals, ownerId, title) {
-      return goals.map(g => {
-        if (g.id === ownerId) {
-          return { ...g, milestones: [...(g.milestones || []), { id: uid(), title, createdAt: Date.now() }] };
-        }
-        return { ...g, children: addMilestoneType(g.children || [], ownerId, title) };
-      });
+      return TrackGoals.addMilestoneType(goals, ownerId, title, goalCreations(goals, ownerId));
     }
 
     function renameMilestoneType(goals, ownerId, milestoneId, title) {
-      function updateBlockTitles(nodes) {
-        return nodes.map(n => ({
-          ...n,
-          title: isMilestoneNode(n) && n.milestoneId === milestoneId ? title : n.title,
-          children: updateBlockTitles(n.children || []),
-        }));
-      }
-      return goals.map(g => {
-        if (g.id === ownerId) {
-          return {
-            ...g,
-            milestones: (g.milestones || []).map(m => m.id === milestoneId ? { ...m, title } : m),
-            children: updateBlockTitles(g.children || []),
-          };
-        }
-        return { ...g, children: renameMilestoneType(g.children || [], ownerId, milestoneId, title) };
-      });
+      return TrackGoals.renameMilestoneType(goals, ownerId, milestoneId, title);
     }
 
     function deleteMilestoneType(goals, ownerId, milestoneId) {
-      function convertBlocks(nodes) {
-        return nodes.map(n => {
-          const converted = isMilestoneNode(n) && n.milestoneId === milestoneId;
-          return {
-            ...n,
-            taskType: converted ? 'task' : n.taskType,
-            milestoneId: converted ? null : n.milestoneId,
-            children: convertBlocks(n.children || []),
-          };
-        });
-      }
-      return goals.map(g => {
-        if (g.id === ownerId) {
-          return {
-            ...g,
-            milestones: (g.milestones || []).filter(m => m.id !== milestoneId),
-            children: convertBlocks(g.children || []),
-          };
-        }
-        return { ...g, children: deleteMilestoneType(g.children || [], ownerId, milestoneId) };
-      });
+      return TrackGoals.deleteMilestoneType(goals, ownerId, milestoneId);
     }
 
     function reorderMilestoneType(goals, ownerId, milestoneId, dir) {
-      return goals.map(g => {
-        if (g.id === ownerId) {
-          const milestones = [...(g.milestones || [])];
-          const idx = milestones.findIndex(m => m.id === milestoneId);
-          const nextIdx = idx + dir;
-          if (idx < 0 || nextIdx < 0 || nextIdx >= milestones.length) return g;
-          const [moved] = milestones.splice(idx, 1);
-          milestones.splice(nextIdx, 0, moved);
-          return { ...g, milestones };
-        }
-        return { ...g, children: reorderMilestoneType(g.children || [], ownerId, milestoneId, dir) };
-      });
+      return TrackGoals.reorderMilestoneType(goals, ownerId, milestoneId, dir);
     }
 
     function normalizeMilestonePeriod(startDate, endDate) {
-      const clean = d => d && d >= MILESTONE_CAL_START && d <= MILESTONE_CAL_END ? d : null;
-      const start = clean(startDate);
-      const end = clean(endDate);
-      if (!start && !end) return { startDate: null, endDate: null };
-      if (start && !end) return { startDate: start, endDate: start };
-      if (!start && end) return { startDate: end, endDate: end };
-      return start <= end
-        ? { startDate: start, endDate: end }
-        : { startDate: end, endDate: start };
+      return TrackGoals.normalizeMilestonePeriod(startDate, endDate);
     }
 
     function withMilestonePeriod(milestone, startDate, endDate) {
-      const next = { ...milestone };
-      if (startDate && endDate) {
-        next.startDate = startDate;
-        next.endDate = endDate;
-      } else {
-        delete next.startDate;
-        delete next.endDate;
-      }
-      return next;
+      return TrackGoals.withMilestonePeriod(milestone, startDate, endDate);
     }
 
-    /* The one writer of a milestone's dates. `slip` — {today, mms, sirDone,
-       baseline} — is what records a late milestone's moved end in `slips`
-       (TrackMilestone.withSlip, the one writer of that key). The baseline is
-       the state the edit STARTED from: a focused date input captures it on
-       focus, because a typed date passes through other days on the way and
-       must not move it; anything else — the clear button — is judged against
-       this tree as it stands before the write. `today` arrives from the
-       caller, so the updater stays a pure function of `goals` and what it was
-       handed. */
     function updateMilestonePeriod(goals, ownerId, milestoneId, startDate, endDate, slip) {
-      const period = normalizeMilestonePeriod(startDate, endDate);
-      let base = slip ? slip.baseline : null;
-      if (slip && !base) {
-        const owner = findNode(goals, ownerId);
-        const def = owner && (owner.milestones || []).find(m => m && m.id === milestoneId);
-        base = def
-          ? TrackMilestone.baselineOf(TrackMilestone.statusOf(owner, def, goals, slip.mms, slip.sirDone, slip.today))
-          : null;
-      }
-      function walk(nodes) {
-        return nodes.map(g => {
-          if (g.id === ownerId) {
-            return {
-              ...g,
-              milestones: (g.milestones || []).map(m => {
-                if (m.id !== milestoneId) return m;
-                const next = withMilestonePeriod(m, period.startDate, period.endDate);
-                return slip ? TrackMilestone.withSlip(next, base, slip.today) : next;
-              }),
-            };
-          }
-          return { ...g, children: walk(g.children || []) };
-        });
-      }
-      return walk(goals);
+      return TrackGoals.updateMilestonePeriod(goals, ownerId, milestoneId, startDate, endDate, slip);
     }
 
     // Delegates to milestone-core.js — see countProgress above. blocksOf
@@ -1226,20 +1034,7 @@
     }
 
     function updateSchedule(goals, id, date, time) {
-      return goals.map(g => {
-        if (g.id === id) {
-          if (g.taskType === 'routine') {
-            if (date === null) return { ...g, routineDates: {} };
-            const prev = (g.routineDates || {})[date];
-            return { ...g, routineDates: {
-              ...(g.routineDates || {}),
-              [date]: { ...(prev || {}), time: time || prev?.time || '09:00', done: prev?.done || false }
-            }};
-          }
-          return { ...g, scheduledDate: date, scheduledTime: time };
-        }
-        return { ...g, children: updateSchedule(g.children || [], id, date, time) };
-      });
+      return TrackGoals.updateSchedule(goals, id, date, time);
     }
 
     function addDissectChild(goals, parentId, childTitle) {
@@ -1280,27 +1075,15 @@
     }
 
     function updateNoteInTask(nodes, taskId, noteId, fields) {
-      return nodes.map(n =>
-        n.id === taskId
-          ? { ...n, notes: (n.notes || []).map(nt => nt.id === noteId ? { ...nt, ...fields } : nt) }
-          : { ...n, children: updateNoteInTask(n.children || [], taskId, noteId, fields) }
-      );
+      return TrackGoals.updateNoteInTask(nodes, taskId, noteId, fields);
     }
 
     function addNoteToTask(nodes, id, note) {
-      return nodes.map(n =>
-        n.id === id
-          ? { ...n, notes: [...(n.notes || []), note] }
-          : { ...n, children: addNoteToTask(n.children || [], id, note) }
-      );
+      return TrackGoals.addNoteToTask(nodes, id, note);
     }
 
     function removeNoteFromTask(nodes, id, noteId) {
-      return nodes.map(n =>
-        n.id === id
-          ? { ...n, notes: (n.notes || []).filter(nt => nt.id !== noteId) }
-          : { ...n, children: removeNoteFromTask(n.children || [], id, noteId) }
-      );
+      return TrackGoals.removeNoteFromTask(nodes, id, noteId);
     }
 
     function addNoteToSaAction(actions, id, note) {
@@ -1311,59 +1094,11 @@
     }
 
     function addChildAndTransferNotes(goals, parentId, child) {
-      function walk(nodes, insideMilestone = false) {
-        return nodes.map(g => {
-          const nextInsideMilestone = insideMilestone || isMilestoneNode(g);
-          if (g.id === parentId) {
-            if (
-              isMilestoneNode(child) &&
-              (nextInsideMilestone || parentHasMilestoneChild(g, child.milestoneId, child.id, goals))
-            ) return g;
-            const isFirst = (g.children || []).length === 0;
-            const parentNotes = g.notes || [];
-            const newChild = isFirst && parentNotes.length > 0
-              ? { ...child, notes: [...parentNotes] } : child;
-            return {
-              ...g,
-              children: [...(g.children || []), newChild],
-              ...(isFirst && parentNotes.length > 0 ? { notes: [] } : {}),
-            };
-          }
-          return { ...g, children: walk(g.children || [], nextInsideMilestone) };
-        });
-      }
-      return walk(goals);
+      return TrackGoals.addChildAndTransferNotes(goals, parentId, child);
     }
 
-    // Every node a newly typed task or routine could be filed under, flattened
-    // in tree order with its depth so one <select> can render the whole shape.
-    //
-    // This is deliberately NOT `getAllParentNodeIds`, which answers a different
-    // question — that one returns nodes which ALREADY have visible children, so
-    // the picker knows what to expand. A leaf is a perfectly good parent for a
-    // new task (the Goals panel's own `commitKid` adds a child to any node), it
-    // simply stops being a leaf, so excluding leaves here would hide most of the
-    // tree from the very control that needs it.
-    //
-    // The exclusions match `renderPickerTreeNode`: a link node is an alias and
-    // owns no children of its own, and a completed branch is finished work that
-    // new work does not belong under. A milestone node is INCLUDED — a task
-    // under one is a milestone task, which is meaningful, and only a milestone
-    // CHILD is refused (by `addChildAndTransferNotes`, not by us). The guard is
-    // a per-path `seen` set: `goals` is a tree, but a hand-edited or synced file
-    // is not obliged to be one, and a cycle here would hang the render.
     function taskParentOptions(nodes, allGoals) {
-      const out = [];
-      function walk(list, depth, seen) {
-        (list || []).forEach(n => {
-          if (!n || n.isLink || seen.has(n.id)) return;
-          if (isComplete(n, allGoals)) return;
-          out.push({ id: n.id, title: n.title || 'Untitled', depth, isMilestone: isMilestoneNode(n) });
-          walk(n.children || [], depth + 1, new Set([...seen, n.id]));
-        });
-      }
-      walk(nodes, 0, new Set());
-      return out;
+      return TrackGoals.taskParentOptions(nodes, allGoals);
     }
 
     function getSCTextBlocks(link) {
@@ -1390,278 +1125,63 @@
     }
 
     function updateTaskProps(goals, id, props) {
-      return goals.map(g =>
-        g.id === id
-          ? { ...g, ...props }
-          : { ...g, children: updateTaskProps(g.children || [], id, props) }
-      );
+      return TrackGoals.updateTaskProps(goals, id, props);
     }
 
     function findNode(goals, id) {
-      for (const g of goals) {
-        if (g.id === id) return g;
-        if (g.children?.length) { const f = findNode(g.children, id); if (f) return f; }
-      }
-      return null;
+      return TrackGoals.findNode(goals, id);
     }
 
     function resolveLinkedTask(node, allGoals) {
-      if (!node?.isLink) return node || null;
-      return allGoals ? findNode(allGoals, node.linkedTaskId) : null;
+      return TrackGoals.resolveLinkedTask(node, allGoals);
     }
 
-    // Would putting a link to `targetId` under `parentId` make a loop? True
-    // when the parent is the target, or can be reached from it through its
-    // children and the links among them: the new link would then lead back to
-    // itself, and every walker following it would go round forever. This is
-    // the ONE test — both link pickers leave such targets out, and both link
-    // writers refuse them. It prevents a new loop only; one already stored, or
-    // arriving through sync, is still drawn once by the guarded walkers.
     function linkWouldLoop(goals, parentId, targetId) {
-      if (parentId == null || targetId == null) return false;
-      if (parentId === targetId) return true;
-      const start = findNode(goals || [], targetId);
-      if (!start) return false;
-      const visited = new Set([start]);
-      const queue = [start];
-      while (queue.length) {
-        const n = queue.shift();
-        if (n.id === parentId) return true;
-        const next = n.isLink ? [findNode(goals || [], n.linkedTaskId)] : (n.children || []);
-        for (const c of next) {
-          if (c && !visited.has(c)) { visited.add(c); queue.push(c); }
-        }
-      }
-      return false;
+      return TrackGoals.linkWouldLoop(goals, parentId, targetId);
     }
 
     function getSelectableTasks(goals) {
-      const out = [];
-      function walk(nodes, isTop) {
-        for (const n of nodes) {
-          if (n.isLink) continue;
-          if (isMilestoneNode(n)) { walk(n.children || [], false); continue; }
-          if (!isTop && !n.isSubGoal) out.push(n);
-          walk(n.children || [], false);
-        }
-      }
-      walk(goals, true);
-      return out;
+      return TrackGoals.getSelectableTasks(goals);
     }
 
-    // `goals` is the whole tree: the loop test needs all of it, so the walk
-    // below is an inner function rather than this one recursing on a subtree.
     function addLinkedTask(goals, parentId, linkedTaskId) {
-      if (linkWouldLoop(goals, parentId, linkedTaskId)) return goals;
-      function walk(nodes) {
-        return nodes.map(g =>
-          g.id === parentId
-            ? { ...g, children: [...(g.children || []), { id: uid(), linkedTaskId, isLink: true }] }
-            : { ...g, children: walk(g.children || []) }
-        );
-      }
-      return walk(goals);
+      return TrackGoals.addLinkedTask(goals, parentId, linkedTaskId, goalCreations(goals, parentId));
     }
 
     function unlinkTask(goals, linkRefId) {
-      return goals
-        .filter(g => g.id !== linkRefId)
-        .map(g => ({ ...g, children: unlinkTask(g.children || [], linkRefId) }));
+      return TrackGoals.unlinkTask(goals, linkRefId);
     }
 
     function getSelectableGoals(goals, excludeId) {
-      const excluded = new Set();
-      function markExcluded(n) { excluded.add(n.id); (n.children||[]).forEach(markExcluded); }
-      function findAndMark(nodes) {
-        for (const n of nodes) {
-          if (n.id === excludeId) { markExcluded(n); return; }
-          findAndMark(n.children || []);
-        }
-      }
-      findAndMark(goals);
-      const out = [];
-      function walk(nodes, depth) {
-        for (const n of nodes) {
-          if (n.isLink || excluded.has(n.id)) continue;
-          if (depth === 0 || n.isSubGoal) out.push({ ...n, _depth: depth === 0 ? 0 : 1 });
-          walk(n.children || [], depth + 1);
-        }
-      }
-      walk(goals, 0);
-      return out;
+      return TrackGoals.getSelectableGoals(goals, excludeId);
     }
 
     function nestGoalIntoGoal(goals, draggedId, targetId) {
-      if (draggedId === targetId) return goals;
-      const dragged = goals.find(g => g.id === draggedId);
-      if (!dragged) return goals;
-      return goals
-        .filter(g => g.id !== draggedId)
-        .map(g => {
-          if (g.id !== targetId) return g;
-          const existingSubGoals = (g.children || []).filter(c => c.isSubGoal);
-          const existingTasks    = (g.children || []).filter(c => !c.isSubGoal);
-          const hasData = (g.toLearn || []).length > 0
-            || Object.keys(g.mmTargets || {}).length > 0
-            || (g.milestones || []).length > 0
-            || existingTasks.length > 0;
-
-          if (existingSubGoals.length === 0 && hasData) {
-            const originalSubGoal = {
-              id: uid(),
-              title: 'original',
-              isSubGoal: true,
-              completed: false,
-              createdAt: Date.now(),
-              children: [...existingTasks],
-              toLearn: [...(g.toLearn || [])],
-              mmTargets: { ...(g.mmTargets || {}) },
-              milestones: [...(g.milestones || [])],
-              // The quest flags travel with toLearn — see
-              // addSubGoalAndMigrateTasks for why leaving them deletes a quest.
-              ...TrackQuest.learnFlagsOf(g),
-            };
-            return {
-              ...TrackQuest.withoutLearnFlags(g),
-              children: [originalSubGoal, { ...dragged, isSubGoal: true }],
-              toLearn: [],
-              mmTargets: {},
-              milestones: [],
-            };
-          }
-
-          return { ...g, children: [...(g.children || []), { ...dragged, isSubGoal: true }] };
-        });
+      return TrackGoals.nestGoalIntoGoal(goals, draggedId, targetId, goalCreations(goals, targetId));
     }
 
     function promoteSubGoalToUltimate(goals, subGoalId) {
-      let promoted = null;
-      function remove(nodes) {
-        return nodes
-          .filter(n => { if (n.id === subGoalId) { promoted = { ...n, isSubGoal: false }; return false; } return true; })
-          .map(n => ({ ...n, children: remove(n.children || []) }));
-      }
-      const updated = remove(goals);
-      return promoted ? [...updated, promoted] : goals;
+      return TrackGoals.promoteSubGoalToUltimate(goals, subGoalId);
     }
 
     function containsId(nodes, id) {
-      for (const n of nodes) {
-        if (n.id === id) return true;
-        if (containsId(n.children || [], id)) return true;
-      }
-      return false;
+      return TrackGoals.containsId(nodes, id);
     }
 
     function nestSubGoalIntoSubGoal(goals, draggedId, targetId) {
-      if (draggedId === targetId) return goals;
-      const draggedNode = (function find(nodes) {
-        for (const n of nodes) { if (n.id === draggedId) return n; const f = find(n.children||[]); if (f) return f; }
-      })(goals);
-      if (draggedNode && containsId(draggedNode.children || [], targetId)) return goals;
-      let dragged = null;
-      function removeDragged(nodes) {
-        return nodes
-          .filter(n => { if (n.id === draggedId) { dragged = n; return false; } return true; })
-          .map(n => ({ ...n, children: removeDragged(n.children || []) }));
-      }
-      const withoutDragged = removeDragged(goals);
-      if (!dragged) return goals;
-      function insertIntoTarget(nodes) {
-        return nodes.map(n => {
-          if (n.id === targetId) {
-            const existingSubGoals = (n.children || []).filter(c => c.isSubGoal);
-            const existingTasks    = (n.children || []).filter(c => !c.isSubGoal);
-            const hasData = (n.toLearn || []).length > 0
-              || Object.keys(n.mmTargets || {}).length > 0
-              || (n.milestones || []).length > 0
-              || existingTasks.length > 0;
-            if (existingSubGoals.length === 0 && hasData) {
-              const defaultSubGoal = {
-                id: uid(), title: 'default', isSubGoal: true,
-                completed: false, createdAt: Date.now(),
-                children: [...existingTasks],
-                toLearn: [...(n.toLearn || [])],
-                mmTargets: { ...(n.mmTargets || {}) },
-                milestones: [...(n.milestones || [])],
-                // The quest flags travel with toLearn — see
-                // addSubGoalAndMigrateTasks for why leaving them deletes a quest.
-                ...TrackQuest.learnFlagsOf(n),
-              };
-              return { ...TrackQuest.withoutLearnFlags(n), children: [defaultSubGoal, { ...dragged, isSubGoal: true }], toLearn: [], mmTargets: {}, milestones: [] };
-            }
-            return { ...n, children: [...(n.children || []), { ...dragged, isSubGoal: true }] };
-          }
-          return { ...n, children: insertIntoTarget(n.children || []) };
-        });
-      }
-      return insertIntoTarget(withoutDragged);
+      return TrackGoals.nestSubGoalIntoSubGoal(goals, draggedId, targetId, goalCreations(goals, targetId));
     }
 
     function nestTaskIntoTask(goals, draggedId, targetId) {
-      if (draggedId === targetId) return goals;
-      const draggedPath = findNodePath(goals, draggedId);
-      const targetPath = findNodePath(goals, targetId);
-      const draggedNode = draggedPath?.[draggedPath.length - 1];
-      const targetNode = targetPath?.[targetPath.length - 1];
-      if (isMilestoneNode(draggedNode)) {
-        if ((targetPath || []).some(isMilestoneNode)) return goals;
-        if (targetNode && parentHasMilestoneChild(targetNode, draggedNode.milestoneId, draggedNode.id, goals)) return goals;
-      }
-      if (draggedNode && containsId(draggedNode.children || [], targetId)) return goals;
-      let dragged = null;
-      function removeDragged(nodes) {
-        return nodes
-          .filter(n => { if (n.id === draggedId) { dragged = n; return false; } return true; })
-          .map(n => ({ ...n, children: removeDragged(n.children || []) }));
-      }
-      const withoutDragged = removeDragged(goals);
-      if (!dragged) return goals;
-      function insertIntoTarget(nodes) {
-        return nodes.map(n => {
-          if (n.id === targetId) {
-            const existingChildren = n.children || [];
-            const targetNotes = n.notes || [];
-            const isFirstChild = existingChildren.length === 0 && targetNotes.length > 0;
-            const newDragged = isFirstChild
-              ? { ...dragged, notes: [...(dragged.notes || []), ...targetNotes] }
-              : dragged;
-            return {
-              ...n,
-              children: [...existingChildren, newDragged],
-              ...(isFirstChild ? { notes: [] } : {}),
-            };
-          }
-          return { ...n, children: insertIntoTarget(n.children || []) };
-        });
-      }
-      return insertIntoTarget(withoutDragged);
+      return TrackGoals.nestTaskIntoTask(goals, draggedId, targetId);
     }
 
     function reorderSibling(nodes, draggedId, targetId, insertBefore) {
-      const di = nodes.findIndex(n => n.id === draggedId);
-      const ti = nodes.findIndex(n => n.id === targetId);
-      if (di !== -1 && ti !== -1) {
-        const arr = [...nodes];
-        const [moved] = arr.splice(di, 1);
-        const newTi = arr.findIndex(n => n.id === targetId);
-        arr.splice(insertBefore ? newTi : newTi + 1, 0, moved);
-        return arr;
-      }
-      return nodes.map(n => ({ ...n, children: reorderSibling(n.children || [], draggedId, targetId, insertBefore) }));
+      return TrackGoals.reorderSibling(nodes, draggedId, targetId, insertBefore);
     }
 
-    // As addLinkedTask: a goal linked under its own sub-goal would loop.
     function addLinkedSubGoal(goals, parentId, linkedGoalId) {
-      if (linkWouldLoop(goals, parentId, linkedGoalId)) return goals;
-      function walk(nodes) {
-        return nodes.map(g =>
-          g.id === parentId
-            ? { ...g, children: [...(g.children||[]), { id: uid(), linkedTaskId: linkedGoalId, isLink: true, isSubGoal: true }] }
-            : { ...g, children: walk(g.children||[]) }
-        );
-      }
-      return walk(goals);
+      return TrackGoals.addLinkedSubGoal(goals, parentId, linkedGoalId, goalCreations(goals, parentId));
     }
 
     function formatTime12(t) {
@@ -1741,8 +1261,8 @@
       dangerSoft: 'var(--color-danger-soft)',
     };
     const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    const MILESTONE_CAL_START = "2026-01-01";
-    const MILESTONE_CAL_END   = "2033-12-31";
+    const MILESTONE_CAL_START = TrackGoals.MILESTONE_CAL_START;
+    const MILESTONE_CAL_END   = TrackGoals.MILESTONE_CAL_END;
     const getDIM      = (y,m) => new Date(y,m+1,0).getDate();
     const getFirstDay = (y,m) => new Date(y,m,1).getDay();
     const dStr        = (y,m,d) => `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
@@ -1770,45 +1290,11 @@
     }
 
     function getMMDescendants(mmId, mms, _visited = new Set()) {
-      const children = mms.filter(m => (m.parentIds || []).includes(mmId));
-      return children.flatMap(c => {
-        if (_visited.has(c.id)) return [];
-        _visited.add(c.id);
-        return [c.id, ...getMMDescendants(c.id, mms, _visited)];
-      });
+      return TrackGoals.getMMDescendants(mmId, mms, _visited);
     }
 
-    // `parentIds` is plural and the canvas pickers let a mind map take its own
-    // descendant as a parent, so a cycle is reachable through ordinary use.
-    // The guard is per path, as TrackTrueStorage.buildTree's: a mind map
-    // already on the branch is not drawn again under itself, while one with
-    // two parents is still drawn under both. And a cycle with no root above it
-    // is reached from no root at all, so it would vanish from the list — its
-    // first member in toLearn order is drawn as a root instead, which keeps
-    // every linked mind map on screen.
     function buildToLearnTree(toLearnIds, mms) {
-      const set = new Set(toLearnIds);
-      const placed = new Set();
-      function entry(mm, seen) {
-        placed.add(mm.id);
-        return { mm, children: buildChildren(mm.id, new Set([...seen, mm.id])) };
-      }
-      function buildChildren(parentId, seen) {
-        return toLearnIds
-          .map(id => mms.find(m => m.id === id))
-          .filter(mm => mm && !seen.has(mm.id) && (mm.parentIds || []).includes(parentId))
-          .map(mm => entry(mm, seen));
-      }
-      const roots = toLearnIds
-        .map(id => mms.find(m => m.id === id))
-        .filter(mm => mm && !(mm.parentIds || []).some(pid => set.has(pid)))
-        .map(mm => entry(mm, new Set()));
-      toLearnIds.forEach(id => {
-        if (placed.has(id)) return;
-        const mm = mms.find(m => m.id === id);
-        if (mm) roots.push(entry(mm, new Set()));
-      });
-      return roots;
+      return TrackGoals.buildToLearnTree(toLearnIds, mms);
     }
 
     // The ONE writer of toLearn, which is why the quest flags are re-scoped
@@ -1840,26 +1326,7 @@
     }
 
     function expandAnchorToLearn(goals, mms) {
-      function walk(nodes) {
-        return nodes.map(n => {
-          const updated = { ...n, children: walk(n.children || []) };
-          const tl = n.toLearn || [];
-          if (tl.length === 0) return updated;
-          const existing = new Set(tl);
-          const extraSet = new Set(existing);
-          const extra = tl
-            .filter(id => { const mm = mms.find(m => m.id === id); return mm && mm.type === 'anchor'; })
-            .flatMap(id => getMMDescendants(id, mms))
-            .filter(id => {
-              if (extraSet.has(id)) return false;
-              extraSet.add(id);
-              return true;
-            });
-          if (extra.length === 0) return updated;
-          return { ...updated, toLearn: [...tl, ...extra] };
-        });
-      }
-      return walk(goals);
+      return TrackGoals.expandAnchorToLearn(goals, mms);
     }
 
     // ── MM goal-target helpers ────────────────────────────────────────────────
@@ -1896,32 +1363,12 @@
       return TrackMilestone.targetFor(mm, target);
     }
 
-    // A goal's mind-map targets as [mm, target] pairs — the one reading that
-    // the auto-complete test and its ring both use, so the two cannot disagree.
-    // It iterates `toLearn`, NEVER Object.entries(mmTargets): those keys are
-    // strings and a mind map's id is a NUMBER from nid(), so a key-driven loop
-    // compared '10' with 10, found no mind map, and left every such goal
-    // undone with its ring at 0/N. A mind map that no longer exists is skipped,
-    // as TrackMilestone.statusOf does.
     function mmTargetEntries(goal, mms) {
-      const out = [];
-      const seen = new Set();
-      (goal.toLearn || []).forEach(mmId => {
-        if (seen.has(mmId)) return;
-        seen.add(mmId);
-        const mm = (mms || []).find(m => m.id === mmId);
-        if (!mm) return;
-        const t = targetOf(mm, (goal.mmTargets || {})[mmId]);
-        if (t && (t.stage || t.level || (t.milestones || []).length > 0)) out.push([mm, t]);
-      });
-      return out;
+      return TrackGoals.mmTargetEntries(goal, mms);
     }
 
-    // Returns null (no active targets), true (all met), or false (some unmet)
     function computeMMAutoComplete(goal, mms, sirDoneMap) {
-      const active = mmTargetEntries(goal, mms);
-      if (active.length === 0) return null;
-      return active.every(([mm, target]) => isMMTargetMet(mm, target, sirDoneMap));
+      return TrackGoals.computeMMAutoComplete(goal, mms, sirDoneMap);
     }
 
     // Returns 0.0–1.0 for a single MM's fractional progress toward its target
@@ -2963,7 +2410,7 @@
     // `ancestry` is the ids of the nodes drawn above this one on its branch;
     // a link to any of them is drawn as a LinkLoopRow.
     function GoalNode({ node, depth, handlers, goalColor, inDetailView, linkedRefId, milestoneOwner, insideMilestone = false, insideActiveMilestone = false, ancestry = [] }) {
-      const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, onArrangeTask, onAddMilestoneType, onRenameMilestoneType, onDeleteMilestoneType, onReorderMilestoneType, allGoals, mms, sirDoneMap } = handlers;
+      const { onToggle, onAddChild, onDelete, onDeleteKeepChildren, onUpdateTitle, onUpdateDate, onUpdateToLearn, onUpdateMmTargets, onAddSubGoal, onAddLinkedTask, onUnlinkTask, onAddLinkedSubGoal, onAddNote, onRemoveNote, onUpdateNote, onNestSubGoal, onNestTask, onArrangeTask, onAddMilestoneType, onRenameMilestoneType, onDeleteMilestoneType, onReorderMilestoneType, allGoals, mms, sirDoneMap, docPages } = handlers;
       const path = [...ancestry, node.id];
       const [hov, setHov]             = useState(false);
       const [showMMPicker, setShowMMPicker] = useState(false);
@@ -3088,8 +2535,37 @@
         setMilestoneEditVal('');
       }
 
+      /* The 📄 chip: documentation pages attached to this goal in
+         Documentations' Projects tab (project-core.js decides which). One page
+         opens that page; several open the goal there, which lists them. Shown
+         on every goal and sub-goal that has any — never on hover only, since
+         it is how the pages are found from here — and read-only: `docPages`
+         is Documentations' key, and Progress never writes it. A linked
+         sub-goal shows its original's pages: they are one goal. */
+      const attachedPages = isGoalType ? TrackProject.pagesForGoal(docPages || [], node.id) : [];
+      const docChip = attachedPages.length > 0 && (
+        <a data-goal-doc-chip={node.id}
+          href={'documentations.html?' + (attachedPages.length === 1
+            ? 'page=' + encodeURIComponent(attachedPages[0].id)
+            : 'goal=' + encodeURIComponent(node.id))}
+          onClick={e => e.stopPropagation()}
+          title={attachedPages.length === 1
+            ? 'Open the page "' + (attachedPages[0].title || 'Untitled') + '" in Documentations'
+            : attachedPages.length + ' pages — open this goal in Documentations → Projects'}
+          className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 flex-shrink-0 hover:bg-gray-700 hover:text-white">
+          📄{attachedPages.length > 1 ? ' ' + attachedPages.length : ''}
+        </a>
+      );
+
       const hoverActions = (
         <div className={`flex items-center gap-0.5 flex-shrink-0 transition-opacity duration-100 ${hov ? 'opacity-100' : 'opacity-0'}`}>
+          {node.isSubGoal && (
+            <a data-goal-projects-link={node.id}
+              href={'documentations.html?goal=' + encodeURIComponent(node.id)}
+              onClick={e => e.stopPropagation()}
+              title="Open this sub-goal's page in Documentations → Projects"
+              className="text-gray-600 hover:text-sky-400 text-xs px-1 py-0.5 rounded hover:bg-gray-700/60">↗</a>
+          )}
           {node.isSubGoal && (
             <span
               draggable
@@ -3347,6 +2823,7 @@
                       {node.scheduledDate}
                     </span>
                   )}
+                  {docChip}
                   {hoverActions}
                 </div>
                 {isParent && prog && depth > 0 && (
@@ -3561,6 +3038,7 @@
                       {node.scheduledDate}
                     </span>
                   )}
+                  {docChip}
                   {hoverActions}
                 </div>
                 {prog && depth > 0 && (
@@ -4239,7 +3717,7 @@
           onChange={e => {
             const v = e.target.value;
             setDraft(v);
-            if (TrackSchema.isDay(v) && v >= MILESTONE_CAL_START && v <= MILESTONE_CAL_END && v !== (value || '')) onCommit(v);
+            if (TrackGoals.isMilestoneDay(v) && v !== (value || '')) onCommit(v);
           }}
           className="bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-[10px] text-gray-300 outline-none focus:border-cyan-500" />
       );
@@ -4403,10 +3881,7 @@
 
       function handleDateInput(ownerId, milestone, field, value, goalId) {
         chooseMilestone(ownerId, milestone.id, goalId);
-        let startDate = field === 'start' ? value || null : milestone.startDate || null;
-        let endDate = field === 'end' ? value || null : milestone.endDate || null;
-        if (field === 'start' && value && endDate && value > endDate) endDate = value;
-        if (field === 'end' && value && startDate && value < startDate) startDate = value;
+        const { startDate, endDate } = TrackGoals.periodWithDay(milestone, field, value);
         const gesture = slipGestureRef.current;
         const baseline = gesture && gesture.key === `${ownerId}|${milestone.id}` ? gesture.baseline : null;
         setMilestonePeriod(ownerId, milestone.id, startDate, endDate, baseline);
@@ -4782,7 +4257,7 @@
 
     // ── GoalTabsPanel ─────────────────────────────────────────────────────────
 
-    function GoalTabsPanel({ goals, setGoals, mms, sirDoneMap }) {
+    function GoalTabsPanel({ goals, setGoals, mms, sirDoneMap, docPages }) {
       const [activeGoalId, setActiveGoalId] = useState(goals[0]?.id || null);
       // Which half of the 65/35 detail split a phone is showing. Desktop
       // renders both and ignores this.
@@ -4830,6 +4305,7 @@
         onDeleteMilestoneType:  (id, mid) => setGoals(prev => deleteMilestoneType(prev, id, mid)),
         onReorderMilestoneType: (id, mid, dir) => setGoals(prev => reorderMilestoneType(prev, id, mid, dir)),
         allGoals: goals,
+        docPages,
         onAddLinkedTask:    (parentId, linkedTaskId) => setGoals(prev => addLinkedTask(prev, parentId, linkedTaskId)),
         onUnlinkTask:       id              => { if (confirmUnlinkTask()) setGoals(prev => deleteNode(prev, id)); },
         onNestGoal:         (draggedId, targetId) => { setGoals(prev => nestGoalIntoGoal(prev, draggedId, targetId)); setActiveGoalId(targetId); },
@@ -4996,6 +4472,16 @@
                 <div className="flex items-center gap-2 mb-4 px-1">
                   <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: goalColor }} />
                   <span className="text-xs font-bold text-gray-300 tracking-wide truncate">{activeGoal.title}</span>
+                  {/* This goal's page in Documentations → Projects, where its
+                      tasks, sub-goals and pages are laid out as one page —
+                      the way back is that page's own ↗ Progress. A sub-goal
+                      row has the same link among its hover actions. */}
+                  <a data-goal-projects-link={activeGoal.id}
+                    href={'documentations.html?goal=' + encodeURIComponent(activeGoal.id)}
+                    title="Open this goal's page in Documentations → Projects"
+                    className="ml-auto flex-shrink-0 rounded border border-gray-700 px-2 py-0.5 text-[11px] text-gray-400 hover:border-gray-500 hover:text-white">
+                    ↗ Projects
+                  </a>
                 </div>
                 <GoalNode
                   key={activeGoal.id}
@@ -11924,7 +11410,7 @@
           {/* Tab: PROGRESS */}
           {tab === 'progress' && (
             <div className="flex-1 flex flex-col min-h-0">
-              <GoalTabsPanel goals={goals} setGoals={setGoals} mms={mms} sirDoneMap={sirDoneMap} />
+              <GoalTabsPanel goals={goals} setGoals={setGoals} mms={mms} sirDoneMap={sirDoneMap} docPages={docPages} />
             </div>
           )}
 
