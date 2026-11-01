@@ -1293,10 +1293,11 @@ leaves, each found while building it and **not** changed there:
   lost, but not where it was. Healing there would mean Progress writing `docPages`, which it
   does not own; the alternative is Projects healing on its `storage` refresh, from the tree it
   last drew to the one it reads. Neither was asked for.
-- **Where a link cannot go.** Not into the to-learn list (mind maps are read-only there), not
-  into a milestone drawn under the directory because no block uses it yet (it has no list until
-  `＋ place`), and not into anything drawn through a link (that subtree is the original's,
-  elsewhere). Each is a choice that fell out of the design rather than one the user made.
+- **Where a link cannot go.** Not into a milestone drawn under the directory because no block
+  uses it yet (it has no list until `＋ place`), and not into anything drawn through a link (that
+  subtree is the original's, elsewhere). Each is a choice that fell out of the design rather than
+  one the user made. In the To learn list a link goes only BETWEEN rows (`⇅`); `⠿` onto a mind
+  map is refused, since a link cannot be "inside" a mind map the way it can be inside a task.
 
 ### The four add buttons: found along the way, and left out
 

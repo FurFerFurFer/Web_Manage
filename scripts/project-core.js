@@ -103,6 +103,23 @@
      `healPlaces` ignores a "moved" node that still stands where it stood,
      and keeps links that come to share one spot in the order they were
      drawn.
+
+   ── THE TO-LEARN AREA ───────────────────────────────────────────────────────
+   A link can also sit in the goal's To learn list (the user's 2026-11-01
+   request), as the second kind of place:
+
+       goalPlace   {area: 'learn', afterId?}
+
+   `afterId` is a mind-map id in the goal's `toLearn` — a NUMBER in real
+   data, compared with === — and the link is drawn right after that mind
+   map's row (its first, where a mind map is drawn under two parents);
+   absent, it is first in the list. The list is flat as far as links go: a
+   link follows a ROW, and the page indents it to the row after it. The
+   same rules hold: an anchor no longer in `toLearn` reads as the top of
+   the To learn list, never repaired on read; a move to the directory
+   writes a directory place over it. Projects never edits `toLearn`, so
+   `healPlaces` leaves a to-learn place exactly as stored, and the to-learn
+   links are not in `placesFor` — `learnPlacesFor` lists them.
 */
 (function (global) {
   'use strict';
@@ -356,34 +373,65 @@
     return out;
   }
 
-  // The stored place, read totally: {parentId, afterId} or null.
+  var LEARN = 'learn';
+
+  // Whether `id` is one of the goal's to-learn mind maps.
+  function inLearn(goal, id) {
+    return isId(id) && isMap(goal) && isList(goal.toLearn) && goal.toLearn.indexOf(id) >= 0;
+  }
+
+  // A spot on the goal's page: {learn, parentId, afterId}. A to-learn spot's
+  // parentId is null; a directory spot's never is.
+  function sameSpot(a, b) {
+    return !!a.learn === !!b.learn && a.parentId === b.parentId && a.afterId === b.afterId;
+  }
+
+  // The stored place, read totally: {learn, parentId, afterId} or null.
   function placeOf(page) {
     if (!isMap(page) || !has(page, 'goalPlace') || !isMap(page.goalPlace)) return null;
     var gp = page.goalPlace;
+    var afterId = isId(gp.afterId) ? gp.afterId : null;
+    if (gp.area === LEARN) return { learn: true, parentId: null, afterId: afterId };
     if (!isId(gp.parentId)) return null;
-    return { parentId: gp.parentId, afterId: isId(gp.afterId) ? gp.afterId : null };
+    return { learn: false, parentId: gp.parentId, afterId: afterId };
   }
 
   // Where the page is DRAWN on `goal`'s page: its stored place while that
   // resolves, else the fallbacks in the header. `dir` is directoryOf(goal).
   function resolvePlace(page, goal, dir) {
     var p = placeOf(page);
-    if (!p || !dir.has(p.parentId)) return { parentId: goal.id, afterId: null };
-    if (p.afterId !== null && !hasChild(dir.get(p.parentId), p.afterId)) return { parentId: p.parentId, afterId: null };
+    if (p && p.learn) return p.afterId === null || inLearn(goal, p.afterId) ? p : { learn: true, parentId: null, afterId: null };
+    if (!p || !dir.has(p.parentId)) return { learn: false, parentId: goal.id, afterId: null };
+    if (p.afterId !== null && !hasChild(dir.get(p.parentId), p.afterId)) return { learn: false, parentId: p.parentId, afterId: null };
     return p;
   }
 
-  // Every page drawn on `goal`'s page, by the list it is drawn in:
+  // Every page drawn in `goal`'s DIRECTORY, by the list it is drawn in:
   // parentId -> [{page, afterId}], in docPages order. Only the goal's own
-  // top pages: a sub-goal's pages are drawn on the sub-goal's page.
+  // top pages: a sub-goal's pages are drawn on the sub-goal's page. A page
+  // placed in the To learn list is in learnPlacesFor instead.
   function placesFor(pages, goal) {
     var out = new Map();
     if (!isMap(goal) || !isId(goal.id)) return out;
     var dir = directoryOf(goal);
     pagesForGoal(pages, goal.id).forEach(function (page) {
       var at = resolvePlace(page, goal, dir);
+      if (at.learn) return;
       if (!out.has(at.parentId)) out.set(at.parentId, []);
       out.get(at.parentId).push({ page: page, afterId: at.afterId });
+    });
+    return out;
+  }
+
+  // The pages drawn in `goal`'s To learn list: [{page, afterId}], in
+  // docPages order — interleave's `placed`, over the list's rows.
+  function learnPlacesFor(pages, goal) {
+    if (!isMap(goal) || !isId(goal.id)) return [];
+    var dir = directoryOf(goal);
+    var out = [];
+    pagesForGoal(pages, goal.id).forEach(function (page) {
+      var at = resolvePlace(page, goal, dir);
+      if (at.learn) out.push({ page: page, afterId: at.afterId });
     });
     return out;
   }
@@ -416,14 +464,16 @@
     return out;
   }
 
-  // The record with its place written — or deleted, for the top of the
-  // goal's own list, the place absence already means.
-  function withPlace(page, goalId, parentId, afterId, now) {
+  // The record with `spot` written as its place — or deleted, for the top
+  // of the goal's own list, the place absence already means.
+  function withPlace(page, goalId, spot, now) {
     var copy = Object.assign({}, page, { updatedAt: now });
-    if (parentId === goalId && !isId(afterId)) delete copy.goalPlace;
+    var after = isId(spot.afterId);
+    if (spot.learn) copy.goalPlace = after ? { area: LEARN, afterId: spot.afterId } : { area: LEARN };
+    else if (spot.parentId === goalId && !after) delete copy.goalPlace;
     else {
-      var gp = { parentId: parentId };
-      if (isId(afterId)) gp.afterId = afterId;
+      var gp = { parentId: spot.parentId };
+      if (after) gp.afterId = spot.afterId;
       copy.goalPlace = gp;
     }
     return copy;
@@ -435,16 +485,19 @@
     if (!ha) return true;
     var x = a.goalPlace, y = b.goalPlace;
     if (!isMap(x) || !isMap(y)) return x === y;
-    return x.parentId === y.parentId && has(x, 'afterId') === has(y, 'afterId') && x.afterId === y.afterId;
+    return x.area === y.area && x.parentId === y.parentId && has(x, 'afterId') === has(y, 'afterId') && x.afterId === y.afterId;
   }
 
   /* MOVE a page's link on its goal's page. `target` is one of
        {pageId, before}           beside another link on the same page;
        {parentId, afterId, at}    after the node `afterId` (null: first) in
                                   `parentId`'s list, 'first' or 'last' among
-                                  the links already placed there.
+                                  the links already placed there;
+       {learn: true, afterId, at} the same, in the To learn list, after the
+                                  mind map `afterId` (null: first).
      Only a top page attached to `goal` moves, and only to a list of the
-     goal's directory and an anchor that is a child of it — anything else
+     goal's directory and an anchor that is a child of it, or to the To
+     learn list after one of the goal's to-learn mind maps — anything else
      returns the input. The page is also spliced into `docPages` beside the
      links it now sits with, since that order is theirs. */
   function movePageTo(pages, pageId, goal, target, now) {
@@ -457,23 +510,25 @@
     var attached = pagesForGoal(pages, goal.id);
     var at = new Map();
     attached.forEach(function (p) { at.set(p, resolvePlace(p, goal, dir)); });
-    var parentId, afterId, besideId = null, before = false, first = false;
+    var spot, besideId = null, before = false, first = false;
     if (has(target, 'pageId')) {
       if (target.pageId === pageId) return pages;
       var q = byId(attached, target.pageId);
       if (!q) return pages;
-      parentId = at.get(q).parentId;
-      afterId = at.get(q).afterId;
+      spot = at.get(q);
       besideId = q.id;
       before = !!target.before;
+    } else if (target.learn === true) {
+      spot = { learn: true, parentId: null, afterId: isId(target.afterId) ? target.afterId : null };
+      if (spot.afterId !== null && !inLearn(goal, spot.afterId)) return pages;
+      first = target.at === 'first';
     } else {
-      parentId = target.parentId;
-      afterId = isId(target.afterId) ? target.afterId : null;
-      if (!dir.has(parentId)) return pages;
-      if (afterId !== null && !hasChild(dir.get(parentId), afterId)) return pages;
+      spot = { learn: false, parentId: target.parentId, afterId: isId(target.afterId) ? target.afterId : null };
+      if (!dir.has(spot.parentId)) return pages;
+      if (spot.afterId !== null && !hasChild(dir.get(spot.parentId), spot.afterId)) return pages;
       first = target.at === 'first';
     }
-    var next = withPlace(page, goal.id, parentId, afterId, now);
+    var next = withPlace(page, goal.id, spot, now);
     var arr = pages.slice();
     arr.splice(i, 1);
     var ins;
@@ -484,7 +539,7 @@
       var peers = [];
       arr.forEach(function (p, k) {
         var pl = at.get(p);
-        if (pl && pl.parentId === parentId && pl.afterId === afterId) peers.push(k);
+        if (pl && sameSpot(pl, spot)) peers.push(k);
       });
       ins = !peers.length ? i : first ? peers[0] : peers[peers.length - 1] + 1;
     }
@@ -495,13 +550,13 @@
     // Array indices are not that test — a page can sit at another index and
     // still be drawn exactly where it is.
     if (samePlace(page, next)) {
-      var spot = function (list, self) {
+      var order = function (list, self) {
         return JSON.stringify(list.filter(function (p) {
-          var pl = p === self ? { parentId: parentId, afterId: afterId } : at.get(p);
-          return !!pl && pl.parentId === parentId && pl.afterId === afterId;
+          var pl = p === self ? spot : at.get(p);
+          return !!pl && sameSpot(pl, spot);
         }).map(function (p) { return p.id; }));
       };
-      if (spot(pages, null) === spot(arr, next)) return pages;
+      if (order(pages, null) === order(arr, next)) return pages;
     }
     return arr;
   }
@@ -610,6 +665,9 @@
       if (!isMap(page) || !has(page, 'goalPlace')) return page;
       var gid = goalIdOf(page);
       if (gid === null || !isTop(pages, page)) return page;
+      // a to-learn place follows a mind map, which no goal edit moves
+      var own = placeOf(page);
+      if (own && own.learn) return page;
       if (!goals.has(gid)) {
         var og = findGoal(before, gid), ng = findGoal(after, gid);
         goals.set(gid, og && ng ? { og: og, ng: ng, od: directoryOf(og), nd: directoryOf(ng) } : null);
@@ -620,7 +678,7 @@
       var spot = standing(was, g, movedSet);
       if (spot.parentId === was.parentId && spot.afterId === was.afterId) return page;
       healed.add(gid);
-      return withPlace(page, gid, spot.parentId, spot.afterId, now);
+      return withPlace(page, gid, spot, now);
     });
     if (!healed.size) return pages;
     // per goal with a re-placed link: every spot's links, re-dealt into the
@@ -632,7 +690,7 @@
       pages.forEach(function (page, k) {
         if (!isMap(page) || goalIdOf(page) !== gid || !isTop(pages, page)) return;
         var s = resolvePlace(out[k], g.ng, g.nd);
-        var key = JSON.stringify([s.parentId, s.afterId]);
+        var key = JSON.stringify([!!s.learn, s.parentId, s.afterId]);
         if (!spots.has(key)) spots.set(key, []);
         spots.get(key).push(k);
       });
@@ -667,6 +725,7 @@
     directoryOf: directoryOf,
     placeOf: placeOf,
     placesFor: placesFor,
+    learnPlacesFor: learnPlacesFor,
     interleave: interleave,
     movePageTo: movePageTo,
     healPlaces: healPlaces

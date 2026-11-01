@@ -16813,6 +16813,48 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
+  await t.test('PROJECTS: a page link moves into the To learn list — after a mind map, above one, by finger — and back out', async () => {
+    const db = PROJ_SEED();
+    db.slots[0].docPages = db.slots[0].docPages.map(p => p.id === 'pp-ev' ? Object.assign({}, p, { goalId: 'pg-1' }) : p);
+    const page = await open('documentations.html', { db, hash: '?goal=pg-1' });
+    try {
+      await page.waitFor(function () { return !!document.querySelector('[data-proj-dir] [data-proj-page-link="pp-ev"]'); },
+        { message: 'the link in pg-1\'s directory' });
+      const LEARN_ROWS = function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-proj-learn] [data-proj-row]'),
+          function (e) { return e.getAttribute('data-proj-row'); });
+      };
+      // ⇅ to the bottom half of the first mind map: right after it
+      let before = await page.evaluate(DOCPAGES_RAW);
+      assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE(LINK('pp-ev'), 'arrange'), '[data-proj-mm="10"]', 'bottom'), 'ok');
+      await docPagesLanded(page, before, 'the move after mind map 10');
+      assert.deepEqual(await placeOf(page, 'pp-ev'), { area: 'learn', afterId: 10 }, 'the anchor is the NUMBER id');
+      assert.deepEqual(await page.evaluate(LEARN_ROWS), ['mm:0', 'page:pp-ev', 'mm:1']);
+      assert.equal(await page.evaluate(HAS_SEL, '[data-proj-dir] ' + LINK('pp-ev')), false, 'gone from the directory');
+      // a mind map row takes no ⠿ and no node: the list is not this page's to move
+      const raw = await page.evaluate(READ_RAW);
+      assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE(LINK('pp-ev'), 'nest'), '[data-proj-mm="11"]', 'mid'), 'refused');
+      assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE('[data-proj-subgoal="ps-a"]', 'arrange'), '[data-proj-mm="11"]', 'top'), 'refused');
+      await sleep(300);
+      assert.equal(await page.evaluate(READ_RAW), raw, 'nothing written');
+      // by finger, ⇅ to the top half of the first mind map: first in the list
+      // (on screen first: a finger's drop is found by elementFromPoint)
+      await page.evaluate(function () { document.querySelector('[data-proj-learn]').scrollIntoView({ block: 'center' }); });
+      before = await page.evaluate(DOCPAGES_RAW);
+      assert.equal(await page.evaluate(PROJ_TOUCH_DRAG, HANDLE(LINK('pp-ev'), 'arrange'), '[data-proj-mm="10"]', 'top'), 'ok');
+      await docPagesLanded(page, before, 'the finger move above mind map 10');
+      assert.deepEqual(await placeOf(page, 'pp-ev'), { area: 'learn' }, 'first: no afterId key at all');
+      assert.deepEqual(await page.evaluate(LEARN_ROWS), ['page:pp-ev', 'mm:0', 'mm:1']);
+      // and back to the directory, after a sub-goal row
+      before = await page.evaluate(DOCPAGES_RAW);
+      assert.equal(await page.evaluate(PROJ_MOUSE_DRAG, HANDLE(LINK('pp-ev'), 'arrange'), '[data-proj-subgoal="ps-a"]', 'bottom'), 'ok');
+      await docPagesLanded(page, before, 'the move back to the directory');
+      assert.deepEqual(await placeOf(page, 'pp-ev'), { parentId: 'pg-1', afterId: 'ps-a' });
+      assert.deepEqual(await page.evaluate(LEARN_ROWS), ['mm:0', 'mm:1']);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
   await t.test('PROJECTS: a page link moves by finger too, and the handles show outright on a touch screen', async () => {
     const page = await open('documentations.html', { db: PROJ_SEED(), viewport: PHONE, hash: '?goal=ps-a' });
     await page.waitFor(function () { return !!document.querySelector('[data-proj-page-link="pp-at"]'); }, { message: 'the goal page on a phone' });

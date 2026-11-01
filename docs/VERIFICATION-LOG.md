@@ -5079,3 +5079,24 @@ to it and its task-window sibling: the REPOSITORY passed 2/2; a scratch root ser
 it was before the removal (a real copy, the rest symlinked, `tests/` copied) failed the new case
 only, at "no date field in the window" (`true !== false`), its sibling passing. The full run above
 predates this edit by one case; it was not re-run.
+
+## 2026-11-01 — Projects: a page link can sit in the To learn list
+
+The user's ask: on a goal's page, a page's link could be moved anywhere in the directory but not
+into the To learn list; it should move there too. A link's place gained a second kind,
+`goalPlace: {area: 'learn', afterId?}` (`scripts/project-core.js`, now `?v=2` on both pages that
+load it), and the To learn rows became `⇅` drop targets in `documentations.html`.
+
+The user asked for a light check, so the full suite was **not** run.
+
+- `node --test tests/project-core.test.js`: 46/46 (42 before, plus four `LEARN:` cases). Against
+  `project-core.js` from HEAD (a real copy in a scratch tree, `tests/` copied), three of the four
+  failed. The fourth, a refused move returning the same list, is a guard and passed on both.
+- `tests/browser.test.js`, narrowed with a scratch preload (a Proxy over the TestContext) to the
+  three `PROJECTS: a page link…` cases: 3/3. One is new: the link moved after a mind map, refused
+  by `⠿` on a mind map's row and by a sub-goal's `⇅`, moved to the top of the list by finger, and
+  back to the directory. That case was not seen failing first.
+
+**Not covered.** The full suite; the `⇅` line's pixels on a to-learn row; a mind map drawn under
+two parents (the drop steps back to that mind map's first row, which nothing pins); real touch
+hardware; print.

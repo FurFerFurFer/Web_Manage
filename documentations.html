@@ -13,7 +13,7 @@
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/milestone-core.js?v=3"></script>
   <script src="scripts/goal-core.js?v=1"></script>
-  <script src="scripts/project-core.js?v=1"></script>
+  <script src="scripts/project-core.js?v=2"></script>
   <script src="scripts/calendar-core.js?v=14"></script>
   <script src="scripts/doc-table-core.js?v=4"></script>
   <script src="scripts/schedule-paste-core.js?v=2"></script>
@@ -2574,9 +2574,13 @@
        milestone, onto a sub-goal (the page moves to it) or onto another page
        (it becomes that page's sub-page, the sidebar's ⠿). Nothing else drops
        on a page link — a node's place is in the goal tree, which holds no
-       pages. A SUB-GOAL nests only into a sub-goal, by the sidebar's rule. */
+       pages. A SUB-GOAL nests only into a sub-goal, by the sidebar's rule.
+       A to-learn row (`mm`, by its index in the list) takes only a page
+       link's ⇅: the list is the goal's mind maps, which this page never
+       moves. */
     function projDropValid(goals, d, rk, rid) {
       if (!d || (rk === d.rowKind && rid === String(d.id))) return false;
+      if (rk === 'mm') return d.rowKind === 'page' && d.mode === 'arrange';
       if (d.rowKind === 'page') return d.mode === 'arrange' || ['task', 'ms', 'sub', 'page'].includes(rk);
       if (rk === 'page') return false;
       if (d.rowKind === 'sub') return d.mode === 'nest'
@@ -3075,38 +3079,59 @@
       );
     }
 
+    // The To learn list as it is drawn, top to bottom: one row per mind map,
+    // depth-first (a mind map under two parents is a row under each). Both
+    // the list and a drop on it read this, so a row's index means one row.
+    function learnRows(goal, mms) {
+      const rows = [];
+      (function flat(entries, depth) {
+        entries.forEach(({mm, children}) => {
+          rows.push({id: mm.id, mm, depth, kids: children.length > 0});
+          flat(children, depth + 1);
+        });
+      })(TrackGoals.buildToLearnTree((goal && goal.toLearn) || [], mms || []), 0);
+      return rows;
+    }
+
     // The goal's mind maps, drawn read-only: phase, level, and the target the
     // goal sets, all read through milestone-core.js (a Procedural mind map is
     // judged by its level alone). Editing a mind map or its target is the
     // Knowledge Record's and Progress's job, which is why each row links out.
-    function ToLearnTree({entries, goal, ctx, depth}) {
-      return entries.map(({mm, children}) => {
+    // The goal's page links placed here (project-core.js, the to-learn area)
+    // are drawn among the rows, each indented as the row after its anchor.
+    function ToLearnList({rows, goal, ctx}) {
+      let depth = 0;
+      return TrackProject.interleave(rows, ctx.learnPlaces).map(it => {
+        if (it.page) return (
+          <div key={'p:' + it.page.id} style={{marginLeft: depth * 20}}><PageLinkRow page={it.page} ctx={ctx} /></div>
+        );
+        const {mm} = it.node;
+        const at = rows.indexOf(it.node);
+        const key = 'mm:' + at;
+        depth = it.node.depth + (it.node.kids ? 1 : 0);
         const target = TrackMilestone.targetFor(mm, ((goal.mmTargets || {})[mm.id]));
         const hasTarget = !!(target && (target.stage || target.level || (target.milestones || []).length));
         const met = hasTarget && TrackMilestone.targetMet(mm, target, ctx.sirDone);
         const last = hasTarget && (target.milestones || []).length ? target.milestones[target.milestones.length - 1] : target;
         const goalText = hasTarget ? [last.stage && stageText(last.stage), last.level && 'L' + last.level].filter(Boolean).join(' · ') : '';
         return (
-          <React.Fragment key={mm.id}>
-            <div data-proj-mm={mm.id} style={{marginLeft: depth * 20}}
-              className="my-0.5 flex items-center gap-2 rounded px-2 py-1 text-xs text-gray-300">
-              <span className="text-gray-500">◎</span>
-              <a href={'sir-ks02.html?mm=' + encodeURIComponent(mm.id)} className="min-w-0 flex-1 truncate hover:text-white hover:underline"
-                title="Open in the Knowledge Record">{mm.name || 'Untitled mind map'}</a>
-              <span className="shrink-0 text-[10px] text-gray-600">{MM_KIND[mm.type] || ''}</span>
-              {mm.type !== 'anchor' && (
-                <span className="shrink-0 text-[10px] text-gray-500">
-                  {TrackMilestone.isProcedural(mm) ? '' : stageText(TrackMilestone.stageOf(mm)) + ' · '}L{mm.rating || 0}
-                </span>
-              )}
-              {hasTarget && (
-                <span className={"shrink-0 rounded px-1 text-[10px] " + (met ? 'bg-emerald-500/10 text-emerald-400' : 'bg-gray-800 text-gray-400')}>
-                  {met ? '✓ ' : '→ '}{goalText}
-                </span>
-              )}
-            </div>
-            {children.length > 0 && <ToLearnTree entries={children} goal={goal} ctx={ctx} depth={depth + 1} />}
-          </React.Fragment>
+          <div key={key} data-proj-mm={mm.id} data-proj-row={key} style={{marginLeft: it.node.depth * 20}}
+            className={"my-0.5 flex items-center gap-2 rounded px-2 py-1 text-xs text-gray-300" + arrangeLine(hitOf(ctx, key))}>
+            <span className="text-gray-500">◎</span>
+            <a href={'sir-ks02.html?mm=' + encodeURIComponent(mm.id)} className="min-w-0 flex-1 truncate hover:text-white hover:underline"
+              title="Open in the Knowledge Record">{mm.name || 'Untitled mind map'}</a>
+            <span className="shrink-0 text-[10px] text-gray-600">{MM_KIND[mm.type] || ''}</span>
+            {mm.type !== 'anchor' && (
+              <span className="shrink-0 text-[10px] text-gray-500">
+                {TrackMilestone.isProcedural(mm) ? '' : stageText(TrackMilestone.stageOf(mm)) + ' · '}L{mm.rating || 0}
+              </span>
+            )}
+            {hasTarget && (
+              <span className={"shrink-0 rounded px-1 text-[10px] " + (met ? 'bg-emerald-500/10 text-emerald-400' : 'bg-gray-800 text-gray-400')}>
+                {met ? '✓ ' : '→ '}{goalText}
+              </span>
+            )}
+          </div>
         );
       });
     }
@@ -3185,15 +3210,22 @@
       const auto = TrackGoals.computeMMAutoComplete(node, baseCtx.mms, baseCtx.sirDone);
       // where this goal's page links are drawn, per list (project-core.js)
       const ctx = {...baseCtx, docPages, onSelectGoal, onSelectPage,
-        places: TrackProject.placesFor(docPages, node), dir: TrackProject.directoryOf(node)};
+        places: TrackProject.placesFor(docPages, node), dir: TrackProject.directoryOf(node),
+        learnPlaces: TrackProject.learnPlacesFor(docPages, node)};
+      // the directory and the To learn list take drops alike
+      const dropZone = {
+        onDragOver: e => ctx.drag && ctx.drag.mouseOver(e),
+        onDragLeave: e => { if (ctx.drag && !e.currentTarget.contains(e.relatedTarget)) ctx.drag.mouseLeave(); },
+        onDrop: e => ctx.drag && ctx.drag.mouseDrop(e),
+      };
       // Milestones defined on this goal that no block in its tree uses yet.
       // They are still the goal's milestones, so they are drawn — empty.
       const used = new Set(TrackGoals.flattenAll(tasks).filter(TrackGoals.isMilestoneNode).map(n => n.milestoneId));
       const unplaced = (node.milestones || []).filter(m => m && !used.has(m.id));
-      const learn = TrackGoals.buildToLearnTree(node.toLearn || [], ctx.mms);
+      const learn = learnRows(node, ctx.mms);
       const section = "mb-2 mt-8 text-[10px] font-bold uppercase tracking-widest text-gray-600";
       const empty = (node.children || []).filter(Boolean).length === 0 && unplaced.length === 0
-        && TrackProject.pagesForGoal(docPages, node.id).length === 0;
+        && ctx.places.size === 0;
       return (
         <div data-proj-goal={node.id}>
           <div className="docs-toolbar mb-2 flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
@@ -3222,10 +3254,7 @@
               here, to App's ctx.drag, so the mouse and a finger answer every
               drop with the same rule. */}
           <div className={section}>Directory</div>
-          <div data-proj-tasks data-proj-dir className="proj-dir"
-            onDragOver={e => ctx.drag && ctx.drag.mouseOver(e)}
-            onDragLeave={e => { if (ctx.drag && !e.currentTarget.contains(e.relatedTarget)) ctx.drag.mouseLeave(); }}
-            onDrop={e => ctx.drag && ctx.drag.mouseDrop(e)}>
+          <div data-proj-tasks data-proj-dir className="proj-dir" {...dropZone}>
             {empty && <div className="text-xs text-gray-600">Nothing here yet — add a sub-goal, a task or a page below.</div>}
             <TaskDirectory nodes={node.children || []} parent={node} owner={node} ctx={ctx}
               ancestry={path.map(n => n.id)} indent={false} inLink={false} />
@@ -3244,11 +3273,11 @@
               className="mt-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-sky-300">＋ page</button>
           </div>
 
-          {learn.length > 0 && (
+          {(learn.length > 0 || ctx.learnPlaces.length > 0) && (
             <>
               <div className={section}>To learn</div>
-              <div data-proj-learn>
-                <ToLearnTree entries={learn} goal={node} ctx={ctx} depth={0} />
+              <div data-proj-learn className="proj-dir" {...dropZone}>
+                <ToLearnList rows={learn} goal={node} ctx={ctx} />
               </div>
             </>
           )}
@@ -4157,6 +4186,19 @@
             return;
           }
           if (rk === 'page') { movePageLink(d.id, {pageId: rid, before}); return; }
+          if (rk === 'mm') {
+            // a to-learn row, by its index: right above it (after the row
+            // before) or right below it, where ⇅ drew its line. A mind map
+            // drawn twice holds links at its first row only, so the anchor
+            // steps back to the nearest row that is a mind map's first.
+            const goalId = TrackProject.projectOf(docPages, d.id);
+            const rows = learnRows(goalId !== null ? TrackProject.findGoal(viewGoals, goalId) : null, slotMms);
+            let k = Number(rid) - (before ? 1 : 0);
+            if (!(k < rows.length)) return;
+            while (k >= 0 && rows.findIndex(r => r.id === rows[k].id) !== k) k--;
+            movePageLink(d.id, {learn: true, afterId: k >= 0 ? rows[k].id : null, at: before ? 'last' : 'first'});
+            return;
+          }
           // before a row: after the row above it and every link below that
           // one; after a row: below the links that follow it, where ⇅ drew
           // its line (the row's wrapper holds them)

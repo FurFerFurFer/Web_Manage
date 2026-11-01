@@ -575,6 +575,60 @@ test('HEAL: links that come to share one spot keep the order they were drawn in'
   assert.equal(out.find(p => p.id === 'pp'), pages[1], 'the link that did not move is the same record');
 });
 
+// ── 5. the To learn list ───────────────────────────────────────────────────
+/* The goal's to-learn ids are NUMBERS, as nid() mints them in real data. */
+const LGOAL = () => Object.assign(GOAL(), { toLearn: [10, 11, 12] });
+const learnDrawn = (pages, goal) => P.interleave(goal.toLearn.map(id => ({ id })), P.learnPlacesFor(pages, goal))
+  .map(it => it.node ? it.node.id : 'page:' + it.page.id);
+
+test('LEARN: a link moves into the To learn list, after a mind map or first, and out of the directory', () => {
+  const g = LGOAL(), pages = deepFreeze(PLACED());
+  const after = P.movePageTo(pages, 'pb', g, { learn: true, afterId: 11, at: 'first' }, NOW);
+  assert.deepEqual(after.find(p => p.id === 'pb').goalPlace, { area: 'learn', afterId: 11 });
+  assert.deepEqual(learnDrawn(after, g), [10, 11, 'page:pb', 12]);
+  assert.deepEqual(drawn(after, g, 'g'), ['page:pa', 't1', 'm1', 't2', 's1', 'l1', 't3'], 'gone from the directory');
+  const first = P.movePageTo(pages, 'pa', g, { learn: true, afterId: null, at: 'last' }, NOW);
+  assert.deepEqual(first.find(p => p.id === 'pa').goalPlace, { area: 'learn' }, 'first: no afterId key, never null');
+  assert.deepEqual(learnDrawn(first, g), ['page:pa', 10, 11, 12]);
+});
+
+test('LEARN: beside a to-learn link is that link\'s place, and a move back to the directory drops the area', () => {
+  const g = LGOAL();
+  const pages = deepFreeze([
+    page('pa', null, { goalId: 'g', goalPlace: { area: 'learn', afterId: 10 } }),
+    page('pb', null, { goalId: 'g', goalPlace: at('g', 't1') })
+  ]);
+  const beside = P.movePageTo(pages, 'pb', g, { pageId: 'pa', before: false }, NOW);
+  assert.deepEqual(learnDrawn(beside, g), [10, 'page:pa', 'page:pb', 11, 12]);
+  const back = P.movePageTo(pages, 'pa', g, { parentId: 't1', afterId: 't1a', at: 'last' }, NOW);
+  assert.deepEqual(back.find(p => p.id === 'pa').goalPlace, at('t1', 't1a'));
+  assert.deepEqual(P.learnPlacesFor(back, g), []);
+});
+
+test('LEARN: a refused or unchanged move returns the SAME list', () => {
+  const g = LGOAL();
+  const pages = deepFreeze([page('pa', null, { goalId: 'g', goalPlace: { area: 'learn', afterId: 10 } })]);
+  assert.equal(P.movePageTo(pages, 'pa', g, { learn: true, afterId: 99, at: 'last' }, NOW), pages, 'not a to-learn mind map');
+  assert.equal(P.movePageTo(pages, 'pa', g, { learn: true, afterId: '10', at: 'last' }, NOW), pages, '\'10\' is not 10');
+  assert.equal(P.movePageTo(pages, 'pa', g, { learn: true, afterId: 10, at: 'first' }, NOW), pages, 'already there');
+});
+
+test('LEARN: a lost anchor reads as the top of the To learn list, and a goal edit never heals it', () => {
+  const before = FOREST(LGOAL());
+  const g = JSON.parse(JSON.stringify(before[0]));
+  g.toLearn = [10, 12];
+  g.children = g.children.filter(c => c.id !== 't1');
+  const pages = deepFreeze([
+    page('pa', null, { goalId: 'g', goalPlace: { area: 'learn', afterId: 11 } }),
+    page('pb', null, { goalId: 'g', goalPlace: at('g', 't1') })
+  ]);
+  assert.deepEqual(learnDrawn(pages, g), ['page:pa', 10, 12]);
+  assert.deepEqual(P.placesFor(pages, g).get('g').map(s => s.page.id), ['pb'], 'only the directory link is in placesFor');
+  const out = P.healPlaces(pages, before, [g, before[1]], ['t1'], NOW);
+  assert.equal(out.find(p => p.id === 'pa'), pages[0], 'the to-learn link is the same record');
+  assert.notEqual(out.find(p => p.id === 'pb'), pages[1], 'while the directory link was healed');
+});
+
 // ── structural ─────────────────────────────────────────────────────────────
 
 test('the module constructs no Date, which is why its suite is not swept', () => {
