@@ -80,6 +80,7 @@ Active files:
 | `scripts/true-storage-core.js` | The one definition of the storage↔source-dump relationship (`window.TrackTrueStorage`): the pair matcher, the pure tag writers, and the parent/child tree |
 | `scripts/source-dump-core.js` | The one definition of how a source dump is read and edited (`window.TrackSourceDump`): `pathTo` (the cycle-guarded breadcrumb), `textBlocksOf` / `isLegacyBlock`, `isLeafMM` / `canLinkMM`, `inheritsLinks`, and every writer both Source Dump pages share. Holds NO date code — a new title's `createdAt` is a parameter — which is why its suite runs once rather than swept |
 | `scripts/graph-layout.js` | The one radial canvas layout (`window.TrackGraphLayout`): `computeLayerLayout`, `applyRepulsion`, and the cycle guards that keep a parent cycle from blowing the stack on either canvas page |
+| `scripts/mm-tree-core.js` | The one definition of the mind-map tree SRCH draws and edits (`window.TrackMMTree`): `childIndex` / `childrenOf`, `roots` (the true roots plus one entry per loop nothing leads to), `descendantIds`, `pathTo` / `isPath` (a page's trail), `moveRefusal`, and the two drag writers — `withNested` (a move out of one parent, keeping the others) and `withArranged` (a sibling reorder judged by the drawn list). Loaded by `sir-ks02.html` only; SRCH → LIST's reorder is a delegate to `withArranged`. Holds NO date code, which is why its suite runs once rather than swept |
 | `scripts/schedule-paste-core.js` | The one definition of the `::: track-schedule` paste format (`window.TrackSchedulePaste`): `parseScheduleText`, `formatScheduleText`, and the day/time cell readers. Holds NO date code, which is why its suite runs once rather than swept |
 | `scripts/doc-table-core.js` | The one definition of a documentation table's shape (`window.TrackDocTable`): `mergeMap`, the pure merge writers, and the `::: track-table` paste format in both directions |
 | `scripts/quest-core.js` | The one definition of what a Quest is (`window.TrackQuest`): the membership readers, the pure flag writers, the pruned tree, the starred rollup, and the day-scoped routine tick. Holds NO date code — the day is a parameter — which is why its suite runs once rather than swept |
@@ -97,7 +98,7 @@ Active files:
 | `docs/` | User-facing paste specifications for the Track application |
 | `World/` | The Track World game project — concept draft, its reference imagery, and its own `AGENTS.md`, which governs every change inside that directory. Nothing there is part of the Track runtime, and nothing there may write Track data |
 | `firestore.rules` | Firestore security rules, versioned for review only; published by hand in the Firebase console |
-| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `notes-core.test.js`, `true-storage-core.test.js`, `source-dump-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`, `milestone-core.test.js`, `goal-core.test.js`, `project-core.test.js`, `viewport.test.js`, `journey-core.test.js`, `strat-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
+| `tests/` | The committed suite. `run.js` is the one command; `calendar-core.test.js`, `schema.test.js`, `notes-core.test.js`, `true-storage-core.test.js`, `source-dump-core.test.js`, `graph-layout.test.js`, `doc-table-core.test.js`, `schedule-paste-core.test.js`, `quest-core.test.js`, `milestone-core.test.js`, `goal-core.test.js`, `project-core.test.js`, `viewport.test.js`, `journey-core.test.js`, `strat-core.test.js`, `mm-tree-core.test.js` and `cdp-cleanup.test.js` are offline; `browser.test.js` drives real Chrome through `lib/cdp.js`; `lib/fixture.js` builds synthetic slots, including legacy and malformed ones |
 
 Current runtime dependencies are loaded through CDNs:
 
@@ -111,7 +112,7 @@ Do not assume Vite, npm scripts, TypeScript, JSX modules, or CI exists until the
 
 There **is** a test suite, and it has no dependencies and no `package.json` — Node's built-in `node:test`, plus a hand-rolled DevTools-protocol driver over Node 22's global `WebSocket`. Keep it that way: adding Playwright, Puppeteer, Jest, or a package manifest to make a test easier is a dependency decision that needs explicit approval (see "Dependencies, Network, and External Systems").
 
-Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=21`, `scripts/schema.js?v=9`, `scripts/calendar-core.js?v=14`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-core.js?v=4`, `scripts/notes-widget.js?v=7`, `scripts/journey-core.js?v=2`, `scripts/journey-book.js?v=2`, `scripts/true-storage-core.js?v=3`, `scripts/source-dump-core.js?v=1`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/milestone-core.js?v=3`, `scripts/goal-core.js?v=1`, `scripts/project-core.js?v=2`, `scripts/strat-core.js?v=1`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent. The five iOS home-screen icons (`assets/icons/<page>-180.png?v=1`, one per page) carry one too; iOS caches a touch icon hard, so a re-rendered PNG needs its page's integer bumped. The one asset no page loads is `scripts/journey-fonts.js`: `journey-book.js` loads it, so its integer is `FONTS_V` in that file — a regenerated copy replacing a deployed one bumps `FONTS_V`, and therefore `journey-book.js`'s own `?v=` on the five pages.
+Repository-local scripts and stylesheets are loaded from `scripts/` and `styles/` with a `?v=N` cache-busting query (`styles/styles.css?v=22`, `scripts/schema.js?v=9`, `scripts/calendar-core.js?v=14`, `scripts/firebase-sync.js?v=2`, `scripts/storage-guard.js?v=2`, `scripts/notes-core.js?v=4`, `scripts/notes-widget.js?v=7`, `scripts/journey-core.js?v=2`, `scripts/journey-book.js?v=2`, `scripts/true-storage-core.js?v=3`, `scripts/source-dump-core.js?v=1`, `scripts/graph-layout.js?v=1`, `scripts/doc-table-core.js?v=4`, `scripts/schedule-paste-core.js?v=2`, `scripts/quest-core.js?v=2`, `scripts/milestone-core.js?v=3`, `scripts/goal-core.js?v=1`, `scripts/project-core.js?v=2`, `scripts/strat-core.js?v=1`, `scripts/mm-tree-core.js?v=1`, `scripts/theme.js?v=1`, `scripts/viewport.js?v=2`). There is no build step to hash filenames, so this query is the only thing guaranteeing a returning visitor gets a changed asset instead of its cached copy. Bump the integer in every page that loads the file whenever its contents change, and keep the value identical across pages. **Every repository-local asset now carries one**; `theme.js` was the last exception and lost it when the appearance became a joint contract between the script and the stylesheet, where a stale script against fresh CSS is exactly the failure the query exists to prevent. The five iOS home-screen icons (`assets/icons/<page>-180.png?v=1`, one per page) carry one too; iOS caches a touch icon hard, so a re-rendered PNG needs its page's integer bumped. The one asset no page loads is `scripts/journey-fonts.js`: `journey-book.js` loads it, so its integer is `FONTS_V` in that file — a regenerated copy replacing a deployed one bumps `FONTS_V`, and therefore `journey-book.js`'s own `?v=` on the five pages.
 
 The phone layout lives at **`max-width: 720px`**, and `--phone-tabbar-h` is the **one
 definition** of the bottom tab bar's height. It is `0px` on `:root` and set only inside
@@ -513,6 +514,17 @@ A mind map may carry `strat`, its one **STRAT** (strategy): `{text, createdAt, u
 - **The times are `Date.now()` passed in as `now`**, never `today()`, which is this page's UTC-day helper. That is what keeps `strat-core.js` free of date code and its suite unswept, and a structural case greps the module, comments stripped, to prove it.
 - **Not validated in `schema.js`**, like every other mind-map key: it is read only through `stratText`, which accepts any value and cannot throw.
 
+**SRCH → DIRECTORY** (`sir-ks02.html`'s `MMDirectoryView`, the user's 2026-11-03 request) draws every mind map as a tree beside a page per mind map, and moves children by a held drag — a reorder between blocks, a nest onto a tree row, a move to Top level, one block or a ticked group. It adds **no** key: a move rewrites `parentIds` and the order of `mms`, nothing else. `scripts/mm-tree-core.js` (`window.TrackMMTree`) is the one definition. Eight rules follow, and the first three are the load-bearing ones:
+
+- **`withNested` and `withArranged` are the only writers, and the writer is the guard.** A nest is a MOVE: the child drops `fromId` (the page it was dragged from), the target takes that parent's PLACE in `parentIds`, any other parent stays, and the order of `mms` is never touched — only `withArranged` reorders, so colours by position (`mmColor`, NOTES Proposal 18) move only on a reorder. A move into the dragged mind map itself or its own branch is REFUSED by returning the very list, and the red row asks the SAME `moveRefusal` the writer does — never a page-local copy. Both return their input when nothing changes. SRCH → LIST's reorder is a delegate to `withArranged`; never spell a `parentIds` transform at a call site.
+- **A reorder is judged by the DRAWN list, never by stored indices.** The page passes `listId` (the open mind map), and `withArranged` returns its input for a drop that keeps the block's place in that list — which is also what hides the line (`hitAt` asks it). Without that, a drop back onto a block's own place rewrote `mms` whenever a mind map outside that list sat between it and its neighbour in the stored list, recolouring mind maps for a no-op. A doctored `withArranged` that ignores `listId` fails exactly the case that asserts no line and no write.
+- **The drop reads the CURRENT `mms`, never the press's.** The engine reads `liveRef` at commit and App's `onNest` / `onArrange` are functional `setMms` updaters, so a rename another tab wrote mid-drag survives the move. This is a guard case, not a fail-first one: breaking it takes two edits, because either door alone still lands on the fresh list.
+- **Ids come back from the DOM through `keyMap`, never `Number()`.** A `data-mmdir-*` hook is text and mind-map ids are numbers (`nid()`); `keyMap` maps `String(id)` to the id as stored, so a string id from a hand-edited file survives too. Fold state is keyed by `mmdirKey`, which keeps `10` and `'10'` apart.
+- **The gesture engine binds its listeners AT THE PRESS**, not from an effect — an effect runs after a render and loses the moves that arrive first (the Documentations touch-drag lesson). The `touchmove` listener is non-passive and calls `preventDefault` only after the hold has lifted the block, so a finger that moves first still scrolls; a click after a drag is swallowed through `suppressClickUntil`, and a mouse press within 800ms of a touch is ignored.
+- **Nothing that is drawn may move under a dragged block.** Top level takes the FILTER's place at the same height rather than being inserted above the rows (inserted, it shifted every row ~30px under the pointer), and over the tree the ghost shrinks to a chip beside the pointer so the row it is over stays visible. The ghost's width and transform are written by the engine alone (`placeGhost`, also run from a layout effect when the drag begins); React never sets either, because every re-render during a drag — each new hit is one — would put back the value it rendered over the one the engine just wrote.
+- **A state rule in the DIRECTORY CSS is (0,4,0)** — `.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="lifted"]`, `.mmdir .mmdir-bar .mmdir-row[data-mmdir-hit="nest"]`. Grit's Tailwind remaps are `html[data-theme="grit"] :is([class~="…"])`, (0,2,1), and their `:hover` forms (0,3,1), so a (0,3,0) drop highlight would lose to the hover remap under the very pointer that is dropping. The tick and the ticked block take their colours from tokens (`--color-primary-*`), not from indigo utilities in the JSX.
+- **`MMDetail`'s `embedded`, `slotTop` and `slotBottom` are absent everywhere but DIRECTORY**, so every other surface draws the panel exactly as before; the trail and the CHILDREN list ride in those slots. No drag asks first — see the exemption list under "Confirm before deleting or clearing stored data".
+
 `dateNotes` is a **map** from a local `YYYY-MM-DD` day to `{content, createdAt, updatedAt}` — one draft per day, owned by `notes-widget.js` alone, with its rules in `notes-core.js`. The user sees it as the **Journal**; its tab was "Date" until 2026-10-08, renamed so it is never mistaken for a calendar day note (`calendarNotes`). Only the visible word changed: the key, the `DATE` constant and the `data-nw-tab="date"` hooks keep theirs, and "Date note" below means a Journal day. Four rules follow, and the first two are the load-bearing ones:
 
 - **Absence is an empty day, and emptying DELETES the key.** Never store `''`: no fallback sits behind it, so this is the `time` / `link` rule and deliberately not `cautionDates: []`. Opening the Journal tab or a day writes nothing. `withDateNote` is the one writer; it spreads the record (an unknown key survives) and returns its input **unchanged** when nothing would change, which is how the widget skips a no-op write.
@@ -561,7 +573,13 @@ A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may
   `strat-core.js` `stratsFor` (upward, visited-at-enqueue: the start is never its own ancestor),
   `sir-ks02.html` `getAncestors`, `getDescendants` and `SrchView.buildTree`, and in
   `progress.html` `buildToLearnTree` and `buildMMTree` (mind-map parents — both also draw a
-  rootless cycle from its first member, so nothing in it vanishes).
+  rootless cycle from its first member, so nothing in it vanishes). `mm-tree-core.js` is the
+  newest: `roots` gives each loop nothing leads to one entry, its earliest stored member;
+  `descendantIds` is visited-at-enqueue; `pathTo` walks up and never visits a mind map twice;
+  and SRCH → DIRECTORY's `MMDirRow` carries a per-path `path`, drawing a mind map met again on
+  its own branch once, marked `↻`. Its drag also REFUSES a move into the moving branch — the one
+  place a mind-map cycle is prevented, approved for that drag alone; it is not a substitute for
+  any guard above.
 - **Goal-tree LINKS are the same hazard in a second graph, and are guarded AND prevented.** A
   link (`isLink`, `linkedTaskId`) can lead back up the tree. Every walker that follows one carries
   a per-path guard — `getLeaves`, `isComplete`, `GoalProgressViz`'s `collectLeaves`,
@@ -753,6 +771,7 @@ milestone-core.js
 goal-core.js
 project-core.js
 strat-core.js
+mm-tree-core.js
 ```
 
 Inspect every applicable:
@@ -883,8 +902,10 @@ Two further rules:
   that does nothing still demand an answer.
 
 Not every `✕` is in scope. Pure-dismiss controls — closing a modal, cancelling a
-form — stay one click. So do five deliberate exclusions, each pinned by a browser
-case: the four detach `⊗` chips, the two MG schedule `✓` toggle-offs
+form — stay one click. So do six deliberate exclusions, each pinned by a browser
+case: every drag in SRCH → DIRECTORY (`sir-ks02.html`) — a nest, a move to Top level
+or a reorder, of one block or a ticked group — which deletes nothing, is undone by
+moving back, and writes nothing at all when refused; the four detach `⊗` chips, the two MG schedule `✓` toggle-offs
 (`progress.html`: ● Learn's and the MG tab's), the emoji icon `Clear` (`documentations.html`), the Quest
 tab's un-quest `✕` and un-star `★` (`progress.html`) — those two write `false`,
 delete nothing, leave the star dormant, and are undone by pressing the same
@@ -1034,6 +1055,7 @@ node --check scripts/journey-fonts.js
 node --check scripts/strat-core.js
 node --check scripts/goal-core.js
 node --check scripts/project-core.js
+node --check scripts/mm-tree-core.js
 ```
 
 Then run the committed suite — it is the only automated check that sees the inline JSX, because it executes it:
@@ -1042,7 +1064,7 @@ Then run the committed suite — it is the only automated check that sees the in
 node tests/run.js
 ```
 
-It runs `tests/calendar-core.test.js`, `tests/schema.test.js` and `tests/notes-core.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/source-dump-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js`, `tests/quest-core.test.js`, `tests/milestone-core.test.js`, `tests/viewport.test.js`, `tests/journey-core.test.js`, `tests/strat-core.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
+It runs `tests/calendar-core.test.js`, `tests/schema.test.js` and `tests/notes-core.test.js` under five timezones (UTC+14 through UTC-11), then `tests/true-storage-core.test.js`, `tests/source-dump-core.test.js`, `tests/graph-layout.test.js`, `tests/doc-table-core.test.js`, `tests/schedule-paste-core.test.js`, `tests/quest-core.test.js`, `tests/milestone-core.test.js`, `tests/goal-core.test.js`, `tests/project-core.test.js`, `tests/viewport.test.js`, `tests/journey-core.test.js`, `tests/strat-core.test.js`, `tests/mm-tree-core.test.js` and `tests/cdp-cleanup.test.js` once each (no date code in any of them), then `tests/browser.test.js` in headless Chrome. Rules for working with it:
 
 - Fixtures are synthetic, always (`tests/lib/fixture.js`). A real personal export is never test data.
 - A bug fix in a covered area adds or extends a case, and **the new case must be seen failing first**. `TRACK_TEST_ROOT=<dir>` serves a scratch directory instead of the repository, so you can symlink the repo plus the one pre-fix file and watch it fail. Never put a baseline copy in the repository.
@@ -1243,22 +1265,22 @@ it describes. **Read it when you need it**: to audit what was verified and when,
 work in an area whose entry records a defect or a known gap, or to check whether something
 is covered by a test or only by code reading. A new entry is appended there, not here.
 
-What a passing run looks like, as of 2026-10-29, with the "Projects, second request" entry in
-the repository —
-`node tests/run.js`, **29 suites**: `calendar-core` (126), `schema` (68) and `notes-core` (37)
+What a passing run looks like, as of 2026-11-04, with the "SRCH → DIRECTORY" entry in the
+repository —
+`node tests/run.js`, **30 suites**: `calendar-core` (126), `schema` (68) and `notes-core` (37)
 swept under five timezones (UTC, UTC+14, UTC-11, America/Los_Angeles, Asia/Kathmandu) with
 identical results, then `true-storage-core` (24), `source-dump-core` (33), `graph-layout` (21),
 `doc-table-core` (103), `schedule-paste-core` (35), `quest-core` (54), `milestone-core` (63),
-`goal-core` (89), `project-core` (42), `viewport` (10), `journey-core` (39), `strat-core` (33)
-and `cdp-cleanup` (13) once each — they hold no date code — then **493 browser subtests** in
-headless Chrome. **In the last one to six days of a month, six timetable cases fail on a date
+`goal-core` (89), `project-core` (46), `viewport` (10), `journey-core` (39), `strat-core` (33),
+`mm-tree-core` (33) and `cdp-cleanup` (13) once each — they hold no date code — then **505
+browser subtests** in headless Chrome. **In the last one to six days of a month, six timetable cases fail on a date
 bug in the suite itself** (NOTES, Proposal 7): the Home and Documentations twins of three cases,
 each timing out on its class layer while its Progress twin passes. That is the 2026-10-29 runs —
 476 of 482, then 486 of 492 one case before the task window's date-field case made it 493 — and a pristine HEAD failed the same six. Any OTHER red case is not that bug. At
 load ~1.5–3 the whole run took 21–27 minutes, 29.5–30 at load ~2–4.5, 36 at load ~5.5–6.5, 39 at
 load ~3.3–4 with 417, 35 with 424, 37 with 428 at load ~1.3, 38 with 442 at load ~3.2, 39 with
-443 at load ~1.7–3, 37 with 448 at load ~1–1.8, 38.5 with 463 at load ~1.4–2.1, 45 with 492 at load ~2.4–3.4, and 44 with 482
-at load ~2.4–3.2. Treat that range as a load measurement, not a property of the suite.
+443 at load ~1.7–3, 37 with 448 at load ~1–1.8, 38.5 with 463 at load ~1.4–2.1, 45 with 492 at load ~2.4–3.4, 44 with 482
+at load ~2.4–3.2, and 42.5 with 505 at load ~1.7–1.8. Treat that range as a load measurement, not a property of the suite.
 
 Still unverified, across everything: real touch hardware, the live Firebase project, real
 multi-device behaviour, and print output. Those gaps are permanent features of this

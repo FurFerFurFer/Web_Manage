@@ -4585,6 +4585,265 @@ button.cal-doc-origin:hover {
   }
 }
 
+/* ── Knowledge Record: SRCH → DIRECTORY ───────────────────────────────────
+   The mind-map tree on the left and a mind map's page beside it, with its
+   CHILDREN list (MMDirectoryView in sir-ks02.html). A block is HELD until it
+   rises and only then drags, like the user's Notability reference: it greys
+   while pressed, rises with a shadow when it comes loose, and stays behind
+   faded while a floating copy follows the pointer.
+
+   Every rule here is two classes or more on purpose: each one overrides a
+   single-class Tailwind utility on the same element (bg-gray-900, w-64,
+   h-5, flex), and the Tailwind CDN injects its <style> AFTER this file.
+
+   The STATE rules — pressed, lifted, ticked, a lit drop target — carry FOUR
+   parts, (0,4,0), because Grit's hover remaps above weigh (0,3,1)
+   (`html[data-theme="grit"] :is([class~="hover:bg-gray-800"]:hover, …)`), and a
+   mouse drag hovers exactly the row or block it is lighting. At (0,3,0) the
+   hover colour would win and a drop target would never show as one. */
+
+/* The phone's own long-press behaviours — the callout, a text selection, the
+   tap flash — would fire before a hold could finish. */
+.mmdir .mmdir-block,
+.mmdir .mmdir-row {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mmdir .mmdir-block {
+  position: relative;
+  transition:
+    transform var(--motion-fast) var(--ease-ui),
+    box-shadow var(--motion-fast) var(--ease-ui),
+    opacity var(--motion-fast) var(--ease-ui),
+    background-color var(--motion-fast) var(--ease-ui);
+}
+
+/* Before the press states, so a ticked block still greys when it is held. */
+.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-ticked="true"] {
+  border-color: var(--color-primary-border);
+  background-color: var(--color-primary-soft);
+}
+
+.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="pressing"] {
+  background-color: var(--color-surface-strong);
+}
+
+.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="lifted"] {
+  z-index: 1;
+  transform: translateY(-3px) scale(1.02);
+  background-color: var(--color-surface-strong);
+  box-shadow: var(--shadow-float);
+}
+
+.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="placeholder"] {
+  opacity: 0.35;
+}
+
+/* The tick box. White on the solid primary is what every primary button in
+   both appearances already draws (7:1 against #2e6349). */
+.mmdir [data-mmdir-list] .mmdir-block .mmdir-tick {
+  border-color: var(--color-border-strong);
+  color: transparent;
+}
+
+.mmdir [data-mmdir-list] .mmdir-block .mmdir-tick[aria-checked="true"] {
+  border-color: var(--color-primary-solid);
+  background-color: var(--color-primary-solid);
+  color: #fff;
+}
+
+/* Where a reorder lands: a line in the gap above or below the nearest block.
+   The list is space-y-1, so the gap is 4px and the line sits inside it. */
+.mmdir .mmdir-block[data-mmdir-hit="before"]::before,
+.mmdir .mmdir-block[data-mmdir-hit="after"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent-done);
+  pointer-events: none;
+}
+
+.mmdir .mmdir-block[data-mmdir-hit="before"]::before {
+  top: -3px;
+}
+
+.mmdir .mmdir-block[data-mmdir-hit="after"]::after {
+  bottom: -3px;
+}
+
+/* A mind map on the left that would take the drop, and one that refuses it
+   (it is inside what is being dragged). The refusal is shown, never silent. */
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-hit="nest"] {
+  background-color: var(--color-primary-soft);
+  box-shadow: inset 0 0 0 1px var(--color-primary-border);
+  color: var(--color-text);
+}
+
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-hit="refused"] {
+  background-color: var(--color-danger-soft);
+  box-shadow: inset 0 0 0 1px var(--color-danger);
+  color: var(--color-text);
+  cursor: not-allowed;
+}
+
+.mmdir .mmdir-bar .mmdir-root-drop[data-mmdir-hit="top"] {
+  border-style: solid;
+  border-color: var(--color-primary-border);
+  background-color: var(--color-primary-soft);
+  color: var(--color-text);
+}
+
+/* Sliding a finger down the tick column ticks every block it crosses, so the
+   column must never start a scroll of its own. */
+.mmdir .mmdir-tick {
+  touch-action: none;
+}
+
+/* The floating copy. pointer-events: none is what keeps elementFromPoint
+   returning the row or block underneath rather than the ghost. Its transform
+   and width are written by the engine on every move; the card carries the rest. */
+.mmdir .mmdir-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  pointer-events: none;
+  max-width: min(36rem, calc(100vw - 2rem));
+}
+
+.mmdir .mmdir-ghost-card {
+  box-shadow: var(--shadow-float);
+  transform: scale(1.02);
+}
+
+/* Over the tree the copy is a small chip below-right of the pointer (the
+   engine moves it there and drops its width), so the row under the pointer —
+   lit, or refused — stays in sight. */
+.mmdir .mmdir-ghost.mmdir-ghost-small {
+  max-width: 14rem;
+}
+
+.mmdir .mmdir-ghost.mmdir-ghost-small .mmdir-ghost-card {
+  transform: none;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+}
+
+/* A group: the cards behind drawn as edges, and the count. */
+.mmdir .mmdir-ghost-card.mmdir-ghost-stack {
+  box-shadow:
+    4px 4px 0 -1px var(--color-surface-strong),
+    4px 4px 0 0 var(--color-border),
+    8px 8px 0 -1px var(--color-surface-strong),
+    8px 8px 0 0 var(--color-border),
+    var(--shadow-float);
+}
+
+.mmdir .mmdir-ghost-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--color-primary-solid);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+/* What a drop did, or why it was refused. It never blocks a drop target, and
+   it clears the notes-widget button (48px at a 16px inset) and the phone bar. */
+.mmdir .mmdir-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(5rem + var(--phone-tabbar-h));
+  z-index: 61;
+  max-width: min(28rem, calc(100vw - 2rem));
+  transform: translateX(-50%);
+  box-shadow: var(--shadow-float);
+  pointer-events: none;
+}
+
+/* The drawer's two buttons exist only on a phone. */
+.mmdir .mmdir-drawer-btn,
+.mmdir .mmdir-drawer-close {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mmdir .mmdir-block,
+  .mmdir .mmdir-ghost-card {
+    transition: none;
+  }
+}
+
+/* A phone keeps the tree in a drawer, opened by ☰ MIND MAPS — the
+   Documentations sidebar's full-screen shape (.docs-sidebar-full), with the
+   same z-index reasoning: inside #root's isolation, over the header and the
+   tab bar, under the notes widget and the banners. Holding a dragged block at
+   the left edge opens it too, so a drag can still reach any mind map. */
+@media (max-width: 720px) {
+  .mmdir .mmdir-drawer-btn,
+  .mmdir .mmdir-drawer-close {
+    display: inline-flex;
+    min-height: 2.25rem;
+  }
+
+  .mmdir .mmdir-bar {
+    display: none;
+  }
+
+  .mmdir.mmdir-drawer-open .mmdir-bar {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    width: auto;
+    height: 100vh;
+    height: 100dvh;
+    border-right: 0;
+    background: var(--color-app-bg);
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.5rem, env(safe-area-inset-right))
+      0
+      max(0.5rem, env(safe-area-inset-left));
+  }
+
+  .mmdir.mmdir-drawer-open .mmdir-bar [data-mmdir-bar-scroll] {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  }
+
+  /* finger-sized rows and ticks */
+  .mmdir .mmdir-row {
+    min-height: 2.75rem;
+    font-size: 0.875rem;
+  }
+
+  .mmdir .mmdir-row [data-mmdir-caret] {
+    width: 1.75rem;
+    min-height: 2.75rem;
+    font-size: 0.75rem;
+  }
+
+  .mmdir .mmdir-block {
+    min-height: 2.75rem;
+  }
+
+  .mmdir .mmdir-block .mmdir-tick {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+}
+
 /* ── phone layout ──────────────────────────────────────────────────────────
    Everything that makes the four React pages usable on a phone, in one place.
 

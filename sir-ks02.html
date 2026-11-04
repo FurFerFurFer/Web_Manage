@@ -15,6 +15,7 @@
   <script src="scripts/true-storage-core.js?v=3"></script>
   <script src="scripts/source-dump-core.js?v=1"></script>
   <script src="scripts/strat-core.js?v=1"></script>
+  <script src="scripts/mm-tree-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -22,7 +23,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=21">
+  <link rel="stylesheet" href="styles/styles.css?v=22">
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="app-page ks02-page">
@@ -1168,7 +1169,13 @@
       onAddLink,onRemoveLink,onNewKolb,onDupeKolb,onDelete,onSetRating,onChangeType,onRename,onUpdateExplanation,onOpenLin,
       sourceDumps,onAddDumpURLLink,onRemoveDumpURLLink,onGoToSourceDump,
       onAddDumpMMLink,onUpdateMMSCOrder,onUpdateMMSCAggOrder,onAddDumpTextBlock,onRemoveDumpTextBlock,onToggleSourceDumpActivation,onToggleUnclear,
-      trueStorages,onTagStorage,onUntagStorage}) {
+      trueStorages,onTagStorage,onUntagStorage,
+      /* SRCH → DIRECTORY only, and absent everywhere else: `embedded` sizes the
+         panel to the pane it sits in rather than to the screen, and the two
+         slots put the trail above it and the CHILDREN list below whichever
+         tab is showing. With all three absent the panel renders exactly as it
+         always has. */
+      embedded,slotTop,slotBottom}) {
       const [mode,setMode]=useState(initialMode||(mm&&mm.type==="anchor"?"info":"ks03"));
       const [newComment,setNewComment]=useState("");
       const [newLink,setNewLink]=useState({label:"",url:""});
@@ -1230,7 +1237,8 @@
       },[dragIdx,dragOverIdx,isLeaf]);
 
       return (
-        <div data-mm-detail={mm.id} className="p-4 max-w-2xl mx-auto overflow-y-auto pb-20 h-screen-nav">
+        <div data-mm-detail={mm.id} className={"p-4 max-w-2xl mx-auto overflow-y-auto pb-20 "+(embedded?"h-full":"h-screen-nav")}>
+          {slotTop}
           <div className="flex items-center justify-between mb-3">
             <button onClick={onBack} className="text-gray-500 hover:text-white text-xs">← back</button>
 	            <button onClick={()=>requestConfirmDelete(
@@ -1944,6 +1952,7 @@
               </div>
             );
           })()}
+          {slotBottom}
         </div>
       );
     }
@@ -2236,6 +2245,504 @@
               ))}
             </div>
           )}
+        </div>
+      );
+    }
+
+    /* ── SRCH → DIRECTORY ───────────────────────────────────────────────────
+       The user's 2026-11-03 request, sketched over Notability's library: every
+       mind map in a fold-open tree on the left, "like in DOC", and a page per
+       mind map — its usual panel, then the list of its children, each opening
+       its own page. Children MOVE by drag: between blocks to reorder, onto a
+       mind map on the left to nest there, onto "Top level" to leave this
+       parent. Several can be ticked and dragged as one.
+
+       A drag never starts at once. Like the user's reference video, the block
+       is HELD (finger or mouse) until it has risen — HOLD_MS — and only then
+       comes loose. A finger that moves first is scrolling, and a quick tap or
+       click still opens the page. One engine serves both inputs: listeners are
+       bound at the press, not from an effect, because an effect runs after a
+       render and would lose the moves that arrive first (Documentations'
+       touch-drag lesson).
+
+       Every write is mm-tree-core.js's (TrackMMTree): withNested and
+       withArranged are the guards — a refused move returns the very list —
+       and moveRefusal, which the writer itself asks, is all this view reads
+       to light a row red. Nothing here writes `mms` but those two, through
+       the page's autosave, and nothing is deleted, so no drag asks first
+       (AGENTS.md, the detach-⊗ class). */
+    const MMDIR_HOLD_MS=400, MMDIR_SLOP_TOUCH=10, MMDIR_SLOP_MOUSE=6, MMDIR_UNFOLD_MS=700,
+      MMDIR_EDGE=40, MMDIR_SPRING_X=28, MMDIR_SPRING_MS=700;
+    // A collapse key per id that keeps 10 and "10" apart — an object key is text.
+    const mmdirKey=id=>(typeof id==="number"?"n":"s")+id;
+    const mmdirDot=(mm,mmColor)=>mm.type==="anchor"?"#6b7280":mm.type==="1"?"#ef4444":mmColor(mm.id);
+
+    function MMDirRow({mm,depth,path,ctx}){
+      const kids=(ctx.index.get(mm.id)||[]).filter(k=>!ctx.filtering||ctx.matchSet.has(k.id));
+      // drawn once where it repeats on its own branch, and the branch ends
+      const loop=path.slice(0,-1).includes(mm.id);
+      const folded=!ctx.filtering&&!!ctx.collapsed[mmdirKey(mm.id)];
+      const hit=ctx.hit&&ctx.hit.kind==="nest"&&ctx.hit.targetId===mm.id?(ctx.hit.refused?"refused":"nest"):undefined;
+      const open=mm.id===ctx.openId;
+      return (
+        <div>
+          <div data-mmdir-row={String(mm.id)} data-mmdir-hit={hit}
+            data-mmdir-focused={mm.id===ctx.focusId?"true":undefined}
+            className={"mmdir-row flex items-center gap-1.5 rounded px-1 py-1 text-xs cursor-pointer "
+              +(open?"bg-gray-800 text-gray-100":"text-gray-400 hover:bg-gray-800/60 hover:text-gray-200")
+              +(mm.id===ctx.focusId?" outline outline-1 outline-indigo-700/50 bg-indigo-900/40":"")}
+            style={{paddingLeft:"calc(4px + "+depth+" * 14px)"}}
+            title={loop?"Already above this row — its branch is drawn there":mm.name}
+            onClick={()=>ctx.openRow(mm.id,path)}>
+            <button type="button" data-mmdir-caret={String(mm.id)} aria-label={folded?"Unfold":"Fold"}
+              onClick={e=>{e.stopPropagation();ctx.toggle(mm.id);}}
+              className={"w-3 shrink-0 text-[9px] "+(kids.length&&!loop?"text-gray-500 hover:text-gray-200":"invisible")}>
+              {folded?"▸":"▾"}
+            </button>
+            <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:mmdirDot(mm,ctx.mmColor)}}/>
+            <span className="flex-1 min-w-0 truncate">{mm.name}</span>
+            {loop&&<span className="text-[10px] text-gray-500">↻</span>}
+            {!loop&&kids.length>0&&<span className="text-[10px] text-gray-600">{kids.length}</span>}
+          </div>
+          {!loop&&!folded&&kids.map((k,i)=>(
+            <MMDirRow key={mmdirKey(k.id)+":"+i} mm={k} depth={depth+1} path={[...path,k.id]} ctx={ctx}/>
+          ))}
+        </div>
+      );
+    }
+
+    function MMDirectoryView({mms,mmColor,openId,onOpen,onNest,onArrange,focusId,onClearFocus,subTabs,renderPage}){
+      const [q,setQ]=useState("");
+      const [collapsed,setCollapsed]=useState({});
+      const [drawerOpen,setDrawerOpen]=useState(false);
+      const [trail,setTrail]=useState([]);
+      const [selectMode,setSelectMode]=useState(false);
+      const [selected,setSelected]=useState([]);
+      const [drag,setDrag]=useState(null);
+      const [toast,setToast]=useState(null);
+      const dragRef=useRef(null), tickRef=useRef(null), liveRef=useRef(null), ghostRef=useRef(null);
+      const barRef=useRef(null), toastTimer=useRef(null), suppressClickUntil=useRef(0), lastTouch=useRef(0);
+
+      const index=useMemo(()=>TrackMMTree.childIndex(mms),[mms]);
+      const rootList=useMemo(()=>TrackMMTree.roots(mms),[mms]);
+      const byId=useMemo(()=>{const m=new Map();mms.forEach(x=>{if(x&&!m.has(x.id))m.set(x.id,x);});return m;},[mms]);
+      // A data attribute is text; this maps it back to the id AS STORED, so a
+      // numeric id is never re-typed by Number() and a string id survives too.
+      const keyMap=useMemo(()=>{const m=new Map();mms.forEach(x=>{if(x&&!m.has(String(x.id)))m.set(String(x.id),x.id);});return m;},[mms]);
+      const lq=q.trim().toLowerCase();
+      const filtering=lq.length>0;
+      const matchSet=useMemo(()=>{
+        const out=new Set();
+        if(!filtering)return out;
+        const queue=mms.filter(m=>m&&String(m.name||"").toLowerCase().includes(lq)).map(m=>m.id);
+        queue.forEach(id=>out.add(id));
+        for(let i=0;i<queue.length;i++){
+          TrackMMTree.parentsOf(byId.get(queue[i])).forEach(pid=>{if(byId.has(pid)&&!out.has(pid)){out.add(pid);queue.push(pid);}});
+        }
+        return out;
+      },[mms,lq,filtering,byId]);
+
+      const openMM=openId!=null?byId.get(openId)||null:null;
+      const kids=openMM?(index.get(openMM.id)||[]):[];
+      const trailShown=openMM?(TrackMMTree.isPath(mms,trail)&&trail[trail.length-1]===openMM.id?trail:TrackMMTree.pathTo(mms,openMM.id)):[];
+      const name=id=>{const m=byId.get(id);return m?m.name:"?";};
+
+      // Ticks belong to one page (rule 5 of the plan): another page clears them.
+      useEffect(()=>{setSelected([]);setSelectMode(false);},[openId]);
+      // The page's own path is never folded away under the user.
+      useEffect(()=>{
+        if(!openMM)return;
+        const up=trailShown.slice(0,-1);
+        if(up.some(id=>collapsed[mmdirKey(id)]))setCollapsed(c=>{const n={...c};up.forEach(id=>{delete n[mmdirKey(id)];});return n;});
+      },[openId]);
+      // +MM from elsewhere lands here with the new mind map scrolled to and lit.
+      useEffect(()=>{
+        if(focusId==null)return;
+        const up=TrackMMTree.pathTo(mms,focusId).slice(0,-1);
+        setCollapsed(c=>{const n={...c};up.forEach(id=>{delete n[mmdirKey(id)];});return n;});
+        setQ("");
+        const raf=requestAnimationFrame(()=>{
+          const el=document.querySelector('[data-mmdir-row="'+String(focusId)+'"]');
+          if(el)el.scrollIntoView({behavior:"smooth",block:"center"});
+        });
+        const t=setTimeout(()=>{if(onClearFocus)onClearFocus();},1500);
+        return ()=>{cancelAnimationFrame(raf);clearTimeout(t);};
+      },[focusId]);
+
+      liveRef.current={mms,openId:openMM?openMM.id:null,kids,selected,selectMode,keyMap,byId,index,collapsed,onNest,onArrange};
+
+      function say(text){
+        setToast(text);
+        clearTimeout(toastTimer.current);
+        toastTimer.current=setTimeout(()=>setToast(null),2600);
+      }
+
+      /* ── the lift engine ── */
+      const engineRef=useRef(null);
+      if(!engineRef.current){
+        const sameHit=(a,b)=>(!a||!b)?a===b:a.kind===b.kind&&a.targetId===b.targetId&&a.before===b.before&&a.refused===b.refused;
+        const barShown=()=>{const b=barRef.current;return !!b&&b.getClientRects().length>0;};
+        const hitAt=(x,y)=>{
+          const d=dragRef.current, live=liveRef.current;
+          if(!d)return null;
+          const el=document.elementFromPoint(x,y);
+          if(!el)return null;
+          if(el.closest("[data-mmdir-root-drop]"))return d.fromId==null?null:{kind:"top"};
+          const row=el.closest("[data-mmdir-row]");
+          if(row){
+            const tid=live.keyMap.get(row.getAttribute("data-mmdir-row"));
+            if(tid===undefined)return null;
+            const why=TrackMMTree.moveRefusal(live.mms,d.ids,d.fromId,tid);
+            if(why==="same"||why==="missing")return null;
+            return {kind:"nest",targetId:tid,refused:why||null};
+          }
+          const list=el.closest("[data-mmdir-list]");
+          if(!list)return null;
+          let best=null;
+          list.querySelectorAll("[data-mmdir-child]").forEach(b=>{
+            const id=live.keyMap.get(b.getAttribute("data-mmdir-child"));
+            if(id===undefined||d.ids.includes(id))return;
+            const r=b.getBoundingClientRect();
+            const dist=y<r.top?r.top-y:y>r.bottom?y-r.bottom:0;
+            if(!best||dist<best.dist)best={id,r,dist};
+          });
+          if(!best)return null;
+          const before=y<best.r.top+best.r.height/2;
+          // judged by what the list draws: a drop that changes nothing has no line
+          if(TrackMMTree.withArranged(live.mms,d.ids,best.id,before,d.fromId)===live.mms)return null;
+          return {kind:"arrange",targetId:best.id,before};
+        };
+        /* The copy is the block, held where it was pressed — until it is over
+           the tree. There a block-wide card covered the very row it was being
+           dropped on, lit or refused, so it becomes a small chip beside the
+           pointer instead. Width and place are written here, never by React,
+           so a re-render for a new hit cannot put the wide card back. */
+        const placeGhost=()=>{
+          const d=dragRef.current, g=ghostRef.current;
+          if(!d||!g)return;
+          const b=barRef.current, over=!!b&&barShown()&&(()=>{const r=b.getBoundingClientRect();return d.x>=r.left&&d.x<=r.right&&d.y>=r.top&&d.y<=r.bottom;})();
+          g.classList.toggle("mmdir-ghost-small",over);
+          g.style.width=over?"auto":d.w+"px";
+          g.style.transform=over
+            ?"translate("+(d.x+14)+"px,"+(d.y+12)+"px)"
+            :"translate("+(d.x-d.offX)+"px,"+(d.y-d.offY)+"px)";
+        };
+        const clearUnfold=d=>{if(d&&d.unfold){clearTimeout(d.unfold.t);d.unfold=null;}};
+        const apply=hit=>{
+          const d=dragRef.current;
+          if(!d||sameHit(d.hit,hit))return;
+          d.hit=hit;
+          setDrag(prev=>prev&&{...prev,hit});
+          clearUnfold(d);
+          // hovering a folded mind map unfolds it, so a deep target is reachable
+          if(hit&&hit.kind==="nest"){
+            const live=liveRef.current, id=hit.targetId;
+            if((live.index.get(id)||[]).length&&live.collapsed[mmdirKey(id)]){
+              d.unfold={id,t:setTimeout(()=>{
+                setCollapsed(c=>{const n={...c};delete n[mmdirKey(id)];return n;});
+                requestAnimationFrame(()=>{const dd=dragRef.current;if(dd)apply(hitAt(dd.x,dd.y));});
+              },MMDIR_UNFOLD_MS)};
+            }
+          }
+        };
+        const step=()=>{
+          const d=dragRef.current;
+          if(!d||d.phase!=="drag")return;
+          if(d.edge&&d.scroller){d.scroller.scrollTop+=d.edge*10;apply(hitAt(d.x,d.y));}
+          d.raf=requestAnimationFrame(step);
+        };
+        const unbind=()=>{
+          document.removeEventListener("mousemove",onMouseMove);
+          document.removeEventListener("mouseup",onMouseUp);
+          document.removeEventListener("keydown",onKey);
+          document.removeEventListener("touchmove",onTouchMove,{passive:false});
+          document.removeEventListener("touchend",onTouchEnd,{passive:false});
+          document.removeEventListener("touchcancel",onTouchCancel);
+          document.removeEventListener("contextmenu",onContextMenu);
+        };
+        const cancel=()=>{
+          const d=dragRef.current;
+          if(d){
+            clearTimeout(d.timer);clearUnfold(d);clearTimeout(d.spring);
+            if(d.raf)cancelAnimationFrame(d.raf);
+          }
+          dragRef.current=null;
+          unbind();
+          setDrag(null);
+        };
+        const lift=()=>{
+          const d=dragRef.current;
+          if(!d||d.phase!=="press")return;
+          d.timer=null;d.phase="lift";d.lx=d.x;d.ly=d.y;
+          setDrag(prev=>prev&&{...prev,phase:"lift"});
+        };
+        const move=(x,y,ev)=>{
+          const d=dragRef.current;
+          if(!d)return;
+          d.x=x;d.y=y;
+          if(d.phase==="press"){
+            // moved before it rose: a scroll (finger) or nothing (mouse), never a drag
+            if(Math.hypot(x-d.x0,y-d.y0)>(d.kind==="touch"?MMDIR_SLOP_TOUCH:MMDIR_SLOP_MOUSE))cancel();
+            return;
+          }
+          if(d.kind==="touch"&&ev&&ev.cancelable)ev.preventDefault();   // lifted: never scroll
+          if(d.phase==="lift"){
+            if(Math.hypot(x-d.lx,y-d.ly)<3)return;
+            d.phase="drag";
+            setDrag(prev=>prev&&{...prev,phase:"drag"});
+            d.raf=requestAnimationFrame(step);
+          }
+          placeGhost();
+          const under=document.elementFromPoint(x,y);
+          const sc=under&&(under.closest("[data-mmdir-bar-scroll]")||under.closest("[data-mm-detail]"));
+          d.scroller=sc||null;
+          if(sc){const r=sc.getBoundingClientRect();d.edge=y<r.top+MMDIR_EDGE?-1:y>r.bottom-MMDIR_EDGE?1:0;}else d.edge=0;
+          // a phone keeps the bar in a drawer: hold at the left edge to open it
+          if(!barShown()&&x<MMDIR_SPRING_X){
+            if(!d.spring)d.spring=setTimeout(()=>{const dd=dragRef.current;if(!dd)return;dd.spring=null;dd.sprung=true;setDrawerOpen(true);
+              requestAnimationFrame(()=>{const d2=dragRef.current;if(d2)apply(hitAt(d2.x,d2.y));});},MMDIR_SPRING_MS);
+          }else if(d.spring){clearTimeout(d.spring);d.spring=null;}
+          apply(hitAt(x,y));
+        };
+        const commit=(hit,ids,fromId)=>{
+          const live=liveRef.current;
+          if(hit.kind==="arrange"){live.onArrange(ids,hit.targetId,hit.before,fromId);return;}
+          const target=hit.kind==="top"?null:hit.targetId;
+          // the writer is the guard: whatever the row showed, ask it
+          const next=TrackMMTree.withNested(live.mms,ids,fromId,target);
+          if(next===live.mms){
+            const why=TrackMMTree.moveRefusal(live.mms,ids,fromId,target);
+            const who=ids.length===1?"“"+(live.byId.get(ids[0])||{}).name+"”":ids.length+" mind maps";
+            const where="“"+(live.byId.get(target)||{}).name+"”";
+            if(why==="self")say(ids.length===1?"Can't move "+who+" into itself.":"Can't move "+who+" into "+where+": it is one of them.");
+            else if(why==="inside")say("Can't move "+who+" into "+where+": "+where+" is inside "+(ids.length===1?"it.":"one of them."));
+            return;
+          }
+          live.onNest(ids,fromId,target);
+          setSelected(s=>s.filter(id=>!ids.includes(id)));
+          const who=ids.length===1?"“"+(live.byId.get(ids[0])||{}).name+"”":ids.length+" mind maps";
+          say(target===null?"Moved "+who+" out of “"+(live.byId.get(fromId)||{}).name+"”.":"Moved "+who+" into “"+(live.byId.get(target)||{}).name+"”.");
+        };
+        const end=ev=>{
+          const d=dragRef.current;
+          if(!d)return;
+          if(d.phase==="press"){cancel();return;}          // a tap or a click: let it through
+          suppressClickUntil.current=Date.now()+500;          // a lift is never also a click
+          if(d.kind==="touch"&&ev&&ev.cancelable)ev.preventDefault();
+          const hit=d.phase==="drag"?d.hit:null, ids=d.ids, fromId=d.fromId, sprung=d.sprung;
+          cancel();
+          if(sprung)setDrawerOpen(false);
+          if(hit)commit(hit,ids,fromId);
+        };
+        function onMouseMove(e){move(e.clientX,e.clientY,e);}
+        function onMouseUp(e){end(e);}
+        function onKey(e){if(e.key==="Escape"&&dragRef.current){suppressClickUntil.current=Date.now()+500;cancel();}}
+        function onTouchMove(e){const t=e.touches[0];if(t)move(t.clientX,t.clientY,e);}
+        function onTouchEnd(e){end(e);}
+        function onTouchCancel(){cancel();}
+        function onContextMenu(e){if(dragRef.current)e.preventDefault();}
+        const press=(e,kind,mm)=>{
+          if(dragRef.current)return;
+          if(kind==="mouse"){
+            if(e.button!==0)return;
+            if(Date.now()-lastTouch.current<800)return;   // the mouse events a tap is followed by
+          }
+          if(e.target.closest("[data-mmdir-tick], button, input, a"))return;
+          const pt=kind==="touch"?e.touches[0]:e;
+          if(!pt||(kind==="touch"&&e.touches.length>1))return;
+          if(kind==="touch")lastTouch.current=Date.now();
+          const live=liveRef.current;
+          const ids=live.selectMode&&live.selected.includes(mm.id)
+            ?live.kids.filter(k=>live.selected.includes(k.id)).map(k=>k.id)
+            :[mm.id];
+          const r=e.currentTarget.getBoundingClientRect();
+          dragRef.current={kind,phase:"press",ids,fromId:live.openId,pressId:mm.id,
+            x0:pt.clientX,y0:pt.clientY,x:pt.clientX,y:pt.clientY,
+            offX:pt.clientX-r.left,offY:pt.clientY-r.top,w:r.width,hit:null,timer:null,raf:null,edge:0,scroller:null,unfold:null,spring:null,sprung:false};
+          setDrag({phase:"press",pressId:mm.id,ids,label:mm.name,hit:null});
+          dragRef.current.timer=setTimeout(lift,MMDIR_HOLD_MS);
+          if(kind==="mouse"){
+            document.addEventListener("mousemove",onMouseMove);
+            document.addEventListener("mouseup",onMouseUp);
+            document.addEventListener("keydown",onKey);
+          }else{
+            document.addEventListener("touchmove",onTouchMove,{passive:false});
+            document.addEventListener("touchend",onTouchEnd,{passive:false});
+            document.addEventListener("touchcancel",onTouchCancel);
+            document.addEventListener("contextmenu",onContextMenu);
+          }
+        };
+        engineRef.current={press,cancel,placeGhost};
+      }
+      const engine=engineRef.current;
+      useEffect(()=>()=>{engine.cancel();clearTimeout(toastTimer.current);},[]);
+      React.useLayoutEffect(()=>{if(drag&&drag.phase==="drag")engine.placeGhost();},[drag&&drag.phase]);
+
+      /* ── ticking: a tap toggles one; sliding down the tick column sets every
+         block it crosses to what the first one became (the sketch's "drag
+         choose"). It never lifts anything. */
+      function setTick(id,on){setSelected(s=>on?(s.includes(id)?s:[...s,id]):s.filter(x=>x!==id));}
+      function tickPress(e,kind,mm){
+        e.stopPropagation();
+        if(kind==="mouse"&&(e.button!==0||Date.now()-lastTouch.current<800))return;
+        if(kind==="touch")lastTouch.current=Date.now();
+        const on=!selected.includes(mm.id);
+        setTick(mm.id,on);
+        const t={kind,on,seen:new Set([mm.id])};
+        tickRef.current=t;
+        const over=(x,y,ev)=>{
+          if(kind==="touch"&&ev.cancelable)ev.preventDefault();
+          const el=document.elementFromPoint(x,y), b=el&&el.closest("[data-mmdir-child]");
+          const id=b&&liveRef.current.keyMap.get(b.getAttribute("data-mmdir-child"));
+          if(id===undefined||id===null||t.seen.has(id))return;
+          t.seen.add(id);setTick(id,on);
+        };
+        const mm_=e2=>over(e2.clientX,e2.clientY,e2);
+        const tm=e2=>{const p=e2.touches[0];if(p)over(p.clientX,p.clientY,e2);};
+        const done=()=>{
+          tickRef.current=null;
+          document.removeEventListener("mousemove",mm_);document.removeEventListener("mouseup",done);
+          document.removeEventListener("touchmove",tm,{passive:false});document.removeEventListener("touchend",done);document.removeEventListener("touchcancel",done);
+        };
+        if(kind==="mouse"){document.addEventListener("mousemove",mm_);document.addEventListener("mouseup",done);}
+        else{document.addEventListener("touchmove",tm,{passive:false});document.addEventListener("touchend",done);document.addEventListener("touchcancel",done);}
+      }
+
+      function openRow(id,path){setTrail(path);onOpen(id);setDrawerOpen(false);}
+      function openChild(id){setTrail([...trailShown,id]);onOpen(id);}
+      // The panel's "← back" climbs the trail; from a top mind map it closes the page.
+      function goUp(){
+        if(trailShown.length>1){const t=trailShown.slice(0,-1);setTrail(t);onOpen(t[t.length-1]);}
+        else onOpen(null);
+      }
+      function clickChild(e,mm){
+        if(Date.now()<suppressClickUntil.current){e.preventDefault();return;}
+        if(selectMode){setTick(mm.id,!selected.includes(mm.id));return;}
+        openChild(mm.id);
+      }
+      const toggle=id=>setCollapsed(c=>{const k=mmdirKey(id), n={...c};if(n[k])delete n[k];else n[k]=true;return n;});
+      const hit=drag&&drag.phase==="drag"?drag.hit:null;
+      const ctx={index,collapsed,toggle,openRow,openId:openMM?openMM.id:null,focusId,filtering,matchSet,mmColor,hit};
+      const roots=filtering?rootList.filter(m=>matchSet.has(m.id)):rootList;
+
+      const slotTop=trailShown.length>1?(
+        <nav data-mmdir-trail className="flex flex-wrap items-center gap-1 text-[11px] text-gray-500 mb-2">
+          {trailShown.slice(0,-1).map((id,i)=>(
+            <React.Fragment key={mmdirKey(id)+":"+i}>
+              <button type="button" data-mmdir-crumb={String(id)} onClick={()=>{setTrail(trailShown.slice(0,i+1));onOpen(id);}}
+                className="max-w-[10rem] truncate hover:text-gray-200">{name(id)}</button>
+              <span aria-hidden="true">›</span>
+            </React.Fragment>
+          ))}
+          <span className="max-w-[12rem] truncate text-gray-300">{openMM?openMM.name:""}</span>
+        </nav>
+      ):null;
+
+      const blockState=id=>{
+        if(!drag)return undefined;
+        if(drag.phase==="drag")return drag.ids.includes(id)?"placeholder":undefined;
+        if(drag.phase==="lift")return drag.ids.includes(id)?"lifted":undefined;
+        return id===drag.pressId?"pressing":undefined;
+      };
+      const slotBottom=openMM?(
+        <section data-mmdir-children className="mt-6 border-t border-gray-800 pt-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs text-gray-500 tracking-widest">CHILDREN</span>
+            <span className="text-xs text-gray-600">{kids.length}</span>
+            <div className="flex-1"/>
+            {selectMode&&<span data-mmdir-count className="text-xs text-gray-400">{selected.length} selected</span>}
+            {selectMode&&<button type="button" data-mmdir-all onClick={()=>setSelected(selected.length===kids.length?[]:kids.map(k=>k.id))}
+              className="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-300 hover:text-white">{selected.length===kids.length?"None":"All"}</button>}
+            {kids.length>0&&<button type="button" data-mmdir-select aria-pressed={selectMode}
+              onClick={()=>{setSelectMode(m=>!m);setSelected([]);}}
+              className={"text-xs px-2 py-0.5 rounded font-bold "+(selectMode?"bg-white text-gray-950":"bg-gray-800 text-gray-300 hover:text-white")}>{selectMode?"Done":"Select"}</button>}
+          </div>
+          {kids.length===0?(
+            <div className="text-xs text-gray-600 py-3">No children yet — +MM here adds one.</div>
+          ):(
+            <div data-mmdir-list className="space-y-1">
+              {kids.map(c=>{
+                const ticked=selected.includes(c.id), n=(index.get(c.id)||[]).length, st=stageOf(c);
+                const h=hit&&hit.kind==="arrange"&&hit.targetId===c.id?(hit.before?"before":"after"):undefined;
+                return (
+                  <div key={mmdirKey(c.id)} data-mmdir-child={String(c.id)} data-mmdir-state={blockState(c.id)} data-mmdir-hit={h}
+                    data-mmdir-ticked={ticked?"true":undefined}
+                    className="mmdir-block flex items-center gap-2 rounded border border-gray-800 bg-gray-900 px-3 py-2 cursor-pointer hover:border-gray-700"
+                    title="Hold to lift, then drag"
+                    onMouseDown={e=>engine.press(e,"mouse",c)}
+                    onTouchStart={e=>engine.press(e,"touch",c)}
+                    onClick={e=>clickChild(e,c)}
+                    onContextMenu={e=>{if(drag)e.preventDefault();}}>
+                    {selectMode&&(
+                      <span data-mmdir-tick={String(c.id)} role="checkbox" aria-checked={ticked}
+                        onMouseDown={e=>tickPress(e,"mouse",c)} onTouchStart={e=>tickPress(e,"touch",c)} onClick={e=>e.stopPropagation()}
+                        className="mmdir-tick flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] font-bold">✓</span>
+                    )}
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor:mmdirDot(c,mmColor)}}/>
+                    <span className="flex-1 min-w-0 truncate text-sm text-gray-200">{c.name}</span>
+                    {c.unclear&&<span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-900 text-red-400" title="In progress">IN PRO</span>}
+                    <span className="text-[10px] text-gray-500">{mmTypeLabel(c.type)}</span>
+                    {st&&<span className={"text-[10px] px-1.5 py-0.5 rounded "+(STAGE_COLORS[st]||"")}>{st==="sir"?"SIR":st==="finished"?"FINISHED":"S"+st}</span>}
+                    {n>0&&<span className="text-[10px] text-gray-500" title={n+" children"}>▸ {n}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {kids.length>0&&<div className="mt-2 text-[10px] text-gray-600">Hold a block until it rises, then drag it between blocks to reorder, or onto a mind map on the left to move it there.{selectMode?" Ticked blocks move together.":""}</div>}
+        </section>
+      ):null;
+
+      return (
+        <div data-mmdir-view className={"mmdir flex flex-col h-screen-nav"+(drawerOpen?" mmdir-drawer-open":"")}>
+          <div className="px-4 py-2 border-b border-gray-800 shrink-0 flex items-center gap-2">
+            <button type="button" data-mmdir-drawer onClick={()=>setDrawerOpen(true)}
+              className="mmdir-drawer-btn items-center rounded bg-gray-800 px-2 py-1 text-xs font-bold text-gray-300">☰ MIND MAPS</button>
+            <div className="flex-1 text-xs text-gray-500 tracking-widest">SRCH</div>
+            {subTabs}
+          </div>
+          <div className="flex flex-1 min-h-0">
+            <aside ref={barRef} data-mmdir-bar className="mmdir-bar w-64 shrink-0 flex flex-col border-r border-gray-800 bg-gray-900/60">
+              {/* While a block is dragged, "Top level" takes the filter's place
+                  at the same height: added above the rows instead, it pushed
+                  every row down under the pointer the moment a drag began. */}
+              <div className="mmdir-bar-top flex items-center gap-2 p-2">
+                {drag&&drag.phase==="drag"&&openMM?(
+                  <div data-mmdir-root-drop data-mmdir-hit={hit&&hit.kind==="top"?"top":undefined}
+                    className="mmdir-root-drop flex h-8 min-w-0 flex-1 items-center rounded border border-dashed border-gray-700 px-2 text-xs text-gray-400">
+                    <span className="truncate">⌂ Top level — out of “{openMM.name}”</span>
+                  </div>
+                ):(
+                  <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Filter mind maps..." data-mmdir-filter
+                    className="h-8 min-w-0 flex-1 bg-gray-900 border border-gray-700 rounded px-2 text-white placeholder-gray-600 text-xs focus:outline-none focus:border-indigo-500"/>
+                )}
+                <button type="button" data-mmdir-drawer-close onClick={()=>setDrawerOpen(false)} aria-label="Close"
+                  className="mmdir-drawer-close rounded px-2 py-1 text-sm text-gray-400 hover:text-white">✕</button>
+              </div>
+              <div data-mmdir-bar-scroll className="flex-1 min-h-0 overflow-y-auto px-2 pb-6">
+                {!mms.length?<div className="text-xs text-gray-600 px-1 py-4">No mind maps yet.</div>
+                  :roots.length===0?<div className="text-xs text-gray-600 px-1 py-4">No matches.</div>
+                  :roots.map((m,i)=><MMDirRow key={mmdirKey(m.id)+":"+i} mm={m} depth={0} path={[m.id]} ctx={ctx}/>)}
+              </div>
+            </aside>
+            <main className="flex-1 min-w-0 min-h-0">
+              {openMM?renderPage(slotTop,slotBottom,goUp):(
+                <div data-mmdir-empty className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-xs text-gray-600">
+                  <div>Pick a mind map to open its page.</div>
+                  <button type="button" onClick={()=>setDrawerOpen(true)} className="mmdir-drawer-btn items-center rounded bg-gray-800 px-3 py-1.5 font-bold text-gray-300">☰ MIND MAPS</button>
+                </div>
+              )}
+            </main>
+          </div>
+          {drag&&drag.phase==="drag"&&(
+            <div ref={ghostRef} data-mmdir-ghost className="mmdir-ghost" aria-hidden="true">
+              <div className={"mmdir-ghost-card flex items-center gap-2 rounded border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-gray-100"+(drag.ids.length>1?" mmdir-ghost-stack":"")}>
+                <span className="flex-1 min-w-0 truncate">{drag.label}</span>
+                {drag.ids.length>1&&<span data-mmdir-ghost-count className="mmdir-ghost-count">{drag.ids.length}</span>}
+              </div>
+            </div>
+          )}
+          {toast&&<div data-mmdir-toast role="status" className="mmdir-toast rounded border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-200">{toast}</div>}
         </div>
       );
     }
@@ -2884,6 +3391,7 @@
       const [kolbLinkSearch,setKolbLinkSearch]=useState("");
       const [parentSearch,setParentSearch]=useState("");
       const [srchFocusId,setSrchFocusId]=useState(null);
+      const [srchSubView,setSrchSubView]=useState("list");
       const [ks02SelectedStage,setKs02SelectedStage]=useState(null);
       const [linChanges,setLinChanges]=useState([]);
       const [linDayTitles,setLinDayTitles]=useState({});
@@ -3898,30 +4406,53 @@
             );
           })()}
 
-          {view==="srch"&&!selectedMM&&(
-            <div className="overflow-y-auto h-screen-nav">
-              <SrchView mms={mms} mmColor={mmColor} onOpen={id=>openMM(id,"ks03")} focusId={srchFocusId} onClearFocus={()=>setSrchFocusId(null)}
-                onArrange={(draggedId, targetId, insertBefore) => {
-                  setMms(prev => {
-                    const byId = Object.fromEntries(prev.map(m => [m.id, m]));
-                    const m1 = byId[draggedId], m2 = byId[targetId];
-                    if (!m1 || !m2) return prev;
-                    const vp1 = (m1.parentIds || []).filter(pid => byId[pid]);
-                    const vp2 = (m2.parentIds || []).filter(pid => byId[pid]);
-                    const areSiblings = (vp1.length === 0 && vp2.length === 0) || vp1.some(p => vp2.includes(p));
-                    if (!areSiblings) return prev;
-                    const di = prev.findIndex(m => m.id === draggedId);
-                    const ti = prev.findIndex(m => m.id === targetId);
-                    const arr = [...prev];
-                    const [moved] = arr.splice(di, 1);
-                    const newTi = arr.findIndex(m => m.id === targetId);
-                    arr.splice(insertBefore ? newTi : newTi + 1, 0, moved);
-                    return arr;
-                  });
-                }}/>
-            </div>
-          )}
-          {view==="srch"&&selectedMM&&currentMM&&<MMDetail mm={currentMM} {...mmDetailProps} initialMode="ks03"/>}
+          {/* SRCH has two sub-tabs. LIST is the tree it always was, opening a
+              mind map full-screen; DIRECTORY keeps the tree on the left and
+              the mind map's page beside it (MMDirectoryView). Both open
+              through selectedMM, so a switch clears it — a page open in one
+              must not reappear full-screen in the other. */}
+          {(()=>{
+            const srchTabs=(
+              <div className="flex gap-1">
+                {[["list","LIST"],["directory","DIRECTORY"]].map(([v,l])=>(
+                  <button key={v} data-srch-sub={v} onClick={()=>{setSrchSubView(v);setSelectedMM(null);}}
+                    className={`px-3 py-1 rounded text-xs font-bold ${srchSubView===v?"bg-white text-gray-950":"text-gray-400 hover:text-white"}`}>{l}</button>
+                ))}
+              </div>
+            );
+            if(view!=="srch")return null;
+            if(srchSubView==="directory")return (
+              <MMDirectoryView mms={mms} mmColor={mmColor} openId={currentMM?currentMM.id:null}
+                onOpen={id=>openMM(id,"ks03")}
+                onNest={(ids,fromId,targetId)=>setMms(p=>TrackMMTree.withNested(p,ids,fromId,targetId))}
+                onArrange={(ids,targetId,before,listId)=>setMms(p=>TrackMMTree.withArranged(p,ids,targetId,before,listId))}
+                focusId={srchFocusId} onClearFocus={()=>setSrchFocusId(null)}
+                subTabs={srchTabs}
+                renderPage={(top,bottom,up)=>currentMM?(
+                  // keyed by mind map: each page opens on its own default tab
+                  <MMDetail key={String(currentMM.id)} mm={currentMM} {...mmDetailProps} onBack={up}
+                    embedded slotTop={top} slotBottom={bottom}/>
+                ):null}/>
+            );
+            if(selectedMM&&currentMM)return <MMDetail mm={currentMM} {...mmDetailProps} initialMode="ks03"/>;
+            if(selectedMM)return null;
+            return (
+              <div className="flex flex-col h-screen-nav">
+                <div className="px-4 py-2 border-b border-gray-800 shrink-0 flex items-center justify-between">
+                  <div className="text-xs text-gray-500 tracking-widest">SRCH</div>
+                  {srchTabs}
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto">
+                  <SrchView mms={mms} mmColor={mmColor} onOpen={id=>openMM(id,"ks03")} focusId={srchFocusId} onClearFocus={()=>setSrchFocusId(null)}
+                    onArrange={(draggedId, targetId, insertBefore) => {
+                      // The one reorder (mm-tree-core.js), pinned against a verbatim
+                      // copy of the inline code that lived here; DIRECTORY uses it too.
+                      setMms(prev => TrackMMTree.withArranged(prev, [draggedId], targetId, insertBefore));
+                    }}/>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* PHONE NAV — one of four (progress.html, documentations.html and
               true-storage.html carry the others). The shared half is

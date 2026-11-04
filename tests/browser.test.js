@@ -17270,4 +17270,578 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(realErrors(page), []);
     await page.close();
   });
+
+  // ── SRCH → DIRECTORY ─────────────────────────────────────────────────────
+  /* The Knowledge Record's mind-map browser (the user's 2026-11-03 request,
+     sketched over Notability): every mind map in a fold-open tree on the left,
+     a page per mind map — its panel, then its CHILDREN — and children moved by
+     a HELD drag, mouse or finger: between blocks to reorder, onto a mind map
+     on the left to nest there, onto "Top level" to leave this parent, ticked
+     blocks as one group. Every gesture here is REAL input (Input.dispatch*),
+     never a synthetic event: a hold is a timing, and a synthetic TouchEvent
+     makes no click. Ids are NUMBERS, as nid() mints them. The writers are
+     mm-tree-core.js's and have their own offline suite; these cases are about
+     the gestures, what each surface draws, and what lands in track_db. */
+  const DIR_MMS = () => [
+    F.mm(1, 'Chemistry', { type: 'anchor' }),
+    F.mm(6, 'Acids', { parentIds: [4] }),
+    F.mm(2, 'Kru Pom', { parentIds: [1] }),
+    F.mm(7, 'Bases', { parentIds: [4], type: '2' }),
+    F.mm(10, 'Shared one', { parentIds: [4, 5] }),
+    F.mm(4, 'P Monday', { parentIds: [2] }),
+    F.mm(8, 'Salts', { parentIds: [4] }),
+    F.mm(5, 'Practice', { parentIds: [2] }),
+    F.mm(3, 'Biology', { parentIds: [1] }),
+    F.mm(9, 'Physics'),
+    F.mm(21, 'Loop B', { parentIds: [20] }),
+    F.mm(20, 'Loop A', { parentIds: [21] })
+  ];
+  // tall enough that a page's CHILDREN sit clear of the edge auto-scroll band
+  const DIR_DESK = [1280, 1000];
+  const DIR_RAW = function () { return localStorage.getItem('track_db'); };
+  const DIR_ORDER = function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return (((db.slots || [])[0] || {}).mms || []).map(function (m) { return m.id; });
+  };
+  const DIR_PARENTS = function (id) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var m = (((db.slots || [])[0] || {}).mms || []).filter(function (x) { return x.id === id; })[0];
+    return m ? (m.parentIds || []) : null;
+  };
+  const DIR_KIDS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-mmdir-child]'),
+      function (b) { return b.getAttribute('data-mmdir-child'); });
+  };
+  const DIR_ROWS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-mmdir-row]'),
+      function (r) { return r.getAttribute('data-mmdir-row'); });
+  };
+  const DIR_TICKED = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-mmdir-ticked="true"]'),
+      function (b) { return b.getAttribute('data-mmdir-child'); });
+  };
+  const DIR_BOX = function (sel, nth) {
+    var el = document.querySelectorAll(sel)[nth || 0];
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+  };
+  const DIR_STATE = function (id) {
+    var b = document.querySelector('[data-mmdir-child="' + id + '"]');
+    return b ? (b.getAttribute('data-mmdir-state') || '') : null;
+  };
+  const DIR_HIT = function (sel) {
+    var el = document.querySelector(sel);
+    return el ? (el.getAttribute('data-mmdir-hit') || '') : null;
+  };
+  const DIR_TOAST = function () {
+    var t = document.querySelector('[data-mmdir-toast]');
+    return t ? t.textContent : '';
+  };
+  const dirMouse = (page, type, p, buttons) => page.session.send('Input.dispatchMouseEvent',
+    { type, x: p.x, y: p.y, button: 'left', buttons, clickCount: 1 });
+  const dirTouch = (page, type, p) => page.session.send('Input.dispatchTouchEvent',
+    { type, touchPoints: type === 'touchEnd' ? [] : [{ x: p.x, y: p.y }] });
+  // a straight path in steps, about a frame apart
+  const dirPath = async (page, kind, from, to, steps = 10) => {
+    for (let k = 1; k <= steps; k++) {
+      const p = { x: from.x + (to.x - from.x) * k / steps, y: from.y + (to.y - from.y) * k / steps };
+      if (kind === 'mouse') await dirMouse(page, 'mouseMoved', p, 1); else await dirTouch(page, 'touchMove', p);
+      await sleep(16);
+    }
+  };
+  const dirPress = async (page, kind, p) => {
+    if (kind === 'mouse') { await dirMouse(page, 'mouseMoved', p, 0); await dirMouse(page, 'mousePressed', p, 1); }
+    else await dirTouch(page, 'touchStart', p);
+  };
+  const dirRelease = (page, kind, p) => kind === 'mouse' ? dirMouse(page, 'mouseReleased', p, 0) : dirTouch(page, 'touchEnd', p);
+  /* Press, HOLD past the lift (400ms), travel, settle, release. `before` runs
+     while the block is still held over its target — where a case reads what
+     the drop WILL do — and its result is returned. */
+  const dirDrag = async (page, kind, from, to, { hold = 650, before = null } = {}) => {
+    await dirPress(page, kind, from);
+    await sleep(hold);
+    await dirPath(page, kind, from, to);
+    await sleep(150);
+    const seen = before ? await before() : null;
+    await dirRelease(page, kind, to);
+    return seen;
+  };
+  // Wait for the write to LAND, then assert — never wait for the right answer.
+  const dirLanded = (page, raw, message) => page.waitFor(function (r) { return localStorage.getItem('track_db') !== r; },
+    { args: [raw], message });
+  const dirOpen = async (page, id, nth = 0) => {
+    await page.evaluate(function (sel, n) { document.querySelectorAll(sel)[n].click(); return true; },
+      '[data-mmdir-row="' + id + '"]', nth);
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="' + id + '"] [data-mmdir-children]'],
+      message: 'the page of ' + id + ' with its CHILDREN' });
+    await page.evaluate(function () {
+      document.querySelector('[data-mmdir-children]').scrollIntoView({ block: 'center' });
+      return true;
+    });
+    await sleep(120);
+  };
+  const openDirectory = async ({ mms = DIR_MMS(), viewport = DIR_DESK, at = null } = {}) => {
+    const page = await open('sir-ks02.html', { db: seedDb({ mms }), hash: '#srch', viewport });
+    await page.waitFor(HAS_SEL, { args: ['[data-srch-sub="directory"]'], message: 'the SRCH sub-tabs' });
+    await page.evaluate(CLICK_SEL, '[data-srch-sub="directory"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-view] [data-mmdir-row]'], message: 'the DIRECTORY tree' });
+    if (at !== null) await dirOpen(page, at);
+    return page;
+  };
+  const NO_DRAG_DIALOG = 'a drag is deliberately NOT confirmed — it deletes nothing (see AGENTS.md)';
+
+  await t.test('DIRECTORY: SRCH has LIST and DIRECTORY; the tree holds every mind map — a two-parent one under both, a rootless loop from one member — folds and filters', async () => {
+    const page = await openDirectory();
+    assert.deepEqual(await page.evaluate(DIR_ROWS),
+      ['1', '2', '4', '6', '7', '10', '8', '5', '10', '3', '9', '21', '20', '21'],
+      'every mind map in stored order, Shared one under BOTH parents, and the loop entered once at its first stored member');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('[data-mmdir-row="21"]')[1].textContent.indexOf('↻') >= 0;
+    }), true, 'the repeat is drawn once, marked, and its branch ends there');
+
+    await page.evaluate(CLICK_SEL, '[data-mmdir-caret="2"]');
+    await page.waitFor(function () { return !document.querySelector('[data-mmdir-row="4"]'); }, { message: 'Kru Pom folding' });
+    assert.deepEqual(await page.evaluate(DIR_ROWS), ['1', '2', '3', '9', '21', '20', '21'], 'folding Kru Pom hides its branch');
+    await page.evaluate(CLICK_SEL, '[data-mmdir-caret="2"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-row="4"]'], message: 'Kru Pom unfolding' });
+
+    await page.evaluate(function (setterSrc) {
+      new Function('return ' + setterSrc)()(document.querySelector('[data-mmdir-filter]'), 'salt');
+      return true;
+    }, SET_REACT_INPUT);
+    await page.waitFor(function () { return !document.querySelector('[data-mmdir-row="9"]'); }, { message: 'the filter applying' });
+    assert.deepEqual(await page.evaluate(DIR_ROWS), ['1', '2', '4', '8'], 'a filter keeps each match and the path down to it');
+
+    // LIST is what it always was, and opening from it draws neither slot
+    await page.evaluate(CLICK_SEL, '[data-srch-sub="list"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-srch-view]'], message: 'LIST' });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-view]'), false, 'LIST replaces DIRECTORY');
+    await page.evaluate(CLICK_SEL, '[data-srch-mm="4"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="4"]'], message: 'LIST opening a mind map' });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-children]'), false, 'the CHILDREN slot is DIRECTORY\'s alone');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-trail]'), false, 'and so is the trail');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY: a row opens the page — its panel, a trail, then its CHILDREN; a block opens the child, a crumb and ← back climb', async () => {
+    const page = await openDirectory({ at: 4 });
+    assert.deepEqual(await page.evaluate(DIR_KIDS), ['6', '7', '10', '8'], 'the children, in stored order');
+    const TRAIL = function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-mmdir-crumb]'),
+        function (c) { return c.getAttribute('data-mmdir-crumb'); });
+    };
+    assert.deepEqual(await page.evaluate(TRAIL), ['1', '2'], 'the trail to it');
+    assert.equal(await page.evaluate(function () {
+      var d = document.querySelector('[data-mm-detail="4"]');
+      var tr = d.querySelector('[data-mmdir-trail]'), ch = d.querySelector('[data-mmdir-children]');
+      return !!tr && !!ch && !!(tr.compareDocumentPosition(ch) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }), true, 'the trail on top and the CHILDREN at the bottom, both inside the panel');
+
+    await page.evaluate(CLICK_SEL, '[data-mmdir-child="6"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="6"]'], message: 'a block opening its page' });
+    assert.deepEqual(await page.evaluate(TRAIL), ['1', '2', '4'], 'the trail grew by the page it came from');
+
+    await page.evaluate(function () { document.querySelectorAll('[data-mmdir-row="10"]')[1].click(); return true; });
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="10"]'], message: 'Shared one, opened under Practice' });
+    assert.deepEqual(await page.evaluate(TRAIL), ['1', '2', '5'], 'a two-parent mind map keeps the path it was opened by');
+
+    await page.evaluate(CLICK_SEL, '[data-mmdir-crumb="2"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="2"]'], message: 'a crumb' });
+    const BACK = function () {
+      var b = Array.prototype.find.call(document.querySelectorAll('[data-mm-detail] button'),
+        function (x) { return x.textContent.trim() === '← back'; });
+      b.click();
+      return true;
+    };
+    await page.evaluate(BACK);
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="1"]'], message: '← back climbing to Chemistry' });
+    await page.evaluate(BACK);
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-empty]'], message: '← back from the top closing the page' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY: a held block LIFTS before it moves — a mouse that moves first drags nothing, a click still opens, and a drop onto a mind map nests it', async () => {
+    const page = await openDirectory({ at: 4 });
+    const raw = await page.evaluate(DIR_RAW);
+    const dialogs = page.dialogs.length;
+    const r9 = await page.evaluate(DIR_BOX, '[data-mmdir-row="9"]');
+
+    // moved before the hold finished: nothing comes loose
+    const b7 = await page.evaluate(DIR_BOX, '[data-mmdir-child="7"]');
+    await dirPress(page, 'mouse', b7);
+    await sleep(60);
+    await dirPath(page, 'mouse', b7, r9);
+    await sleep(600);
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-ghost]'), false, 'a mouse that moved first lifted nothing');
+    assert.equal(await page.evaluate(DIR_STATE, 7), '', 'and the block is at rest');
+    await dirRelease(page, 'mouse', r9);
+    await sleep(300);
+    assert.equal(await page.evaluate(DIR_RAW), raw, 'nothing was written');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-detail="4"]'), true, 'and nothing opened');
+
+    // held: it greys, then rises, and only then follows the pointer
+    const b6 = await page.evaluate(DIR_BOX, '[data-mmdir-child="6"]');
+    await dirPress(page, 'mouse', b6);
+    await sleep(150);
+    assert.equal(await page.evaluate(DIR_STATE, 6), 'pressing', 'held, not yet lifted');
+    await sleep(500);
+    assert.equal(await page.evaluate(DIR_STATE, 6), 'lifted', 'lifted once held');
+    await dirPath(page, 'mouse', b6, r9);
+    await sleep(150);
+    assert.deepEqual(await page.evaluate(function () {
+      return { ghost: !!document.querySelector('[data-mmdir-ghost]'),
+        hit: document.querySelector('[data-mmdir-row="9"]').getAttribute('data-mmdir-hit'),
+        left: document.querySelector('[data-mmdir-child="6"]').getAttribute('data-mmdir-state') };
+    }), { ghost: true, hit: 'nest', left: 'placeholder' }, 'a copy follows the pointer, the row lights, the block stays behind faded');
+    await dirRelease(page, 'mouse', r9);
+    await dirLanded(page, raw, 'the nest being saved');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 6), [9], 'Acids moved into Physics');
+    assert.deepEqual(await page.evaluate(DIR_KIDS), ['7', '10', '8'], 'and left this page');
+    assert.match(await page.evaluate(DIR_TOAST), /Moved “Acids” into “Physics”/);
+    assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+
+    // a plain click, no hold, opens the block as it always did
+    await sleep(600);
+    const b8 = await page.evaluate(DIR_BOX, '[data-mmdir-child="8"]');
+    await dirPress(page, 'mouse', b8);
+    await sleep(60);
+    await dirRelease(page, 'mouse', b8);
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="8"]'], message: 'a click opening the child' });
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY: nesting MOVES out of this page\'s mind map only — a two-parent child keeps its other parent, and "Top level" leaves', async () => {
+    const page = await openDirectory({ at: 4 });
+    let raw = await page.evaluate(DIR_RAW);
+    const order = await page.evaluate(DIR_ORDER);
+    const dialogs = page.dialogs.length;
+    const b10 = await page.evaluate(DIR_BOX, '[data-mmdir-child="10"]');
+    const r3 = await page.evaluate(DIR_BOX, '[data-mmdir-row="3"]');
+    await dirDrag(page, 'mouse', b10, r3);
+    await dirLanded(page, raw, 'Shared one moving');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 10), [3, 5],
+      'P Monday is replaced by Biology, in its place; Practice stays');
+    assert.deepEqual(await page.evaluate(DIR_ORDER), order, 'a nest never reorders the stored list');
+
+    await sleep(600);
+    raw = await page.evaluate(DIR_RAW);
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-root-drop]'), false, 'no Top level row at rest');
+    const b7 = await page.evaluate(DIR_BOX, '[data-mmdir-child="7"]');
+    await dirPress(page, 'mouse', b7);
+    await sleep(650);
+    const off = { x: b7.x - 40, y: b7.y };
+    await dirPath(page, 'mouse', b7, off);
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-root-drop]'], message: 'Top level, while a block is dragged' });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-filter]'), false, 'it takes the filter\'s place, so no row moves');
+    const top = await page.evaluate(DIR_BOX, '[data-mmdir-root-drop]');
+    await dirPath(page, 'mouse', off, top);
+    await sleep(150);
+    assert.equal(await page.evaluate(DIR_HIT, '[data-mmdir-root-drop]'), 'top', 'Top level lights');
+    await dirRelease(page, 'mouse', top);
+    await dirLanded(page, raw, 'Bases leaving for the top level');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 7), [], 'Bases is a top-level mind map');
+    assert.match(await page.evaluate(DIR_TOAST), /Moved “Bases” out of “P Monday”/);
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-filter]'), true, 'the filter is back');
+    assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY: a drop into the dragged mind map\'s own branch is REFUSED — the row says so, the toast names it, nothing is written, nothing asks', async () => {
+    const page = await openDirectory({ at: 2 });
+    const raw = await page.evaluate(DIR_RAW);
+    const dialogs = page.dialogs.length;
+    const b4 = await page.evaluate(DIR_BOX, '[data-mmdir-child="4"]');
+    const r6 = await page.evaluate(DIR_BOX, '[data-mmdir-row="6"]');
+    const inside = await dirDrag(page, 'mouse', b4, r6, { before: () => page.evaluate(DIR_HIT, '[data-mmdir-row="6"]') });
+    // the claim this case is named for fires first: a writer that stopped
+    // refusing fails HERE, not on the toast below
+    await sleep(400);
+    assert.equal(await page.evaluate(DIR_RAW), raw, 'nothing was written');
+    assert.equal(inside, 'refused', 'the row showed the refusal while the block was over it');
+    await page.waitFor(function () { return document.body.textContent.indexOf('Can\'t move') >= 0; }, { message: 'the refusal being said' });
+    assert.equal(await page.evaluate(DIR_TOAST), 'Can\'t move “P Monday” into “Acids”: “Acids” is inside it.');
+
+    await sleep(600);
+    const b4b = await page.evaluate(DIR_BOX, '[data-mmdir-child="4"]');
+    const r4 = await page.evaluate(DIR_BOX, '[data-mmdir-row="4"]');
+    const self = await dirDrag(page, 'mouse', b4b, r4, { before: () => page.evaluate(DIR_HIT, '[data-mmdir-row="4"]') });
+    await sleep(400);
+    assert.equal(await page.evaluate(DIR_RAW), raw, 'nor into itself: still nothing written');
+    assert.equal(self, 'refused', 'and its own row said so');
+    await page.waitFor(function () { return document.body.textContent.indexOf('into itself') >= 0; }, { message: 'the second refusal' });
+    assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY: between blocks reorders, judged by what the list DRAWS — a drop that changes nothing shows no line, writes nothing, opens nothing', async () => {
+    const page = await openDirectory({ at: 4 });
+    let raw = await page.evaluate(DIR_RAW);
+    const dialogs = page.dialogs.length;
+    // Bases back where it is drawn: Kru Pom sits between Acids and Bases in the
+    // stored list, so the unnamed reorder WOULD rewrite it and recolour mind maps
+    const b7 = await page.evaluate(DIR_BOX, '[data-mmdir-child="7"]');
+    await dirPress(page, 'mouse', b7);
+    await sleep(650);
+    await dirPath(page, 'mouse', b7, { x: b7.x, y: b7.y + 30 }, 5);
+    await dirPath(page, 'mouse', { x: b7.x, y: b7.y + 30 }, b7, 5);
+    await sleep(150);
+    assert.equal(await page.evaluate(function () {
+      return document.querySelectorAll('[data-mmdir-child][data-mmdir-hit]').length;
+    }), 0, 'no line where a drop would change nothing');
+    await dirRelease(page, 'mouse', b7);
+    await sleep(400);
+    assert.equal(await page.evaluate(DIR_RAW), raw, 'nothing was written');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-detail="4"]'), true, 'and the release over its own block opened nothing');
+
+    await sleep(300);
+    const b8 = await page.evaluate(DIR_BOX, '[data-mmdir-child="8"]');
+    const b6 = await page.evaluate(DIR_BOX, '[data-mmdir-child="6"]');
+    const line = await dirDrag(page, 'mouse', b8, { x: b6.x, y: b6.top + 5 },
+      { before: () => page.evaluate(DIR_HIT, '[data-mmdir-child="6"]') });
+    assert.equal(line, 'before', 'the line above Acids');
+    await dirLanded(page, raw, 'the reorder being saved');
+    assert.deepEqual(await page.evaluate(DIR_KIDS), ['8', '6', '7', '10'], 'Salts first');
+    assert.deepEqual(await page.evaluate(DIR_ORDER), [1, 8, 6, 2, 7, 10, 4, 5, 3, 9, 21, 20],
+      'moved in the stored list to just before Acids');
+    assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY: ticked blocks move as ONE — between blocks and into a mind map, in their own order; a slide down the ticks chooses several', async () => {
+    const page = await openDirectory({ at: 4 });
+    await page.evaluate(CLICK_SEL, '[data-mmdir-select]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-tick="6"]'], message: 'select mode' });
+    const tap = async sel => {
+      const p = await page.evaluate(DIR_BOX, sel);
+      await dirPress(page, 'mouse', p); await sleep(40); await dirRelease(page, 'mouse', p); await sleep(120);
+    };
+    await tap('[data-mmdir-tick="8"]');
+    await tap('[data-mmdir-tick="7"]');
+    assert.deepEqual(await page.evaluate(DIR_TICKED), ['7', '8']);
+    assert.match(await page.evaluate(function () { return document.querySelector('[data-mmdir-count]').textContent; }), /2 selected/);
+
+    let raw = await page.evaluate(DIR_RAW);
+    const dialogs = page.dialogs.length;
+    const b8 = await page.evaluate(DIR_BOX, '[data-mmdir-child="8"]');
+    const b6 = await page.evaluate(DIR_BOX, '[data-mmdir-child="6"]');
+    const seen = await dirDrag(page, 'mouse', b8, { x: b6.x, y: b6.top + 5 }, { before: () => page.evaluate(function () {
+      var c = document.querySelector('[data-mmdir-ghost-count]');
+      return { count: c ? c.textContent : null, line: document.querySelector('[data-mmdir-child="6"]').getAttribute('data-mmdir-hit'),
+        left: ['7', '8'].map(function (id) { return document.querySelector('[data-mmdir-child="' + id + '"]').getAttribute('data-mmdir-state'); }) };
+    }) });
+    assert.deepEqual(seen, { count: '2', line: 'before', left: ['placeholder', 'placeholder'] }, 'both lift as one stack of two');
+    await dirLanded(page, raw, 'the group reorder');
+    assert.deepEqual(await page.evaluate(DIR_KIDS), ['7', '8', '6', '10'], 'Bases and Salts moved together, in their own order');
+
+    // Done clears the ticks; a slide down the tick column ticks all it crosses
+    await page.evaluate(CLICK_SEL, '[data-mmdir-select]');
+    await page.evaluate(CLICK_SEL, '[data-mmdir-select]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-tick="8"]'], message: 'select mode again' });
+    assert.deepEqual(await page.evaluate(DIR_TICKED), [], 'none ticked');
+    const t8 = await page.evaluate(DIR_BOX, '[data-mmdir-tick="8"]');
+    const t10 = await page.evaluate(DIR_BOX, '[data-mmdir-tick="10"]');
+    await dirPress(page, 'mouse', t8);
+    await dirPath(page, 'mouse', t8, t10, 8);
+    await dirRelease(page, 'mouse', t10);
+    await sleep(150);
+    assert.deepEqual(await page.evaluate(DIR_TICKED), ['8', '6', '10'], 'one slide ticked every block it crossed');
+    await tap('[data-mmdir-tick="8"]');
+    assert.deepEqual(await page.evaluate(DIR_TICKED), ['6', '10'], 'and a tap unticks one');
+
+    await sleep(300);
+    raw = await page.evaluate(DIR_RAW);
+    const order = await page.evaluate(DIR_ORDER);
+    const b10 = await page.evaluate(DIR_BOX, '[data-mmdir-child="10"]');
+    const r3 = await page.evaluate(DIR_BOX, '[data-mmdir-row="3"]');
+    const over = await dirDrag(page, 'mouse', b10, r3, { before: () => page.evaluate(function () {
+      var c = document.querySelector('[data-mmdir-ghost-count]');
+      return [c ? c.textContent : null, document.querySelector('[data-mmdir-row="3"]').getAttribute('data-mmdir-hit')];
+    }) });
+    assert.deepEqual(over, ['2', 'nest']);
+    await dirLanded(page, raw, 'the group nest');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 6), [3], 'Acids into Biology');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 10), [3, 5], 'Shared one into Biology, keeping Practice');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 8), [4], 'the unticked block stayed');
+    assert.deepEqual(await page.evaluate(DIR_KIDS), ['7', '8'], 'both left this page');
+    assert.deepEqual(await page.evaluate(DIR_ORDER), order, 'and the stored order is untouched');
+    assert.match(await page.evaluate(DIR_TOAST), /Moved 2 mind maps into “Biology”/);
+    assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY: a held drag over a folded mind map unfolds it, so a deep target is reachable', async () => {
+    const page = await openDirectory({ at: 4 });
+    await page.evaluate(CLICK_SEL, '[data-mmdir-caret="5"]');
+    await page.waitFor(function () { return document.querySelectorAll('[data-mmdir-row="10"]').length === 1; },
+      { message: 'Practice folding' });
+    const raw = await page.evaluate(DIR_RAW);
+    const b6 = await page.evaluate(DIR_BOX, '[data-mmdir-child="6"]');
+    const r5 = await page.evaluate(DIR_BOX, '[data-mmdir-row="5"]');
+    await dirPress(page, 'mouse', b6);
+    await sleep(650);
+    await dirPath(page, 'mouse', b6, r5);
+    await page.waitFor(function () { return document.querySelectorAll('[data-mmdir-row="10"]').length === 2; },
+      { timeout: 3000, message: 'Practice unfolding under the held block' });
+    const r10 = await page.evaluate(DIR_BOX, '[data-mmdir-row="10"]', 1);
+    await dirPath(page, 'mouse', r5, r10, 4);
+    await sleep(150);
+    await dirRelease(page, 'mouse', r10);
+    await dirLanded(page, raw, 'the nest into the unfolded row');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 6), [10], 'Acids landed in Shared one');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY (touch): a finger HOLDS a block until it lifts and drags it into a mind map; a finger that moves first lifts nothing; a held finger let go does nothing; a tap opens', async () => {
+    const page = await openDirectory({ at: 4, viewport: [1024, 1000, { touch: true }] });
+    const raw0 = await page.evaluate(DIR_RAW);
+    const dialogs = page.dialogs.length;
+
+    const b7 = await page.evaluate(DIR_BOX, '[data-mmdir-child="7"]');
+    await dirTouch(page, 'touchStart', b7);
+    await sleep(40);
+    await dirPath(page, 'touch', b7, { x: b7.x, y: b7.y - 120 }, 6);
+    await sleep(600);
+    assert.equal(await page.evaluate(DIR_STATE, 7), '', 'a finger that moved first is a scroll: nothing lifted');
+    await dirTouch(page, 'touchEnd', b7);
+    await sleep(300);
+    assert.equal(await page.evaluate(DIR_RAW), raw0, 'nothing was written');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-detail="4"]'), true, 'and nothing opened');
+
+    await page.evaluate(function () { document.querySelector('[data-mmdir-children]').scrollIntoView({ block: 'center' }); return true; });
+    await sleep(300);
+    const b6 = await page.evaluate(DIR_BOX, '[data-mmdir-child="6"]');
+    const r9 = await page.evaluate(DIR_BOX, '[data-mmdir-row="9"]');
+    await dirTouch(page, 'touchStart', b6);
+    await sleep(150);
+    assert.equal(await page.evaluate(DIR_STATE, 6), 'pressing', 'held, not yet lifted');
+    await sleep(500);
+    assert.equal(await page.evaluate(DIR_STATE, 6), 'lifted', 'lifted under the finger');
+    await dirPath(page, 'touch', b6, r9);
+    await sleep(150);
+    assert.equal(await page.evaluate(DIR_HIT, '[data-mmdir-row="9"]'), 'nest');
+    await dirTouch(page, 'touchEnd', r9);
+    await dirLanded(page, raw0, 'the touch nest');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 6), [9], 'Acids moved into Physics');
+    await sleep(400);
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-detail="4"]'), true, 'the lift was not also a tap');
+
+    const raw1 = await page.evaluate(DIR_RAW);
+    const b8 = await page.evaluate(DIR_BOX, '[data-mmdir-child="8"]');
+    await dirTouch(page, 'touchStart', b8);
+    await sleep(650);
+    assert.equal(await page.evaluate(DIR_STATE, 8), 'lifted');
+    await dirTouch(page, 'touchEnd', b8);
+    await sleep(400);
+    assert.equal(await page.evaluate(DIR_RAW), raw1, 'held and let go without moving: nothing written');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-detail="4"]'), true, 'and nothing opened');
+    assert.equal(await page.evaluate(DIR_STATE, 8), '', 'it settled back');
+
+    await sleep(600);
+    await dirTouch(page, 'touchStart', b8);
+    await sleep(50);
+    await dirTouch(page, 'touchEnd', b8);
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="8"]'], message: 'a tap opening the child' });
+    assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY (phone): the tree is a drawer; a dragged block held at the left edge opens it, and the drop lands there', async () => {
+    const page = await openDirectory({ viewport: PHONE });
+    const DISPLAY = function () { return getComputedStyle(document.querySelector('[data-mmdir-bar]')).display; };
+    assert.equal(await page.evaluate(DISPLAY), 'none', 'the tree is folded away');
+    await page.evaluate(CLICK_SEL, '[data-mmdir-drawer]');
+    await page.waitFor(function () { return getComputedStyle(document.querySelector('[data-mmdir-bar]')).display === 'flex'; },
+      { message: 'the drawer opening' });
+    const geo = await page.evaluate(function () {
+      var r = document.querySelector('[data-mmdir-bar]').getBoundingClientRect();
+      return { l: r.left, t: r.top, w: r.width, h: r.height, vw: innerWidth, vh: innerHeight,
+        row: document.querySelector('[data-mmdir-row="4"]').getBoundingClientRect().height };
+    });
+    assert.ok(geo.l === 0 && geo.t === 0 && geo.w === geo.vw && geo.h >= geo.vh - 1, 'the drawer covers the screen: ' + JSON.stringify(geo));
+    assert.ok(geo.row >= 44, 'its rows are finger-sized: ' + geo.row);
+    const r4 = await page.evaluate(DIR_BOX, '[data-mmdir-row="4"]');
+    await dirTouch(page, 'touchStart', r4);
+    await sleep(40);
+    await dirTouch(page, 'touchEnd', r4);
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="4"] [data-mmdir-children]'], message: 'a tap on a row opening its page' });
+    await page.waitFor(function () { return getComputedStyle(document.querySelector('[data-mmdir-bar]')).display === 'none'; },
+      { message: 'the drawer closing behind it' });
+    await page.evaluate(function () { document.querySelector('[data-mmdir-children]').scrollIntoView({ block: 'center' }); return true; });
+    await sleep(300);
+
+    const raw = await page.evaluate(DIR_RAW);
+    const b6 = await page.evaluate(DIR_BOX, '[data-mmdir-child="6"]');
+    const edge = { x: 8, y: b6.y };
+    await dirTouch(page, 'touchStart', b6);
+    await sleep(650);
+    await dirPath(page, 'touch', b6, edge);
+    await page.waitFor(function () { return document.querySelector('[data-mmdir-view]').classList.contains('mmdir-drawer-open'); },
+      { timeout: 3000, message: 'the drawer springing open under the held block' });
+    await sleep(150);
+    const r9 = await page.evaluate(DIR_BOX, '[data-mmdir-row="9"]');
+    await dirPath(page, 'touch', edge, r9);
+    await sleep(150);
+    assert.equal(await page.evaluate(DIR_HIT, '[data-mmdir-row="9"]'), 'nest', 'a row in the sprung drawer takes the drop');
+    await dirTouch(page, 'touchEnd', r9);
+    await dirLanded(page, raw, 'the nest from the drawer');
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 6), [9], 'Acids moved into Physics');
+    await page.waitFor(function () { return !document.querySelector('[data-mmdir-view]').classList.contains('mmdir-drawer-open'); },
+      { message: 'the sprung drawer closing after the drop' });
+    assert.ok(await page.evaluate(function () { return document.documentElement.scrollWidth <= innerWidth; }), 'nothing scrolls sideways');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('DIRECTORY: a move lands on what another tab wrote DURING the drag, never over it', async () => {
+    const page = await openDirectory({ at: 4 });
+    let other = null;
+    try {
+      other = await open('index.html', { fresh: false });
+      await other.waitFor(function () { return typeof window.TrackStorage === 'object'; }, { message: 'the second tab' });
+      await page.session.send('Page.bringToFront');
+      await page.waitFor(function () { return document.visibilityState === 'visible'; }, { message: 'the DIRECTORY tab in front' });
+      await page.evaluate(function () { document.querySelector('[data-mmdir-children]').scrollIntoView({ block: 'center' }); return true; });
+      await sleep(150);
+      const raw = await page.evaluate(DIR_RAW);
+      const b6 = await page.evaluate(DIR_BOX, '[data-mmdir-child="6"]');
+      const r9 = await page.evaluate(DIR_BOX, '[data-mmdir-row="9"]');
+      await dirPress(page, 'mouse', b6);
+      await sleep(650);
+      await dirPath(page, 'mouse', b6, r9);
+      // mid-drag, the other tab renames Physics
+      const slot = await page.evaluate(READ_SLOT);
+      const renamed = slot.mms.map(m => m.id === 9 ? Object.assign({}, m, { name: 'Physics II' }) : m);
+      assert.equal(await other.evaluate(WRITE_SLOT_KEY, 'mms', renamed), true, 'the other tab wrote');
+      await page.waitFor(function () { return document.querySelector('[data-mmdir-row="9"]').textContent.indexOf('Physics II') >= 0; },
+        { message: 'the DIRECTORY tab adopting the rename mid-drag' });
+      await dirPath(page, 'mouse', r9, { x: r9.x + 4, y: r9.y }, 2);
+      await sleep(150);
+      await dirRelease(page, 'mouse', { x: r9.x + 4, y: r9.y });
+      await page.waitFor(function () {
+        var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+        var m = (((db.slots || [])[0] || {}).mms || []).filter(function (x) { return x.id === 6; })[0];
+        return !!m && JSON.stringify(m.parentIds) !== '[4]';
+      }, { message: 'the nest being saved' });
+      assert.notEqual(await page.evaluate(DIR_RAW), raw);
+      assert.deepEqual(await page.evaluate(DIR_PARENTS, 6), [9], 'the nest landed');
+      assert.equal(await page.evaluate(function () {
+        var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+        return (((db.slots || [])[0] || {}).mms || []).filter(function (x) { return x.id === 9; })[0].name;
+      }), 'Physics II', 'and the other tab\'s rename survived it');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+      if (other) await other.close();
+    }
+  });
 });

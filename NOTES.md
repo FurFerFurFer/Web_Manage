@@ -935,13 +935,23 @@ Fix by reading the list fresh when the picker opens, if it ever proves annoying 
 The picker still lets a user make a record its own ancestor; the code now survives it rather
 than refusing it. That was deliberate — tolerance is required regardless, because a cycle can
 already exist in stored data or arrive through sync, and prevention alone would not help
-those. But nothing currently tells a user they have built one.
+those. But little tells a user they have built one: SRCH → DIRECTORY's tree marks a mind map
+met again on its own branch with `↻`, and the canvases and SRCH → LIST draw a cycle without
+saying so.
 
 Open question, needing a product decision rather than a code one: should a cyclic parent
 relationship be refused at the picker, merely flagged in the canvas and SRCH views, or left
 entirely alone as a legitimate way to model mutual dependence? Do not implement a refusal
 without answering that — a mind map where two ideas genuinely feed each other may be exactly
 what the user meant.
+
+One gesture has been answered, and only that one. On 2026-11-03 the user approved that a drag
+in SRCH → DIRECTORY refuses a move into the dragged mind map itself or into its own branch, and
+says why (README, "SRCH → DIRECTORY"). The Connections pickers on both canvas pages are
+unchanged and still allow a cycle, so the question above stays open for them. If it is ever
+answered with a refusal for mind maps, the test exists once already — `TrackMMTree.moveRefusal`
+— and a picker would ask it rather than spell its own; storages are a separate graph and would
+need their own.
 
 ## Proposal 15: Extract the Duplicated `ConfirmDialog`
 
@@ -1077,6 +1087,47 @@ Parent → child means either "part of" or "learn before" (docs/CONCEPTS.md). Fe
 things along the arrow assume the first: an activated Source Dump shares sources with
 ancestors **and** descendants. Nothing to change yet. Revisit if a feature needs to tell the
 two apart — for example with an optional kind on the link.
+
+## Proposal 18: SRCH → DIRECTORY Follow-ups
+
+Built on 2026-11-03 (README, "SRCH → DIRECTORY"). The items below were left out of the plan the
+user approved, or found while building it. None is authorized.
+
+### Left out of the plan
+
+- **A long-press menu.** Notability opens one on a held block; here a hold only lifts.
+- **Dragging rows inside the tree.** The tree is a drop target only; a mind map is moved from a
+  page's CHILDREN list.
+- **Nesting by dropping one block onto another.** A drop between blocks reorders, and nesting
+  goes through the tree.
+- **A selection across pages.** Ticks belong to one page, and opening another clears them.
+- **Remembered folds and a remembered sub-tab.** Folds reset whenever DIRECTORY is left, and a
+  reload opens SRCH on LIST. Either would be a per-device view key like `track_home_cal_hidden`,
+  never slot data.
+
+### SRCH → LIST cannot see a loop with nothing above it
+
+`SrchView.buildTree` starts only from mind maps with no stored parent. A loop that nothing
+leads to — A under B, B under A, neither under anything else — is therefore drawn nowhere in
+LIST. DIRECTORY draws it from its earliest stored member through `TrackMMTree.roots`, and LIST
+could delegate to the same reader. That changes what LIST draws, so it waits for the user.
+
+### Found while building it
+
+- **A nest does not switch on a Source Dump.** `+MM` sets `sourceDumpActivated` on a parent
+  that was a leaf with S&C content, so its new child inherits that content in its S&C tab. A
+  nest in DIRECTORY does not, and neither does Connections' `edit`. A mind map nested under such
+  a leaf therefore inherits nothing from it, and the parent's own `+` for linking a dump is
+  hidden, until `Activate Source Dump` is pressed on the parent's S&C tab. Nothing is lost: the
+  parent still draws its own links.
+  The fix would be to give the two writers the rule `addMM` has; whether a move should switch
+  anything on is the user's call.
+- **A reorder recolours mind maps that have no colour of their own.** `mmColor` falls back to
+  `PALETTE[i % PALETTE.length]`, where `i` is the mind map's place in the stored list. Without a
+  `customColor`, its colour therefore depends on its position, and moving it — in LIST as much as
+  in DIRECTORY — can change its colour and the colour of every uncoloured mind map between its
+  old and new place. Pinning a colour when a mind map is created would end it for new mind maps;
+  the existing ones would need their current colour written once, which is a migration.
 
 ## Track World: Computer Feasibility
 

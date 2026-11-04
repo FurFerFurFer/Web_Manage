@@ -5100,3 +5100,80 @@ The user asked for a light check, so the full suite was **not** run.
 **Not covered.** The full suite; the `⇅` line's pixels on a to-learn row; a mind map drawn under
 two parents (the drop steps back to that mind map's first row, which nothing pins); real touch
 hardware; print.
+
+## 2026-11-03 — Knowledge Record: SRCH → DIRECTORY
+
+The user's ask, sketched over a Notability screenshot and shown in a screen recording of its
+lift: a sub-tab inside SRCH with every mind map in a fold-open tree "like in DOC", a page per mind
+map (its panel, then its children), children moved by a held drag — a reorder, or a nest onto a
+tree row — and several at once. New: `scripts/mm-tree-core.js` (`?v=1`, loaded by `sir-ks02.html`
+only) and `tests/mm-tree-core.test.js`; `MMDirectoryView` in `sir-ks02.html`, with SRCH → LIST's
+reorder now a delegate to `TrackMMTree.withArranged`; a DIRECTORY section in `styles/styles.css`,
+now `?v=22` on all five pages.
+
+- `node --test tests/mm-tree-core.test.js`: 33/33. Four doctored copies of the module, each with
+  one rule reversed in a scratch tree, `tests/` copied for real:
+  - `withNested` dropping every parent, not only `fromId`: offline 20, 22, 23; browser 4 and 7
+    ("Practice stays": `[3]` against `[3, 5]`).
+  - `withNested` never refusing: offline 24; browser 5, on its first assertion, "nothing was
+    written".
+  - `withArranged` ignoring `listId`: offline 30; browser 6, "no line where a drop would change
+    nothing" (1 !== 0).
+  - `roots` dropping each loop's entry: offline 10–12; browser 1.
+- The 11 `DIRECTORY` browser cases — numbered 1–11 here in file order, as the narrowed run
+  prints them — narrowed with a scratch preload (a Proxy over the TestContext): 11/11 twice,
+  67–68s each. An undoctored control tree: 11/11, and 33/33 offline.
+  Six doctored copies of `sir-ks02.html`, each failing only the case named for its rule:
+  - a hold of 0ms: 3 (mouse) and 9 (touch), "moved first lifted nothing";
+  - a ticked group ignored: 7, "both lift as one stack of two";
+  - no spring at the drawer's edge: 10, timing out on the drawer springing open;
+  - no click suppression after a drag: 6, "release over its own block opened nothing";
+  - no unfold under a held drag: 8, timing out on "Practice unfolding";
+  - the refusal not lit: 5, `'nest' !== 'refused'`.
+- Not doctored: case 2 (navigation — trail, crumbs, `← back`) and case 11 (a rename another tab
+  wrote mid-drag). Case 11 is a guard: breaking it takes two edits, because App's `onNest` is a
+  functional `setMms`. The touch path's click suppression has two overlapping doors (`touchend`'s
+  `preventDefault` and `suppressClickUntil`), so reversing one alone proves nothing, and it was
+  not tried.
+- The no-confirm exemption. The no-dialog assertion was in cases 3, 5 and 9 only — a nest by
+  mouse, a refusal, a nest by finger — so a confirm added to a reorder or a Top level move would
+  have tripped nothing. Found while writing AGENTS.md, and added to 4, 6 and 7. A second set, run
+  one at a time after the full run below was stopped, at 17:10–17:14 with no sleep in the
+  journal: an undoctored control, 11/11 and 33/33, which is also the narrowed run of the final
+  files; then two doctored copies of `sir-ks02.html`, each adding a `window.confirm` to one
+  commit. Prompting on a reorder failed exactly 6 and 7; prompting on a nest failed exactly 3,
+  4, 7 and 9 — 4 counting two dialogs, its nest and its Top level move. Every failure was the
+  no-dialog assertion itself (`1 !== 0`, `2 !== 0`). The two sets share only 7, which both
+  reorders and nests a group.
+- Screenshots of scripted drags at 1280×1000, in both appearances, found three problems the
+  passing cases had not:
+  1. Top level, inserted above the tree's rows when a drag began, pushed every row about 30px
+     down under the pointer. It now takes the filter's place at the same height; case 4 asserts
+     the filter is gone during the drag and back after.
+  2. The ghost, scaled down over the tree, still covered the row it was over. Over the tree it is
+     now a chip below and right of the pointer.
+  3. Ticked blocks under Grit were a heavy indigo. The tick and ticked colours are now tokens.
+  Reading Grit's remaps while fixing the third found a fourth, by reading rather than on screen:
+  their `:hover` forms weigh (0,3,1) and would outrank a (0,3,0) drop highlight under the very
+  pointer that is dropping. The state rules are (0,4,0).
+- `node tests/run.js`, started at 16:38 on battery, is **void**. All 29 offline runs passed
+  (`mm-tree-core` 33, every other count as before this change), and browser cases 1–284 passed. The
+  laptop then suspended from 17:04:49 to 17:07:57 (logind `Suspending...`, then `Lid opened.` on
+  resume), and case 285 died on `CDP connection closed` while case 286 timed out on its first
+  `waitFor`: the suspend signature (AGENTS, "This machine"). 287–294 passed, and the run was
+  stopped during case 295 to keep the battery for the second set above, since a run that spans a
+  sleep proves nothing whatever it reports after. Every narrowed run and baseline in this entry
+  ran outside both sleeps the journal records that afternoon, 16:18:41–16:18:49 and this one.
+  Before it was stopped, two files it uses changed under it: a comment in `styles/styles.css`
+  (Grit, not "the theme", owns the hover remaps — no rule changed) and the no-dialog assertions
+  added to cases 4, 6 and 7 of `tests/browser.test.js`, which the running process had already
+  loaded.
+- `node tests/run.js` again on 2026-11-04, after a reboot, on mains power: **exit 0 in 2549s**
+  (42.5 minutes) at load ~1.7–1.8. 30 suites — the 29 offline runs as above, then 505 of 505
+  browser subtests (`1..505`). No suspend in the journal for the window; the tree's checksums
+  (every page, script, stylesheet and test file) matched before and after, and HEAD stayed
+  `bb3bc2f`. This is the run the stopped one owed, and it covers every case after 284.
+
+**Not covered.** Real touch hardware, including iOS Safari's long-press callout and text
+selection (switched off in CSS, never tried on a device); the hold's feel against the reference
+video, compared only frame by frame; print; the live Firebase project; two devices.

@@ -81,11 +81,13 @@ const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.te
 // same structural case: the page passes `now` in.
 // goal-core.js likewise receives every new id and timestamp from the caller;
 // its structural case rejects both date code and id minting. project-core.js
-// is handed a move's `updatedAt` as `now` for the same reason.
+// is handed a move's `updatedAt` as `now` for the same reason. mm-tree-core.js
+// needs no time at all — a move stamps nothing — and its structural case says
+// so.
 const UNSWEPT_FILES = ['true-storage-core.test.js', 'source-dump-core.test.js', 'graph-layout.test.js',
   'doc-table-core.test.js', 'schedule-paste-core.test.js', 'quest-core.test.js', 'milestone-core.test.js',
   'goal-core.test.js', 'project-core.test.js', 'viewport.test.js', 'journey-core.test.js', 'strat-core.test.js',
-  'cdp-cleanup.test.js'];
+  'mm-tree-core.test.js', 'cdp-cleanup.test.js'];
 
 for (const tz of zones)
   for (const file of OFFLINE_FILES)
