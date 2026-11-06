@@ -13,6 +13,12 @@
              written day with its colour. `Journey` opens every Eternal day
              as a read-only book (journey-book.js), which this file only
              opens: the book reads, and writes nothing.
+     Kolbs   the slot's own `kolbs` — the very records the Knowledge Record
+             shows — newest first, each opened to be edited. `+ New Kolb`
+             starts a DRAFT (`kolbDrafts`), drawn grey among them, which is
+             stored as it is written but is not a Kolb until Done. What
+             saving, editing and finishing one stores is kolb-core.js's
+             (window.TrackKolb), the definition sir-ks02.html uses too.
 
    Side opening: ⧉ on any note opens another beside it, full screen, up to
    TrackNotes.MAX_PANES at once — left/right above 720px, stacked below it
@@ -28,9 +34,14 @@
    too: a note opened in slot A keeps writing to A after another tab switches
    the active slot, and writes nothing if A is gone.
 
-   Every write is a fresh read-modify-write of ONE key (`notes` or `dateNotes`)
-   for ONE slot, through TrackStorage.saveDB. This file owns those two keys and
-   writes nothing else.
+   Every write is a fresh read-modify-write for ONE slot, through
+   TrackStorage.saveDB. This file owns `notes`, `dateNotes` and `kolbDrafts`.
+   A Kolb edit or a finished draft also writes the Knowledge Record's keys —
+   `kolbs`, `mgChanges`, `mms`, `sessions`, `linChanges` — and only the ones
+   kolb-core.js's writer changed, merged into that same fresh read. Such a
+   write then raises `storage` in THIS tab too (tellThisTab), because a
+   Knowledge Record open here hears no other event, and its next autosave
+   would write its old copy of `kolbs` back over the Kolb just saved.
 */
 (function () {
   var N = window.TrackNotes;
@@ -41,7 +52,11 @@
     return;
   }
 
-  var SORTED = 'sorted', DATE = 'date';
+  var SORTED = 'sorted', DATE = 'date', KOLB = 'kolb', KDRAFT = 'kdraft';
+  // The Kolbs tab needs kolb-core.js (and through it milestone-core.js). A page
+  // that has not loaded them still gets Sorted and Journal.
+  var KC = window.TrackKolb && window.TrackMilestone ? window.TrackKolb : null;
+  function isKolbKind(kind) { return kind === KOLB || kind === KDRAFT; }
 
   var state = {
     view: 'collapsed',   // collapsed | list | detail | pick | split
@@ -50,8 +65,14 @@
     pickTab: SORTED,
     panes: [],           // [{kind, key, slotId}] — the side-by-side view
     sizes: [],           // flex-grow per pane; in memory only, never stored
-    lastPane: 0
+    lastPane: 0,
+    kolbField: {}        // keyOf(ref) → the Kolb field Send writes into
   };
+
+  // Drafts opened with `+ New Kolb` and not stored yet. Only these may be
+  // CREATED by a save: a draft that was stored and is gone now was finished or
+  // discarded elsewhere, and a pending save must not bring it back.
+  var draftNew = {};
   var panelW = 320, panelH = 420;
 
   function isMap(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
@@ -95,24 +116,78 @@
 
   var MISSING = {}, REFUSE = {}, LOCKED = {};
 
-  // The one writer. A fresh read, ONE key, for ONE slot id. `fn` maps the stored
-  // value to the next one; returning it unchanged (the same object) writes
-  // nothing. Answers 'saved' | 'unchanged' | 'missing' | 'locked' | 'refused'.
-  function writeSlotKey(slotId, key, fn) {
+  // The Knowledge Record's keys. This file writes them only for a Kolb, and
+  // only through kolb-core.js's writers.
+  var KS02_KEYS = ['kolbs', 'mgChanges', 'mms', 'sessions', 'linChanges'];
+
+  // The one writer. A fresh read, for ONE slot id. `fn` maps the stored slot
+  // to a patch — {key: next value} for the keys that change — or a sentinel;
+  // an empty patch writes nothing. Answers 'saved' | 'unchanged' | 'missing' |
+  // 'locked' | 'refused'.
+  function writeSlot(slotId, fn) {
     var db = _twDB();
     var slot = slotById(db, slotId);
     if (!slot) return 'refused';
-    var cur = slot[key];
-    var next = fn(cur);
-    if (next === MISSING) return 'missing';
-    if (next === LOCKED) return 'locked';
-    if (next === REFUSE) return 'refused';
-    if (next === cur) return 'unchanged';
-    db.slots = db.slots.map(function (s) {
-      if (s !== slot) return s;
-      var o = Object.assign({}, s); o[key] = next; return o;
+    var patch = fn(slot);
+    if (patch === MISSING) return 'missing';
+    if (patch === LOCKED) return 'locked';
+    if (patch === REFUSE) return 'refused';
+    var keys = Object.keys(patch);
+    if (!keys.length) return 'unchanged';
+    db.slots = db.slots.map(function (s) { return s === slot ? Object.assign({}, s, patch) : s; });
+    if (!TrackStorage.saveDB(db)) return 'refused';
+    if (keys.some(function (k) { return KS02_KEYS.indexOf(k) >= 0; })) tellThisTab();
+    return 'saved';
+  }
+
+  // ONE key: `fn` maps the stored value to the next one, and returning it
+  // unchanged (the same object) writes nothing.
+  function writeSlotKey(slotId, key, fn) {
+    return writeSlot(slotId, function (slot) {
+      var cur = slot[key];
+      var next = fn(cur);
+      if (next === MISSING || next === LOCKED || next === REFUSE) return next;
+      if (next === cur) return {};
+      var p = {}; p[key] = next; return p;
     });
-    return TrackStorage.saveDB(db) ? 'saved' : 'refused';
+  }
+
+  // A `storage` event reaches every OTHER tab and never the one that wrote.
+  // The Knowledge Record holds `kolbs`, `mms` and the rest in React state and
+  // autosaves them, so open in this tab it would keep its old copy and write it
+  // straight back over a Kolb saved here. The same event, raised here, is the
+  // one every page's refresh already listens for — and each re-reads storage,
+  // trusting nothing in the event but its key.
+  //
+  // This widget's own listener ignores it (`telling`): every write here is
+  // followed by the redraw its caller chose, and a write made while render()
+  // flushes its savers would otherwise start a second render inside the first.
+  var telling = false;
+  function tellThisTab() {
+    telling = true;
+    try { window.dispatchEvent(new StorageEvent('storage', { key: 'track_db' })); } catch (e) {}
+    finally { telling = false; }
+  }
+
+  // A Kolb write reads five lists and a draft write one more; any of them in
+  // the wrong shape is refused rather than replaced.
+  function wrongShape(slot, keys) {
+    return keys.some(function (k) { return slot[k] != null && !Array.isArray(slot[k]); });
+  }
+
+  // Ids for the Knowledge Record's records: numbers, from where its own nid()
+  // counter would hand them out. It steps past them the moment it hears the
+  // write (tellThisTab, or another tab's storage event).
+  function minter(slot) {
+    var n = KC.nextNumericId(slot);
+    return function () { return n++; };
+  }
+
+  // Only the fields an editor may change, read as the form reads them.
+  function kolbFields(patch) {
+    var out = {};
+    Object.keys(patch).forEach(function (k) { if (KC.FIELD_KEYS.indexOf(k) >= 0) out[k] = KC.fieldValue(patch, k); });
+    return out;
   }
 
   function sortedList(slot) { return slot && Array.isArray(slot.notes) ? slot.notes.filter(isMap) : []; }
@@ -130,6 +205,32 @@
   // wrong-kind canonical field; this is the second lock on the same door.)
   function persist(ref, patch) {
     var now = Date.now();
+    if (ref.kind === KDRAFT) {
+      var r = writeSlotKey(ref.slotId, 'kolbDrafts', function (cur) {
+        if (cur != null && !Array.isArray(cur)) return REFUSE;
+        var base = Array.isArray(cur) ? cur : [];
+        var w = KC.withDraft(base, ref.key, patch, now, !!draftNew[ref.key]);
+        if (!w.found) return MISSING;
+        return w.list === base ? cur : w.list;
+      });
+      if (r === 'saved') delete draftNew[ref.key];
+      return r;
+    }
+    if (ref.kind === KOLB) {
+      // A text, level or "reflecting?" edit. It never MOVES the Kolb — that is
+      // relinkKolb, which asks first when it must — so it has no reset plan.
+      // withKolbEdit still carries an MG edit into the Kolb's MG change and the
+      // level into its mind map, exactly as the KOLB tab's SAVE CHANGES does.
+      return writeSlot(ref.slotId, function (slot) {
+        if (wrongShape(slot, KS02_KEYS)) return REFUSE;
+        var S = KC.stateOf(slot);
+        var k = KC.findKolb(S.kolbs, ref.key);
+        if (!k) return MISSING;
+        var next = KC.withKolbEdit(S, ref.key, Object.assign({}, k, kolbFields(patch)),
+          { mint: minter(slot), day: localToday(), plan: null });
+        return KC.changedKeys(S, next);
+      });
+    }
     if (ref.kind === DATE) {
       var hasContent = Object.prototype.hasOwnProperty.call(patch, 'content');
       var hasTag = Object.prototype.hasOwnProperty.call(patch, 'tag');
@@ -167,6 +268,122 @@
     return r === 'saved' ? note.id : null;
   }
 
+  // ── Kolbs ─────────────────────────────────────────────────────────────────
+
+  function kolbList(slot) { return KC.kolbsOf(slot && slot.kolbs); }
+  function draftList(slot) { return KC.draftsOf(slot && slot.kolbDrafts); }
+  function findKolbIn(slot, id) { return KC.findKolb(kolbList(slot), id); }
+  function findDraftIn(slot, id) { return KC.findDraft(draftList(slot), id); }
+  function kolbRecord(slot, ref) { return ref.kind === KOLB ? findKolbIn(slot, ref.key) : findDraftIn(slot, ref.key); }
+  function linkableIn(slot) { return KC.linkable(slot && slot.mms); }
+  function mmOf(slot, id) {
+    if (id == null || id === '') return null;
+    return (Array.isArray(slot && slot.mms) ? slot.mms : []).find(function (m) { return isMap(m) && m.id === id; }) || null;
+  }
+  function mmName(slot, id) { var m = mmOf(slot, id); return m ? text(m.name) || '(unnamed)' : ''; }
+
+  // A Kolb row's words: its day, its mind map, its first line.
+  function kolbTitle(slot, ref, rec) {
+    var mm = rec && KC.isId(rec.mmId) ? mmName(slot, rec.mmId) || 'a mind map that is gone' : '';
+    if (ref.kind === KDRAFT) return 'Draft' + (mm ? ' · ' + mm : '');
+    return 'Kolb' + (mm ? ' · ' + mm : '');
+  }
+  function kolbDay(ref, rec, today) {
+    if (!rec) return 'New';
+    if (ref.kind === KDRAFT) return typeof rec.createdAt === 'number' ? N.dayLabel(TrackSchema.localToday(new Date(rec.createdAt)), today) : '';
+    return typeof rec.date === 'string' ? N.dayLabel(rec.date, today) : '';
+  }
+  function kolbPreview(rec) { return N.firstLine(rec && rec.experience) || '(no experience noted)'; }
+
+  // `+ New Kolb`: a draft that exists only here until something is written.
+  function newDraftRef(slotId) {
+    var id = generateId();
+    draftNew[id] = true;
+    return { kind: KDRAFT, key: id, slotId: slotId };
+  }
+
+  // Moving an existing Kolb to another mind map, or to none: an ARRIVAL, so it
+  // resets a Procedural mind map past S1 exactly as the KOLB tab's move does,
+  // and asks first when that deletes hidden SIR sessions. The question is
+  // asked before any write; the write re-reads, and refuses if there is now
+  // something to ask that was not asked. Answers a writeSlot result, or
+  // 'cancelled'.
+  function relinkKolb(ref, mmId) {
+    var slot = slotById(_twDB(), ref.slotId);
+    if (!slot) return 'refused';
+    var k = findKolbIn(slot, ref.key);
+    if (!k) return 'missing';
+    if (mmId === k.mmId || (mmId == null && k.mmId == null)) return 'unchanged';
+    var asked = false;
+    if (mmId != null) {
+      var ask = KC.resetPrompt(KC.resetPlan(KC.stateOf(slot), mmId), 'Moving this Kolb sends');
+      if (ask) { if (!window.confirm(ask)) return 'cancelled'; asked = true; }
+    }
+    return writeSlot(ref.slotId, function (s2) {
+      if (wrongShape(s2, KS02_KEYS)) return REFUSE;
+      var S = KC.stateOf(s2);
+      var k2 = KC.findKolb(S.kolbs, ref.key);
+      if (!k2) return MISSING;
+      var plan = mmId != null && mmId !== k2.mmId ? KC.resetPlan(S, mmId) : null;
+      if (plan && KC.resetPrompt(plan, '') && !asked) return REFUSE;
+      var next = KC.withKolbEdit(S, ref.key, Object.assign({}, k2, { mmId: mmId }),
+        { mint: minter(s2), day: localToday(), plan: plan });
+      return KC.changedKeys(S, next);
+    });
+  }
+
+  // Done: the draft becomes a Kolb, through the same writer the Knowledge
+  // Record's SAVE uses — its MG change, its level, the reset to S1 and the
+  // question before it — and the draft goes, in ONE write. Answers
+  // {result, kolbId}; result is a writeSlot result, 'cancelled', 'blank' or
+  // 'unlinkable' (its mind map is gone or no longer Procedural).
+  function finishDraft(ref) {
+    var slot = slotById(_twDB(), ref.slotId);
+    if (!slot) return { result: 'refused' };
+    var d = findDraftIn(slot, ref.key);
+    if (!d) return { result: draftNew[ref.key] ? 'blank' : 'missing' };
+    if (KC.draftIsBlank(d)) return { result: 'blank' };
+    var mmId = KC.isId(d.mmId) ? d.mmId : null;
+    var S = KC.stateOf(slot);
+    var canLink = function (mms) { return KC.linkable(mms).some(function (m) { return m.id === mmId; }); };
+    if (mmId != null && !canLink(S.mms)) return { result: 'unlinkable' };
+    var asked = false;
+    var ask = KC.resetPrompt(KC.resetPlan(S, mmId), 'Saving this Kolb sends');
+    if (ask) { if (!window.confirm(ask)) return { result: 'cancelled' }; asked = true; }
+    var made = null;
+    var result = writeSlot(ref.slotId, function (s2) {
+      if (wrongShape(s2, KS02_KEYS.concat(['kolbDrafts']))) return REFUSE;
+      var d2 = findDraftIn(s2, ref.key);
+      if (!d2) return MISSING;
+      if ((KC.isId(d2.mmId) ? d2.mmId : null) !== mmId) return REFUSE; // relinked elsewhere since
+      var S2 = KC.stateOf(s2);
+      if (mmId != null && !canLink(S2.mms)) return REFUSE;
+      var plan = KC.resetPlan(S2, mmId);
+      if (KC.resetPrompt(plan, '') && !asked) return REFUSE;
+      var next = KC.withNewKolb(S2, KC.formOf(d2), mmId, { mint: minter(s2), day: localToday(), plan: plan });
+      made = next.kolbId;
+      var patch = KC.changedKeys(S2, next);
+      patch.kolbDrafts = KC.withoutDraft(s2.kolbDrafts, ref.key);
+      return patch;
+    });
+    if (result === 'saved') delete draftNew[ref.key];
+    return { result: result, kolbId: result === 'saved' ? made : null };
+  }
+
+  // Discard asks — a draft is written work — except when nothing was ever
+  // stored, which has nothing to lose. Answers true when the draft is gone.
+  function discardDraft(ref, hasText) {
+    var stored = findDraftIn(slotById(_twDB(), ref.slotId), ref.key);
+    if (!stored && !hasText) { delete draftNew[ref.key]; return true; }
+    if (!window.confirm('Discard this draft? It is not a Kolb yet, and nothing of it will be kept.')) return false;
+    var r = writeSlotKey(ref.slotId, 'kolbDrafts', function (cur) {
+      if (cur != null && !Array.isArray(cur)) return REFUSE;
+      return KC.withoutDraft(cur, ref.key);
+    });
+    delete draftNew[ref.key];
+    return r !== 'refused';
+  }
+
   // ── savers ────────────────────────────────────────────────────────────────
 
   var editors = [];
@@ -196,15 +413,19 @@
 
   function flushAll() { editors.forEach(function (s) { s.flush(); }); }
 
-  function statusSetter(el) {
+  function statusSetter(el, kind) {
     return function (result) {
       if (result === 'unchanged') return;
       var ok = result === 'saved';
       el.setAttribute('data-nw-status', result);
       el.classList.toggle('nw-status-warn', !ok);
-      el.textContent = ok ? 'Saved'
-        : result === 'missing' ? '⚠ Not saved — this note was deleted elsewhere'
+      el.textContent = ok ? (kind === KDRAFT ? 'Draft saved — not a Kolb until Done' : 'Saved')
+        : result === 'missing' ? (kind === KDRAFT ? '⚠ Not saved — this draft was finished or discarded elsewhere'
+          : kind === KOLB ? '⚠ Not saved — this Kolb was deleted elsewhere'
+          : '⚠ Not saved — this note was deleted elsewhere')
         : result === 'locked' ? '⚠ Not saved — this day was locked elsewhere. Your text is still here to copy.'
+        : result === 'blank' ? 'Write something first — an empty draft has nothing to save as a Kolb'
+        : result === 'unlinkable' ? '⚠ Not done — its mind map is gone or no longer Procedural. Choose another, or none.'
         : '⚠ Not saved — storage refused the write';
     };
   }
@@ -248,7 +469,9 @@
     // DATE is shown as "Journal" so it can never be mistaken for a calendar day
     // note (`calendarNotes`). The stored map is still `dateNotes` and the test
     // hooks still say "date"; only the visible word changed.
-    [[SORTED, 'Sorted'], [DATE, 'Journal']].forEach(function (t) {
+    var all = [[SORTED, 'Sorted'], [DATE, 'Journal']];
+    if (KC) all.push([KOLB, 'Kolbs']);
+    all.forEach(function (t) {
       var b = el('button', 'nw-tab', t[1]);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -261,9 +484,225 @@
   }
 
   function chip(kind) {
-    var c = el('span', 'nw-chip nw-chip-' + kind, kind === DATE ? 'Journal' : 'Sorted');
+    var c = el('span', 'nw-chip nw-chip-' + kind,
+      kind === DATE ? 'Journal' : kind === KOLB ? 'Kolb' : kind === KDRAFT ? 'Draft' : 'Sorted');
     c.setAttribute('aria-hidden', 'true');
     return c;
+  }
+
+  // ── the Kolb form ─────────────────────────────────────────────────────────
+  // One form for a Kolb and a draft, in the single view and in a pane. It is
+  // the Knowledge Record's questions in its order (TrackKolb.TEXT_FIELDS),
+  // with the level, "reflecting on a previous Kolb?" and the mind map it is on.
+  // Text goes through the editor's saver on the usual debounce; a level or a
+  // yes/no is pressed and saved at once. The mind map is opts.onLink's: a
+  // Kolb's move may have to ask first, and either way the view is redrawn.
+  //
+  // opts: {onLink(mmId), onField(key, textarea), onInput()}.
+
+  var levelTemplatesOf = function (slot) { return isMap(slot && slot.levelTemplates) ? slot.levelTemplates : {}; };
+
+  function fitText(ta) {
+    ta.style.height = 'auto';
+    ta.style.height = Math.max(ta.scrollHeight, 40) + 'px';
+  }
+
+  function kolbForm(ref, slot, rec, saver, opts) {
+    var form = el('div', 'nw-kolb-form');
+    form.setAttribute('data-nw-kolb-form', keyOf(ref));
+    var fields = {};
+    var draft = ref.kind === KDRAFT;
+    var val = function (k) { return KC.fieldValue(rec, k); };
+    var templates = levelTemplatesOf(slot);
+
+    if (draft) {
+      var banner = el('div', 'nw-kolb-banner', 'Draft — kept as you write, but not a Kolb until you press Done.');
+      banner.setAttribute('data-nw-kolb-banner', '');
+      form.appendChild(banner);
+    }
+
+    // the mind map
+    var linkRow = el('label', 'nw-kolb-link');
+    linkRow.appendChild(el('span', 'nw-kolb-label', 'Mind map (Procedural only)'));
+    var select = el('select', 'nw-kolb-select');
+    select.setAttribute('data-nw-kolb-link', '');
+    // Option values are positions in `choices`, never ids: an id read back
+    // from the DOM is text, and a mind map's id is a NUMBER.
+    var choices = [null];
+    var none = el('option', null, 'No mind map (unlinked)');
+    none.value = '0';
+    select.appendChild(none);
+    var current = rec && KC.isId(rec.mmId) ? rec.mmId : null;
+    var found = current == null;
+    linkableIn(slot).forEach(function (m) {
+      choices.push(m.id);
+      var o = el('option', null, text(m.name) || '(unnamed)');
+      o.value = String(choices.length - 1);
+      if (m.id === current) { o.selected = true; found = true; }
+      select.appendChild(o);
+    });
+    if (!found) {
+      // Linked to a mind map that is gone or no longer Procedural: say so
+      // rather than show "unlinked", which would be untrue.
+      choices.push(current);
+      var gone = el('option', null, '⚠ ' + (mmName(slot, current) || 'a mind map that is gone') + ' — not Procedural now');
+      gone.value = String(choices.length - 1);
+      gone.selected = true;
+      gone.disabled = true;
+      select.appendChild(gone);
+    }
+    select.onchange = function () {
+      var id = choices[+select.value];
+      opts.onLink(id === undefined ? null : id, function revert() {
+        Array.prototype.forEach.call(select.options, function (o) { o.selected = choices[+o.value] === current; });
+      });
+    };
+    linkRow.appendChild(select);
+    form.appendChild(linkRow);
+
+    function step(n) {
+      var s = KC.STEPS[n - 1];
+      var h = el('div', 'nw-kolb-step', 'Step ' + s.n + ' — ' + s.title);
+      h.setAttribute('data-nw-kolb-step', String(s.n));
+      form.appendChild(h);
+    }
+
+    function textField(f) {
+      var wrap = el('div', 'nw-kolb-field');
+      var id = 'nw-kf-' + ref.kind + '-' + String(ref.key).replace(/[^A-Za-z0-9_-]/g, '_') + '-' + f.key;
+      var lab = el('label', 'nw-kolb-label', f.label);
+      lab.htmlFor = id;
+      var ta = el('textarea', 'nw-kolb-text');
+      ta.id = id;
+      ta.rows = f.rows;
+      ta.value = val(f.key);
+      ta.setAttribute('data-nw-kolb-field', f.key);
+      ta.setAttribute('data-nw-text', '');
+      ta.addEventListener('input', function () {
+        var p = {}; p[f.key] = ta.value;
+        saver.queue(p);
+        fitText(ta);
+        if (opts.onInput) opts.onInput();
+      });
+      ta.addEventListener('focus', function () { if (opts.onField) opts.onField(f.key, ta); });
+      wrap.appendChild(lab);
+      wrap.appendChild(ta);
+      fields[f.key] = ta;
+      form.appendChild(wrap);
+      return wrap;
+    }
+
+    function pressNow(patch) { saver.queue(patch); saver.flush(); }
+
+    step(1);
+    // reflecting on a previous Kolb?
+    var reflect = el('div', 'nw-kolb-field');
+    reflect.appendChild(el('span', 'nw-kolb-label', 'Reflecting on a previous Kolb?'));
+    var yn = el('div', 'nw-kolb-yesno');
+    yn.setAttribute('role', 'radiogroup');
+    yn.setAttribute('aria-label', 'Reflecting on a previous Kolb?');
+    var ynButtons = [true, false].map(function (v) {
+      var b = el('button', 'nw-kolb-choice', v ? 'Yes' : 'No');
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('data-nw-kolb-reflect', v ? 'yes' : 'no');
+      b.onclick = function () { reflectV = v; pressNow({ isReflectingOnPrev: v }); drawYN(v); if (opts.onInput) opts.onInput(); };
+      yn.appendChild(b);
+      return b;
+    });
+    function drawYN(v) { ynButtons.forEach(function (b, i) { b.setAttribute('aria-checked', String((i === 0) === v)); }); }
+    var reflectV = val('isReflectingOnPrev');
+    drawYN(reflectV);
+    reflect.appendChild(yn);
+    form.appendChild(reflect);
+
+    KC.TEXT_FIELDS.filter(function (f) { return f.step === 1; }).forEach(textField);
+
+    // the level, 1–10; pressing the chosen one again clears it
+    var levelWrap = el('div', 'nw-kolb-field');
+    levelWrap.appendChild(el('span', 'nw-kolb-label', 'What level are you on?'));
+    var levels = el('div', 'nw-kolb-levels');
+    levels.setAttribute('role', 'group');
+    levels.setAttribute('aria-label', 'Level');
+    var level = val('level');
+    var levelButtons = KC.LEVELS.map(function (n) {
+      var b = el('button', 'nw-kolb-level', n);
+      b.type = 'button';
+      b.setAttribute('data-nw-kolb-level', n);
+      b.onclick = function () { level = level === n ? '' : n; pressNow({ level: level }); drawLevel(); if (opts.onInput) opts.onInput(); };
+      levels.appendChild(b);
+      return b;
+    });
+    var levelInfo = el('div', 'nw-kolb-hint');
+    levelInfo.setAttribute('data-nw-kolb-level-info', '');
+    function drawLevel() {
+      levelButtons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.textContent === level)); });
+      var t = level && isMap(templates[level]) ? templates[level] : null;
+      levelInfo.textContent = '';
+      levelInfo.hidden = !level;
+      if (!level) return;
+      levelInfo.appendChild(el('div', 'nw-kolb-hint-name', level + '/10' + (t && t.name ? ' — ' + t.name : '')));
+      if (t && t.mgTemplate) levelInfo.appendChild(el('div', 'nw-kolb-hint-mg', 'Pre-written MG: ' + t.mgTemplate));
+      drawUseTemplate();
+    }
+    levelWrap.appendChild(levels);
+    levelWrap.appendChild(levelInfo);
+    form.appendChild(levelWrap);
+
+    step(2);
+    KC.TEXT_FIELDS.filter(function (f) { return f.step === 2; }).forEach(textField);
+    step(3);
+    KC.TEXT_FIELDS.filter(function (f) { return f.step === 3; }).forEach(textField);
+    step(4);
+    // What the Kolb form shows before step 4's answers: the latest experiment
+    // and the mind map's MG focus. A new Kolb only, as there.
+    if (draft) {
+      var latest = KC.latestExperiment(kolbList(slot), current);
+      var focus = current != null ? text((mmOf(slot, current) || {}).currentMG) : '';
+      if (latest || focus) {
+        var ctx = el('div', 'nw-kolb-context');
+        if (latest) { ctx.appendChild(el('div', 'nw-kolb-context-label', 'Latest experiment')); ctx.appendChild(el('div', 'nw-kolb-context-text', latest)); }
+        if (focus) { ctx.appendChild(el('div', 'nw-kolb-context-label', 'MG focus')); ctx.appendChild(el('div', 'nw-kolb-context-text', focus)); }
+        form.appendChild(ctx);
+      }
+    }
+    KC.TEXT_FIELDS.filter(function (f) { return f.step === 4; }).forEach(textField);
+
+    // The level's pre-written MG, one press away from MG add — never written
+    // there unasked.
+    var useT = el('button', 'nw-kolb-use', 'Use the pre-written MG');
+    useT.type = 'button';
+    useT.setAttribute('data-nw-kolb-use-template', '');
+    useT.onclick = function () {
+      var t = level && isMap(templates[level]) ? text(templates[level].mgTemplate) : '';
+      if (!t) return;
+      var ta = fields.mgAdd;
+      ta.value = N.isBlank(ta.value) ? t : N.appendSent(ta.value, t);
+      pressNow({ mgAdd: ta.value });
+      fitText(ta);
+      if (opts.onInput) opts.onInput();
+    };
+    function drawUseTemplate() {
+      var t = level && isMap(templates[level]) ? text(templates[level].mgTemplate) : '';
+      useT.hidden = !t;
+    }
+    fields.mgAdd.parentNode.appendChild(useT);
+    drawLevel();
+    drawUseTemplate();
+
+    return {
+      el: form,
+      fields: fields,
+      first: fields.experience,
+      fitAll: function () { Object.keys(fields).forEach(function (k) { fitText(fields[k]); }); },
+      // What is on screen, asked as TrackKolb.draftIsBlank asks what is stored.
+      blank: function () {
+        var shown = { level: level, isReflectingOnPrev: reflectV };
+        if (current != null) shown.mmId = current;
+        Object.keys(fields).forEach(function (k) { shown[k] = fields[k].value; });
+        return KC.draftIsBlank(shown);
+      }
+    };
   }
 
   function emptyMsg(msg) { return el('div', 'nw-empty-msg', msg); }
@@ -447,7 +886,51 @@
     headerTitle.appendChild(tabs(state.tab, function (t) { state.tab = t; render(); }, 'data-nw-tab'));
     body.innerHTML = '';
     if (state.tab === DATE) renderDateList(slot);
+    else if (state.tab === KOLB && KC) renderKolbList(slot);
     else renderSortedList(slot);
+  }
+
+  // Drafts first — open work, grey — then every Kolb, newest first. The rows
+  // are the slot's own `kolbs`: the list the Knowledge Record's KOLB tab shows.
+  function kolbRows(slot) {
+    var rows = [];
+    KC.draftsByNewest(slot && slot.kolbDrafts).forEach(function (d) { rows.push({ ref: { kind: KDRAFT, key: d.id, slotId: slot.id }, rec: d }); });
+    KC.byNewest(slot && slot.kolbs).forEach(function (k) { if (KC.isId(k.id)) rows.push({ ref: { kind: KOLB, key: k.id, slotId: slot.id }, rec: k }); });
+    return rows;
+  }
+
+  function kolbRow(slot, row, today) {
+    var b = el('button', 'nw-note-row nw-kolb-row' + (row.ref.kind === KDRAFT ? ' nw-kolb-row-draft' : ''));
+    b.type = 'button';
+    b.setAttribute('data-nw-row', keyOf(row.ref));
+    if (row.ref.kind === KDRAFT) b.setAttribute('data-nw-draft', '');
+    var line = el('div', 'nw-date-line');
+    line.appendChild(el('div', 'nw-date-label', kolbTitle(slot, row.ref, row.rec)));
+    line.appendChild(el('div', 'nw-kolb-day', kolbDay(row.ref, row.rec, today)));
+    b.appendChild(line);
+    b.appendChild(el('div', 'nw-date-preview', kolbPreview(row.rec)));
+    b.title = row.ref.kind === KDRAFT ? 'A draft — not a Kolb until you press Done' : 'Open this Kolb';
+    return b;
+  }
+
+  function renderKolbList(slot) {
+    if (!slot) { body.appendChild(emptyMsg('Create a workspace on Home first.')); return; }
+    var add = el('button', 'nw-kolb-new', '+ New Kolb');
+    add.type = 'button';
+    add.setAttribute('data-nw-kolb-new', '');
+    add.onclick = function () { openDetail(newDraftRef(slot.id)); };
+    body.appendChild(add);
+    var rows = kolbRows(slot);
+    if (!rows.length) {
+      body.appendChild(emptyMsg('No Kolbs yet. A new one stays a grey draft until you press Done.'));
+      return;
+    }
+    var today = localToday();
+    rows.forEach(function (row) {
+      var b = kolbRow(slot, row, today);
+      b.onclick = function () { openDetail(row.ref); };
+      body.appendChild(b);
+    });
   }
 
   function renderSortedList(slot) {
@@ -572,6 +1055,7 @@
     var ref = state.active;
     var slot = ref && slotById(_twDB(), ref.slotId);
     if (!slot || (ref.kind === SORTED && !findSorted(slot, ref.key))) { state.view = 'list'; render(); return; }
+    if (isKolbKind(ref.kind)) { renderKolbDetail(ref, slot); return; }
 
     headerTitle.innerHTML = '';
 
@@ -676,6 +1160,124 @@
     setTimeout(function () { textarea.focus(); }, 10);
   }
 
+  // What a Kolb form's mind-map choice does. A Kolb MOVES — relinkKolb, which
+  // may ask first; Cancel puts the choice back and writes nothing. A draft just
+  // records it, and its level starts at the chosen mind map's MG level, as the
+  // Knowledge Record's Kolb form does. Pending text lands first, either way.
+  // `after` redraws whatever view the form is in.
+  function linkHandler(ref, saver, setStatus, after) {
+    return function (mmId, revert) {
+      saver.flush();
+      var r;
+      if (ref.kind === KOLB) {
+        r = relinkKolb(ref, mmId);
+        if (r === 'cancelled') { revert(); return; }
+      } else {
+        var slot = slotById(_twDB(), ref.slotId);
+        saver.queue({ mmId: mmId, level: KC.levelFor(mmOf(slot, mmId)) });
+        r = saver.flush();
+      }
+      if (r === 'saved' || r === 'unchanged') { after(); return; }
+      revert();
+      setStatus(r);
+    };
+  }
+
+  // Done's handler: the draft becomes a Kolb, and `onKolb(id)` follows it.
+  function doneHandler(ref, saver, setStatus, onKolb) {
+    return function () {
+      saver.flush();
+      var r = finishDraft(ref);
+      if (r.result === 'saved') { onKolb(r.kolbId); return; }
+      if (r.result !== 'cancelled') setStatus(r.result);
+    };
+  }
+
+  function doneButton(form) {
+    var b = el('button', 'nw-done-btn', 'Done');
+    b.type = 'button';
+    b.setAttribute('data-nw-kolb-done', '');
+    function draw() {
+      var blank = form.blank();
+      // aria-disabled, never disabled: the click is where a finger learns why.
+      b.setAttribute('aria-disabled', String(blank));
+      b.title = blank ? 'Write something first' : 'Done — save this draft as a Kolb';
+    }
+    return { el: b, draw: draw };
+  }
+
+  // The bar under a Kolb form: its save status, and for a draft Discard and
+  // Done. Under the form rather than in the header, which at the panel's 320px
+  // would leave the title no room at all.
+  function kolbActions(statusEl, done, discard) {
+    var bar = el('div', 'nw-kolb-actions');
+    bar.appendChild(statusEl);
+    if (discard) bar.appendChild(discard);
+    if (done) bar.appendChild(done.el);
+    return bar;
+  }
+
+  function renderKolbDetail(ref, slot) {
+    var rec = kolbRecord(slot, ref);
+    if (!rec && !(ref.kind === KDRAFT && draftNew[ref.key])) { state.view = 'list'; state.tab = KOLB; render(); return; }
+    var today = localToday();
+    headerTitle.innerHTML = '';
+
+    var backBtn = document.createElement('button');
+    backBtn.id = 'nw-back-btn';
+    backBtn.textContent = '←';
+    backBtn.title = 'Back to the Kolbs';
+    backBtn.setAttribute('aria-label', 'Back to notes list');
+    backBtn.onclick = function () { state.view = 'list'; state.tab = KOLB; render(); };
+    headerTitle.appendChild(backBtn);
+
+    var title = el('div', 'nw-day-title', kolbTitle(slot, ref, rec) + (rec ? ' · ' + kolbDay(ref, rec, today) : ''));
+    title.setAttribute('data-nw-kolb-title', keyOf(ref));
+    if (ref.kind === KDRAFT) title.classList.add('nw-kolb-title-draft');
+    headerTitle.appendChild(title);
+
+    var statusEl = el('div', 'nw-status');
+    statusEl.setAttribute('data-nw-status', 'idle');
+    var setStatus = statusSetter(statusEl, ref.kind);
+    var saver = makeSaver(ref, setStatus);
+    var done = null;
+    var form = kolbForm(ref, slot, rec, saver, {
+      onLink: linkHandler(ref, saver, setStatus, render),
+      onInput: function () { if (done) done.draw(); }
+    });
+
+    var sideBtn = iconBtn('side', 'Open another note side by side', 'data-nw-side-open');
+    sideBtn.onclick = function () { state.view = 'pick'; state.pickTab = DATE; render(); };
+    headerTitle.appendChild(sideBtn);
+
+    var del = null;
+    if (ref.kind === KDRAFT) {
+      done = doneButton(form);
+      done.el.onclick = doneHandler(ref, saver, setStatus, function (id) {
+        state.active = { kind: KOLB, key: id, slotId: ref.slotId };
+        render();
+      });
+      del = iconBtn('trash', 'Discard this draft', 'data-nw-kolb-discard');
+      del.onclick = function () {
+        saver.flush();
+        if (!discardDraft(ref, !form.blank())) return;
+        state.active = null; state.view = 'list'; state.tab = KOLB;
+        render();
+      };
+      done.draw();
+    }
+
+    body.innerHTML = '';
+    body.style.padding = '0';
+    body.style.display = 'flex';
+    body.style.flexDirection = 'column';
+    body.style.overflow = 'hidden';
+    body.appendChild(form.el);
+    body.appendChild(kolbActions(statusEl, done, del));
+    form.fitAll();
+    setTimeout(function () { form.first.focus({ preventScroll: true }); }, 10);
+  }
+
   function renderSidePick() {
     var origin = state.active;
     if (!origin) { state.view = 'list'; render(); return; }
@@ -765,6 +1367,23 @@
           list.appendChild(pickRow(SORTED, n.id, n.topic || '(untitled)', N.firstLine(n.content)));
           shown++;
         });
+      } else if (tab === KOLB && KC) {
+        var addK = el('button', 'nw-pick-new', '+ New Kolb');
+        addK.type = 'button';
+        addK.setAttribute('data-nw-pick-new-kolb', '');
+        addK.onclick = function () { opts.onPick(newDraftRef(opts.slotId)); };
+        list.appendChild(addK);
+        kolbRows(slot).forEach(function (row) {
+          var r = row.ref, rec = row.rec;
+          if (excluded(r.kind, r.key)) return;
+          var name = kolbTitle(slot, r, rec), day = kolbDay(r, rec, today);
+          var words = KC.TEXT_FIELDS.map(function (f) { return KC.fieldValue(rec, f.key); });
+          if (!matches.apply(null, [name, day, r.kind === KDRAFT ? 'draft' : 'kolb'].concat(words))) return;
+          var pr = pickRow(r.kind, r.key, name + (day ? ' · ' + day : ''), kolbPreview(rec));
+          if (r.kind === KDRAFT) pr.classList.add('nw-pick-row-draft');
+          list.appendChild(pr);
+          shown++;
+        });
       } else {
         var map = dateMap(slot);
         var todayText = N.dateNoteText(map, today);
@@ -788,7 +1407,8 @@
           shown++;
         });
       }
-      if (!shown) list.appendChild(emptyMsg(filter.trim() ? 'Nothing matches.' : tab === SORTED ? 'No other sorted notes yet.' : 'No other drafts yet.'));
+      if (!shown) list.appendChild(emptyMsg(filter.trim() ? 'Nothing matches.' : tab === SORTED ? 'No other sorted notes yet.'
+        : tab === KOLB ? 'No other Kolbs yet.' : 'No other drafts yet.'));
     }
 
     search.oninput = function () { filter = search.value; draw(); };
@@ -804,13 +1424,18 @@
 
   function resolvable(db, ref) {
     var slot = slotById(db, ref.slotId);
-    return !!slot && (ref.kind === DATE || !!findSorted(slot, ref.key));
+    if (!slot) return false;
+    if (ref.kind === DATE) return true;
+    if (ref.kind === KOLB) return !!KC && !!findKolbIn(slot, ref.key);
+    if (ref.kind === KDRAFT) return !!KC && (!!findDraftIn(slot, ref.key) || !!draftNew[ref.key]);
+    return !!findSorted(slot, ref.key);
   }
 
   function renderSplit() {
     var db = _twDB();
-    // A Sorted note deleted in another tab since the last draw is dropped here,
-    // rather than drawn empty and invited to be typed into.
+    // A Sorted note — or a Kolb, or a draft — deleted or finished in another
+    // tab since the last draw is dropped here, rather than drawn empty and
+    // invited to be typed into.
     var keep = state.panes.map(function (ref) { return resolvable(db, ref); });
     state.panes = state.panes.filter(function (ref, i) { return keep[i]; });
     state.sizes = state.sizes.filter(function (s, i) { return keep[i]; });
@@ -882,6 +1507,7 @@
   }
 
   function buildPane(db, ref, i) {
+    if (isKolbKind(ref.kind)) return buildKolbPane(db, ref, i);
     var slot = slotById(db, ref.slotId);
     var sec = el('section', 'nw-pane nw-pane-' + ref.kind);
     sec.setAttribute('data-nw-pane', keyOf(ref));
@@ -970,6 +1596,125 @@
     return pane;
   }
 
+  // A Kolb or a draft as a pane: the whole form, scrolling inside the pane.
+  // Send reads from, and writes into, ONE field — the one last focused,
+  // remembered per Kolb across redraws and marked, so where a Send will land
+  // is never a guess. It starts on "Describe the experience".
+  function buildKolbPane(db, ref, i) {
+    var slot = slotById(db, ref.slotId);
+    var rec = kolbRecord(slot, ref);
+    var draft = ref.kind === KDRAFT;
+    var sec = el('section', 'nw-pane nw-pane-' + ref.kind);
+    sec.setAttribute('data-nw-pane', keyOf(ref));
+    sec.setAttribute('data-nw-kind', ref.kind);
+    sec.setAttribute('data-nw-key', String(ref.key));
+    sec.style.flexGrow = String(state.sizes[i]);
+
+    var head = el('div', 'nw-pane-head');
+    head.appendChild(chip(ref.kind));
+    var day = kolbDay(ref, rec, localToday());
+    var title = el('span', 'nw-pane-title' + (draft ? ' nw-kolb-title-draft' : ''), kolbTitle(slot, ref, rec) + (day ? ' · ' + day : ''));
+    title.setAttribute('data-nw-kolb-title', keyOf(ref));
+    head.appendChild(title);
+
+    var statusEl = el('div', 'nw-status');
+    statusEl.setAttribute('data-nw-status', 'idle');
+    var setStatus = statusSetter(statusEl, ref.kind);
+    var saver = makeSaver(ref, setStatus);
+    var done = null, pane = null;
+    var fieldKey = KC.TEXT_FIELDS.some(function (f) { return f.key === state.kolbField[keyOf(ref)]; })
+      ? state.kolbField[keyOf(ref)] : 'experience';
+    var form = kolbForm(ref, slot, rec, saver, {
+      onLink: linkHandler(ref, saver, setStatus, render),
+      onField: function (key, ta) {
+        fieldKey = key;
+        state.kolbField[keyOf(ref)] = key;
+        if (pane) pane.textarea = ta;
+        mark();
+        refreshSend();
+      },
+      onInput: function () { if (done) done.draw(); refreshSend(); }
+    });
+    function mark() {
+      Object.keys(form.fields).forEach(function (k) {
+        var wrap = form.fields[k].parentNode;
+        if (k === fieldKey) wrap.setAttribute('data-nw-kolb-target', '');
+        else wrap.removeAttribute('data-nw-kolb-target');
+      });
+    }
+
+    var del = null;
+    if (draft) {
+      done = doneButton(form);
+      done.el.onclick = doneHandler(ref, saver, setStatus, function (id) {
+        var kref = { kind: KOLB, key: id, slotId: ref.slotId };
+        state.kolbField[keyOf(kref)] = fieldKey;
+        state.panes[i] = kref;
+        state.lastPane = i;
+        render();
+      });
+      del = iconBtn('trash', 'Discard this draft', 'data-nw-kolb-discard');
+      del.onclick = function () {
+        saver.flush();
+        if (!discardDraft(ref, !form.blank())) return;
+        state.panes.splice(i, 1);
+        state.sizes.splice(i, 1);
+        if (state.lastPane >= i && state.lastPane > 0) state.lastPane--;
+        render();
+      };
+    }
+
+    var send = el('button', 'nw-send-btn');
+    send.type = 'button';
+    send.setAttribute('data-nw-send', '');
+    send.innerHTML = '<svg class="nw-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' + ICONS.send + '</svg><span class="nw-send-label">Send</span>';
+    head.appendChild(send);
+
+    var change = iconBtn('change', 'Change this pane’s note', 'data-nw-pane-change');
+    change.onclick = function () { openPaneOverlay('replace', i); };
+    head.appendChild(change);
+
+    var closeP = iconBtn('close', 'Close this pane', 'data-nw-pane-close');
+    closeP.onclick = function () {
+      state.panes.splice(i, 1);
+      state.sizes.splice(i, 1);
+      if (state.lastPane >= i && state.lastPane > 0) state.lastPane--;
+      render();
+    };
+    head.appendChild(closeP);
+    sec.appendChild(head);
+    sec.appendChild(form.el);
+    sec.appendChild(kolbActions(statusEl, done, del));
+
+    Object.keys(form.fields).forEach(function (k) {
+      var ta = form.fields[k];
+      ['select', 'keyup', 'mouseup', 'touchend'].forEach(function (ev) { ta.addEventListener(ev, refreshSend); });
+    });
+    sec.addEventListener('focusin', function () { state.lastPane = i; });
+    mark();
+    if (done) done.draw();
+
+    pane = {
+      ref: ref, el: sec, textarea: form.fields[fieldKey], saver: saver, sendBtn: send, bar: null,
+      name: function () {
+        var f = KC.TEXT_FIELDS.find(function (x) { return x.key === fieldKey; });
+        return kolbTitle(slotById(_twDB(), ref.slotId), ref, rec) + ' — ' + (f ? f.short : fieldKey);
+      },
+      patch: function (value) { var p = {}; p[fieldKey] = value; return p; },
+      fit: function () {
+        fitText(pane.textarea);
+        if (done) done.draw();
+        if (pane.textarea.scrollIntoView) pane.textarea.scrollIntoView({ block: 'nearest' });
+      }
+    };
+    send.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    send.addEventListener('pointerdown', function (e) { if (e.pointerType !== 'mouse') e.preventDefault(); });
+    send.onclick = function () { doSend(i, send); };
+    // Laid out once it is in the page: an auto-fit before that reads 0.
+    setTimeout(form.fitAll, 0);
+    return pane;
+  }
+
   function selectionOf(ta) {
     var a = ta.selectionStart, b = ta.selectionEnd;
     return (typeof a === 'number' && b > a) ? ta.value.slice(a, b) : '';
@@ -979,14 +1724,15 @@
   // locked day is still for — but never sent INTO: that would edit its text.
   function paneLocked(p) { return !!(p.bar && p.bar.locked()); }
 
-  // Sorted notes first — the draft → sorted direction is the one this is for.
+  // Sorted notes first — the draft → sorted direction is the one this is for —
+  // then Kolbs and Kolb drafts, then Journal days.
+  function sendRank(kind) { return kind === SORTED ? 0 : isKolbKind(kind) ? 1 : 2; }
   function sendTargets(i) {
     return livePanes
       .map(function (p, j) { return { p: p, j: j }; })
       .filter(function (x) { return x.j !== i && !paneLocked(x.p); })
       .sort(function (a, b) {
-        var ka = a.p.ref.kind === SORTED ? 0 : 1, kb = b.p.ref.kind === SORTED ? 0 : 1;
-        return ka - kb || a.j - b.j;
+        return sendRank(a.p.ref.kind) - sendRank(b.p.ref.kind) || a.j - b.j;
       })
       .map(function (x) { return x.p; });
   }
@@ -1024,13 +1770,15 @@
     var ta = target.textarea;
     var before = ta.value;
     ta.value = N.appendSent(before, chosen);
-    target.saver.queue({ content: ta.value });
+    // A Kolb pane takes it into ONE field — the one it marks — not `content`.
+    target.saver.queue(target.patch ? target.patch(ta.value) : { content: ta.value });
     var r = target.saver.flush();
     // Locked elsewhere before this tab heard: the sent words go back out. They
     // are still in the source pane, so taking them back loses nothing.
     if (r === 'locked') ta.value = before;
     // A value set from script fires no input event; a blank day just got words.
     if (target.bar) target.bar.draw();
+    if (target.fit) target.fit();
     ta.scrollTop = ta.scrollHeight;
     target.el.classList.remove('nw-pane-flash');
     void target.el.offsetWidth;
@@ -1084,7 +1832,7 @@
     card.appendChild(buildPicker({
       slotId: slotId,
       exclude: state.panes.map(keyOf),
-      tab: mode === 'replace' ? state.panes[index].kind : SORTED,
+      tab: mode === 'replace' ? (isKolbKind(state.panes[index].kind) ? KOLB : state.panes[index].kind) : SORTED,
       onPick: function (ref) {
         if (mode === 'add') {
           state.panes.push(ref);
@@ -1458,6 +2206,7 @@
     header.id = 'nw-header';
 
     headerTitle = document.createElement('div');
+    headerTitle.className = 'nw-head-main';
     headerTitle.style.cssText = 'display:flex;align-items:center;flex:1;gap:8px;min-width:0;';
 
     var closeBtn = document.createElement('button');
@@ -1507,7 +2256,7 @@
     // day locked in another tab freezes here too, before anything is typed
     // into it. An open calendar holds no text, so it always repaints.
     window.addEventListener('storage', function (e) {
-      if (e.key !== 'track_db') return;
+      if (e.key !== 'track_db' || telling) return;
       if (state.view === 'list') { render(); return; }
       liveBars.forEach(function (b) { b.sync(); });
       if (cal) cal.refresh();

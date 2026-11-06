@@ -5177,3 +5177,58 @@ now `?v=22` on all five pages.
 **Not covered.** Real touch hardware, including iOS Safari's long-press callout and text
 selection (switched off in CSS, never tried on a device); the hold's feel against the reference
 video, compared only frame by frame; print; the live Firebase project; two devices.
+
+## 2026-11-05 — Notes widget: the Kolbs tab, with drafts
+
+The user's ask: a third tab in the notes widget that is "literally from the list of kolbs", newest
+first, each opened to be edited; `+ New Kolb` keeping a draft "without saving it until I click
+done", shown "almost a normal tab but with grey color"; and side by side working with all of it.
+New: `scripts/kolb-core.js` (`?v=1`, loaded on all five pages) and `tests/kolb-core.test.js`; the
+slot field `kolbDrafts` in `schema.js` (now `?v=10`); the Kolbs tab, drafts, `Done` and Kolb panes
+in `notes-widget.js` (`?v=8`); a Kolbs section in `styles/styles.css` (`?v=23`). `sir-ks02.html`'s
+`saveKolb`, edit `onSave`, `kolbResetPlan`, `stageLabel`, `EMPTY_KOLB`, latest-experiment line and
+id ceiling are now delegates to `TrackKolb`.
+
+- `node --test tests/kolb-core.test.js`: 32/32. SAVE and `SAVE CHANGES` are pinned against
+  verbatim copies of the KS02 code they replaced, run through a React-state harness. Six doctored
+  copies of the module in a scratch tree, behind an undoctored control (32/32):
+  - a move recomputing the wrong mind map (the one it reaches, not the one it leaves): case 6;
+  - the MG change's `oldMG` read after the write: 1, 2, 3;
+  - no reset to S1: 1, 5, 11;
+  - an older Kolb's MG taken as current: 5;
+  - a draft recreated by a save (`create` ignored): 21;
+  - an emptied field stored as `''`: 22, 24.
+  A first pass missed the "mind map it leaves" rule; the level-only Kolb case was added for it and
+  then caught it.
+- `schema.test.js`: 68/68 with the 26th field. The hand-written field lists the suite keeps were
+  each extended — `schema.test.js`'s CONTRACT and its counts, the browser CONTRACT, the import
+  round trip (which now carries a draft with a numeric `mmId` and an unknown key), the two FOREIGN
+  lists, `fixture.js`'s `emptySlot`, and the two legacy shapes, which predate the field.
+- The 12 `KOLBS` browser cases, numbered 1–12 in file order, run on their own: a scratch runner
+  built from the suite's own header plus the section's bytes, `tests/` copied for real, printing
+  the root it serves. Against the repository, 11/11 at first, then 12/12 with case 12 added.
+  Eleven doctored copies, one rule each, between two undoctored controls (12/12, 17s and 16s):
+  - `tellThisTab` raising nothing: 8, on "the Knowledge Record drawing the new Kolb — it heard
+    the write";
+  - `Done` keeping the draft: 3, 4 and 9, each on its `kolbDrafts` assertion;
+  - `Done` asking nothing: 4, "Done asked, once";
+  - discard asking nothing: 5, "discarding asked";
+  - Send writing `content`: 9, timing out on "the Send landing" — a draft has no `content`, so
+    nothing was written, which is the claim but reads as a timeout;
+  - the draft row not grey: 1, "only the draft is grey";
+  - a move asking nothing: 7, "the move asked";
+  - an edit writing `kolbs` only: 6, "its MG change follows";
+  - Kolbs in stored order: 1 and 10, the list and the picker;
+  - no narrow tab padding: 11, "320px: the tabs end at 254, before Close at 247";
+  - a draft recreated by a save: 12, "the save was refused and said so".
+  Every run was 15–32s; none spanned a sleep.
+- `node tests/run.js` on 2026-11-06, on mains power: **exit 0 in 2534s** (42 minutes), 12:40–13:22,
+  at load ~1.3–1.7. **31 suites** — the 29 offline runs as before plus `kolb-core` (32), with
+  `schema` 68 in every zone — then 517 of 517 browser subtests (`1..517`: the 505 before, plus the
+  12 `KOLBS` cases). No suspend or lid event in the journal for the window; the checksums of
+  every changed and new file matched before and after, and HEAD stayed `25a5cc9`.
+
+**Not covered.** Real touch hardware; the same-tab adoption on Progress, Documentations and True
+Storage, which read the Knowledge Record's keys but were not driven (each re-reads on `storage`,
+as for another tab's write); a Kolb edited in the widget while the KOLB tab's edit view holds an
+unsaved form (NOTES Proposal 19 — last write wins); print; the live Firebase project; two devices.

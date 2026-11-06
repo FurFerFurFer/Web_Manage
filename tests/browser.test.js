@@ -4421,7 +4421,11 @@ test('browser suites', skipUnlessChrome, async t => {
         // and its link's place on the goal's page, `goalPlace`, are item
         // keys no allow-list names, so they ride normalizeSlot's unknown-key
         // path like the rest
-        docPages: [F.docPage('p-1'), F.docPage('p-at', { title: 'Attached', goalId: 'g-1', goalPlace: { parentId: 'g-1', afterId: 'g-1a' } })]
+        docPages: [F.docPage('p-1'), F.docPage('p-at', { title: 'Attached', goalId: 'g-1', goalPlace: { parentId: 'g-1', afterId: 'g-1a' } })],
+        // a Kolb draft from the notes widget: a canonical list, with a
+        // mind-map id that is a NUMBER and a key no version has heard of
+        kolbDrafts: [{ id: 'kd-1', createdAt: F.localTs(2026, 3, 9, 20, 0), updatedAt: F.localTs(2026, 3, 9, 20, 5),
+          mmId: 10, experience: 'Half-written', level: '4', laterKey: 'kept' }]
       })
     });
     await page.waitFor(function () { return !!window.exportSlot && !!window.importSlot; },
@@ -4508,7 +4512,7 @@ test('browser suites', skipUnlessChrome, async t => {
     for (const key of ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
       'goals', 'saActions', 'saEntries', 'sourceDumps', 'notes', 'mmEntries', 'mgSchedule',
       'calendarNotes', 'deadlines', 'pos', 'levelTemplates', 'docPages',
-      'trueStorages', 'trueStoragePos', 'dateNotes']) {
+      'trueStorages', 'trueStoragePos', 'dateNotes', 'kolbDrafts']) {
       assert.deepEqual(imported[key], original[key], key + ' round-tripped unchanged');
     }
 
@@ -4521,7 +4525,7 @@ test('browser suites', skipUnlessChrome, async t => {
       'and the storage parent/child link');
 
     // The allow-list must not silently shrink back.
-    assert.equal(Object.keys(imported).length, 25, 'the imported slot carries all 25 canonical fields');
+    assert.equal(Object.keys(imported).length, 26, 'the imported slot carries all 26 canonical fields');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -4551,7 +4555,7 @@ test('browser suites', skipUnlessChrome, async t => {
     'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
     'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
     'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
-    'dateNotes'
+    'dateNotes', 'kolbDrafts'
   ];
 
   await t.test('every entry point creates a slot with the same canonical shape', async () => {
@@ -7387,7 +7391,7 @@ test('browser suites', skipUnlessChrome, async t => {
     await mountSchedule(page);
     const FOREIGN = ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
       'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes',
-      'dateNotes'];
+      'dateNotes', 'kolbDrafts'];
     const before = await page.evaluate(function (keys) {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var s = (db.slots || [])[0] || {};
@@ -9165,7 +9169,7 @@ test('browser suites', skipUnlessChrome, async t => {
     await mountSchedule(page);
     const FOREIGN = ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
       'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes',
-      'dateNotes'];
+      'dateNotes', 'kolbDrafts'];
     const SNAP = function (keys) {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var s = (db.slots || [])[0] || {};
@@ -13096,6 +13100,502 @@ test('browser suites', skipUnlessChrome, async t => {
       await page.close();
     }
   });
+
+  /* ── KOLBS: the notes widget's third tab ──────────────────────────────────
+     The tab lists the slot's own `kolbs` — the Knowledge Record's records —
+     newest first, with `kolbDrafts` above them in grey. A draft is stored as it
+     is written but is not a Kolb until Done, which saves it through the same
+     writer as the Knowledge Record's SAVE (kolb-core.js) and removes the draft
+     in the same write. Side by side works with both. The cases below depend
+     only on open, seedDb, realErrors, PHONE, F, sleep and assert, so the
+     section can also be run on its own against a scratch tree. */
+
+  const KOLB_SEED = over => seedDb(Object.assign({
+    mms: [F.mm(10, 'Mind Map A'), F.mm(11, 'Procedural Beta', { type: '2', ksStage: 'sir' }),
+      F.mm(16, 'Procedural Theta', { type: '2', ksStage: '3', rating: 5, currentMG: 'lift earlier' }),
+      F.mm(17, 'Procedural Iota', { type: '2', ksStage: '1', rating: 2, currentMG: 'old mg' })],
+    sessions: [F.session(211, '2026-03-10', 11), F.session(212, '2026-03-12', 11, { repIndex: 1 })],
+    kolbs: [F.kolb(301, '2026-03-05', { mmId: 16, experience: 'the oldest one', level: '5' }),
+      F.kolb(302, '2026-03-09', { experience: 'the newest one' }),
+      F.kolb(303, '2026-03-07', { mmId: 17, experience: 'the middle one', mgAdd: 'old mg', level: '2' })],
+    mgChanges: [{ id: 304, mmId: 17, kolbId: 303, oldMG: '(none)', newMG: 'old mg', experiment: '', date: '2026-03-07' }],
+    kolbDrafts: [{ id: 'kd-1', createdAt: F.localTs(2026, 3, 8), updatedAt: F.localTs(2026, 3, 8), experience: 'a draft I kept' }]
+  }, over || {}));
+  const K_RAW = function () { return localStorage.getItem('track_db'); };
+  const K_SLOT = function () { return (JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || null; };
+  const K_TODAY = function () { return window.TrackSchema.localToday(); };
+  const K_CLICK = function (sel) { var e = document.querySelector(sel); if (!e) return false; e.click(); return true; };
+  const K_TYPE = function (sel, value) {
+    var ta = document.querySelector(sel);
+    ta.value = value;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  // A background headless tab fires no focus events (Testing Lessons), so the
+  // field a Send lands in is chosen by dispatching the event the form listens for.
+  const K_FOCUS = function (sel) {
+    var ta = document.querySelector(sel);
+    ta.focus();
+    ta.dispatchEvent(new FocusEvent('focus'));
+    return true;
+  };
+  const K_SELECT = function (sel, a, b) {
+    var ta = document.querySelector(sel);
+    ta.focus();
+    ta.setSelectionRange(a, b);
+    document.dispatchEvent(new Event('selectionchange'));
+    return true;
+  };
+  // The mind-map choice, by the option's words: its value is an index, never an id.
+  const K_LINK = function (sel, words) {
+    var s = document.querySelector(sel);
+    var o = Array.prototype.find.call(s.options, function (x) { return x.textContent === words; });
+    if (!o) return false;
+    s.value = o.value;
+    s.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  };
+  const K_PANES = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-nw-pane]'), function (p) { return p.getAttribute('data-nw-pane'); });
+  };
+  const kLanded = (page, before, message) => page.waitFor(function (b) {
+    return localStorage.getItem('track_db') !== b;
+  }, { args: [before], message: message || 'the write landing in track_db' });
+  const openKolbs = async (file, db, opts) => {
+    const page = await open(file, Object.assign({ db }, opts || {}));
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-tab="kolb"]').click();
+      return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-kolb-new]'); }, { message: 'the Kolbs tab' });
+    return page;
+  };
+  const openKolbRow = async (page, row) => {
+    await page.evaluate(K_CLICK, '#nw-body [data-nw-row="' + row + '"]');
+    await page.waitFor(function (r) { return !!document.querySelector('[data-nw-kolb-form="' + r + '"]'); },
+      { args: [row], message: row + ' open in the widget' });
+  };
+  // Counts whole-database writes from here on.
+  const K_COUNT_WRITES = function () {
+    var real = window.TrackStorage.saveDB;
+    window.__kWrites = 0;
+    window.TrackStorage.saveDB = function (db) { window.__kWrites++; return real.call(this, db); };
+    return true;
+  };
+
+  await t.test('KOLBS: the tab lists the slot\'s Kolbs newest first, drafts grey above them, and opening writes nothing', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED());
+    const before = await page.evaluate(K_RAW);
+    const rows = await page.evaluate(function () {
+      var probe = document.createElement('span');
+      document.body.appendChild(probe);
+      probe.style.color = 'var(--color-text-muted)';
+      var muted = getComputedStyle(probe).color;
+      probe.remove();
+      return Array.prototype.map.call(document.querySelectorAll('#nw-body [data-nw-row]'), function (r) {
+        return { row: r.getAttribute('data-nw-row'), draft: r.hasAttribute('data-nw-draft'),
+          grey: getComputedStyle(r.querySelector('.nw-date-label')).color === muted };
+      });
+    });
+    assert.deepEqual(rows.map(r => r.row), ['kdraft:kd-1', 'kolb:302', 'kolb:303', 'kolb:301'],
+      'the draft first, then every Kolb by date, latest on top');
+    assert.deepEqual(rows.map(r => r.grey), [true, false, false, false], 'only the draft is grey');
+    assert.deepEqual(rows.map(r => r.draft), [true, false, false, false]);
+
+    await openKolbRow(page, 'kolb:303');
+    const shown = await page.evaluate(function () {
+      var f = document.querySelector('[data-nw-kolb-form="kolb:303"]');
+      var s = f.querySelector('[data-nw-kolb-link]');
+      return {
+        experience: f.querySelector('[data-nw-kolb-field="experience"]').value,
+        mgAdd: f.querySelector('[data-nw-kolb-field="mgAdd"]').value,
+        link: s.options[s.selectedIndex].textContent,
+        level: Array.prototype.filter.call(f.querySelectorAll('[data-nw-kolb-level]'),
+          function (b) { return b.getAttribute('aria-pressed') === 'true'; }).map(function (b) { return b.textContent; }),
+        banner: !!f.querySelector('[data-nw-kolb-banner]'),
+        done: !!document.querySelector('[data-nw-kolb-done]')
+      };
+    });
+    assert.deepEqual(shown, { experience: 'the middle one', mgAdd: 'old mg', link: 'Procedural Iota', level: ['2'],
+      banner: false, done: false }, 'a Kolb opens as itself, with no draft banner and no Done');
+    await page.evaluate(K_CLICK, '#nw-back-btn');
+    await openKolbRow(page, 'kdraft:kd-1');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-nw-kolb-banner]') && !!document.querySelector('[data-nw-kolb-done]'); }), true,
+      'a draft opens with its banner and Done');
+    await page.evaluate(K_CLICK, '#nw-back-btn');
+    await sleep(600);
+    assert.equal(await page.evaluate(K_RAW), before, 'reading the list and opening both wrote nothing');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: + New Kolb is stored only once something is written, as a draft, and nothing else changes', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED());
+    const before = await page.evaluate(K_RAW);
+    const slotBefore = await page.evaluate(K_SLOT);
+    await page.evaluate(K_CLICK, '[data-nw-kolb-new]');
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-kolb-form^="kdraft:"]'); }, { message: 'the new draft' });
+    await sleep(500);
+    assert.equal(await page.evaluate(K_RAW), before, 'an empty new draft is not stored');
+
+    await page.evaluate(K_TYPE, '[data-nw-kolb-field="experience"]', 'a new attempt');
+    await kLanded(page, before, 'the draft landing');
+    const slot = await page.evaluate(K_SLOT);
+    assert.equal(slot.kolbDrafts.length, 2, 'one draft added');
+    const made = slot.kolbDrafts[1];
+    assert.equal(made.experience, 'a new attempt');
+    assert.equal(typeof made.id, 'string');
+    assert.equal(typeof made.createdAt, 'number');
+    assert.equal('mmId' in made, false, 'unlinked is an absence');
+    for (const key of Object.keys(slotBefore)) {
+      if (key === 'kolbDrafts') continue;
+      assert.deepEqual(slot[key], slotBefore[key], key + ' is unchanged — a draft writes kolbDrafts alone');
+    }
+
+    await page.evaluate(K_CLICK, '#nw-back-btn');
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-kolb-new]'); }, { message: 'back on the list' });
+    const first = await page.evaluate(function () { return document.querySelector('#nw-body [data-nw-row]').getAttribute('data-nw-row'); });
+    assert.equal(first, 'kdraft:' + made.id, 'the draft just written is on top');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: Done saves a draft as the Knowledge Record\'s SAVE does — MG, level, S1 — and drops it, in one write', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED({
+      kolbDrafts: [{ id: 'kd-1', createdAt: F.localTs(2026, 3, 8), updatedAt: F.localTs(2026, 3, 8), mmId: 16,
+        experience: 'it went well', experiments: 'try lifting earlier', level: '4', laterKey: 'not a Kolb field' }]
+    }));
+    await openKolbRow(page, 'kdraft:kd-1');
+    const before = await page.evaluate(K_SLOT);
+    const today = await page.evaluate(K_TODAY);
+    await page.evaluate(K_COUNT_WRITES);
+    await page.evaluate(K_CLICK, '[data-nw-kolb-done]');
+    const slot = await page.waitFor(function () {
+      var s = (JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0];
+      return s && s.kolbs.length === 4 ? s : false;
+    }, { message: 'the Kolb landing in track_db' });
+    assert.equal(await page.evaluate(function () { return window.__kWrites; }), 1, 'one write');
+    assert.deepEqual(slot.kolbDrafts, [], 'the draft is gone');
+    const k = slot.kolbs[3];
+    assert.equal(k.id, 305, 'a NUMBER, from where the Knowledge Record\'s own counter would hand it out');
+    assert.equal(k.mmId, 16);
+    assert.equal(k.date, today, 'dated by the local day');
+    assert.equal(k.experience, 'it went well');
+    assert.equal(k.level, '4');
+    for (const key of ['createdAt', 'updatedAt', 'laterKey'])
+      assert.equal(key in k, false, key + ' is a draft\'s, not a Kolb\'s');
+    assert.deepEqual(slot.kolbs.slice(0, 3), before.kolbs, 'the other Kolbs are untouched');
+    assert.deepEqual(slot.mgChanges[slot.mgChanges.length - 1],
+      { id: 307, mmId: 16, kolbId: 305, oldMG: 'lift earlier', newMG: 'try lifting earlier', experiment: 'try lifting earlier', date: today },
+      'its MG change, from the experiment');
+    const theta = slot.mms.find(m => m.id === 16);
+    assert.equal(theta.currentMG, 'try lifting earlier');
+    assert.equal(theta.rating, 4, 'the level reaches the mind map');
+    assert.equal(theta.ksStage, '1', 'a Kolb arriving sends a Procedural MM back to S1');
+    assert.deepEqual(slot.linChanges[slot.linChanges.length - 1].items,
+      [{ mmId: 16, change: { type: 'kolbReset', oldValue: '3', newValue: '1', kolbId: 305 } }]);
+    for (const key of ['notes', 'dateNotes', 'goals', 'docPages', 'sourceDumps', 'trueStorages'])
+      assert.deepEqual(slot[key], before[key], key + ' is unchanged');
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-kolb-form="kolb:305"]'); }, { message: 'the view following the new Kolb' });
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-nw-kolb-done]'); }), false, 'and it has no Done now');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: Done for a mind map still stored in SIR asks first; Cancel writes nothing, OK deletes its sessions', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED({
+      kolbDrafts: [{ id: 'kd-1', createdAt: F.localTs(2026, 3, 8), updatedAt: F.localTs(2026, 3, 8), mmId: 11, experience: 'on Beta' }]
+    }));
+    await openKolbRow(page, 'kdraft:kd-1');
+    const before = await page.evaluate(K_RAW);
+    const dialogs = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(K_CLICK, '[data-nw-kolb-done]');
+    await sleep(500);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogs + 1, 'Done asked, once');
+    assert.match(page.dialogs[page.dialogs.length - 1], /^Saving this Kolb sends "Procedural Beta" back to S1[\s\S]*2 SIR sessions/);
+    assert.equal(await page.evaluate(K_RAW), before, 'Cancel wrote nothing — the draft is still a draft');
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-nw-kolb-form="kdraft:kd-1"]'); }), true);
+
+    await page.evaluate(K_CLICK, '[data-nw-kolb-done]');
+    const slot = await page.waitFor(function () {
+      var s = (JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0];
+      return s && s.kolbs.length === 4 ? s : false;
+    }, { message: 'the Kolb landing after OK' });
+    assert.deepEqual(slot.sessions.filter(x => x.mmId === 11), [], 'Beta\'s hidden sessions went');
+    assert.equal(slot.mms.find(m => m.id === 11).ksStage, '1');
+    assert.equal(slot.linChanges[slot.linChanges.length - 1].items[0].change.oldValue, '4', 'logged as the S4 it showed');
+    assert.deepEqual(slot.kolbDrafts, []);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: discarding a draft asks — Cancel keeps it — and a new draft never written asks nothing', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED());
+    await openKolbRow(page, 'kdraft:kd-1');
+    const before = await page.evaluate(K_RAW);
+    const dialogs = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(K_CLICK, '[data-nw-kolb-discard]');
+    await sleep(400);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogs + 1, 'discarding asked');
+    assert.match(page.dialogs[page.dialogs.length - 1], /^Discard this draft\?/);
+    assert.equal(await page.evaluate(K_RAW), before, 'Cancel kept it, byte for byte');
+
+    await page.evaluate(K_CLICK, '[data-nw-kolb-discard]');
+    await kLanded(page, before, 'the discard landing');
+    const slot = await page.evaluate(K_SLOT);
+    assert.deepEqual(slot.kolbDrafts, [], 'OK discarded it');
+    assert.equal(slot.kolbs.length, 3, 'and made no Kolb of it');
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-kolb-new]'); }, { message: 'back on the list' });
+
+    const raw = await page.evaluate(K_RAW);
+    const n = page.dialogs.length;
+    await page.evaluate(K_CLICK, '[data-nw-kolb-new]');
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-kolb-discard]'); }, { message: 'the new draft' });
+    await page.evaluate(K_CLICK, '[data-nw-kolb-discard]');
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-kolb-new]'); }, { message: 'back on the list again' });
+    assert.equal(page.dialogs.length, n, 'nothing written, nothing to lose, nothing asked');
+    assert.equal(await page.evaluate(K_RAW), raw);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: editing a Kolb in the widget saves into its record, and its MG and level follow', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED());
+    await openKolbRow(page, 'kolb:303');
+    const before = await page.evaluate(K_SLOT);
+    let raw = await page.evaluate(K_RAW);
+    await page.evaluate(K_TYPE, '[data-nw-kolb-field="mgAdd"]', 'a better MG');
+    await kLanded(page, raw, 'the MG edit landing');
+    let slot = await page.evaluate(K_SLOT);
+    assert.equal(slot.kolbs.find(k => k.id === 303).mgAdd, 'a better MG');
+    assert.equal(slot.mgChanges.find(c => c.id === 304).newMG, 'a better MG', 'its MG change follows');
+    assert.equal(slot.mms.find(m => m.id === 17).currentMG, 'a better MG', 'and the mind map\'s MG');
+    assert.deepEqual(slot.kolbs.filter(k => k.id !== 303), before.kolbs.filter(k => k.id !== 303));
+    assert.deepEqual(slot.kolbDrafts, before.kolbDrafts);
+
+    raw = await page.evaluate(K_RAW);
+    await page.evaluate(K_CLICK, '[data-nw-kolb-level="7"]');
+    await kLanded(page, raw, 'the level landing');
+    slot = await page.evaluate(K_SLOT);
+    assert.equal(slot.kolbs.find(k => k.id === 303).level, '7');
+    assert.equal(slot.mms.find(m => m.id === 17).rating, 7);
+    assert.equal(slot.mms.find(m => m.id === 17).ksStage, '1', 'an edit is not an arrival');
+    assert.deepEqual(slot.linChanges, before.linChanges, 'nothing logged');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: moving a Kolb onto a Procedural mind map resets it — asking first where SIR sessions would go', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED());
+    await openKolbRow(page, 'kolb:302');
+    const before = await page.evaluate(K_RAW);
+    const dialogs = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(K_LINK, '[data-nw-kolb-link]', 'Procedural Beta');
+    await sleep(400);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, dialogs + 1, 'the move asked');
+    assert.match(page.dialogs[page.dialogs.length - 1], /^Moving this Kolb sends "Procedural Beta" back to S1[\s\S]*2 SIR sessions/);
+    assert.equal(await page.evaluate(K_RAW), before, 'Cancel moved nothing');
+    assert.equal(await page.evaluate(function () { var s = document.querySelector('[data-nw-kolb-link]'); return s.options[s.selectedIndex].textContent; }),
+      'No mind map (unlinked)', 'and the choice went back');
+
+    const n = page.dialogs.length;
+    await page.evaluate(K_LINK, '[data-nw-kolb-link]', 'Procedural Theta');
+    await kLanded(page, before, 'the move landing');
+    assert.equal(page.dialogs.length, n, 'no hidden sessions, nothing to ask');
+    const slot = await page.evaluate(K_SLOT);
+    assert.equal(slot.kolbs.find(k => k.id === 302).mmId, 16);
+    assert.equal(slot.mms.find(m => m.id === 16).ksStage, '1', 'an arrival sends Theta back to S1');
+    assert.deepEqual(slot.linChanges[slot.linChanges.length - 1].items,
+      [{ mmId: 16, change: { type: 'kolbReset', oldValue: '3', newValue: '1', kolbId: 302 } }]);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  /* The Knowledge Record holds `kolbs` in React state and autosaves it. Open in
+     the SAME tab it hears no storage event from the widget's write unless the
+     widget raises one, and its next autosave would write its old list back —
+     the Kolb just finished gone, and its own counter handing out that Kolb's id
+     again. The dupe is that next autosave. */
+  await t.test('KOLBS: a Knowledge Record in the same tab adopts a Kolb finished in the widget, and its next save keeps it', async () => {
+    const page = await open('sir-ks02.html', { db: KOLB_SEED(), hash: '#kolb' });
+    await page.waitFor(function () { return !!document.querySelector('[data-kolb-row="301"]'); }, { message: 'the KOLB tab' });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('[data-nw-tab="kolb"]').click();
+      document.querySelector('#nw-body [data-nw-row="kdraft:kd-1"]').click();
+      document.querySelector('[data-nw-kolb-done]').click();
+      return true;
+    });
+    await page.waitFor(function () {
+      var s = (JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0];
+      return s && s.kolbs.some(function (k) { return k.id === 305; });
+    }, { message: 'the Kolb landing in track_db' });
+    await page.waitFor(function () { return !!document.querySelector('[data-kolb-row="305"]'); },
+      { message: 'the Knowledge Record drawing the new Kolb — it heard the write' });
+    await page.evaluate(function () {
+      var row = document.querySelector('[data-kolb-row="301"]');
+      Array.prototype.find.call(row.querySelectorAll('button'), function (b) { return b.textContent.trim() === 'dupe'; }).click();
+      return true;
+    });
+    const slot = await page.waitFor(function () {
+      var s = (JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0];
+      return s && s.kolbs.length >= 5 ? s : false;
+    }, { message: 'the dupe landing' });
+    assert.ok(slot.kolbs.some(k => k.id === 305 && k.experience === 'a draft I kept'), 'the widget\'s Kolb survived the autosave');
+    const dup = slot.kolbs[slot.kolbs.length - 1];
+    assert.ok(![301, 302, 303, 304, 305].includes(dup.id), 'and the dupe took a fresh id, ' + dup.id);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: side by side — Send lands in the marked Kolb field, and Done in a pane makes the draft a Kolb', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED());
+    const today = await page.evaluate(K_TODAY);
+    await page.evaluate(function () {
+      document.querySelector('[data-nw-tab="date"]').click();
+      document.querySelector('.nw-date-today').click();
+      return true;
+    });
+    let raw = await page.evaluate(K_RAW);
+    await page.evaluate(K_TYPE, '#nw-content', 'idea one. idea two');
+    await kLanded(page, raw, 'today\'s Journal landing');
+    await page.evaluate(function () {
+      document.querySelector('[data-nw-side-open]').click();
+      document.querySelector('[data-nw-picker-tab="kolb"]').click();
+      document.querySelector('[data-nw-pick="kdraft:kd-1"]').click();
+      return true;
+    });
+    await page.waitFor(function () { return document.querySelectorAll('[data-nw-pane]').length === 2; }, { message: 'two panes' });
+    assert.deepEqual(await page.evaluate(K_PANES), ['date:' + today, 'kdraft:kd-1']);
+    const P = '[data-nw-pane="kdraft:kd-1"] ';
+    assert.equal(await page.evaluate(function (p) {
+      var t = document.querySelector(p + '[data-nw-kolb-target]');
+      return t && t.querySelector('[data-nw-kolb-field]').getAttribute('data-nw-kolb-field');
+    }, P), 'experience', 'a Send lands in "Describe the experience" until another field is chosen');
+
+    raw = await page.evaluate(K_RAW);
+    await page.evaluate(K_SELECT, '[data-nw-pane="date:' + today + '"] [data-nw-text]', 0, 8);
+    await page.evaluate(K_CLICK, '[data-nw-pane="date:' + today + '"] [data-nw-send]');
+    await kLanded(page, raw, 'the Send landing');
+    let draft = (await page.evaluate(K_SLOT)).kolbDrafts[0];
+    assert.equal(draft.experience, await page.evaluate(function () { return window.TrackNotes.appendSent('a draft I kept', 'idea one'); }),
+      'appended to the draft\'s experience');
+    assert.equal('content' in draft, false, 'never as `content`');
+
+    await page.evaluate(K_FOCUS, P + '[data-nw-kolb-field="experiments"]');
+    assert.equal(await page.evaluate(function (p) {
+      return document.querySelector(p + '[data-nw-kolb-target] [data-nw-kolb-field]').getAttribute('data-nw-kolb-field');
+    }, P), 'experiments', 'the mark follows the field chosen');
+    raw = await page.evaluate(K_RAW);
+    await page.evaluate(K_SELECT, '[data-nw-pane="date:' + today + '"] [data-nw-text]', 10, 18);
+    await page.evaluate(K_CLICK, '[data-nw-pane="date:' + today + '"] [data-nw-send]');
+    await kLanded(page, raw, 'the second Send landing');
+    draft = (await page.evaluate(K_SLOT)).kolbDrafts[0];
+    assert.equal(draft.experiments, 'idea two', 'into the field chosen');
+
+    await page.evaluate(K_CLICK, P + '[data-nw-kolb-done]');
+    await page.waitFor(function () { return !!document.querySelector('[data-nw-pane="kolb:305"]'); }, { message: 'the pane following the new Kolb' });
+    assert.deepEqual(await page.evaluate(K_PANES), ['date:' + today, 'kolb:305'], 'the pane stays where it was');
+    const slot = await page.evaluate(K_SLOT);
+    assert.deepEqual(slot.kolbDrafts, []);
+    assert.equal(slot.kolbs.find(k => k.id === 305).experiments, 'idea two');
+    assert.equal(slot.dateNotes[today].content, 'idea one. idea two', 'the source is untouched');
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: the picker lists Kolbs and drafts, finds one by its words, and + New Kolb opens a draft pane', async () => {
+    const page = await open('index.html', { db: KOLB_SEED() });
+    await page.waitFor(function () { return !!document.getElementById('nw-btn'); }, { message: 'the notes widget' });
+    await page.evaluate(function () {
+      document.getElementById('nw-btn').click();
+      document.querySelector('#nw-body [data-nw-row="sorted:n-1"]').click();
+      document.querySelector('[data-nw-side-open]').click();
+      document.querySelector('[data-nw-picker-tab="kolb"]').click();
+      return true;
+    });
+    const listed = await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-nw-picker] [data-nw-pick]'), function (r) { return r.getAttribute('data-nw-pick'); });
+    });
+    assert.deepEqual(listed, ['kdraft:kd-1', 'kolb:302', 'kolb:303', 'kolb:301']);
+    await page.evaluate(function () {
+      var f = document.querySelector('[data-nw-picker-filter]');
+      f.value = 'middle';
+      f.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    });
+    assert.deepEqual(await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-nw-picker] [data-nw-pick]'), function (r) { return r.getAttribute('data-nw-pick'); });
+    }), ['kolb:303'], 'found by its own words');
+
+    const before = await page.evaluate(K_RAW);
+    await page.evaluate(K_CLICK, '[data-nw-pick-new-kolb]');
+    await page.waitFor(function () { return document.querySelectorAll('[data-nw-pane]').length === 2; }, { message: 'two panes' });
+    const panes = await page.evaluate(K_PANES);
+    assert.equal(panes[0], 'sorted:n-1');
+    assert.match(panes[1], /^kdraft:/);
+    await sleep(500);
+    assert.equal(await page.evaluate(K_RAW), before, 'not stored until written');
+    await page.evaluate(K_TYPE, '[data-nw-pane="' + panes[1] + '"] [data-nw-kolb-field="experience"]', 'from a pane');
+    await kLanded(page, before, 'the pane\'s draft landing');
+    const slot = await page.evaluate(K_SLOT);
+    assert.deepEqual(slot.kolbDrafts.map(d => d.experience), ['a draft I kept', 'from a pane']);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+
+  await t.test('KOLBS: on a phone, and at 320px, the three tabs fit the panel\'s header', async () => {
+    for (const viewport of [PHONE, [320, 640, { mobile: true, deviceScaleFactor: 2, touch: true }]]) {
+      const page = await openKolbs('index.html', KOLB_SEED(), { viewport });
+      const fit = await page.evaluate(function () {
+        var tabs = document.querySelector('#nw-header .nw-tabs').getBoundingClientRect();
+        var close = document.querySelector('#nw-header [aria-label="Close notes"]').getBoundingClientRect();
+        var panel = document.getElementById('nw-panel').getBoundingClientRect();
+        return { clear: tabs.right <= close.left, inside: panel.left >= 0 && panel.right <= window.innerWidth,
+          tabs: Math.round(tabs.right), close: Math.round(close.left) };
+      });
+      assert.ok(fit.clear, viewport[0] + 'px: the tabs end at ' + fit.tabs + ', before Close at ' + fit.close);
+      assert.ok(fit.inside, viewport[0] + 'px: the panel is on screen');
+      assert.deepEqual(realErrors(page), []);
+      await page.close();
+    }
+  });
+
+  /* Only a draft opened with + New Kolb may be CREATED by a save. A stored
+     draft that is gone now was finished or discarded elsewhere, and the words
+     typed after that are refused and said so — never a draft brought back. */
+  await t.test('KOLBS: a draft finished elsewhere is not brought back by words typed into it here', async () => {
+    const page = await openKolbs('index.html', KOLB_SEED());
+    await openKolbRow(page, 'kdraft:kd-1');
+    // another tab finishes it: the draft goes, a Kolb arrives
+    await page.evaluate(function () {
+      var db = JSON.parse(localStorage.getItem('track_db'));
+      db.slots[0].kolbDrafts = [];
+      db.slots[0].kolbs = db.slots[0].kolbs.concat([{ id: 400, mmId: null, date: '2026-03-10', experience: 'a draft I kept' }]);
+      return window.TrackStorage.saveDB(db);
+    });
+    await page.evaluate(K_TYPE, '[data-nw-kolb-field="experience"]', 'a draft I kept, and more');
+    const status = await page.waitFor(function () {
+      var s = document.querySelector('#nw-body [data-nw-status]');
+      return s && s.getAttribute('data-nw-status') !== 'idle' ? s.getAttribute('data-nw-status') : false;
+    }, { message: 'the save answering' });
+    assert.equal(status, 'missing', 'the save was refused and said so');
+    const slot = await page.evaluate(K_SLOT);
+    assert.deepEqual(slot.kolbDrafts, [], 'no draft was brought back');
+    assert.equal(slot.kolbs.length, 4);
+    assert.deepEqual(realErrors(page), []);
+    await page.close();
+  });
+  // ── end KOLBS ─────────────────────────────────────────────────────────────
 
   /* ── JOURNEY: the book of Eternal days ────────────────────────────────────
      journey-book.js binds every Eternal Journal day into a book that opens on

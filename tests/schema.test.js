@@ -39,7 +39,7 @@ const S = globalThis.TrackSchema;
 
 const TZ = process.env.TZ || '(system default)';
 
-// The 25 fields as AGENTS.md "Current Data Contract" writes them, in its order.
+// The 26 fields as AGENTS.md "Current Data Contract" writes them, in its order.
 // Written out by hand on purpose: if the table in schema.js is edited, this is
 // the assertion that notices.
 const CONTRACT = [
@@ -47,7 +47,7 @@ const CONTRACT = [
   'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
   'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
   'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
-  'dateNotes'
+  'dateNotes', 'kolbDrafts'
 ];
 
 const LISTS = CONTRACT.filter(k => S.SLOT_FIELDS[k] === 'list');
@@ -60,7 +60,7 @@ test('module surface', () => {
     assert.equal(typeof S[name], 'function', name + ' is exported');
   }
   assert.equal(typeof S.SLOT_FIELDS, 'object');
-  assert.equal(S.SLOT_KEYS.length, 25);
+  assert.equal(S.SLOT_KEYS.length, 26);
   assert.ok(Object.isFrozen(S.SLOT_FIELDS), 'the field table is frozen — it is the schema, not a scratch object');
 });
 
@@ -147,8 +147,8 @@ test('GUARD: the five quest keys add NO slot field and raise no validation error
     }]
   });
   assert.deepEqual(Object.keys(quested), CONTRACT,
-    'no SLOT_FIELDS row was added — the slot is still exactly the 25 contract fields');
-  assert.equal(CONTRACT.length, 25);
+    'no SLOT_FIELDS row was added — the slot is still exactly the 26 contract fields');
+  assert.equal(CONTRACT.length, 26);
   assert.deepEqual(S.validateSlot(quested), { ok: true, errors: [] },
     'the quest keys raise no validation error');
 
@@ -832,10 +832,10 @@ test('a non-string detail WARNS and stays editable, and an absent one is fine', 
   assert.equal(absent.ok, true, 'absence is the default and is not damage');
 });
 
-test('GUARD: the detail is an item key, so the slot is still 25 fields', () => {
+test('GUARD: the detail is an item key, so the slot is still 26 fields', () => {
   // If this ever fails, `detail` has become a SLOT_FIELDS row by mistake and
   // the seven hand-written CONTRACT lists all need to follow it.
-  assert.equal(Object.keys(S.createEmptySlot()).length, 25);
+  assert.equal(Object.keys(S.createEmptySlot()).length, 26);
 });
 
 // ── dateNotes: one draft per local day ─────────────────────────────────────

@@ -402,6 +402,13 @@ This can select the previous or next local day near midnight. Slot creation is a
 local-day safe through `schema.js`; remaining uses affect export filenames, KS02 dates and
 SIR calculations, and Progress date logic.
 
+Kolbs now show the split side by side. A Kolb finished in the notes widget's Kolbs tab is dated
+by the local day (`TrackSchema.localToday()`); one saved on the Knowledge Record is still dated
+by KS02's UTC `today()`, and so are the MG change and LIN record each save writes. Between local
+midnight and UTC midnight the two can disagree by a day for the same moment. `kolb-core.js`
+takes the day as a parameter, so the fix is the page's `today()` alone, with no change to the
+shared writer.
+
 Parsing `new Date('YYYY-MM-DD')` is also unsafe for local calendar arithmetic because that
 form is interpreted as UTC.
 
@@ -1128,6 +1135,27 @@ could delegate to the same reader. That changes what LIST draws, so it waits for
   in DIRECTORY — can change its colour and the colour of every uncoloured mind map between its
   old and new place. Pinning a colour when a mind map is created would end it for new mind maps;
   the existing ones would need their current colour written once, which is a migration.
+
+## Proposal 19: Kolbs Tab Follow-ups
+
+Built on 2026-11-05 (README, "Floating notes" → Kolbs). None of these is authorized.
+
+- **Deleting or duplicating a Kolb from the widget.** The tab edits and finishes; `✕` and `dupe`
+  stay on the Knowledge Record's KOLB tab. Either would go through a `kolb-core.js` writer
+  (the delete would also have to recompute the mind map's MG and level, as the KOLB tab's does)
+  and ask first.
+- **The Kolb timer.** The Knowledge Record's form can save itself when its timer runs out; a
+  draft has no timer, so it waits for `Done`.
+- **The pre-written MG is offered, not filled.** The Knowledge Record's form writes the level's
+  pre-written MG into MG add on reaching step 4 when MG add is empty; the widget shows a
+  button instead, because a draft is written over days and a field filled unasked would look
+  like the user's own words. Making them agree is the user's call.
+- **Two editors on one Kolb.** A Kolb open in the widget and in the KOLB tab's edit view at once
+  ends with the last save, like two tabs typing into one Sorted note. The KOLB tab's edit view
+  keeps its own form until SAVE CHANGES, so a widget edit made meanwhile is overwritten by it.
+  A per-record revision check (Proposal 4) would catch it.
+- **A draft's mind map can stop being Procedural.** `Done` then refuses and says so; nothing
+  tells the user earlier, and the list does not mark such a draft.
 
 ## Track World: Computer Feasibility
 

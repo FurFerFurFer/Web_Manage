@@ -64,7 +64,10 @@
     trueStorages: 'list',
     trueStoragePos: 'map',
     refSchedules: 'list',
-    dateNotes: 'map'
+    dateNotes: 'map',
+    // Kolbs begun in the notes widget and not finished yet (kolb-core.js).
+    // A draft is NOT a Kolb: nothing that reads `kolbs` sees one until Done.
+    kolbDrafts: 'list'
   };
 
   var SLOT_KEYS = Object.keys(SLOT_FIELDS);

@@ -1814,6 +1814,308 @@ html[data-theme] #nw-content::placeholder {
   background: var(--color-primary-soft);
 }
 
+/* ── notes: the Kolbs tab ──
+   A Kolb paints from --color-accent-study; a DRAFT is the same row, pane and
+   chip in grey, because it is not a Kolb yet. Grey is the neutral tokens, never
+   a new colour: muted text on the muted surface, the strong border dashed. */
+.nw-head-main {
+  container-type: inline-size;
+}
+
+/* Three tabs in a 240px panel, or a 320px phone's: tighter, never wrapped. */
+@container (max-width: 230px) {
+  .nw-tab {
+    padding: 0 0.5rem;
+  }
+}
+
+.nw-kolb-new {
+  flex-shrink: 0;
+  margin: 10px 12px 4px;
+  min-height: 2.75rem;
+  padding: 0 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-text);
+  font: 600 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.nw-kolb-new:hover {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-soft);
+}
+
+/* The date row's reasoning: a column flex that must not shrink in the list. */
+#nw-panel .nw-kolb-row {
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.nw-kolb-day {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#nw-panel .nw-kolb-row.nw-kolb-row-draft,
+.nw-pick-row.nw-pick-row-draft {
+  background: var(--color-surface-muted);
+  box-shadow: inset 3px 0 0 var(--color-border-strong);
+}
+
+#nw-panel .nw-kolb-row.nw-kolb-row-draft:hover,
+.nw-pick-row.nw-pick-row-draft:hover {
+  background: var(--color-surface-hover);
+}
+
+#nw-panel .nw-kolb-row-draft .nw-date-label,
+.nw-pick-row-draft .nw-pick-name,
+.nw-day-title.nw-kolb-title-draft,
+.nw-pane-title.nw-kolb-title-draft {
+  color: var(--color-text-muted);
+}
+
+.nw-chip-kolb {
+  border-color: color-mix(in srgb, var(--color-accent-study) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent-study) 12%, transparent);
+  color: var(--color-accent-study);
+}
+
+.nw-chip-kdraft {
+  border-color: var(--color-border-strong);
+  border-style: dashed;
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+.nw-pane.nw-pane-kolb {
+  border-top: 3px solid var(--color-accent-study);
+}
+
+.nw-pane.nw-pane-kdraft {
+  border-top: 3px dashed var(--color-border-strong);
+  background: var(--color-surface-muted);
+}
+
+/* the form — in the single view and in a pane, scrolling inside either */
+.nw-kolb-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.nw-kolb-banner {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font: 12px/1.45 var(--font-ui);
+}
+
+.nw-kolb-step {
+  flex-shrink: 0;
+  margin-top: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-accent-study);
+  font: 700 11px var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nw-pane-kdraft .nw-kolb-step,
+#nw-panel .nw-kolb-form[data-nw-kolb-form^="kdraft:"] .nw-kolb-step {
+  color: var(--color-text-muted);
+}
+
+.nw-kolb-field,
+.nw-kolb-link {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nw-kolb-label {
+  color: var(--color-text-secondary);
+  font: 600 12px/1.4 var(--font-ui);
+}
+
+/* Auto-fit by the widget (height from scrollHeight), so it never scrolls
+   itself and never offers a resize handle that would fight the fit. */
+.nw-kolb-text {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  color: var(--color-text-secondary);
+  font: 13px/1.55 var(--font-ui);
+  resize: none;
+}
+
+.nw-kolb-text:focus {
+  border-color: var(--color-primary-border);
+}
+
+/* Where a Send into this pane lands: one field, marked and named. */
+#nw-split .nw-kolb-field[data-nw-kolb-target] .nw-kolb-text {
+  box-shadow: inset 3px 0 0 var(--color-accent-study);
+}
+
+#nw-split .nw-kolb-field[data-nw-kolb-target] > .nw-kolb-label::after {
+  content: " · Send lands here";
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.nw-kolb-select {
+  min-height: 2.75rem;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-app-bg);
+  color: var(--color-text);
+  font: 13px var(--font-ui);
+}
+
+.nw-kolb-yesno,
+.nw-kolb-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.nw-kolb-choice,
+.nw-kolb-level {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font: 600 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.nw-kolb-level {
+  padding: 0;
+}
+
+.nw-kolb-choice:hover,
+.nw-kolb-level:hover {
+  border-color: var(--color-primary-border);
+  color: var(--color-text);
+}
+
+.nw-kolb-choice[aria-checked="true"],
+.nw-kolb-level[aria-pressed="true"] {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-solid);
+  color: #ffffff;
+}
+
+.nw-kolb-hint {
+  color: var(--color-text-muted);
+  font: 12px/1.45 var(--font-ui);
+}
+
+.nw-kolb-hint-name {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.nw-kolb-context {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--color-accent-study);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+
+.nw-kolb-context-label {
+  color: var(--color-text-muted);
+  font: 700 10px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.nw-kolb-context-text {
+  color: var(--color-text-secondary);
+  font: 13px/1.5 var(--font-ui);
+  white-space: pre-wrap;
+}
+
+.nw-kolb-use {
+  align-self: flex-start;
+  min-height: 2.25rem;
+  padding: 0 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-text);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+/* inline-block above would otherwise beat the UA's [hidden] rule */
+.nw-kolb-use[hidden] {
+  display: none;
+}
+
+/* the bar under the form: the save status, and a draft's Discard and Done */
+.nw-kolb-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 4px 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.nw-kolb-actions .nw-status {
+  flex: 1;
+  min-width: 0;
+}
+
+.nw-done-btn {
+  flex-shrink: 0;
+  min-height: 2.75rem;
+  padding: 0 16px;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-solid);
+  color: #ffffff;
+  font: 600 13px var(--font-ui);
+  cursor: pointer;
+}
+
+/* A ring, not a lighter fill: Night's primary hover is pale, and white text
+   on it would fall far under 4.5:1. */
+.nw-done-btn:hover:not([aria-disabled="true"]) {
+  box-shadow: 0 0 0 2px var(--color-primary-border);
+}
+
 /* While side by side is open the page behind does not scroll. On BODY, not html:
    body's overflow propagates to the viewport only while html's stays visible, and
    (0,1,2) beats `body.app-page { overflow-x: hidden }` without a new scroll

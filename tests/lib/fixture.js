@@ -46,7 +46,8 @@ function emptySlot(over = {}) {
     trueStorages: [],
     trueStoragePos: {},
     refSchedules: [],
-    dateNotes: {}
+    dateNotes: {},
+    kolbDrafts: []
   }, over);
 }
 
@@ -185,14 +186,14 @@ function slotWithout(missing, over = {}) {
 const preCalendarSlot = (over = {}) => slotWithout(
   ['linDayTitles', 'notes', 'mmEntries', 'mgSchedule', 'calendarNotes',
     'deadlines', 'pos', 'levelTemplates', 'docPages',
-    'trueStorages', 'trueStoragePos', 'dateNotes'], over);
+    'trueStorages', 'trueStoragePos', 'dateNotes', 'kolbDrafts'], over);
 
 // The oldest shape: what a slot looked like before Progress and KS02 were
 // unified under one track_db, when a slot held only KS02 records.
 const preUnifiedSlot = (over = {}) => slotWithout(
   ['linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
     'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
-    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'dateNotes'], over);
+    'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'dateNotes', 'kolbDrafts'], over);
 
 // ── malformed input ──────────────────────────────────────────────────────
 // Raw STRINGS, because the failure mode is what is stored, not what a caller
