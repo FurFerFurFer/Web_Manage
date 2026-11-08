@@ -5232,3 +5232,77 @@ id ceiling are now delegates to `TrackKolb`.
 Storage, which read the Knowledge Record's keys but were not driven (each re-reads on `storage`,
 as for another tab's write); a Kolb edited in the widget while the KOLB tab's edit view holds an
 unsaved form (NOTES Proposal 19 — last write wins); print; the live Firebase project; two devices.
+
+## 2026-11-08 — Note to self: the line across the top of every page
+
+The user's ask: a "Note to self" pop-up as "a long line on the top of every track screen like
+`---------------v---------------`", clicking the `v` to open it downward, holding "everything in
+Quest" and every ★ day note and deadline "that is in caution or due". Their choices on the plan:
+D1 today's items **plus** overdue deadlines nobody ticked, D2 read-only with every row a
+hyperlink into Progress, D3 floating over the page. New: `scripts/note-to-self-core.js` and
+`scripts/note-to-self.js` (`?v=1`, on all five pages), `tests/note-to-self-core.test.js` (swept),
+a Note to self block and a print rule in `styles/styles.css` (`?v=24`). `index.html`'s
+`renderQuests` now draws through `TrackNoteToSelf.questHtml`. `progress.html` gained
+`calendar-core.js`, and `sir-ks02.html` / `true-storage.html` gained `calendar-core.js` and
+`quest-core.js`, for the pop-up only.
+
+- **Measured before choosing the tab's size** (a scratch CDP script, five pages × 1280, 1024 and
+  390 px): a header tab button sits under the top centre on Progress at every width (`MIND MAPS`,
+  `SCHEDULE`/`ACTIONS`, `PROGRESS`) and on the Knowledge Record (`CAL`/`KS02`) and True Storage
+  (`MULTIVERSE`) at 390 px, from y=0 or y=14 to past y=34. Hence 56×14 with a mouse and 72×24
+  under `(pointer: coarse)`, not 44px; a 16px first try clipped the top of `MIND MAPS`, seen in a
+  2× screenshot, and became 14.
+- `node --test tests/note-to-self-core.test.js`: 14/14, then swept: all five zones pass.
+  `questHtml` with no options is pinned byte for byte against a verbatim copy of the inline Home
+  code (HEAD `a883f1d`) over six fixtures, including numeric mind-map ids, a removed mind map, a
+  starred sub-goal's count and markup in titles. Six doctored copies of the module in scratch
+  trees, behind an undoctored control (14/14):
+  - overdue including today (`<=`): 6, 7, 9;
+  - overdue ignoring the tick: 6;
+  - a caution row linking to today, not its due day: 12;
+  - a quest title unescaped: 3 (the byte-identity case);
+  - the pop-up's rows keeping Home's `data-quest-*` hook: 4;
+  - ticked due deadlines dropped from the due list: 9.
+  A first pass of the `<=` doctor replaced the same text inside a comment and passed 14/14 — the
+  "strip comments" lesson again, in a doctor rather than a grep. Re-aimed at the code, it failed.
+- The 12 `NOTE TO SELF` browser cases plus the 17 `HOME:` cases (the moved renderer's existing
+  guards), narrowed through a task-owned `--require` preload that Proxy-binds the parent
+  `TestContext` and filters `t.test` by name, and prints the root it serves: 29/29 against the
+  repository (plan `1..1`, `# tests 30`). Eight doctored copies, run one at a time behind an
+  undoctored control (12/12), each a symlinked tree with `tests/` copied and the one file a real,
+  edited copy; every run 55–86 s:
+  - the same-page link without `reload()`: 7 only, timing out on the QUEST tab;
+  - a closed panel keeping its DOM: 1–5, each on "the ^ shuts it and its DOM goes", and 6 on "a
+    plain Escape shuts it";
+  - Escape ignoring an Escape already handled: 6, on exactly that assertion;
+  - no redraw on another tab's write: 8 only;
+  - the print rule removed: 10, "documentations.html: neither the line, the tab nor an open panel
+    is printed";
+  - a 44px tab under a finger: 9 only, "a header tab button sits under it";
+  - `sir-ks02.html` without the widget: 3 and 12 (12 opens on that page);
+  - `true-storage.html` without the widget: 5 and 8 (8 opens on that page).
+  The two page doctors' per-page failures are disjoint, which is the proof each page is asserted
+  on its own. A second pass, to print the failure messages, re-ran four of them; its 44 px run
+  took 3516 s because the lid was closed at 18:11 and the machine slept until 19:09 — void, and
+  its extra failures (7, 8: `CDP connection closed`) are the sleep signature. The first 44 px run,
+  56 s, is the evidence.
+- A scratch smoke on all five pages at 1280 and 390 px: the same rows, Escape closing, `track_db`
+  unchanged and no page error on every one; screenshots checked in Grit and Night.
+- `node tests/run.js`, the first try (19:11–20:14, on battery): every offline suite passed and
+  the browser run went 526 of 530 — `QUEST: nesting a sub-goal into a sub-goal…`, `…un-linking a
+  mind map…` and `…the tab prunes…`, plus their parent. **Void**: the journal shows the machine
+  suspended 19:37:45–19:55:55 mid-run, and the three failures are the sleep signature, not
+  assertions — `CDP connection closed` on navigating to `progress.html`, then two pages that never
+  mounted inside 15 s. A one-variable control against the same tree (checksummed before the void
+  run and unchanged), narrowed to the 17 `QUEST` cases: 17/17 in 2 min 13 s.
+- `node tests/run.js`, the second try (20:19:00–21:04:15, no suspend and no NetworkManager change
+  in the journal for the window; on mains by its end), HEAD `a883f1d` and the checksummed tree
+  identical at both ends: **all 36 suites pass** — `calendar-core` (126), `schema` (68),
+  `notes-core` (37) and `note-to-self-core` (14) identical under all five zones, the fifteen
+  unswept suites at their previous counts, and **529 browser subtests** (`# tests 530`
+  with the parent), 45 min 15 s at load ~2.3–2.6.
+
+**Not covered.** Real touch hardware (the 72×24 tab and the header button beside it were
+hit-tested in headless Chrome only); a real Escape from the notes calendar or the Journey book
+with the panel open (the case stands in an earlier `preventDefault`); the open panel across local
+midnight; print output on paper; the live Firebase project; two devices.

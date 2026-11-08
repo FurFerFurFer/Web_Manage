@@ -16,6 +16,13 @@
   <script src="scripts/goal-core.js?v=1"></script>
   <script src="scripts/project-core.js?v=2"></script>
   <script src="scripts/strat-core.js?v=1"></script>
+  <!-- calendar-core.js is here for the Note to self pop-up ONLY. This page's
+       own code never calls TrackCalendar: it keeps its documented twins
+       (noteTimed, dlDone, dlCautionDays, the block geometry, refOccupies …),
+       and every comment below saying this page "does not load" calendar-core.js
+       means its page code does not use it. Retiring the twins is NOTES work. -->
+  <script src="scripts/calendar-core.js?v=14"></script>
+  <script src="scripts/note-to-self-core.js?v=1"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -23,7 +30,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=23">
+  <link rel="stylesheet" href="styles/styles.css?v=24">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -11525,5 +11532,6 @@
   <script src="scripts/journey-core.js?v=2"></script>
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
+  <script src="scripts/note-to-self.js?v=1"></script>
 </body>
 </html>

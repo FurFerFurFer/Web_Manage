@@ -1157,6 +1157,27 @@ Built on 2026-11-05 (README, "Floating notes" → Kolbs). None of these is autho
 - **A draft's mind map can stop being Procedural.** `Done` then refuses and says so; nothing
   tells the user earlier, and the list does not mark such a draft.
 
+## Proposal 20: Note to self Follow-ups
+
+Built on 2026-11-08 (README, "Note to self"). None of these is authorized.
+
+- **Retire Progress's calendar twins.** `progress.html` now loads `calendar-core.js` (for the
+  pop-up), so the reason it keeps its own `noteTimed`, `dlDone`, `dlCautionDays`, the block
+  geometry and `refOccupies` — "it does not load that file" — no longer holds. Delegating them
+  is a refactor across the Schedule's caution, block and timetable code, and each twin has
+  browser cases whose disjoint failure sets would need re-deciding.
+- **A count on the closed line.** The line says nothing until opened. A small count of what is
+  overdue or due today on the tab would need the same-tab freshness the open panel does not:
+  an edit on the page underneath fires no `storage` event in its own tab.
+- **Same-tab freshness while open.** An open panel redraws on another tab's write, not on one
+  made in the page under it — clicking the page closes the panel first, so today this is only
+  reachable by keyboard. `TrackStorage.saveDB` raising a same-tab event would cover it.
+- **A ticked overdue deadline is the only way out of the list.** A deadline the user let pass
+  stays under *overdue* until it is ticked in the Schedule. If old unticked deadlines pile up,
+  a cut-off (only the last N days) is the user's call.
+- **Midnight with the panel open.** "Today" is read at each draw, so an open panel shows the new
+  day only on its next redraw.
+
 ## Track World: Computer Feasibility
 
 The game project lives entirely in [`World/`](World/) and has its own

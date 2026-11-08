@@ -59,8 +59,11 @@ function run(label, file, env) {
 // These sweep every zone: calendar-core.js turns instants into local days,
 // schema.js stamps createdAt with one, and notes-core.js names a stored day's
 // weekday. Any of them can regress to a UTC day invisibly on a machine running
-// in UTC.
-const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.test.js'];
+// in UTC. note-to-self-core.js holds no date code itself (its suite says so
+// structurally), but three of its four lists are calendar-core.js's
+// buildDaySchedule, run for real there — so it sweeps with the calendar.
+const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.test.js',
+  'note-to-self-core.test.js'];
 
 // Swept once, not per zone: true-storage-core.js, source-dump-core.js,
 // graph-layout.js, doc-table-core.js, schedule-paste-core.js, quest-core.js,

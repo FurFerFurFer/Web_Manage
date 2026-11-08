@@ -18344,4 +18344,305 @@ test('browser suites', skipUnlessChrome, async t => {
       if (other) await other.close();
     }
   });
+
+  /* ── NOTE TO SELF: the line across the top of every page (2026-11-08) ─────
+     scripts/note-to-self.js draws it; note-to-self-core.js decides what the
+     panel holds and is pinned offline. These cases are about the SURFACE: that
+     every page carries it, each asserted separately so a page missing its
+     script fails alone; that it is a reader; that a closed panel keeps no DOM;
+     how it closes; that a link to the page it is on still goes there; that an
+     edit in another tab reaches an open panel; and the phone and print rules. */
+
+  const ntsDay = n => {
+    const d = new Date(TODAY + 'T12:00:00');
+    d.setDate(d.getDate() + n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  };
+  // Every ★ Forced state once, beside the quest tree the Quest cases use. The
+  // populated slot's own deadlines are March 2026 and would read as overdue, so
+  // both lists are replaced outright.
+  const NTS_DB = (over = {}) => seedDb(Object.assign({
+    goals: QUEST_TREE(),
+    deadlines: [
+      F.deadline('nts-due', TODAY, { title: 'Essay draft', time: '14:00' }),
+      F.deadline('nts-cau', ntsDay(4), { title: 'Lab report', cautionDates: [TODAY] }),
+      F.deadline('nts-late', ntsDay(-5), { title: 'Old form' }),
+      F.deadline('nts-late-done', ntsDay(-3), { title: 'Handled', done: true }),
+      F.deadline('nts-later', ntsDay(9), { title: 'Not yet' }),
+      F.deadline('nts-quiet', ntsDay(6), { title: 'Quiet run-up', cautionDates: [ntsDay(1)] })
+    ],
+    calendarNotes: [
+      F.calNote('nts-n1', TODAY, { title: 'Call advisor', time: '09:00' }),
+      F.calNote('nts-n2', ntsDay(1), { title: 'Tomorrow only' })
+    ]
+  }, over));
+  const NTS_STORE = function () {
+    return { db: localStorage.getItem('track_db'), keys: Object.keys(localStorage).sort() };
+  };
+  const NTS_OPEN = function () {
+    var b = document.getElementById('nts-toggle');
+    if (!b) return false;
+    if (b.getAttribute('aria-expanded') !== 'true') b.click();
+    return true;
+  };
+  const NTS_SHUT = function () {
+    var p = document.getElementById('nts-panel');
+    return !!p && p.hidden && p.childNodes.length === 0 &&
+      document.getElementById('nts-toggle').getAttribute('aria-expanded') === 'false';
+  };
+  const ntsReady = page => page.waitFor(function () { return !!document.getElementById('nts-toggle'); },
+    { message: 'the Note to self tab' });
+  const ntsOpened = page => page.waitFor(function () {
+    return !!document.querySelector('#nts-panel [data-nts-section], #nts-panel .nts-empty');
+  }, { message: 'the Note to self panel drawn' });
+
+  for (const file of PAGES) {
+    await t.test('NOTE TO SELF: ' + file + ' — the line opens onto ★ Forced in caution or due, and Quest', async () => {
+      const page = await open(file, { db: NTS_DB() });
+      try {
+        await ntsReady(page);
+        assert.equal(await page.evaluate(NTS_SHUT), true, 'it starts shut, with no panel DOM at all');
+        const line = await page.evaluate(function () {
+          var r = document.getElementById('nts-line').getBoundingClientRect();
+          return { top: r.top, left: r.left, width: r.width, vw: document.documentElement.clientWidth };
+        });
+        assert.deepEqual([line.top, line.left, line.width], [0, 0, line.vw], 'the line spans the top of the screen');
+
+        const homeRows = await page.evaluate(function () { return document.querySelectorAll('[data-quest-row]').length; });
+        const before = await page.evaluate(NTS_STORE);
+        await page.evaluate(NTS_OPEN);
+        await ntsOpened(page);
+
+        assert.deepEqual(await page.evaluate(attrs, 'data-nts-overdue'), ['nts-late'],
+          'overdue: past due and not ticked — a ticked one and a future one are not');
+        assert.deepEqual(await page.evaluate(attrs, 'data-nts-due'), ['nts-due']);
+        assert.deepEqual(await page.evaluate(attrs, 'data-nts-caution'), ['nts-cau'],
+          'today is a chosen caution day of this one, and of no other');
+        assert.deepEqual(await page.evaluate(attrs, 'data-nts-note'), ['nts-n1'], 'today\'s day notes only');
+        assert.deepEqual(await page.evaluate(attrs, 'data-nts-quest-row'), ['root', 't1', 't2', 'r1'],
+          'everything in Quest: the same prune as the Quest tab');
+        assert.deepEqual(await page.evaluate(attrs, 'data-nts-quest-learn-row'), ['root:10']);
+        assert.deepEqual(await page.evaluate(attrs, 'data-nts-quest-star-row'), ['root:10', 't1']);
+
+        const links = await page.evaluate(function () {
+          var h = function (sel) { var e = document.querySelector(sel); return e ? e.getAttribute('href') : null; };
+          var quest = Array.prototype.map.call(
+            document.querySelectorAll('#nts-panel [data-nts-quest-row], #nts-panel [data-nts-quest-star-row]'),
+            function (e) { return e.getAttribute('href'); });
+          return { late: h('[data-nts-overdue="nts-late"]'), cau: h('[data-nts-caution="nts-cau"]'),
+            note: h('[data-nts-note="nts-n1"]'), quest: quest };
+        });
+        assert.equal(links.late, 'progress.html?date=' + ntsDay(-5) + '&dl=nts-late#schedule');
+        assert.equal(links.cau, 'progress.html?date=' + ntsDay(4) + '&dl=nts-cau#schedule',
+          'a caution row opens its DUE day, never the day it warns on');
+        assert.equal(links.note, 'progress.html?date=' + TODAY + '#schedule');
+        assert.ok(links.quest.length === 6 && links.quest.every(h => h === 'progress.html#quest'),
+          'every quest row links to the Quest tab');
+        assert.equal(await page.evaluate(function () { return document.querySelectorAll('[data-quest-row]').length; }),
+          homeRows, 'the panel adds nothing a [data-quest-row] selector can find');
+
+        await page.evaluate(function () { document.getElementById('nts-toggle').click(); });
+        assert.equal(await page.evaluate(NTS_SHUT), true, 'the ^ shuts it and its DOM goes');
+        assert.deepEqual(await page.evaluate(NTS_STORE), before,
+          'a READER: track_db byte-identical and no browser key added');
+        assert.deepEqual(realErrors(page), []);
+      } finally { await page.close(); }
+    });
+  }
+
+  await t.test('NOTE TO SELF: Escape, the ^ and a click outside each close it — Escape only when nothing took it first', async () => {
+    const page = await open('progress.html', { db: NTS_DB() });
+    try {
+      await ntsReady(page);
+      const dialogs = page.dialogs.length;
+      const ESC = function (taken) {
+        if (taken) document.addEventListener('keydown', function (e) { e.preventDefault(); }, { once: true });
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        return true;
+      };
+
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      await page.evaluate(ESC, true);
+      assert.equal(await page.evaluate(NTS_SHUT), false,
+        'an Escape something above already handled (the notes calendar, the Journey book) leaves it open');
+      await page.evaluate(ESC, false);
+      assert.equal(await page.evaluate(NTS_SHUT), true, 'a plain Escape shuts it');
+      assert.equal(await page.evaluate(function () { return document.activeElement && document.activeElement.id; }),
+        'nts-toggle', 'and gives focus back to the tab');
+
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      await page.evaluate(function () {
+        document.querySelector('#nts-panel .nts-head').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      });
+      assert.equal(await page.evaluate(NTS_SHUT), false, 'a press inside the panel keeps it open');
+      await page.evaluate(function () {
+        document.querySelector('header').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      });
+      assert.equal(await page.evaluate(NTS_SHUT), true, 'a press anywhere else shuts it');
+
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      assert.equal(await page.evaluate(function () {
+        return document.getElementById('nts-toggle').getAttribute('aria-expanded');
+      }), 'true');
+      await page.evaluate(function () { document.getElementById('nts-toggle').click(); });
+      assert.equal(await page.evaluate(NTS_SHUT), true, 'the ^ shuts it');
+      assert.equal(page.dialogs.length, dialogs, 'nothing here asks — it deletes nothing');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('NOTE TO SELF: a link to the page it is on still goes there', async () => {
+    /* Progress reads its tab once, at mount, so a link differing from the
+       address only in its #hash would change nothing on screen. */
+    const page = await open('progress.html', { db: NTS_DB() });
+    try {
+      await ntsReady(page);
+      await page.waitFor(function () { return !document.querySelector('[data-quest-tab]'); },
+        { message: 'Progress open on another tab than QUEST' });
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      // Clicked on the next task, so this evaluate returns before the reload
+      // the click starts can tear its context down.
+      await page.evaluate(function () {
+        var row = document.querySelector('#nts-panel [data-nts-quest-row="t1"]');
+        setTimeout(function () { row.click(); }, 0);
+        return !!row;
+      });
+      await page.waitFor(function () {
+        return location.hash === '#quest' && !!document.querySelector('[data-quest-tab]');
+      }, { timeout: 30000, message: 'the QUEST tab after following a quest row from Progress itself' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('NOTE TO SELF: an edit in another tab reaches the open panel', async () => {
+    const page = await open('true-storage.html', { db: NTS_DB() });
+    let other = null;
+    try {
+      await ntsReady(page);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      assert.deepEqual(await page.evaluate(attrs, 'data-nts-due'), ['nts-due']);
+      other = await open('index.html', { fresh: false });
+      assert.equal(await other.evaluate(function (today) {
+        var db = JSON.parse(localStorage.getItem('track_db'));
+        var s = db.slots[0];
+        s.deadlines = s.deadlines.concat([{ id: 'nts-new', date: today, title: 'Added elsewhere', time: '08:00' }]);
+        return window.TrackStorage.saveDB(db);
+      }, TODAY), true, 'the other tab wrote');
+      await page.waitFor(function () { return !!document.querySelector('[data-nts-due="nts-new"]'); },
+        { message: 'the deadline the other tab added, in the panel that was already open' });
+      assert.deepEqual(await page.evaluate(attrs, 'data-nts-due'), ['nts-new', 'nts-due'], 'by time');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+      if (other) await other.close();
+    }
+  });
+
+  await t.test('NOTE TO SELF: on a phone it fits, the tab is a finger target, and the header tab under it still answers', async () => {
+    const page = await open('progress.html', { db: NTS_DB(), viewport: PHONE });
+    try {
+      await ntsReady(page);
+      const tab = await page.evaluate(function () {
+        var b = document.getElementById('nts-toggle').getBoundingClientRect();
+        var under = document.elementFromPoint(b.left + b.width / 2, b.bottom + 4);
+        var btn = under && under.closest('button');
+        return { w: b.width, h: b.height, under: btn && btn.id !== 'nts-toggle' ? btn.textContent.trim() : null };
+      });
+      assert.ok(tab.w >= 44 && tab.h >= 24, 'a 72x24 target under a finger, not the desktop 56x14 (got ' + tab.w + 'x' + tab.h + ')');
+      assert.ok(tab.under, 'a header tab button sits under it, and its lower part is still the button');
+
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      const fit = await page.evaluate(function () {
+        var p = document.getElementById('nts-panel').getBoundingClientRect();
+        var bar = document.querySelector('.track-tabbar');
+        var rows = Array.prototype.map.call(document.querySelectorAll(
+          '#nts-panel .nts-row, #nts-panel a.quest-row, #nts-panel a.quest-star-row'),
+          function (e) { return e.getBoundingClientRect().height; });
+        return { left: p.left, right: p.right, bottom: p.bottom, vw: window.innerWidth,
+          barTop: bar ? bar.getBoundingClientRect().top : window.innerHeight,
+          sideways: document.documentElement.scrollWidth > window.innerWidth,
+          minRow: Math.min.apply(null, rows), rows: rows.length };
+      });
+      assert.ok(fit.left >= 0 && fit.right <= fit.vw, 'inside the screen sideways');
+      assert.equal(fit.sideways, false, 'and the page does not scroll sideways');
+      assert.ok(fit.bottom <= fit.barTop, 'clear of the bottom tab bar');
+      assert.ok(fit.rows > 0 && fit.minRow >= 43.5, 'every row is a 44px target (smallest ' + fit.minRow + ')');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('NOTE TO SELF: it never prints', async () => {
+    for (const file of ['documentations.html', 'index.html']) {
+      const page = await open(file, { db: NTS_DB() });
+      try {
+        await ntsReady(page);
+        await page.evaluate(NTS_OPEN); await ntsOpened(page);
+        await page.session.send('Emulation.setEmulatedMedia', { media: 'print' });
+        assert.deepEqual(await page.evaluate(function () {
+          return [getComputedStyle(document.getElementById('nts')).display,
+            document.getElementById('nts-toggle').getClientRects().length,
+            document.getElementById('nts-panel').getClientRects().length];
+        }), ['none', 0, 0], file + ': neither the line, the tab nor an open panel is printed');
+        await page.session.send('Emulation.setEmulatedMedia', { media: '' });
+      } finally { await page.close(); }
+    }
+  });
+
+  await t.test('NOTE TO SELF: no workspace, an empty one, and unreadable data each say so', async () => {
+    let page = await open('index.html', { db: { slots: [], activeSlotId: null } });
+    try {
+      await ntsReady(page);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      assert.match(await page.evaluate(function () { return document.getElementById('nts-panel').textContent; }),
+        /No workspace yet/);
+    } finally { await page.close(); }
+
+    page = await open('documentations.html', { db: { slots: [F.emptySlot()], activeSlotId: 'slot-test-1' } });
+    try {
+      await ntsReady(page);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      const text = await page.evaluate(function () { return document.getElementById('nts-panel').textContent; });
+      assert.match(text, /Nothing in caution or due today/);
+      assert.match(text, /No quests yet/);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+
+    page = await open('index.html', { raw: '{not json' });
+    try {
+      await ntsReady(page);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      assert.match(await page.evaluate(function () { return document.getElementById('nts-panel').textContent; }),
+        /Saved data could not be read/);
+      assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), '{not json',
+        'the unreadable bytes are left exactly as they were');
+    } finally { await page.close(); }
+  });
+
+  await t.test('NOTE TO SELF: a title is TEXT, never markup', async () => {
+    const payload = '<img src=x onerror="window.__ntsPwned=1">';
+    const page = await open('sir-ks02.html', { db: NTS_DB({
+      goals: [questNode('root', { title: payload, quest: true, star: true })],
+      deadlines: [F.deadline('nts-x', TODAY, { title: payload, detail: '</a><b>bold</b>' })],
+      calendarNotes: [F.calNote('nts-y', TODAY, { title: 'A & "B" <i>c</i>' })]
+    }) });
+    try {
+      await ntsReady(page);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      await sleep(200);
+      const r = await page.evaluate(function () {
+        return {
+          pwned: !!window.__ntsPwned,
+          injected: document.querySelectorAll('#nts-panel img, #nts-panel b, #nts-panel i').length,
+          titles: Array.prototype.map.call(document.querySelectorAll('#nts-panel .nts-title, #nts-panel .quest-title'),
+            function (e) { return e.textContent; })
+        };
+      });
+      assert.equal(r.pwned, false, 'the payload did not run');
+      assert.equal(r.injected, 0, 'and made no element');
+      assert.ok(r.titles.indexOf(payload) >= 0, 'it is shown verbatim');
+      assert.ok(r.titles.indexOf('A & "B" <i>c</i>') >= 0);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
 });
