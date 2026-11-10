@@ -15,8 +15,8 @@
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
   <script src="scripts/source-dump-core.js?v=1"></script>
-  <script src="scripts/strat-core.js?v=1"></script>
-  <script src="scripts/mm-tree-core.js?v=1"></script>
+  <script src="scripts/strat-core.js?v=2"></script>
+  <script src="scripts/mm-tree-core.js?v=2"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/calendar-core.js?v=14"></script>
   <script src="scripts/note-to-self-core.js?v=1"></script>
@@ -27,7 +27,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=24">
+  <link rel="stylesheet" href="styles/styles.css?v=25">
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="app-page ks02-page">
@@ -1106,45 +1106,118 @@
        mind map's own — at most one, its ORIGINAL — comes last with ✎ and ×,
        and while it has none the comment-style box and + stand in its place.
 
-       The origin is a label, not a link: MMDetail is not keyed by mind map,
-       so opening another one in place would keep this tab, and an anchor
-       opened on KS03 draws nothing. The caller keys THIS by mm.id, so a draft
-       never follows the panel to another mind map. */
-    function StratSection({mm,mms,mmColor,onSaveStrat,onRemoveStrat}){
+       A STRAT may SPREAD FROM a mind map above the one it is written on (the
+       user's 2026-11-10 rule; strat-core.js, `originId`). The writer's
+       ORIGINAL card carries `↑ spread from…`, which opens a picker of every
+       mind map above, nearest first, each row greyed by the refusal the
+       writer itself gives (TrackStrat.linkChoices) — the row never decides
+       for itself, it asks the writer, so a refused row is aria-disabled and
+       never `disabled`. Once linked the card says where it spreads from and
+       offers `unlink`, which asks (the user's choice). The origin shows the
+       STRAT as FROM its writer, read-only, and draws no add box: that STRAT
+       is its one, and withStrat refuses a second.
+
+       Every mind-map name here is a link to that mind map (the user's
+       choice, 2026-11-10): onOpenMM opens it on the tab that draws its STRAT
+       section — INFO for an anchor, KS03 otherwise. Every MMDetail is keyed
+       by mind map, so the new one mounts on that tab rather than keeping
+       this one. The caller keys THIS by mm.id too, so a draft never follows
+       the panel to another mind map. */
+    function StratSection({mm,mms,mmColor,onSaveStrat,onRemoveStrat,onLinkStrat,onUnlinkStrat,onOpenMM}){
       const [draft,setDraft]=React.useState("");
       const [editing,setEditing]=React.useState(false);
       const [editDraft,setEditDraft]=React.useState("");
+      const [picking,setPicking]=React.useState(false);
       const strats=TrackStrat.stratsFor(mm.id,mms);
       const own=strats.find(s=>s.own)||null;
+      // Another mind map's STRAT spreads from this one: that is its one.
+      const hosted=strats.some(s=>s.hosted);
+      const link=own?TrackStrat.stratLink(mm.id,mms):null;
       // gone while being edited (deleted in another tab): leave the editor
-      React.useEffect(()=>{if(!own)setEditing(false);},[!!own]);
+      React.useEffect(()=>{if(!own){setEditing(false);setPicking(false);}},[!!own]);
+      // linked meanwhile (here or in another tab): the picker has done its job
+      React.useEffect(()=>{if(link)setPicking(false);},[!!link]);
       const dot=m=>m.type==="anchor"?"#6b7280":m.type==="1"?"#ef4444":mmColor(m.id);
       const add=()=>{if(!draft.trim())return;onSaveStrat(mm.id,draft);setDraft("");};
-      const startEdit=()=>{setEditDraft(own.text);setEditing(true);};
+      const startEdit=()=>{setPicking(false);setEditDraft(own.text);setEditing(true);};
       const save=()=>{if(!editDraft.trim())return;onSaveStrat(mm.id,editDraft);setEditing(false);};
+      const goto=m=>(
+        <button data-strat-goto={String(m.id)} onClick={()=>onOpenMM&&onOpenMM(m.id)} title={`Open ${m.name}`}
+          className="text-xs font-semibold text-gray-400 hover:text-white tracking-wide truncate underline decoration-dotted underline-offset-2 text-left min-w-0">{m.name}</button>
+      );
+      // The words for a refusal; the refusal itself is TrackStrat.linkRefusal.
+      const why=r=>!r?"":r.code==="own"?"has its own STRAT":r.code==="taken"?`shows ${r.by.name}'s STRAT`:"cannot";
+      const choices=picking&&own&&!link?TrackStrat.linkChoices(mm.id,mms):[];
       return (
         <div data-strat-section className="mb-4">
           <div className="text-xs text-gray-500 mb-1 tracking-widest">STRAT</div>
           {strats.filter(s=>!s.own).map(s=>(
-            <div key={s.mm.id} data-strat-inherited={s.mm.id} className="bg-gray-900 border border-gray-800 rounded px-3 py-2 mb-1">
+            <div key={s.mm.id} data-strat-inherited={s.mm.id} data-strat-hosted={s.hosted?"":undefined}
+              data-strat-origin={s.origin?String(s.origin.id):undefined}
+              className={`bg-gray-900 border rounded px-3 py-2 mb-1 ${s.hosted?"border-gray-700":"border-gray-800"}`}>
               <div className="flex items-center gap-1.5 mb-1 min-w-0">
+                {s.hosted&&<span className="text-[10px] font-bold tracking-widest text-violet-300 shrink-0">FROM</span>}
                 <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:dot(s.mm)}}/>
-                <span className="text-xs font-semibold text-gray-400 tracking-wide truncate">{s.mm.name}</span>
+                <span data-strat-name className="flex min-w-0">{goto(s.mm)}</span>
+                {s.hosted&&<span className="text-[10px] text-gray-500 shrink-0 ml-auto">spreads from here · edited there</span>}
+                {s.origin&&!s.hosted&&(
+                  <span data-strat-via className="text-[10px] text-gray-500 flex items-center gap-1 min-w-0">· spreads from {goto(s.origin)}</span>
+                )}
               </div>
               <div className="text-xs text-gray-300 whitespace-pre-wrap break-words">{s.text}</div>
             </div>
           ))}
           {own?(
-            <div data-strat-own className="bg-gray-900 border border-gray-700 rounded px-3 py-2 mb-1">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-bold tracking-widest text-violet-300">ORIGINAL</span>
+            <div data-strat-own data-strat-origin={link&&link.origin?String(link.origin.id):undefined}
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-2 mb-1">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[10px] font-bold tracking-widest text-violet-300 shrink-0">ORIGINAL</span>
+                  {link&&link.origin&&(
+                    <span data-strat-spreads className="text-[10px] text-gray-500 flex items-center gap-1 min-w-0">· spreads from {goto(link.origin)}</span>
+                  )}
+                </div>
                 {!editing&&(
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
+                    {link
+                      ?<button data-strat-unlink onClick={()=>onUnlinkStrat(mm.id)} className="text-gray-500 hover:text-white text-[10px]"
+                          title="Spread this STRAT from this mind map again">unlink</button>
+                      :<button data-strat-link onClick={()=>setPicking(p=>!p)} className="text-gray-500 hover:text-white text-[10px]"
+                          title="Spread this STRAT from a mind map above this one">↑ spread from…</button>}
                     <button data-strat-edit onClick={startEdit} className="text-gray-500 hover:text-white text-xs" title="Edit this STRAT">✎</button>
                     <button data-strat-remove onClick={()=>onRemoveStrat(mm.id)} className="text-gray-600 hover:text-red-400 text-xs" title="Delete this STRAT">×</button>
                   </div>
                 )}
               </div>
+              {link&&link.lost&&(
+                <div data-strat-link-lost className="text-[10px] text-amber-400 mb-1">The mind map it spread from is gone, so it spreads from here. Unlink to clear it.</div>
+              )}
+              {link&&link.origin&&!link.above&&(
+                <div data-strat-link-moved className="text-[10px] text-amber-400 mb-1">{link.origin.name} is no longer above this mind map. It still spreads from there.</div>
+              )}
+              {picking&&!editing&&!link&&(
+                <div data-strat-picker className="border border-gray-800 rounded p-2 mb-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] text-gray-500 tracking-widest">SPREAD FROM</span>
+                    <button data-strat-picker-close onClick={()=>setPicking(false)} className="text-gray-500 hover:text-white text-xs" title="Close">×</button>
+                  </div>
+                  {choices.length===0
+                    ?<div className="text-[10px] text-gray-600 italic">Nothing is above this mind map.</div>
+                    :choices.map(c=>{
+                      const no=why(c.refusal);
+                      return (
+                        <button key={String(c.mm.id)} data-strat-choice={String(c.mm.id)} aria-disabled={no?"true":undefined}
+                          onClick={()=>{onLinkStrat(mm.id,c.mm.id);if(!no)setPicking(false);}}
+                          title={no?`${c.mm.name} ${no}`:`Spread this STRAT from ${c.mm.name} and every mind map under it`}
+                          className={`w-full flex items-center gap-1.5 px-2 py-1 rounded text-left text-xs ${no?"opacity-40 cursor-not-allowed text-gray-400":"text-gray-200 hover:bg-gray-800"}`}>
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:dot(c.mm)}}/>
+                          <span className="truncate">{c.mm.name}</span>
+                          <span className="text-[10px] text-gray-500 shrink-0 ml-auto">{no||`${c.depth} up`}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+              )}
               {editing?(<>
                 <textarea data-strat-draft autoFocus value={editDraft} rows={3}
                   onChange={e=>setEditDraft(e.target.value)}
@@ -1158,7 +1231,7 @@
                 <div className="text-xs text-gray-200 whitespace-pre-wrap break-words cursor-text" title="Double-click to edit" onDoubleClick={startEdit}>{own.text}</div>
               )}
             </div>
-          ):(
+          ):hosted?null:(
             <div className="flex gap-2 mt-1">
               <input data-strat-input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Add strat..."
                 onKeyDown={e=>{if(e.key==="Enter")add();}}
@@ -1171,7 +1244,7 @@
     }
 
     function MMDetail({mm,mms,mgChanges,kolbs,mmColor,sirSessionsMap,initialMode,levelTemplates,
-      onBack,onNavigate,onSaveParents,onDetachChild,onAddComment,onRemoveComment,onToggleComment,onSaveStrat,onRemoveStrat,
+      onBack,onNavigate,onSaveParents,onDetachChild,onAddComment,onRemoveComment,onToggleComment,onSaveStrat,onRemoveStrat,onLinkStrat,onUnlinkStrat,
       onAddLink,onRemoveLink,onNewKolb,onDupeKolb,onDelete,onSetRating,onChangeType,onRename,onUpdateExplanation,onOpenLin,
       sourceDumps,onAddDumpURLLink,onRemoveDumpURLLink,onGoToSourceDump,
       onAddDumpMMLink,onUpdateMMSCOrder,onUpdateMMSCAggOrder,onAddDumpTextBlock,onRemoveDumpTextBlock,onToggleSourceDumpActivation,onToggleUnclear,
@@ -1209,6 +1282,10 @@
       const allRepsDone=mySessions.length===5&&mySessions.every(s=>s.done);
 	      const mmKolbs=kolbs.filter(k=>k.mmId===mm.id).sort((a,b)=>b.date.localeCompare(a.date));
 	      const requestConfirmDelete=(title,message,onConfirm)=>setConfirmDelete({title,message,onConfirm});
+      // A STRAT's mind-map name opens that mind map on the tab its STRAT
+      // section is drawn on: INFO for an anchor, KS03 otherwise. Looked up by
+      // ===, never through mmById, whose keys are text (10 and '10' collide).
+      const openStratMM=id=>{const t=mms.find(m=>m&&m.id===id);if(t&&onNavigate)onNavigate(t.id,t.type==="anchor"?"info":"ks03");};
 
       React.useEffect(()=>{
         if(!isLeaf)return;
@@ -1335,7 +1412,8 @@
                 </button>
               </div>
             </div>
-            <StratSection key={mm.id} mm={mm} mms={mms} mmColor={mmColor} onSaveStrat={onSaveStrat} onRemoveStrat={onRemoveStrat}/>
+            <StratSection key={mm.id} mm={mm} mms={mms} mmColor={mmColor} onSaveStrat={onSaveStrat} onRemoveStrat={onRemoveStrat}
+              onLinkStrat={onLinkStrat} onUnlinkStrat={onUnlinkStrat} onOpenMM={openStratMM}/>
           </>)}
 
           {mm.type!=="anchor"&&mode==="ks03"&&(<>
@@ -1427,7 +1505,8 @@
                 </button>
               </div>
             </div>
-            <StratSection key={mm.id} mm={mm} mms={mms} mmColor={mmColor} onSaveStrat={onSaveStrat} onRemoveStrat={onRemoveStrat}/>
+            <StratSection key={mm.id} mm={mm} mms={mms} mmColor={mmColor} onSaveStrat={onSaveStrat} onRemoveStrat={onRemoveStrat}
+              onLinkStrat={onLinkStrat} onUnlinkStrat={onUnlinkStrat} onOpenMM={openStratMM}/>
           </>)}
 
           {mm.type!=="anchor"&&mode==="mg"&&(<>
@@ -2271,10 +2350,10 @@
        render and would lose the moves that arrive first (Documentations'
        touch-drag lesson).
 
-       Every write is mm-tree-core.js's (TrackMMTree): withNested and
-       withArranged are the guards — a refused move returns the very list —
+       Every write is mm-tree-core.js's (TrackMMTree): withNested,
+       withArranged and their composition withPlaced guard each drop —
        and moveRefusal, which the writer itself asks, is all this view reads
-       to light a row red. Nothing here writes `mms` but those two, through
+       to light a row red. Nothing here writes `mms` but those writers, through
        the page's autosave, and nothing is deleted, so no drag asks first
        (AGENTS.md, the detach-⊗ class). */
     const MMDIR_HOLD_MS=400, MMDIR_SLOP_TOUCH=10, MMDIR_SLOP_MOUSE=6, MMDIR_UNFOLD_MS=700,
@@ -2288,17 +2367,27 @@
       // drawn once where it repeats on its own branch, and the branch ends
       const loop=path.slice(0,-1).includes(mm.id);
       const folded=!ctx.filtering&&!!ctx.collapsed[mmdirKey(mm.id)];
-      const hit=ctx.hit&&ctx.hit.kind==="nest"&&ctx.hit.targetId===mm.id?(ctx.hit.refused?"refused":"nest"):undefined;
+      const pathKey=JSON.stringify(path.map(mmdirKey));
+      const line=ctx.hit&&ctx.hit.kind==="place"&&ctx.hit.pathKey===pathKey?ctx.hit:null;
+      const hit=line&&line.refused?"refused":ctx.hit&&ctx.hit.kind==="nest"&&ctx.hit.targetId===mm.id?(ctx.hit.refused?"refused":"nest"):undefined;
+      const state=ctx.drag&&ctx.drag.pathKey===pathKey
+        ?(ctx.drag.phase==="drag"?"placeholder":ctx.drag.phase==="lift"?"lifted":"pressing"):undefined;
       const open=mm.id===ctx.openId;
       return (
         <div>
           <div data-mmdir-row={String(mm.id)} data-mmdir-hit={hit}
+            data-mmdir-path={pathKey} data-mmdir-state={state} data-mmdir-loop={loop?"true":undefined}
+            data-mmdir-line={line?(line.edgeBefore?"before":"after"):undefined}
+            data-mmdir-depth={line?line.depth:undefined}
             data-mmdir-focused={mm.id===ctx.focusId?"true":undefined}
             className={"mmdir-row flex items-center gap-1.5 rounded px-1 py-1 text-xs cursor-pointer "
               +(open?"bg-gray-800 text-gray-100":"text-gray-400 hover:bg-gray-800/60 hover:text-gray-200")
               +(mm.id===ctx.focusId?" outline outline-1 outline-indigo-700/50 bg-indigo-900/40":"")}
-            style={{paddingLeft:"calc(4px + "+depth+" * 14px)"}}
+            style={{paddingLeft:"calc(4px + "+depth+" * 14px)","--mmdir-line-left":line?(4+line.depth*14)+"px":undefined}}
             title={loop?"Already above this row — its branch is drawn there":mm.name}
+            onMouseDown={e=>{if(!loop)ctx.press(e,"mouse",mm,path);}}
+            onTouchStart={e=>{if(!loop)ctx.press(e,"touch",mm,path);}}
+            onContextMenu={e=>{if(ctx.drag)e.preventDefault();}}
             onClick={()=>ctx.openRow(mm.id,path)}>
             <button type="button" data-mmdir-caret={String(mm.id)} aria-label={folded?"Unfold":"Fold"}
               onClick={e=>{e.stopPropagation();ctx.toggle(mm.id);}}
@@ -2317,7 +2406,7 @@
       );
     }
 
-    function MMDirectoryView({mms,mmColor,openId,onOpen,onNest,onArrange,focusId,onClearFocus,subTabs,renderPage}){
+    function MMDirectoryView({mms,mmColor,openId,onOpen,onNest,onArrange,onPlace,focusId,onClearFocus,subTabs,renderPage}){
       const [q,setQ]=useState("");
       const [collapsed,setCollapsed]=useState({});
       const [drawerOpen,setDrawerOpen]=useState(false);
@@ -2334,7 +2423,7 @@
       const byId=useMemo(()=>{const m=new Map();mms.forEach(x=>{if(x&&!m.has(x.id))m.set(x.id,x);});return m;},[mms]);
       // A data attribute is text; this maps it back to the id AS STORED, so a
       // numeric id is never re-typed by Number() and a string id survives too.
-      const keyMap=useMemo(()=>{const m=new Map();mms.forEach(x=>{if(x&&!m.has(String(x.id)))m.set(String(x.id),x.id);});return m;},[mms]);
+      const keyMap=useMemo(()=>{const m=new Map();m.typed=new Map();mms.forEach(x=>{if(x){if(!m.has(String(x.id)))m.set(String(x.id),x.id);m.typed.set(mmdirKey(x.id),x.id);}});return m;},[mms]);
       const lq=q.trim().toLowerCase();
       const filtering=lq.length>0;
       const matchSet=useMemo(()=>{
@@ -2375,7 +2464,7 @@
         return ()=>{cancelAnimationFrame(raf);clearTimeout(t);};
       },[focusId]);
 
-      liveRef.current={mms,openId:openMM?openMM.id:null,kids,selected,selectMode,keyMap,byId,index,collapsed,onNest,onArrange};
+      liveRef.current={mms,openId:openMM?openMM.id:null,kids,selected,selectMode,keyMap,byId,index,collapsed,onNest,onArrange,onPlace,q};
 
       function say(text){
         setToast(text);
@@ -2386,8 +2475,39 @@
       /* ── the lift engine ── */
       const engineRef=useRef(null);
       if(!engineRef.current){
-        const sameHit=(a,b)=>(!a||!b)?a===b:a.kind===b.kind&&a.targetId===b.targetId&&a.before===b.before&&a.refused===b.refused;
+        const sameHit=(a,b)=>(!a||!b)?a===b:a.kind===b.kind&&a.targetId===b.targetId&&a.before===b.before&&a.refused===b.refused&&a.parentId===b.parentId&&a.pathKey===b.pathKey&&a.edgeBefore===b.edgeBefore&&a.depth===b.depth;
         const barShown=()=>{const b=barRef.current;return !!b&&b.getClientRects().length>0;};
+        // Only a tree-row drag uses edge hits. The rendered paths already end
+        // at a repeated node, so this finite DOM scan cannot follow a cycle.
+        const treeLine=(row,x,y)=>{
+          const d=dragRef.current, live=liveRef.current;
+          const rows=Array.from(barRef.current.querySelectorAll("[data-mmdir-row]"));
+          const r=row.getBoundingClientRect(), edge=Math.min(10,r.height/4);
+          if(y>=r.top+edge&&y<=r.bottom-edge)return undefined; // middle: nest
+          const edgeBefore=y<r.top+edge, gap=rows.indexOf(row)+(edgeBefore?0:1);
+          const pathOf=e=>e?JSON.parse(e.getAttribute("data-mmdir-path")).map(k=>live.keyMap.typed.get(k)):[];
+          const prev=pathOf(rows[gap-1]), next=pathOf(rows[gap]);
+          if(prev.includes(undefined)||next.includes(undefined))return null;
+          let depth, parentId, targetId, before;
+          if(next.length>prev.length&&prev.length&&prev.every((id,i)=>id===next[i])){
+            // Immediately below an open parent: always its first child.
+            depth=prev.length;parentId=prev[prev.length-1];targetId=next[depth];before=true;
+          }else if(!prev.length){
+            depth=0;parentId=null;targetId=next[0];before=true;
+          }else{
+            // At a branch end, only the depths between the following row and
+            // the preceding row are possible. Pick the nearest 14px indent.
+            const low=next.length?next.length-1:0, high=prev.length-1;
+            depth=Math.max(low,Math.min(high,Math.round((x-r.left-4)/14)));
+            parentId=depth?prev[depth-1]:null;
+            before=next.length===depth+1;targetId=before?next[depth]:prev[depth];
+          }
+          const why=TrackMMTree.moveRefusal(live.mms,d.ids,d.fromId,parentId);
+          if(why==="missing")return null;
+          const refused=why==="same"?null:why;
+          if(!refused&&TrackMMTree.withPlaced(live.mms,d.ids[0],d.fromId,parentId,targetId,before)===live.mms)return null;
+          return {kind:"place",parentId,targetId,before,refused,depth,edgeBefore,pathKey:row.getAttribute("data-mmdir-path")};
+        };
         const hitAt=(x,y)=>{
           const d=dragRef.current, live=liveRef.current;
           if(!d)return null;
@@ -2396,14 +2516,16 @@
           if(el.closest("[data-mmdir-root-drop]"))return d.fromId==null?null:{kind:"top"};
           const row=el.closest("[data-mmdir-row]");
           if(row){
-            const tid=live.keyMap.get(row.getAttribute("data-mmdir-row"));
+            if(d.pathKey){const line=treeLine(row,x,y);if(line!==undefined)return line;}
+            const rowPath=JSON.parse(row.getAttribute("data-mmdir-path"));
+            const tid=live.keyMap.typed.get(rowPath[rowPath.length-1]);
             if(tid===undefined)return null;
             const why=TrackMMTree.moveRefusal(live.mms,d.ids,d.fromId,tid);
             if(why==="same"||why==="missing")return null;
             return {kind:"nest",targetId:tid,refused:why||null};
           }
           const list=el.closest("[data-mmdir-list]");
-          if(!list)return null;
+          if(!list||d.pathKey)return null;
           let best=null;
           list.querySelectorAll("[data-mmdir-child]").forEach(b=>{
             const id=live.keyMap.get(b.getAttribute("data-mmdir-child"));
@@ -2513,9 +2635,9 @@
         const commit=(hit,ids,fromId)=>{
           const live=liveRef.current;
           if(hit.kind==="arrange"){live.onArrange(ids,hit.targetId,hit.before,fromId);return;}
-          const target=hit.kind==="top"?null:hit.targetId;
+          const target=hit.kind==="place"?hit.parentId:hit.kind==="top"?null:hit.targetId;
           // the writer is the guard: whatever the row showed, ask it
-          const next=TrackMMTree.withNested(live.mms,ids,fromId,target);
+          const next=hit.kind==="place"?TrackMMTree.withPlaced(live.mms,ids[0],fromId,target,hit.targetId,hit.before):TrackMMTree.withNested(live.mms,ids,fromId,target);
           if(next===live.mms){
             const why=TrackMMTree.moveRefusal(live.mms,ids,fromId,target);
             const who=ids.length===1?"“"+(live.byId.get(ids[0])||{}).name+"”":ids.length+" mind maps";
@@ -2524,7 +2646,8 @@
             else if(why==="inside")say("Can't move "+who+" into "+where+": "+where+" is inside "+(ids.length===1?"it.":"one of them."));
             return;
           }
-          live.onNest(ids,fromId,target);
+          if(hit.kind==="place")live.onPlace(ids[0],fromId,target,hit.targetId,hit.before);
+          else live.onNest(ids,fromId,target);
           setSelected(s=>s.filter(id=>!ids.includes(id)));
           const who=ids.length===1?"“"+(live.byId.get(ids[0])||{}).name+"”":ids.length+" mind maps";
           say(target===null?"Moved "+who+" out of “"+(live.byId.get(fromId)||{}).name+"”.":"Moved "+who+" into “"+(live.byId.get(target)||{}).name+"”.");
@@ -2547,7 +2670,7 @@
         function onTouchEnd(e){end(e);}
         function onTouchCancel(){cancel();}
         function onContextMenu(e){if(dragRef.current)e.preventDefault();}
-        const press=(e,kind,mm)=>{
+        const press=(e,kind,mm,path)=>{
           if(dragRef.current)return;
           if(kind==="mouse"){
             if(e.button!==0)return;
@@ -2558,14 +2681,17 @@
           if(!pt||(kind==="touch"&&e.touches.length>1))return;
           if(kind==="touch")lastTouch.current=Date.now();
           const live=liveRef.current;
-          const ids=live.selectMode&&live.selected.includes(mm.id)
+          if(path&&live.q.length)return; // a filtered tree cannot promise a position
+          const pathKey=path?JSON.stringify(path.map(mmdirKey)):null;
+          const fromId=path?(path.length>1?path[path.length-2]:null):live.openId;
+          const ids=!path&&live.selectMode&&live.selected.includes(mm.id)
             ?live.kids.filter(k=>live.selected.includes(k.id)).map(k=>k.id)
             :[mm.id];
           const r=e.currentTarget.getBoundingClientRect();
-          dragRef.current={kind,phase:"press",ids,fromId:live.openId,pressId:mm.id,
+          dragRef.current={kind,phase:"press",ids,fromId,pathKey,pressId:mm.id,
             x0:pt.clientX,y0:pt.clientY,x:pt.clientX,y:pt.clientY,
             offX:pt.clientX-r.left,offY:pt.clientY-r.top,w:r.width,hit:null,timer:null,raf:null,edge:0,scroller:null,unfold:null,spring:null,sprung:false};
-          setDrag({phase:"press",pressId:mm.id,ids,label:mm.name,hit:null});
+          setDrag({phase:"press",pressId:mm.id,ids,fromId,pathKey,label:mm.name,hit:null});
           dragRef.current.timer=setTimeout(lift,MMDIR_HOLD_MS);
           if(kind==="mouse"){
             document.addEventListener("mousemove",onMouseMove);
@@ -2614,7 +2740,7 @@
         else{document.addEventListener("touchmove",tm,{passive:false});document.addEventListener("touchend",done);document.addEventListener("touchcancel",done);}
       }
 
-      function openRow(id,path){setTrail(path);onOpen(id);setDrawerOpen(false);}
+      function openRow(id,path){if(Date.now()<suppressClickUntil.current)return;setTrail(path);onOpen(id);setDrawerOpen(false);}
       function openChild(id){setTrail([...trailShown,id]);onOpen(id);}
       // The panel's "← back" climbs the trail; from a top mind map it closes the page.
       function goUp(){
@@ -2628,7 +2754,7 @@
       }
       const toggle=id=>setCollapsed(c=>{const k=mmdirKey(id), n={...c};if(n[k])delete n[k];else n[k]=true;return n;});
       const hit=drag&&drag.phase==="drag"?drag.hit:null;
-      const ctx={index,collapsed,toggle,openRow,openId:openMM?openMM.id:null,focusId,filtering,matchSet,mmColor,hit};
+      const ctx={index,collapsed,toggle,openRow,openId:openMM?openMM.id:null,focusId,filtering,matchSet,mmColor,hit,drag,press:engine.press};
       const roots=filtering?rootList.filter(m=>matchSet.has(m.id)):rootList;
 
       const slotTop=trailShown.length>1?(
@@ -2645,7 +2771,7 @@
       ):null;
 
       const blockState=id=>{
-        if(!drag)return undefined;
+        if(!drag||drag.pathKey)return undefined;
         if(drag.phase==="drag")return drag.ids.includes(id)?"placeholder":undefined;
         if(drag.phase==="lift")return drag.ids.includes(id)?"lifted":undefined;
         return id===drag.pressId?"pressing":undefined;
@@ -2713,10 +2839,10 @@
                   at the same height: added above the rows instead, it pushed
                   every row down under the pointer the moment a drag began. */}
               <div className="mmdir-bar-top flex items-center gap-2 p-2">
-                {drag&&drag.phase==="drag"&&openMM?(
+                {drag&&drag.phase==="drag"?(
                   <div data-mmdir-root-drop data-mmdir-hit={hit&&hit.kind==="top"?"top":undefined}
                     className="mmdir-root-drop flex h-8 min-w-0 flex-1 items-center rounded border border-dashed border-gray-700 px-2 text-xs text-gray-400">
-                    <span className="truncate">⌂ Top level — out of “{openMM.name}”</span>
+                    <span className="truncate">⌂ Top level{drag.fromId!=null?" — out of “"+name(drag.fromId)+"”":""}</span>
                   </div>
                 ):(
                   <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Filter mind maps..." data-mmdir-filter
@@ -3828,8 +3954,29 @@
       function saveStrat(mmId,text){const now=Date.now();setMms(p=>TrackStrat.withStrat(p,mmId,text,now));}
       function removeStrat(mmId){
         const target=mmMap[mmId];
-        if(!window.confirm(`Delete the STRAT on "${target?target.name:"this mind map"}"? Every mind map under it stops showing it too. This cannot be undone.`)) return;
+        const name=target?target.name:"this mind map";
+        const link=TrackStrat.stratLink(mmId,mms);
+        if(!window.confirm(link&&link.origin
+          ?`Delete the STRAT on "${name}"? It spreads from "${link.origin.name}", so "${link.origin.name}" and every mind map under it stop showing it too. This cannot be undone.`
+          :`Delete the STRAT on "${name}"? Every mind map under it stops showing it too. This cannot be undone.`)) return;
         setMms(p=>TrackStrat.withoutStrat(p,mmId));
+      }
+      // Spreading a STRAT from a mind map above is the writer's to decide:
+      // withStratOrigin refuses an origin that is not above, or that already
+      // has a STRAT, against the CURRENT list. It deletes nothing, so it does
+      // not ask. Unlinking deletes the `originId` key, so it asks first (the
+      // user's choice) — here, before the setMms the autosave writes from,
+      // because every path through unlinkStrat is the unlink.
+      function linkStrat(mmId,originId){setMms(p=>TrackStrat.withStratOrigin(p,mmId,originId));}
+      function unlinkStrat(mmId){
+        const link=TrackStrat.stratLink(mmId,mms);
+        if(!link) return;
+        const target=mmMap[mmId];
+        const name=target?target.name:"this mind map";
+        if(!window.confirm(link.origin
+          ?`Stop spreading the STRAT on "${name}" from "${link.origin.name}"? It will spread from "${name}" again, so "${link.origin.name}" and the mind maps under it stop showing it unless they sit under "${name}". The STRAT itself is kept.`
+          :`Clear the link from the STRAT on "${name}" to a mind map that is gone? It already spreads from "${name}", and the STRAT itself is kept.`)) return;
+        setMms(p=>TrackStrat.withoutStratOrigin(p,mmId));
       }
       function toggleUnclear(mmId){setMms(p=>p.map(m=>m.id===mmId?{...m,unclear:!m.unclear}:m));}
       function addLink(mmId,link){if (!link.url.trim()) return;setMms(p=>p.map(m=>m.id===mmId?{...m,links:[...(m.links||[]),{id:nid(),label:link.label||link.url,url:link.url}]}:m));}
@@ -3926,12 +4073,16 @@
          MM when another tab deletes it, and would store a parent naming nothing. */
       const openAddMM=()=>{setNewMM(p=>({...p,parentIds:currentMM?[currentMM.id]:[]}));setAddMMModal(true);};
 
+      // onNavigate opens another mind map in place — a STRAT's name does. It
+      // works because every <MMDetail> is keyed by mind map and opens on
+      // `selectedMMMode`, which openMM sets in the same step: an unkeyed panel
+      // kept the tab it was on, and an anchor shown on KS03 draws nothing.
       const mmDetailProps={
         mms,mgChanges,kolbs,mmColor,sirSessionsMap,levelTemplates,
         onBack:()=>setSelectedMM(null),onNavigate:(id,mode)=>openMM(id,mode||selectedMMMode),
         onSaveParents:saveParents,onDetachChild:detachChild,
         onAddComment:addComment,onRemoveComment:removeComment,onToggleComment:toggleComment,
-        onSaveStrat:saveStrat,onRemoveStrat:removeStrat,
+        onSaveStrat:saveStrat,onRemoveStrat:removeStrat,onLinkStrat:linkStrat,onUnlinkStrat:unlinkStrat,
         onAddLink:addLink,onRemoveLink:removeLink,
         onNewKolb:()=>setKolbModal({mmId:selectedMM}),
         onDupeKolb:duplicateKolb,
@@ -4161,7 +4312,7 @@
               )}
             </div>
           )}
-          {view==="ks02"&&selectedMM&&currentMM&&<MMDetail mm={currentMM} {...mmDetailProps} initialMode={selectedMMMode}/>}
+          {view==="ks02"&&selectedMM&&currentMM&&<MMDetail key={String(currentMM.id)} mm={currentMM} {...mmDetailProps} initialMode={selectedMMMode}/>}
 
           {view==="mg"&&!selectedMM&&(
             <div className="flex flex-col h-screen-nav">
@@ -4277,7 +4428,7 @@
               )}
             </div>
           )}
-          {view==="mg"&&selectedMM&&currentMM&&<MMDetail mm={currentMM} {...mmDetailProps} initialMode="mg"/>}
+          {view==="mg"&&selectedMM&&currentMM&&<MMDetail key={String(currentMM.id)} mm={currentMM} {...mmDetailProps} initialMode={selectedMMMode}/>}
 
           {view==="ks03"&&!selectedMM&&(
             <div className="flex flex-col h-screen-nav">
@@ -4307,7 +4458,7 @@
               )}
             </div>
           )}
-          {view==="ks03"&&selectedMM&&currentMM&&<MMDetail mm={currentMM} {...mmDetailProps} initialMode={selectedMMMode}/>}
+          {view==="ks03"&&selectedMM&&currentMM&&<MMDetail key={String(currentMM.id)} mm={currentMM} {...mmDetailProps} initialMode={selectedMMMode}/>}
 
           {view==="kolb"&&!selectedKolb&&(
             <div className="p-4 max-w-2xl mx-auto">
@@ -4387,6 +4538,7 @@
                 onOpen={id=>openMM(id,"ks03")}
                 onNest={(ids,fromId,targetId)=>setMms(p=>TrackMMTree.withNested(p,ids,fromId,targetId))}
                 onArrange={(ids,targetId,before,listId)=>setMms(p=>TrackMMTree.withArranged(p,ids,targetId,before,listId))}
+                onPlace={(id,fromId,parentId,targetId,before)=>setMms(p=>TrackMMTree.withPlaced(p,id,fromId,parentId,targetId,before))}
                 focusId={srchFocusId} onClearFocus={()=>setSrchFocusId(null)}
                 subTabs={srchTabs}
                 renderPage={(top,bottom,up)=>currentMM?(
@@ -4395,7 +4547,7 @@
                     embedded slotTop={top} slotBottom={bottom}/>
                 ):null}/>
             );
-            if(selectedMM&&currentMM)return <MMDetail mm={currentMM} {...mmDetailProps} initialMode="ks03"/>;
+            if(selectedMM&&currentMM)return <MMDetail key={String(currentMM.id)} mm={currentMM} {...mmDetailProps} initialMode={selectedMMMode}/>;
             if(selectedMM)return null;
             return (
               <div className="flex flex-col h-screen-nav">

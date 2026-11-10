@@ -27,6 +27,13 @@
 
    4. Ids are NUMBERS in real data (KS02's nid()), and 10 is not '10'.
 
+   5. A STRAT that SPREADS FROM a mind map above it (`strat.originId`, the
+      user's 2026-11-10 rule) reaches that origin and everything under it,
+      and only that: the writer shows it once, as its own; it takes the
+      origin's one STRAT, so the picker and the writer refuse an origin that
+      has one; and it is read as stored — a writer moved out from under its
+      origin keeps spreading from it, a deleted origin reads as no link.
+
    Fixtures are synthetic, always (AGENTS.md, "Preserve old data").
 */
 'use strict';
@@ -94,8 +101,9 @@ test('the module touches no storage', () => {
     'strat-core.js is a pure data module — sir-ks02.html owns the write');
 });
 
-test('exports exactly the reader pair and the writer pair', () => {
-  assert.deepEqual(Object.keys(S).sort(), ['stratText', 'stratsFor', 'withStrat', 'withoutStrat']);
+test('exports exactly the readers and the two writer pairs', () => {
+  assert.deepEqual(Object.keys(S).sort(), ['linkChoices', 'linkRefusal', 'stratLink', 'stratText', 'stratsFor',
+    'withStrat', 'withStratOrigin', 'withoutStrat', 'withoutStratOrigin']);
 });
 
 // ── stratText ──────────────────────────────────────────────────────────────
@@ -363,4 +371,287 @@ test('deleting a parent’s STRAT takes it off every descendant at once', () => 
   assert.deepEqual(ids(S.stratsFor(33, next)), [30, 33]);
   assert.deepEqual(ids(S.stratsFor(32, next)), [30]);
   assert.deepEqual(ids(S.stratsFor(31, next)), [30]);
+});
+
+// ── spreading from a mind map above (2026-11-10) ───────────────────────────
+//
+// The user's case, in synthetic form: ICS (anchor) → CORE ICS (anchor) →
+// ICS strategy, which holds the STRAT meant for all of ICS, beside Learning
+// system (another branch under ICS) with a child of its own, a child under
+// ICS strategy, Extra Brain above ICS, and Drums outside the tree.
+const ICS = (strat = { text: 'Backbone before detail', createdAt: NOW, updatedAt: NOW, originId: 1 }) => [
+  mm(0, 'Extra Brain', { type: 'anchor' }),
+  mm(1, 'ICS', { type: 'anchor', parentIds: [0] }),
+  mm(2, 'CORE ICS', { type: 'anchor', parentIds: [1] }),
+  mm(3, 'ICS strategy', { parentIds: [2], strat }),
+  mm(4, 'Learning system', { parentIds: [1] }),
+  mm(5, 'Encoding', { parentIds: [4] }),
+  mm(6, 'Strategy detail', { parentIds: [3] }),
+  mm(7, 'Drums', { strat: rec('Count aloud') })
+];
+const unlinked = () => ICS(rec('Backbone before detail'));
+const view = list => list.map(s => [s.mm.id, s.own, s.depth, s.origin ? s.origin.id : null, s.hosted]);
+
+test('a linked STRAT reaches its origin and EVERY mind map under it, as the writer’s, from the origin’s depth', () => {
+  const mms = deepFreeze(ICS());
+  assert.deepEqual(view(S.stratsFor(1, mms)), [[3, false, 0, 1, true]], 'ICS shows it as the STRAT spreading from it');
+  assert.deepEqual(view(S.stratsFor(2, mms)), [[3, false, 1, 1, false]], 'CORE ICS, one under ICS');
+  assert.deepEqual(view(S.stratsFor(4, mms)), [[3, false, 1, 1, false]], 'Learning system — another branch under ICS');
+  assert.deepEqual(view(S.stratsFor(5, mms)), [[3, false, 2, 1, false]], 'Encoding, two under ICS');
+  assert.deepEqual(view(S.stratsFor(6, mms)), [[3, false, 3, 1, false]], 'a child of the writer sees it because it is under ICS');
+  assert.equal(S.stratsFor(1, mms)[0].mm, mms[3], 'the entry names the mind map it is WRITTEN on');
+  assert.equal(S.stratsFor(1, mms)[0].text, 'Backbone before detail');
+});
+
+test('a linked STRAT never reaches above its origin, or outside it', () => {
+  const mms = ICS();
+  assert.deepEqual(S.stratsFor(0, mms), [], 'Extra Brain is above ICS');
+  assert.deepEqual(texts(S.stratsFor(7, mms)), ['Count aloud'], 'Drums is outside the tree');
+});
+
+test('the writer shows its linked STRAT ONCE, as its own, last — never again as spreading from above', () => {
+  assert.deepEqual(view(S.stratsFor(3, ICS())), [[3, true, 0, 1, false]]);
+});
+
+test('unlinked, the same STRAT spreads from the writer as it always did', () => {
+  const mms = unlinked();
+  assert.deepEqual(S.stratsFor(1, mms), []);
+  assert.deepEqual(S.stratsFor(4, mms), [], 'another branch under ICS sees nothing');
+  assert.deepEqual(view(S.stratsFor(6, mms)), [[3, false, 1, null, false]]);
+  assert.deepEqual(view(S.stratsFor(3, mms)), [[3, true, 0, null, false]]);
+});
+
+test('linked STRATs take their place among the others by the ORIGIN’s depth', () => {
+  const mms = ICS();
+  mms[0].strat = rec('Extra Brain first');
+  mms[2].strat = rec('Core first');
+  assert.deepEqual(texts(S.stratsFor(5, mms)), ['Extra Brain first', 'Backbone before detail'],
+    'Encoding: Extra Brain (3 up), then ICS strategy’s from ICS (2 up)');
+  assert.deepEqual(texts(S.stratsFor(6, mms)), ['Extra Brain first', 'Backbone before detail', 'Core first'],
+    'Strategy detail: ICS (3 up) before CORE ICS (2 up), though it is written on its parent');
+});
+
+test('at one origin, the STRAT written there comes first, then those spreading from it in stored order', () => {
+  // Two claims on one origin can only arrive from a race between tabs or a
+  // hand-edited file; both are SHOWN, never one hidden behind the other.
+  const mms = ICS();
+  mms.push(mm(8, 'Second writer', { parentIds: [1], strat: Object.assign(rec('Second claim'), { originId: 1 }) }));
+  mms[1].strat = rec('ICS’s own');
+  assert.deepEqual(texts(S.stratsFor(4, mms)), ['ICS’s own', 'Backbone before detail', 'Second claim']);
+  assert.deepEqual(view(S.stratsFor(1, mms)), [[3, false, 0, 1, true], [8, false, 0, 1, true], [1, true, 0, null, false]]);
+});
+
+test('a writer moved out from under its origin keeps spreading from it — the user’s choice', () => {
+  const mms = ICS();
+  mms[3].parentIds = [7];   // ICS strategy now sits under Drums
+  assert.deepEqual(view(S.stratsFor(4, mms)), [[3, false, 1, 1, false]], 'Learning system still shows it');
+  assert.deepEqual(view(S.stratsFor(3, mms)), [[7, false, 1, null, false], [3, true, 0, 1, false]],
+    'the writer still lists it, as its own, wherever it spreads from');
+  assert.deepEqual(texts(S.stratsFor(6, mms)), ['Count aloud'], 'its child is no longer under ICS, so it no longer sees it');
+  assert.deepEqual(S.stratLink(3, mms), { originId: 1, origin: mms[1], lost: false, above: false });
+});
+
+test('an origin that names nothing reads as no link: it spreads from the writer, and the key is kept', () => {
+  const mms = deepFreeze(ICS().filter(m => m.id !== 1));
+  assert.deepEqual(view(S.stratsFor(6, mms)), [[3, false, 1, null, false]]);
+  assert.deepEqual(view(S.stratsFor(3, mms)), [[3, true, 0, null, false]]);
+  assert.deepEqual(S.stratLink(3, mms), { originId: 1, origin: null, lost: true, above: false });
+  assert.equal(mms[2].strat.originId, 1, 'read, never repaired');
+});
+
+test('an origin naming the writer itself reads as no link', () => {
+  const mms = ICS(Object.assign(rec('Self'), { originId: 3 }));
+  assert.deepEqual(view(S.stratsFor(6, mms)), [[3, false, 1, null, false]]);
+  assert.deepEqual(S.stratLink(3, mms), { originId: 3, origin: null, lost: true, above: false });
+});
+
+test('the link is ONE hop: an origin’s own link does not carry a STRAT further', () => {
+  // CORE ICS's STRAT spreads from ICS; ICS strategy's, from CORE ICS. Only a
+  // hand-edited file can store the second (CORE ICS has a STRAT, so the
+  // writer refuses it), and it must still read without following a chain.
+  const mms = ICS(Object.assign(rec('Leaf’s'), { originId: 2 }));
+  mms[2].strat = Object.assign(rec('Core’s'), { originId: 1 });
+  assert.deepEqual(texts(S.stratsFor(4, mms)), ['Core’s'], 'Learning system: only what spreads from ICS');
+  assert.deepEqual(texts(S.stratsFor(2, mms)), ['Leaf’s', 'Core’s']);
+});
+
+test('a link loop between two writers terminates — each reads one hop', () => {
+  const mms = [
+    mm(1, 'A', { parentIds: [2], strat: Object.assign(rec('A'), { originId: 2 }) }),
+    mm(2, 'B', { parentIds: [1], strat: Object.assign(rec('B'), { originId: 1 }) })
+  ];
+  assert.deepEqual(view(S.stratsFor(1, mms)), [[2, false, 0, 1, true], [1, true, 0, 2, false]]);
+  assert.deepEqual(view(S.stratsFor(2, mms)), [[1, false, 0, 2, true], [2, true, 0, 1, false]]);
+});
+
+test('an origin id is compared as stored: the string "1" is not mind map 1', () => {
+  const mms = ICS(Object.assign(rec('Typed'), { originId: '1' }));
+  assert.deepEqual(S.stratsFor(1, mms), []);
+  assert.equal(S.stratLink(3, mms).lost, true);
+});
+
+test('only a STRAT with text carries a link; null is no link; junk around it never throws', () => {
+  assert.deepEqual(S.stratsFor(1, ICS({ text: '   ', originId: 1 })), [], 'blank text is no STRAT, linked or not');
+  assert.equal(S.stratLink(3, ICS({ text: '  ', originId: 1 })), null);
+  assert.equal(S.stratLink(3, ICS(Object.assign(rec('x'), { originId: null }))), null);
+  assert.equal(S.stratLink(3, ICS(rec('x'))), null);
+  assert.equal(S.stratLink(3, ICS('bare string')), null, 'a bare string has nowhere to keep one');
+  assert.equal(S.stratLink(99, ICS()), null);
+  for (const v of [undefined, null, 'mms', {}]) assert.equal(S.stratLink(3, v), null);
+  for (const o of [{}, [], [1], true, 0, NaN])
+    assert.doesNotThrow(() => S.stratsFor(1, ICS(Object.assign(rec('x'), { originId: o }))), JSON.stringify(o));
+});
+
+// ── linkRefusal / linkChoices ──────────────────────────────────────────────
+
+test('any mind map above, at ANY depth, may be chosen while its slot is free', () => {
+  const mms = unlinked();
+  assert.equal(S.linkRefusal(mms, 3, 2), null, 'CORE ICS, one up');
+  assert.equal(S.linkRefusal(mms, 3, 1), null, 'ICS, two up');
+  assert.equal(S.linkRefusal(mms, 3, 0), null, 'Extra Brain, three up');
+});
+
+test('linkRefusal names why: none, self, missing, not-above, own, taken', () => {
+  const mms = unlinked();
+  assert.deepEqual(S.linkRefusal(mms, 4, 1), { code: 'none' }, 'Learning system has no STRAT to spread');
+  assert.deepEqual(S.linkRefusal(mms, 99, 1), { code: 'none' });
+  assert.deepEqual(S.linkRefusal(ICS('bare string'), 3, 1), { code: 'none' }, 'a bare string cannot carry a link');
+  assert.deepEqual(S.linkRefusal(mms, 3, 3), { code: 'self' });
+  assert.deepEqual(S.linkRefusal(mms, 3, 404), { code: 'missing' });
+  assert.deepEqual(S.linkRefusal(mms, 3, '1'), { code: 'missing' }, 'the string "1" names nothing');
+  assert.deepEqual(S.linkRefusal(mms, 3, 4), { code: 'not-above' }, 'a sibling branch');
+  assert.deepEqual(S.linkRefusal(mms, 3, 6), { code: 'not-above' }, 'its own child');
+  assert.deepEqual(S.linkRefusal(mms, 3, 7), { code: 'not-above' }, 'an unrelated mind map');
+  const owned = unlinked(); owned[1].strat = rec('ICS has one');
+  assert.deepEqual(S.linkRefusal(owned, 3, 1), { code: 'own', by: owned[1] });
+  const taken = unlinked();
+  taken.push(mm(8, 'First writer', { parentIds: [1], strat: Object.assign(rec('First'), { originId: 1 }) }));
+  assert.deepEqual(S.linkRefusal(taken, 3, 1), { code: 'taken', by: taken[8] });
+  for (const v of [undefined, null, 'mms', {}]) assert.deepEqual(S.linkRefusal(v, 3, 1), { code: 'none' });
+});
+
+test('an origin whose own STRAT is itself linked elsewhere still has its slot taken', () => {
+  const mms = unlinked();
+  mms[2].strat = Object.assign(rec('Core’s, spreading from ICS'), { originId: 1 });
+  assert.deepEqual(S.linkRefusal(mms, 3, 2), { code: 'own', by: mms[2] });
+  assert.deepEqual(S.linkRefusal(mms, 3, 1), { code: 'taken', by: mms[2] });
+});
+
+test('the origin it already spreads from is not refused', () => {
+  assert.equal(S.linkRefusal(ICS(), 3, 1), null);
+});
+
+test('a writer moved away cannot choose its old origin anew, and keeps the link it has', () => {
+  const mms = ICS(); mms[3].parentIds = [7];
+  assert.deepEqual(S.linkRefusal(mms, 3, 1), { code: 'not-above' });
+  assert.equal(S.withStratOrigin(mms, 3, 1), mms);
+  assert.equal(S.stratsFor(4, mms).length, 1, 'still spreading from ICS');
+});
+
+test('linkChoices lists every mind map above, nearest first, each with the refusal the writer gives', () => {
+  const mms = unlinked(); mms[0].strat = rec('Extra Brain’s');
+  assert.deepEqual(S.linkChoices(3, mms).map(c => [c.mm.id, c.depth, c.refusal && c.refusal.code]),
+    [[2, 1, null], [1, 2, null], [0, 3, 'own']]);
+  assert.equal(S.linkChoices(3, mms)[0].mm, mms[2], 'the stored record');
+  assert.deepEqual(S.linkChoices(1, mms).map(c => [c.mm.id, c.refusal.code]), [[0, 'none']],
+    'ICS has no STRAT to spread, and its one row says so first');
+  assert.deepEqual(S.linkChoices(0, mms), [], 'nothing above the top');
+  assert.deepEqual(S.linkChoices(99, mms), []);
+  for (const v of [undefined, null, 'mms', {}]) assert.deepEqual(S.linkChoices(3, v), []);
+});
+
+test('linkChoices terminates on a parent cycle and never offers the mind map itself', () => {
+  const mms = [
+    mm(36, 'Loop A', { parentIds: [37], strat: rec('A') }),
+    mm(37, 'Loop B', { parentIds: [36] })
+  ];
+  assert.deepEqual(S.linkChoices(36, mms).map(c => [c.mm.id, c.refusal]), [[37, null]]);
+});
+
+// ── withStratOrigin / withoutStratOrigin ───────────────────────────────────
+
+test('withStratOrigin writes originId and NOTHING else — not the text, not either time, not an unknown key', () => {
+  const base = unlinked(); base[3].strat.colour = 'violet'; base[3].future = 'kept';
+  const mms = deepFreeze(base);
+  const next = S.withStratOrigin(mms, 3, 1);
+  assert.notEqual(next, mms);
+  assert.deepEqual(next[3].strat, { text: 'Backbone before detail', createdAt: NOW, updatedAt: NOW, colour: 'violet', originId: 1 });
+  assert.equal(next[3].future, 'kept');
+  next.forEach((m, i) => { if (i !== 3) assert.equal(m, mms[i], 'record ' + i + ' untouched'); });
+  assert.equal(mms[3].strat.originId, undefined, 'the input is not mutated');
+  assert.equal(typeof next[3].strat.originId, 'number', 'stored as the id is stored');
+});
+
+test('withStratOrigin REFUSES every refusal — the input comes back', () => {
+  const mms = deepFreeze(unlinked());
+  for (const [id, origin] of [[4, 1], [3, 3], [3, 404], [3, '1'], [3, 4], [3, 6], [3, 7], [99, 1]])
+    assert.equal(S.withStratOrigin(mms, id, origin), mms, id + ' → ' + JSON.stringify(origin));
+  const owned = unlinked(); owned[1].strat = rec('ICS has one'); deepFreeze(owned);
+  assert.equal(S.withStratOrigin(owned, 3, 1), owned, 'an origin with its own STRAT');
+  const taken = unlinked();
+  taken.push(mm(8, 'First writer', { parentIds: [1], strat: Object.assign(rec('First'), { originId: 1 }) }));
+  deepFreeze(taken);
+  assert.equal(S.withStratOrigin(taken, 3, 1), taken, 'an origin another STRAT already spreads from');
+  for (const v of [undefined, null, 'mms', {}]) assert.equal(S.withStratOrigin(v, 3, 1), v);
+});
+
+test('withStratOrigin writes nothing when it already spreads from there', () => {
+  const mms = deepFreeze(ICS());
+  assert.equal(S.withStratOrigin(mms, 3, 1), mms);
+});
+
+test('withStratOrigin can move a link to another free mind map above', () => {
+  const next = S.withStratOrigin(deepFreeze(ICS()), 3, 2);
+  assert.equal(next[3].strat.originId, 2);
+  assert.deepEqual(S.stratsFor(4, next), [], 'Learning system is not under CORE ICS');
+  assert.equal(S.stratsFor(2, next)[0].hosted, true);
+});
+
+test('withoutStratOrigin deletes the KEY — never null — and keeps everything else', () => {
+  const base = ICS(); base[3].strat.colour = 'violet';
+  const mms = deepFreeze(base);
+  const next = S.withoutStratOrigin(mms, 3);
+  assert.equal(Object.prototype.hasOwnProperty.call(next[3].strat, 'originId'), false);
+  assert.deepEqual(next[3].strat, { text: 'Backbone before detail', createdAt: NOW, updatedAt: NOW, colour: 'violet' });
+  next.forEach((m, i) => { if (i !== 3) assert.equal(m, mms[i], 'record ' + i + ' untouched'); });
+  assert.equal(mms[3].strat.originId, 1, 'the input is not mutated');
+  assert.deepEqual(S.stratsFor(4, next), [], 'Learning system stops showing it');
+  assert.deepEqual(texts(S.stratsFor(6, next)), ['Backbone before detail'], 'it spreads from ICS strategy again');
+});
+
+test('unlinking and linking again restores exactly what was stored', () => {
+  const mms = deepFreeze(ICS());
+  assert.deepEqual(S.withStratOrigin(S.withoutStratOrigin(mms, 3), 3, 1), mms);
+});
+
+test('withoutStratOrigin changes nothing with no key, no such mind map, or no list — and clears a lost link', () => {
+  const mms = deepFreeze(unlinked());
+  assert.equal(S.withoutStratOrigin(mms, 3), mms);
+  assert.equal(S.withoutStratOrigin(mms, 99), mms);
+  const linked = deepFreeze(ICS());
+  assert.equal(S.withoutStratOrigin(linked, '3'), linked, 'the string "3" is not mind map 3');
+  for (const v of [undefined, null, 'mms', {}]) assert.equal(S.withoutStratOrigin(v, 3), v);
+  const lost = ICS().filter(m => m.id !== 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(S.withoutStratOrigin(lost, 3)[2].strat, 'originId'), false,
+    'a link to a deleted mind map can still be cleared');
+});
+
+// ── the other writers, beside a link ───────────────────────────────────────
+
+test('withStrat REFUSES to create a STRAT on a mind map another STRAT spreads from — its one is taken', () => {
+  const mms = deepFreeze(ICS());
+  assert.equal(S.withStrat(mms, 1, 'ICS’s own', LATER), mms);
+  assert.notEqual(S.withStrat(mms, 4, 'Learning system’s own', LATER), mms, 'a mind map merely UNDER the origin may');
+});
+
+test('withStrat edits a linked STRAT’s words and keeps its link', () => {
+  const next = S.withStrat(deepFreeze(ICS()), 3, 'Backbone, then detail', LATER);
+  assert.deepEqual(next[3].strat, { text: 'Backbone, then detail', createdAt: NOW, updatedAt: LATER, originId: 1 });
+  assert.equal(S.stratsFor(4, next)[0].text, 'Backbone, then detail', 'the edit reaches everything under ICS at once');
+});
+
+test('deleting a linked STRAT takes it off the origin and everything under it', () => {
+  const next = S.withoutStrat(ICS(), 3);
+  for (const id of [1, 2, 3, 4, 5, 6]) assert.deepEqual(S.stratsFor(id, next), [], 'mind map ' + id);
+  assert.notEqual(S.withStrat(next, 1, 'ICS’s own now', LATER), next, 'and ICS may hold its own again');
 });

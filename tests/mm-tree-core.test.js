@@ -141,7 +141,7 @@ test('the module touches no storage and coerces no id', () => {
 
 test('exports exactly the readers and the three writers', () => {
   assert.deepEqual(Object.keys(T).sort(), ['childIndex', 'childrenOf', 'descendantIds', 'isPath', 'moveRefusal',
-    'parentsOf', 'pathTo', 'roots', 'withArranged', 'withNested']);
+    'parentsOf', 'pathTo', 'roots', 'withArranged', 'withNested', 'withPlaced']);
 });
 
 // ── readers ────────────────────────────────────────────────────────────────
@@ -386,4 +386,110 @@ test('withArranged: a two-parent mind map is a sibling under EITHER parent', () 
   // none, so arrange it against A3 (P Mon) — they share P Mon.
   const after = T.withArranged(tree, [10], 8, false);
   assert.deepEqual(ids(T.childrenOf(after, 4)), [6, 7, 8, 10]);
+});
+
+// ── withPlaced: one occurrence of a tree row, parent AND drawn position ─────
+
+test('withPlaced reorders within the same parent', () => {
+  const tree = deepFreeze(TREE());
+  const after = T.withPlaced(tree, 6, 4, 4, 8, false);
+  assert.deepEqual(ids(T.childrenOf(after, 4)), [7, 10, 8, 6]);
+  assert.deepEqual(after.find(m => m.id === 6).parentIds, [4]);
+});
+
+for (const [where, anchor, before, expected] of [
+  ['first', 6, true, [3, 6, 7, 10, 8]],
+  ['middle', 7, false, [6, 7, 3, 10, 8]],
+  ['last', null, false, [6, 7, 10, 8, 3]]
+]) test('withPlaced moves to another parent at the ' + where + ' position', () => {
+  const source = TREE();
+  // Last must require a real reorder too: store Bio before P Mon's children.
+  const tree = deepFreeze(where === 'last' ? [source[8], ...source.filter(m => m.id !== 3)] : source);
+  const after = T.withPlaced(tree, 3, 1, 4, anchor, before);
+  assert.deepEqual(ids(T.childrenOf(after, 4)), expected, 'the destination draws the chosen position');
+  assert.deepEqual(after.find(m => m.id === 3).parentIds, [4]);
+  assert.deepEqual(ids(T.childrenOf(after, 1)), [2]);
+});
+
+test('withPlaced moves to top level at a drawn position', () => {
+  const after = T.withPlaced(deepFreeze(TREE()), 6, 4, null, 9, false);
+  assert.deepEqual(ids(T.roots(after)), [1, 9, 6]);
+  assert.deepEqual(after.find(m => m.id === 6).parentIds, []);
+});
+
+test('withPlaced moves from top level into a parent', () => {
+  const after = T.withPlaced(deepFreeze(TREE()), 9, null, 4, 7, true);
+  assert.deepEqual(ids(T.childrenOf(after, 4)), [6, 9, 7, 10, 8]);
+  assert.deepEqual(after.find(m => m.id === 9).parentIds, [4]);
+  assert.deepEqual(ids(T.roots(after)), [1]);
+});
+
+test('withPlaced enters a childless parent and preserves unknown keys', () => {
+  const tree = deepFreeze(TREE().map(m => m.id === 6 ? { ...m, future: { keep: true } } : m));
+  const after = T.withPlaced(tree, 6, 4, 9, null, false);
+  assert.deepEqual(after.find(m => m.id === 6), { ...tree.find(m => m.id === 6), parentIds: [9] });
+  assert.deepEqual(ids(T.childrenOf(after, 9)), [6]);
+  after.forEach(m => { if (m.id !== 6) assert.equal(m, tree.find(x => x.id === m.id)); });
+});
+
+test('withPlaced keeps other parents and replaces only the drawn parent in its place', () => {
+  const after = T.withPlaced(deepFreeze(TREE()), 10, 5, 1, 3, false);
+  assert.deepEqual(after.find(m => m.id === 10).parentIds, [4, 1]);
+  assert.deepEqual(ids(T.childrenOf(after, 1)), [2, 3, 10]);
+  assert.deepEqual(ids(T.childrenOf(after, 5)), []);
+  assert.equal(T.childrenOf(after, 4).some(m => m.id === 10), true);
+});
+
+test('withPlaced to top level removes just the drawn parent of a multi-parent row', () => {
+  const after = T.withPlaced(deepFreeze(TREE()), 10, 4, null, 9, false);
+  assert.deepEqual(after.find(m => m.id === 10).parentIds, [5]);
+  assert.deepEqual(ids(T.roots(after)), [1, 9], 'its other parent still owns it; no synthetic root is made');
+});
+
+for (const [reason, parent, anchor] of [['self', 2, 4], ['inside', 4, 6], ['missing', 999, null]]) {
+  test('withPlaced refuses ' + reason + ' through the same moveRefusal', () => {
+    const tree = deepFreeze(TREE());
+    assert.equal(T.withPlaced(tree, 2, 1, parent, anchor, true), tree);
+    assert.equal(T.moveRefusal(tree, [2], 1, parent), reason);
+  });
+}
+
+test('withPlaced refuses a disappeared or foreign sibling anchor atomically', () => {
+  const tree = deepFreeze(TREE());
+  for (const anchor of [999, 9]) assert.equal(T.withPlaced(tree, 3, 1, 4, anchor, true), tree);
+});
+
+test('withPlaced returns the very input for a drawn no-op across unrelated stored records', () => {
+  const tree = deepFreeze(TREE());
+  assert.equal(T.withPlaced(tree, 6, 4, 4, 7, true), tree);
+  assert.equal(T.withPlaced(tree, 6, 4, 4, 6, false), tree);
+  assert.equal(T.withPlaced(tree, 8, 4, 4, null, false), tree);
+});
+
+test('withPlaced root reorder is judged by roots, including a no-op with children stored between', () => {
+  const tree = deepFreeze(TREE());
+  assert.deepEqual(ids(T.roots(T.withPlaced(tree, 9, null, null, 1, true))), [9, 1]);
+  assert.equal(T.withPlaced(tree, 1, null, null, 9, true), tree);
+});
+
+test('withPlaced preserves numeric and string ids as distinct values', () => {
+  const tree = deepFreeze([mm(10, 'Number'), mm('10', 'String'),
+    mm(11, 'Moving', { parentIds: [10] }), mm('11', 'Sibling', { parentIds: ['10'] })]);
+  const after = T.withPlaced(tree, 11, 10, '10', '11', false);
+  assert.deepEqual(after.find(m => m.id === 11).parentIds, ['10']);
+  assert.deepEqual(ids(T.childrenOf(after, '10')), ['11', 11]);
+});
+
+test('withPlaced terminates on a parent cycle and can arrange its drawn root', () => {
+  const tree = deepFreeze(LOOPED());
+  assert.equal(T.withPlaced(tree, 21, null, 22, null, false), tree, 'own cyclic branch refused');
+  const after = T.withPlaced(tree, 21, null, null, 1, true);
+  assert.deepEqual(ids(T.roots(after)), [21, 1], 'a synthetic root is a drawn root for arrangement');
+  assert.deepEqual(after.find(m => m.id === 21).parentIds, [20], 'root reorder does not break the loop');
+});
+
+test('withPlaced is total and refuses a missing dragged id', () => {
+  for (const junk of [null, undefined, 42, {}, [], [null]]) assert.equal(T.withPlaced(junk, 999, null, null, null, false), junk);
+  const tree = deepFreeze(TREE());
+  assert.equal(T.withPlaced(tree, 999, 1, 4, 6, true), tree);
 });

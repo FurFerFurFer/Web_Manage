@@ -327,8 +327,12 @@
     if (want.indexOf(targetId) >= 0) return mms;
     want = want.filter(function (id) { return byId.has(id); });
     if (!want.length) return mms;
+    // A named list is the actual drawn sibling set, including DIRECTORY's
+    // synthetic roots for stranded cycles. An unnamed list keeps LIST's rule.
+    var drawn = listId === undefined ? null : (listId === null ? roots(mms) : childrenOf(mms, listId));
     for (var i = 0; i < want.length; i++) {
-      if (!siblings(byId.get(want[i]), target, byId)) return mms;
+      if (drawn ? !drawn.some(function (m) { return m.id === want[i]; }) ||
+        !drawn.some(function (m) { return m.id === targetId; }) : !siblings(byId.get(want[i]), target, byId)) return mms;
     }
     // the FIRST stored record of each id moves, as findIndex found it inline
     var picked = new Set();
@@ -348,14 +352,34 @@
     var at = before ? ti : ti + 1;
     var next = rest.slice(0, at).concat(block, rest.slice(at));
     if (listId !== undefined) {
-      var was = childrenOf(mms, listId);
-      var now = childrenOf(next, listId);
+      var was = drawn;
+      var now = listId === null ? roots(next) : childrenOf(next, listId);
       var drawnSame = was.length === now.length &&
         was.every(function (m, i) { return m.id === now[i].id; });
       return drawnSame ? mms : next;
     }
     for (var k = 0; k < next.length; k++) if (next[k] !== mms[k]) return next;
     return mms;
+  }
+
+  // Place ONE drawn occurrence: leave only its drawn parent, then arrange in
+  // the destination's drawn list. targetId is a sibling anchor; null appends
+  // (and also handles an empty destination). A stale anchor aborts both steps.
+  function withPlaced(mms, id, fromId, parentId, targetId, before) {
+    if (!isList(mms)) return mms;
+    var to = parentId === undefined ? null : parentId;
+    var why = moveRefusal(mms, [id], fromId, to);
+    // 'same' is not a refused placement: it is the ordinary reorder path.
+    if (why !== null && why !== 'same') return mms;
+    var next = to === fromId ? mms : withNested(mms, [id], fromId, to);
+    var drawn = to === null ? roots(next) : childrenOf(next, to);
+    if (targetId != null && !drawn.some(function (m) { return m.id === targetId; })) return mms;
+    // Leaving one of several parents for Top level keeps the others, exactly
+    // as withNested does; it does not create a second, top-level occurrence.
+    if (!drawn.some(function (m) { return m.id === id; })) return next;
+    var others = drawn.filter(function (m) { return m.id !== id; });
+    var anchor = targetId == null ? (others.length ? others[others.length - 1].id : null) : targetId;
+    return anchor === null ? next : withArranged(next, [id], anchor, targetId == null ? false : before, to);
   }
 
   global.TrackMMTree = {
@@ -368,6 +392,7 @@
     isPath: isPath,
     moveRefusal: moveRefusal,
     withNested: withNested,
-    withArranged: withArranged
+    withArranged: withArranged,
+    withPlaced: withPlaced
   };
 })(window);

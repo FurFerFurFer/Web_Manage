@@ -13,8 +13,9 @@ Read this file when you need it, not by default:
 
 **The durable lessons are not here.** The rules these entries taught — about fail-first
 evidence, doctored baselines, reading a failure message, and this machine's test
-environment — live in `AGENTS.md` under "Testing Lessons", which stays in context. What
-remains here is the evidence behind them.
+environment — live in `docs/TESTING-LESSONS.md` (in `AGENTS.md` under "Testing Lessons"
+until 2026-11-10, which now keeps only the five that must stay in context). What remains
+here is the evidence behind them.
 
 Entries are **append-only**; never rewrite or delete one, because the point of an entry is
 that it recorded what was true when the work was done. Order is broadly chronological
@@ -5306,3 +5307,194 @@ a Note to self block and a print rule in `styles/styles.css` (`?v=24`). `index.h
 hit-tested in headless Chrome only); a real Escape from the notes calendar or the Journey book
 with the panel open (the case stands in an earlier `preventDefault`); the open panel across local
 midnight; print output on paper; the live Firebase project; two devices.
+
+## 2026-11-10 — AGENTS.md split: feature contracts moved to `docs/contracts/`
+
+Documentation only; no source, test or stored-data change. `AGENTS.md` (which `CLAUDE.md`
+symlinks to) had reached 173,132 characters against Claude Code's 40,000-character warning,
+and Codex truncates far below that. 115,616 of it was "Current Data Contract": every feature
+since 2026-09-19 had appended its own "N rules follow" block there (96,768 → 171,628 in the
+commits between 4d04ed7 and c6125eb).
+
+**What moved, word for word.** The per-feature blocks into nine files under
+`docs/contracts/` (`calendar-items`, `documentations`, `timetable`, `quests`,
+`milestones-mindmaps`, `notes-journal`, `storages-source-dumps`, `appearance`,
+`destructive-controls`); the full file table and the `?v=` paragraph into
+`docs/ARCHITECTURE.md`; "Testing Lessons", workflow step 8's checklists and the baseline
+paragraph with its run-time history into `docs/TESTING-LESSONS.md`. `AGENTS.md` keeps the
+core storage rules, a "Feature contracts" index saying which file to read before touching
+what, and a rule that a new feature rule goes in its contract file. Result: 39,000
+characters (`wc -m`).
+
+**How "nothing deleted" was checked.** The split was scripted on line anchors, and the
+script compared every non-blank line of the original with the union of the twelve output
+files. 61 lines are in none of them, all reworded on purpose: the 25-file `rg` list (now
+"the five pages and every file in `scripts/`", a superset), the 25 `node --check` lines (now
+one loop over `scripts/*.js`), the sentence listing which suites are swept (now points at
+`tests/run.js`), six lines of the "verification evidence" bullet's history (the log's own
+header tells it), and the two "Update `AGENTS.md`…" lines, which now name the contract files.
+
+**Not covered.** No test run: nothing executable changed. Another session had uncommitted
+STRAT work in the tree, including an edit to the STRAT block of `AGENTS.md`; that edit was
+carried into `docs/contracts/milestones-mindmaps.md` as it stood. Whether agents reliably
+open a contract file before touching its area is a behaviour only later sessions can show.
+
+## 2026-11-10 — Knowledge Record: a STRAT can spread from a mind map above it
+
+The user's proposal: a STRAT written in a child ("ICS strategy") can be linked to any mind map
+above it ("ICS"), and then spreads from that parent alone; the parent can add none of its own;
+wherever it shows it names the child, with a link. Their three choices: a moved child keeps
+spreading from the parent (1a), every STRAT name is a link (2a), unlinking asks (3b). Stored as
+`originId` on the writer's `strat` — no slot field, nothing migrated. `scripts/strat-core.js`
+(`?v=2` on both pages) gains `stratLink`, `linkRefusal`, `linkChoices`, `withStratOrigin` and
+`withoutStratOrigin`; `stratsFor` now lists every STRAT whose origin is at or above the mind map,
+one hop. `sir-ks02.html`: the `↑ spread from…` picker, `unlink`, the `FROM` card, name links,
+`linkStrat` / `unlinkStrat`, the delete prompt naming the origin, and every `<MMDetail>` keyed by
+mind map (the two fixed `initialMode`s now read `selectedMMMode`, which is what every opener of
+those two views already set). `progress.html`: the Schedule's STRAT panel names the origin and
+links both names.
+
+- `tests/strat-core.test.js`: **63** cases (33 → 63), all passing.
+- Offline doctored baselines, one rule each in a scratch root, behind an undoctored CONTROL
+  (63/63): `originId` ignored — 14 fail; `withStratOrigin` skipping `linkRefusal` — only
+  "REFUSES every refusal"; unlink writing `null` — the two delete-the-key cases; a moved writer
+  no longer spreading (not 1a) — the two moved-writer cases; `withStrat` creating on a mind map
+  one spreads from — only that case. The last four sets are pairwise disjoint. The writer listed
+  twice fails 16 — nine of them pre-existing cases, which is the proof the `w === self` skip is
+  what keeps an UNLINKED STRAT from being drawn twice as well.
+- `tests/browser.test.js`: 13 new `STRAT SPREAD` cases (KS02 ×11, DIRECTORY, PROGRESS); the
+  existing `STRAT_VIEW` helper now reads the name from `[data-strat-name]` and leaves the new
+  name links out of its control count. Narrowed to `STRAT` (a task-owned preload): **28/28** in
+  2 min 40 s.
+- Browser doctored baselines, narrowed the same way, one at a time behind a CONTROL (28/28,
+  155 s):
+  - `originId` ignored: 9 fail (17, 19–21, 23, 24, 26–28), each on its own claim;
+  - `withStratOrigin` skipping `linkRefusal`: only 18, "a greyed row writes NOTHING" — the row
+    calls the writer and never re-checks, so this case is the writer's guard;
+  - unlink writing `null`: only 22, which read `"originId":null`;
+  - the writer listed twice: 10, seven of them pre-existing STRAT cases;
+  - a moved writer no longer spreading: only 24;
+  - unlink not asking (`sir-ks02.html`): only 21;
+  - the origin keeping its add box: only 19;
+  - the ks03-view `<MMDetail>` unkeyed: only 26, timing out on "ICS, an anchor, opened on INFO
+    with its STRAT section" — the reason the name used to be a label.
+  The six single-case sets are pairwise disjoint.
+- Screenshots at 1280 and 390 px (Grit): the picker with a greyed row, the linked ORIGINAL, the
+  origin's `FROM` card with no add box, a card under ICS saying where it spreads from, and the
+  Schedule panel. Nothing clipped at 390.
+
+**A second session was editing this tree during the runs.** It split `AGENTS.md` (21:25) and
+then changed SRCH → DIRECTORY (`mm-tree-core.js`, its tests, `styles.css`, the tree rows in
+`sir-ks02.html` and cases in `tests/browser.test.js`, 21:31–21:37). The baselines' checksum check
+caught `sir-ks02.html` changing; the doctored roots for CONTROL–D5 served it through a symlink, so
+those runs saw some of that DIRECTORY work. Every CONTROL passed and every failure is on the
+claim its rule names, so the evidence stands, but it is evidence against a tree that also held
+uncommitted work that is not this entry's.
+
+- `node tests/run.js`, run at the user's word while the other session was still at work
+  (21:44:53–22:36:34, 51 min 41 s at load ~3.8–4.2, on mains, no suspend in the journal, HEAD
+  `c6125eb` at both ends): **all 36 suites pass** — `calendar-core` (126), `schema` (68),
+  `notes-core` (37) and `note-to-self-core` (14) under all five zones, `strat-core` **63**,
+  `mm-tree-core` 51 (the other session's), the rest at their previous counts, and **569 browser
+  subtests** (`# tests 570` with the parent), the 13 `STRAT SPREAD` cases among them. The
+  checksum of every `.html`, `.js` and `.css` file, taken before the run, matched at its end
+  except `tests/browser.test.js`, which the other session rewrote at 21:44:55 — two seconds in,
+  while the swept offline suites were still running and before the browser suite loaded it — so
+  the browser run used that one version throughout. `index.html`, `documentations.html` and
+  `true-storage.html` changed after the run ended; they are not this entry's.
+
+**Not covered.** Real touch hardware; the live Firebase project; two devices; the Schedule's
+STRAT links opening a mind map on S&C rather than where its STRAT is (NOTES, Proposal 21).
+
+## 2026-11-10 — SRCH → DIRECTORY: held tree rows reorder and renest
+
+Implemented in the existing `MMDirectoryView` engine, with one new pure writer,
+`TrackMMTree.withPlaced`. It composes `withNested` and `withArranged`; the source parent is the
+row's path, and an insertion uses a sibling anchor against current state. `withArranged` now
+accepts null as the drawn root list, including cycle entry rows. No schema, import/export,
+cloud path or new stored key. The existing ownership/autosave path is unchanged.
+
+**Choices.** CHILDREN blocks remain nest-only over the tree, keeping their existing hit model.
+Tree rows lift one occurrence, not a selected group; filtered rows (any text) and `↻` repeats
+cannot lift. The edge band is `min(10px, row height / 4)` at either end; the remaining middle
+nests. Immediately below an open parent, the line means its first child. At a branch end,
+horizontal x chooses the nearest 14px indent from row-left + 4px, clamped between the following
+and preceding rows' depths. The line and dot are absolute paint, and share the established
+theme tokens and state-selector specificity. The hold remains 400ms, unfold 700ms, and the
+existing 40px edge-scroll band and ghost positioning are reused.
+
+**Checks actually run.**
+
+- `node --check` on every `scripts/*.js` and `tests/browser.test.js`; all passed.
+- All four inline JSX blocks parsed without diagnostics using the already-installed VS Code
+  TypeScript parser in JSX mode. This checks syntax, not React execution or Babel equivalence.
+- `node tests/run.js --offline` returned success, but each file reported only `1..1` under this
+  sandbox's subprocess runner. A probe returned `spawnSync /usr/bin/node EPERM` with empty
+  output. That output was NOT used as per-case evidence. Invoked each offline file directly
+  instead (`node tests/<name>.test.js`), preserving the runner's five timezone sweep and fifteen
+  unswept files: **35 runs, 1,901 assertions, all passing**. Tree suite: **51/51**, up from 33;
+  the other session's STRAT suite is 63/63. Calendar 126, schema 68, notes 37, note-to-self 14
+  were identical in all five zones. No test runner or dependency was changed for the sandbox.
+- `git diff --check`; reviewed task changes against an initial copy as well as Git, so the
+  other session's uncommitted changes were not mistaken for this task's diff. Cache versions:
+  `mm-tree-core.js?v=2` in KS02, `styles.css?v=25` on all five pages and in ARCHITECTURE.
+
+**Offline fail-first evidence.** Scratch roots were `/tmp/track-directory-piuy0ktk/offline-*`;
+`tests/` was copied, never symlinked, and each doctored root changed one rule in
+`scripts/mm-tree-core.js`. The harness rejected a byte-identical doctor. The first attempted
+Node subprocess harness produced empty output because of `spawnSync EPERM`; it supplied no
+evidence. The real runs were direct shell invocations with `TRACK_TEST_ROOT` set, each with
+plan `1..51`; the unchanged CONTROL passed 51/51. Case numbers below refer to that suite.
+
+| Doctor | New cases seen failing | Assertion message / observed wrong value |
+| --- | --- | --- |
+| `no-arrangement`: placement skips `withArranged` | 34–39, 41, 48–50 | 34: `Expected values to be strictly deep-equal`, children `[6,7,10,8]` instead of `[7,10,8,6]`; 35–37: `the destination draws the chosen position`, first/middle/last all wrong; 38: roots `[1,6,9]` instead of `[1,9,6]`; 39: root moved into the parent at the end instead of before 7 |
+| `no-move`: placement skips `withNested` | 35–42, 49 | `the destination draws the chosen position`: moving id 3 is absent; 41 keeps `[4,5]` instead of replacing the drawn parent with `[4,1]` |
+| `stored-noop`: placement omits the named drawn list | 47, 48, 50 | `Expected "actual" to be reference-equal to "expected"`: a visually unchanged placement shifts unrelated stored records; 50's synthetic-root arrangement is refused |
+| `drop-other-parents`: nest discards all old parents | 41, 42 | `Expected values to be strictly deep-equal`: `[1]` instead of `[4,1]`; Top level writes `[]` instead of `[5]` |
+| `self-allowed`: shared self-refusal removed | 43 | `Expected "actual" to be reference-equal to "expected"`: parent `[2]` is written instead of keeping `[1]` |
+| `branch-allowed`: shared descendant-refusal removed | 44, 50 | Same reference-identity failure; cycle case also fails `own cyclic branch refused` |
+| `missing-allowed`: shared missing-target refusal removed | 45 | Same reference-identity failure, parent `[999]` written instead of keeping `[1]` |
+| `stale-anchor`: placement's sibling-anchor guard removed | 46 only | Same reference-identity failure, parent `[4]` written despite a missing anchor |
+| `coerced-parent`: parent id converted with `Number()` | 49 | `Expected values to be strictly deep-equal`: `[10]` instead of `['10']`; the existing structural no-coercion case fails too |
+| `no-root-order`: null list reads children instead of roots | 38, 48, 50 | Wrong root order; 50: `a synthetic root is a drawn root for arrangement`, `[1,21]` instead of `[21,1]` |
+| `empty-rejected`: null sibling anchor rejected | 37, 40 | `the destination draws the chosen position`: id 3 absent; childless destination keeps parent `[4]` instead of `[9]` |
+| `lost-unknown-key`: nest rebuilds rather than spreads | 40 | `Expected values to be strictly deep-equal`: `future: {keep: true}` disappears |
+
+Shared move writers deliberately make some failure sets overlap existing tests. These are
+assertion failures, not missing-export or missing-selector failures. The total-function case
+is a guard. This evidence does not claim that the unrun browser cases are fail-first-proven.
+
+**Browser work authored but NOT verified here.** 27 new `DIRECTORY ROW` cases beside the
+existing DIRECTORY cases use numeric fixtures and real CDP mouse/touch input: reorder,
+renest at a position, first child below an unfolded parent, top-level line, childless middle,
+refusal bytes, no-op line/bytes, click versus hold, separate parent occurrences and horizontal
+depth selection (each mouse and touch); filtering/cycle rows, phone scroll before hold, phone
+hold reorder, hover-unfold, edge scrolling, another tab's mid-drag edit, theme-token line paint
+with no layout shift, and reload. They assert drawn order and stored parents, not just a line.
+
+**Full-suite result and the blocker.** Ran `node tests/run.js` once at the end: it reported
+**1 of 36 suites failed**, the browser layer, before any browser subtests. Running its browser
+file directly to expose the hidden diagnostic failed at setup with
+`listen EPERM: operation not permitted 127.0.0.1`. An earlier isolated Chrome launch probe
+also failed with `setsockopt: Operation not permitted (1)` in crashpad and timed out waiting
+for `DevToolsActivePort`. No workaround was attempted. Mains power read `1`; runtime/test
+MD5 checksums and HEAD `c6125eb` were identical before and after the final run.
+
+The launching session must run `node tests/run.js` outside this sandbox. Browser fail-first
+doctors and the five-page smoke/visual checks are also outstanding; **no browser suite,
+screenshots, Grit/Night paint, phone layout, or real gesture was verified by this session**.
+Real touch hardware, live Firebase and two devices remain uncovered.
+
+**Full suite, run by the launching session outside the sandbox (2026-11-10).** `node tests/run.js`:
+**all 36 suites passed**, 569 of 569 browser subtests, 38 of them `DIRECTORY` cases (the 11
+earlier ones and this entry's 27), 51.6 minutes at load ~2.2. No suspend in the journal for the
+window; the MD5 of `sir-ks02.html`, `scripts/mm-tree-core.js`, `styles/styles.css` and
+`tests/browser.test.js` was the same before and after. Still owed: the browser fail-first
+doctors for the 27 new cases (they have only been seen passing), and any look at the lift,
+ghost and insertion line by eye.
+
+**Other-session work.** Pre-existing STRAT edits in KS02, Progress, tests and docs were kept.
+No source edit region collided. That session appended its STRAT verification entry while this
+task ran; this entry follows it. AGENTS, CONCEPTS, STRAT source/tests and the other session's
+test cases were not edited by this task. No staging, commit, dependency install or deployment.

@@ -15,7 +15,7 @@
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/goal-core.js?v=1"></script>
   <script src="scripts/project-core.js?v=2"></script>
-  <script src="scripts/strat-core.js?v=1"></script>
+  <script src="scripts/strat-core.js?v=2"></script>
   <!-- calendar-core.js is here for the Note to self pop-up ONLY. This page's
        own code never calls TrackCalendar: it keeps its documented twins
        (noteTimed, dlDone, dlCautionDays, the block geometry, refOccupies …),
@@ -30,7 +30,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=24">
+  <link rel="stylesheet" href="styles/styles.css?v=25">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -8482,7 +8482,11 @@
                         )}
                         {/* Read-only, like the Comments panel: a STRAT is edited
                             in the Knowledge Record, inside the mind map it names.
-                            Farthest ancestor first, the mind map's own last. */}
+                            Farthest ancestor first, the mind map's own last. A
+                            STRAT spreading from a mind map above the one it is
+                            written on says so (stratsFor's `origin`). Each name
+                            is a link into the Knowledge Record (?mm=, which
+                            opens that mind map) — the user's choice, 2026-11-10. */}
                         {timelineMode === 'day' && openMMStrats.has(entry.id) && (
                           <div data-mm-strat-panel={entry.id}
                             style={{top:(top+height)+'px',left:'3px',right:'3px',position:'absolute',zIndex:30,borderColor:col+'99'}}
@@ -8501,8 +8505,20 @@
                                       style={{border:`1px solid ${col}30`}}>
                                       <div className="flex items-center gap-1 min-w-0">
                                         <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{backgroundColor: s.mm.color || '#6366f1'}}/>
-                                        <span className="text-[9px] uppercase tracking-widest font-semibold text-gray-400 truncate">{s.mm.name}</span>
+                                        <span className="text-[9px] uppercase tracking-widest font-semibold text-gray-400 truncate">
+                                          <a data-mm-strat-goto={String(s.mm.id)} href={'sir-ks02.html?mm=' + encodeURIComponent(s.mm.id)}
+                                            title={'Open ' + s.mm.name + ' in the Knowledge Record'}
+                                            className="hover:text-white underline decoration-dotted underline-offset-2">{s.mm.name}</a>
+                                        </span>
                                       </div>
+                                      {s.origin && (
+                                        <div data-mm-strat-via={String(s.origin.id)} className="text-[9px] text-gray-500 leading-tight mt-0.5 truncate">
+                                          {s.hosted ? 'spreads from this mind map' : <>spreads from <a data-mm-strat-goto={String(s.origin.id)}
+                                            href={'sir-ks02.html?mm=' + encodeURIComponent(s.origin.id)}
+                                            title={'Open ' + s.origin.name + ' in the Knowledge Record'}
+                                            className="hover:text-white underline decoration-dotted underline-offset-2">{s.origin.name}</a></>}
+                                        </div>
+                                      )}
                                       <p className="text-[11px] text-gray-300 leading-tight mt-0.5 whitespace-pre-wrap break-words">{s.text}</p>
                                     </div>
                                   ))}

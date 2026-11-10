@@ -5129,7 +5129,8 @@ button.cal-doc-origin:hover {
   -webkit-tap-highlight-color: transparent;
 }
 
-.mmdir .mmdir-block {
+.mmdir .mmdir-block,
+.mmdir .mmdir-row {
   position: relative;
   transition:
     transform var(--motion-fast) var(--ease-ui),
@@ -5144,18 +5145,21 @@ button.cal-doc-origin:hover {
   background-color: var(--color-primary-soft);
 }
 
-.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="pressing"] {
+.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="pressing"],
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-state="pressing"] {
   background-color: var(--color-surface-strong);
 }
 
-.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="lifted"] {
+.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="lifted"],
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-state="lifted"] {
   z-index: 1;
   transform: translateY(-3px) scale(1.02);
   background-color: var(--color-surface-strong);
   box-shadow: var(--shadow-float);
 }
 
-.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="placeholder"] {
+.mmdir [data-mmdir-list] .mmdir-block[data-mmdir-state="placeholder"],
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-state="placeholder"] {
   opacity: 0.35;
 }
 
@@ -5192,6 +5196,39 @@ button.cal-doc-origin:hover {
 
 .mmdir .mmdir-block[data-mmdir-hit="after"]::after {
   bottom: -3px;
+}
+
+/* A tree insertion is paint only: no row changes size or position. The dot
+   and line share the chosen depth, including a gap with several legal levels. */
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line]::before,
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line]::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+  background: var(--color-accent-done);
+}
+
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line]::before {
+  left: var(--mmdir-line-left);
+  right: 0;
+  height: 2px;
+}
+
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line]::after {
+  left: calc(var(--mmdir-line-left) - 2px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line="before"]::before { top: -1px; }
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line="before"]::after { top: -3px; }
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line="after"]::before { bottom: -1px; }
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line="after"]::after { bottom: -3px; }
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line][data-mmdir-hit="refused"]::before,
+.mmdir .mmdir-bar .mmdir-row[data-mmdir-line][data-mmdir-hit="refused"]::after {
+  background: var(--color-danger);
 }
 
 /* A mind map on the left that would take the drop, and one that refuses it
@@ -5297,6 +5334,7 @@ button.cal-doc-origin:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .mmdir .mmdir-block,
+  .mmdir .mmdir-row,
   .mmdir .mmdir-ghost-card {
     transition: none;
   }

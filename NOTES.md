@@ -1103,8 +1103,6 @@ user approved, or found while building it. None is authorized.
 ### Left out of the plan
 
 - **A long-press menu.** Notability opens one on a held block; here a hold only lifts.
-- **Dragging rows inside the tree.** The tree is a drop target only; a mind map is moved from a
-  page's CHILDREN list.
 - **Nesting by dropping one block onto another.** A drop between blocks reorders, and nesting
   goes through the tree.
 - **A selection across pages.** Ticks belong to one page, and opening another clears them.
@@ -1177,6 +1175,21 @@ Built on 2026-11-08 (README, "Note to self"). None of these is authorized.
   a cut-off (only the last N days) is the user's call.
 - **Midnight with the panel open.** "Today" is read at each draw, so an open panel shows the new
   day only on its next redraw.
+
+## Proposal 21: STRAT Spread-From Follow-ups
+
+Built on 2026-11-10 (README, "Mind maps and knowledge structure"). None of these is authorized.
+
+- **The Schedule's STRAT links open S&C.** A name in the ◎ STRAT panel is `sir-ks02.html?mm=<id>`,
+  and `?mm=` opens a mind map on its S&C tab — where a strategy's detail may or may not live.
+  Opening on KS03 / INFO instead needs a tab parameter on that link, which True Storage's and the
+  Source Dump's links share.
+- **Moving a link is two steps.** To spread from a different mind map, the user unlinks (which
+  asks) and links again. `withStratOrigin` already re-targets a link; a picker on a linked card
+  would only need to offer it.
+- **Two STRATs claiming one origin.** The writer refuses a second, but two tabs linking different
+  writers to one origin at the same moment, or a hand-edited file, can store both. Both are
+  shown, never one hidden; nothing tells the user which came first.
 
 ## Track World: Computer Feasibility
 

@@ -70,6 +70,17 @@ Dump).
   block shows a STRAT button whenever its mind map has at least one. The app works this way since
   2026-10-25 (README, "Mind maps and knowledge structure").
 
+  **A STRAT can spread from a mind map above it** (the user, 2026-11-10). Sometimes the detail of
+  a strategy lives in a mind map *below* the one it is meant for: ICS's strategy is written out in
+  the mind map "ICS strategy", two levels under ICS. Call them the **child** (where the STRAT is
+  written) and the **parent** (any mind map above it, chosen from the child's STRAT). Then the
+  STRAT spreads from the parent **only** — the parent and all its children show it — instead of
+  from the child; the parent can add no STRAT of its own, because this is its one; and wherever it
+  appears it says clearly which mind map it came from, with a link to it. Decided with it: a child
+  later moved out from under its parent **keeps** spreading from that parent; every STRAT's
+  mind-map name, linked or not, is a link; and undoing the link asks first. The app works this way
+  since 2026-11-10.
+
 ## Phases S1–S4
 
 The phases of building an MM. Names are not chosen yet.

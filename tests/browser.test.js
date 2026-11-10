@@ -16520,15 +16520,18 @@ test('browser suites', skipUnlessChrome, async t => {
     if (!m) return null;
     return { has: Object.prototype.hasOwnProperty.call(m, 'strat'), strat: m.strat === undefined ? null : m.strat };
   };
-  // What the panel's STRAT section draws, in order.
+  // What the panel's STRAT section draws, in order. `controls` leaves out
+  // the mind-map name links (data-strat-goto): since 2026-11-10 every name is
+  // one, and a link that opens a mind map edits nothing.
   const STRAT_VIEW = function () {
     var sec = document.querySelector('[data-strat-section]');
     if (!sec) return null;
     var own = sec.querySelector('[data-strat-own]');
     return {
       inherited: Array.prototype.map.call(sec.querySelectorAll('[data-strat-inherited]'), function (e) {
-        return { id: e.getAttribute('data-strat-inherited'), name: e.querySelector('span').textContent,
-          text: e.lastElementChild.textContent, controls: e.querySelectorAll('button, input, textarea').length };
+        return { id: e.getAttribute('data-strat-inherited'), name: e.querySelector('[data-strat-name]').textContent,
+          text: e.lastElementChild.textContent,
+          controls: e.querySelectorAll('button:not([data-strat-goto]), input, textarea').length };
       }),
       own: own && !own.querySelector('[data-strat-draft]') ? own.lastElementChild.textContent : null,
       input: !!sec.querySelector('[data-strat-input]')
@@ -16801,6 +16804,264 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.equal(await page.evaluate(TAP_REAL, B), 'ok');
     await page.waitFor(ARMED_RING, { args: [B], message: 'the tap arming ' + B });
     await tapKeepsArmed(page, B, '[data-mm-strat-btn="me-33"]', '[data-mm-strat-panel="me-33"]', 'STRAT');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  /* ── 20b. STRAT that SPREADS FROM a mind map above it (2026-11-10) ──
+     The user's case: ICS's strategy is written out in the mind map "ICS
+     strategy", two levels under ICS. Its STRAT carries `originId`, and then
+     spreads from ICS ALONE: ICS and everything under ICS show it, named by
+     the mind map it is written on and linking there; ICS's own add box goes,
+     because that STRAT is its one. The user's choices: a writer moved out
+     from under its origin keeps spreading from it (1a); every STRAT's name
+     is a link (2a); unlinking asks (3b).
+
+     Seed, with numeric ids as nid() mints them: Extra Brain (anchor, with a
+     STRAT) → ICS (anchor) → CORE ICS (anchor) → ICS strategy (the writer),
+     beside Learning system (another branch under ICS) and Stage checkpoint
+     (under CORE ICS), and Drums outside the tree. The writer is unlinked in
+     SPREAD_MMS and linked to ICS in SPREAD_LINKED. */
+  const SPREAD_MMS = (strat = SREC('Backbone before detail'), writerParents = [52]) => [
+    F.mm(50, 'Extra Brain', { type: 'anchor', strat: SREC('Extra Brain first') }),
+    F.mm(51, 'ICS', { type: 'anchor', parentIds: [50] }),
+    F.mm(52, 'CORE ICS', { type: 'anchor', parentIds: [51] }),
+    F.mm(53, 'ICS strategy', { ksStage: '1', parentIds: writerParents, strat }),
+    F.mm(54, 'Learning system', { ksStage: '1', parentIds: [51] }),
+    F.mm(55, 'Stage checkpoint', { ksStage: '1', parentIds: [52] }),
+    F.mm(56, 'Drums', { ksStage: '1' })
+  ];
+  const SLINKED = (originId = 51) => Object.assign(SREC('Backbone before detail'), { originId });
+  const SPREAD_LINKED = (originId = 51, writerParents = [52]) => SPREAD_MMS(SLINKED(originId), writerParents);
+  const spreadDb = (mms = SPREAD_MMS()) => seedDb({ mms, sessions: [], mmEntries: [
+    F.mmEntry('me-54', MONDAY, 54, { time: '08:00', duration: 60 }),
+    F.mmEntry('me-55', MONDAY, 55, { time: '09:30', duration: 60 }),
+    F.mmEntry('me-56', MONDAY, 56, { time: '11:00', duration: 60 })
+  ] });
+  // Every card the section draws, as [id, origin, hosted] — ORIGINAL last.
+  const SPREAD_VIEW = function () {
+    var sec = document.querySelector('[data-strat-section]');
+    if (!sec) return null;
+    var own = sec.querySelector('[data-strat-own]');
+    return {
+      cards: Array.prototype.map.call(sec.querySelectorAll('[data-strat-inherited]'), function (e) {
+        return [e.getAttribute('data-strat-inherited'), e.getAttribute('data-strat-origin'), e.hasAttribute('data-strat-hosted')];
+      }),
+      own: own ? own.getAttribute('data-strat-origin') : 'none',
+      input: !!sec.querySelector('[data-strat-input]'),
+      link: !!sec.querySelector('[data-strat-link]'),
+      unlink: !!sec.querySelector('[data-strat-unlink]')
+    };
+  };
+  const PICKER_ROWS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-strat-picker] [data-strat-choice]'), function (b) {
+      return [b.getAttribute('data-strat-choice'), b.getAttribute('aria-disabled') === 'true', b.disabled,
+        b.lastElementChild.textContent];
+    });
+  };
+
+  await t.test('STRAT SPREAD KS02: ↑ spread from… lists every mind map above, nearest first, and greys one that has a STRAT', async tc => {
+    const page = await openStratMM(tc, 53, 'ks03', spreadDb());
+    assert.deepEqual(await page.evaluate(SPREAD_VIEW),
+      { cards: [['50', null, false]], own: null, input: false, link: true, unlink: false },
+      'precondition: the writer, unlinked, shows Extra Brain’s above its own');
+    await page.evaluate(CLICK_SEL, '[data-strat-link]');
+    const rows = await page.waitFor(function (f) { var r = new Function('return ' + f)()(); return r.length ? r : false; },
+      { args: [PICKER_ROWS.toString()], message: 'the picker rows' });
+    assert.deepEqual(rows, [['52', false, false, '1 up'], ['51', false, false, '2 up'], ['50', true, false, 'has its own STRAT']],
+      'CORE ICS, ICS, then Extra Brain greyed — aria-disabled, never disabled');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: choosing ICS writes originId and NOTHING else, asks nothing, and the card says where it spreads from', async tc => {
+    const page = await openStratMM(tc, 53, 'ks03', spreadDb());
+    const asked = page.dialogs.length;
+    await page.evaluate(CLICK_SEL, '[data-strat-link]');
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-choice="51"]'], message: 'ICS in the picker' });
+    await page.evaluate(CLICK_SEL, '[data-strat-choice="51"]');
+    const got = await page.waitFor(function (f) {
+      var s = new Function('return ' + f)()(53); return s && s.strat && 'originId' in s.strat ? s : false;
+    }, { args: [STRAT_OF.toString()], message: 'the link landing in track_db' });
+    assert.deepEqual(got.strat, { text: 'Backbone before detail', createdAt: STRAT_AT, updatedAt: STRAT_AT, originId: 51 },
+      'the id as stored — a NUMBER — and the text and both times untouched');
+    assert.equal(page.dialogs.length, asked, 'linking deletes nothing, so it asks nothing');
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-own] [data-strat-spreads]'], message: 'the card saying where it spreads from' });
+    assert.deepEqual(await page.evaluate(SPREAD_VIEW),
+      { cards: [['50', null, false]], own: '51', input: false, link: false, unlink: true },
+      'shown ONCE, as its own; unlink in place of the link button; the picker gone');
+    assert.equal(await page.evaluate(function () { return document.querySelector('[data-strat-spreads]').textContent; }),
+      '· spreads from ICS');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-strat-picker]'), false);
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: a greyed row writes NOTHING — the writer refuses it, not the row', async tc => {
+    const page = await openStratMM(tc, 53, 'ks03', spreadDb());
+    const before = await page.evaluate(RAW_DB);
+    await page.evaluate(CLICK_SEL, '[data-strat-link]');
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-choice="50"]'], message: 'Extra Brain in the picker' });
+    await page.evaluate(CLICK_SEL, '[data-strat-choice="50"]');
+    await sleep(500);
+    assert.equal(await page.evaluate(RAW_DB), before, 'track_db is byte-identical');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-strat-picker]'), true, 'and the picker stays open for another choice');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: the ORIGIN shows it FROM its writer, read-only, and has no add box', async tc => {
+    const page = await openStratMM(tc, 51, 'info', spreadDb(SPREAD_LINKED()));
+    const v = await page.evaluate(SPREAD_VIEW);
+    assert.deepEqual(v, { cards: [['50', null, false], ['53', '51', true]], own: 'none', input: false, link: false, unlink: false },
+      'Extra Brain’s from above, then ICS strategy’s spreading from here — and no add box: that STRAT is ICS’s one');
+    const card = await page.evaluate(function () {
+      var e = document.querySelector('[data-strat-inherited="53"]');
+      return { text: e.textContent, controls: e.querySelectorAll('button:not([data-strat-goto]), input, textarea').length,
+        name: e.querySelector('[data-strat-name]').textContent };
+    });
+    assert.equal(card.name, 'ICS strategy', 'named by the mind map it is written on');
+    assert.match(card.text, /^FROM/, 'and clearly FROM it');
+    assert.equal(card.controls, 0, 'no ✎, no ×: it is edited in ICS strategy');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: a mind map anywhere under the origin shows it, saying it spreads from ICS — one outside does not', async tc => {
+    let page = await openStratMM(tc, 54, 'ks03', spreadDb(SPREAD_LINKED()));
+    assert.deepEqual(await page.evaluate(SPREAD_VIEW),
+      { cards: [['50', null, false], ['53', '51', false]], own: 'none', input: true, link: false, unlink: false },
+      'Learning system — another branch under ICS — sees it, and may still add its own');
+    assert.equal(await page.evaluate(function () { return document.querySelector('[data-strat-inherited="53"] [data-strat-via]').textContent; }),
+      '· spreads from ICS');
+    page = await openStratMM(tc, 56, 'ks03', spreadDb(SPREAD_LINKED()));
+    assert.deepEqual((await page.evaluate(SPREAD_VIEW)).cards, [], 'Drums is outside ICS');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: unlink asks, and Cancel leaves track_db byte-identical', async tc => {
+    const page = await openStratMM(tc, 53, 'ks03', spreadDb(SPREAD_LINKED()));
+    const before = await page.evaluate(RAW_DB);
+    const asked = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(CLICK_SEL, '[data-strat-unlink]');
+    await sleep(600);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, asked + 1, 'unlink asked, once');
+    assert.match(page.dialogs[page.dialogs.length - 1], /Stop spreading the STRAT on "ICS strategy" from "ICS"/);
+    assert.match(page.dialogs[page.dialogs.length - 1], /The STRAT itself is kept/);
+    assert.equal(await page.evaluate(RAW_DB), before, 'Cancel left track_db byte-identical');
+    assert.equal((await page.evaluate(SPREAD_VIEW)).own, '51', 'and it still spreads from ICS');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: OK on unlink deletes the KEY — not null — keeps the STRAT, and brings the button back', async tc => {
+    const page = await openStratMM(tc, 53, 'ks03', spreadDb(SPREAD_LINKED()));
+    await page.evaluate(CLICK_SEL, '[data-strat-unlink]');
+    // Waits for the link to stop READING as one, so a writer that left
+    // originId: null behind reports itself below instead of timing out.
+    const got = await page.waitFor(function (f) {
+      var s = new Function('return ' + f)()(53); return s && s.strat && !s.strat.originId ? s : false;
+    }, { args: [STRAT_OF.toString()], message: 'the unlink landing in track_db' });
+    assert.deepEqual(got.strat, { text: 'Backbone before detail', createdAt: STRAT_AT, updatedAt: STRAT_AT },
+      'the key is gone and nothing else moved — it read ' + JSON.stringify(got.strat));
+    await page.waitFor(HAS_SEL, { args: ['[data-strat-link]'], message: 'the link button coming back' });
+    assert.equal(await page.evaluate(function () {
+      var mms = JSON.parse(localStorage.getItem('track_db')).slots[0].mms;
+      return window.TrackStrat.stratsFor(54, mms).map(function (s) { return s.mm.id; }).join(',');
+    }), '50', 'Learning system stops showing it');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: deleting a linked STRAT names the mind map it spreads from', async tc => {
+    const page = await openStratMM(tc, 53, 'ks03', spreadDb(SPREAD_LINKED()));
+    const before = await page.evaluate(RAW_DB);
+    const asked = page.dialogs.length;
+    page.rejectDialogs = true;
+    await page.evaluate(CLICK_SEL, '[data-strat-remove]');
+    await sleep(600);
+    page.rejectDialogs = false;
+    assert.equal(page.dialogs.length, asked + 1);
+    assert.match(page.dialogs[page.dialogs.length - 1], /It spreads from "ICS", so "ICS" and every mind map under it stop showing it too/);
+    assert.equal(await page.evaluate(RAW_DB), before, 'Cancel left track_db byte-identical');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: a writer moved out from under ICS keeps spreading from it, and says so', async tc => {
+    let page = await openStratMM(tc, 53, 'ks03', spreadDb(SPREAD_LINKED(51, [56])));
+    assert.equal(await page.evaluate(function () {
+      var e = document.querySelector('[data-strat-link-moved]'); return e ? e.textContent : null;
+    }), 'ICS is no longer above this mind map. It still spreads from there.');
+    assert.equal((await page.evaluate(SPREAD_VIEW)).own, '51');
+    page = await openStratMM(tc, 54, 'ks03', spreadDb(SPREAD_LINKED(51, [56])));
+    assert.deepEqual((await page.evaluate(SPREAD_VIEW)).cards, [['50', null, false], ['53', '51', false]],
+      'Learning system still shows it — the user’s choice');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: a link to a mind map that is gone says so and can be cleared', async tc => {
+    const page = await openStratMM(tc, 53, 'ks03', spreadDb(SPREAD_LINKED(999)));
+    assert.equal(await page.evaluate(HAS_SEL, '[data-strat-link-lost]'), true);
+    assert.deepEqual(await page.evaluate(SPREAD_VIEW),
+      { cards: [['50', null, false]], own: null, input: false, link: false, unlink: true });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-strat-spreads]'), false, 'no origin is named');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD KS02: every STRAT’s name opens its mind map — an anchor on INFO, any other on KS03', async tc => {
+    const page = await openStratMM(tc, 54, 'ks03', spreadDb(SPREAD_LINKED()));
+    await page.evaluate(CLICK_SEL, '[data-strat-inherited="53"] [data-strat-name] [data-strat-goto="53"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="53"] [data-strat-own]'],
+      message: 'ICS strategy’s panel with its STRAT section — on KS03' });
+    await page.evaluate(CLICK_SEL, '[data-strat-spreads] [data-strat-goto="51"]');
+    // An anchor shown on KS03 draws nothing: the STRAT section is the proof
+    // that the panel opened on INFO, not merely that it changed mind map.
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="51"] [data-strat-section]'],
+      message: 'ICS, an anchor, opened on INFO with its STRAT section' });
+    await page.evaluate(CLICK_SEL, '[data-strat-inherited="50"] [data-strat-goto="50"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="50"] [data-strat-own]'],
+      message: 'Extra Brain — an ordinary inherited STRAT’s name is a link too' });
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD DIRECTORY: a STRAT’s name opens that mind map’s page beside the tree', async tc => {
+    // Opened by hand: the DIRECTORY section's openDirectory is declared
+    // further down this function, and calling it from here would throw.
+    const page = await openHere(tc, 'sir-ks02.html', { db: seedDb({ mms: SPREAD_LINKED() }), hash: '#srch', viewport: [1280, 900] });
+    await page.waitFor(HAS_SEL, { args: ['[data-srch-sub="directory"]'], message: 'the SRCH sub-tabs' });
+    await page.evaluate(CLICK_SEL, '[data-srch-sub="directory"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-view] [data-mmdir-row="54"]'], message: 'Learning system in the DIRECTORY tree' });
+    await page.evaluate(CLICK_SEL, '[data-mmdir-row="54"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-view] [data-mm-detail="54"] [data-strat-goto="51"]'],
+      message: 'Learning system’s page, on KS03, with its STRAT section' });
+    await page.evaluate(CLICK_SEL, '[data-strat-via] [data-strat-goto="51"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-view] [data-mm-detail="51"] [data-strat-hosted]'],
+      message: 'ICS’s page, on INFO, showing the STRAT that spreads from it' });
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('STRAT SPREAD PROGRESS: a ◎ block under ICS lists the linked STRAT by its writer, says it spreads from ICS, links both, and writes nothing', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: spreadDb(SPREAD_LINKED()), hash: '?date=' + MONDAY + '#schedule', viewport: [1280, 900] });
+    await page.waitFor(HAS_SEL, { args: ['[data-mm-notes-btn="me-56"]'], message: "the ◎ blocks' toolbars" });
+    await sleep(300);
+    const before = await page.evaluate(RAW_DB);
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mm-strat-btn="me-56"]'), false, 'Drums, outside ICS, has no STRAT button');
+    const read = async entry => {
+      await page.evaluate(CLICK_SEL, '[data-mm-strat-btn="' + entry + '"]');
+      return page.waitFor(function (k) {
+        var p = document.querySelector('[data-mm-strat-panel="' + k + '"]');
+        return p ? Array.prototype.map.call(p.querySelectorAll('[data-mm-strat-item]'), function (e) {
+          var via = e.querySelector('[data-mm-strat-via]');
+          return [e.getAttribute('data-mm-strat-item'), e.querySelector('div span:last-child').textContent,
+            via ? via.textContent : null, e.querySelector('[data-mm-strat-goto]').getAttribute('href'),
+            via && via.querySelector('a') ? via.querySelector('a').getAttribute('href') : null, e.querySelector('p').textContent];
+        }) : false;
+      }, { args: [entry], message: entry + "'s STRAT panel" });
+    };
+    assert.deepEqual(await read('me-54'), [
+      ['50', 'Extra Brain', null, 'sir-ks02.html?mm=50', null, 'Extra Brain first'],
+      ['53', 'ICS strategy', 'spreads from ICS', 'sir-ks02.html?mm=53', 'sir-ks02.html?mm=51', 'Backbone before detail']
+    ], 'Learning system — another branch under ICS');
+    assert.deepEqual((await read('me-55')).map(i => i[0]), ['50', '53'], 'Stage checkpoint, beside the writer under CORE ICS');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-mm-strat-panel="me-55"]').querySelectorAll('button, input, textarea').length;
+    }), 1, 'read-only: its one control is the × that closes it');
+    assert.equal(await page.evaluate(RAW_DB), before, 'reading it wrote nothing');
     assert.deepEqual(realErrors(page), []);
   });
 
@@ -17890,6 +18151,236 @@ test('browser suites', skipUnlessChrome, async t => {
     return page;
   };
   const NO_DRAG_DIALOG = 'a drag is deliberately NOT confirmed — it deletes nothing (see AGENTS.md)';
+
+  // Tree rows share the block engine; each occurrence has its own path.
+  const DIR_DRAWN_UNDER = function (parent) {
+    return Array.from(document.querySelectorAll('[data-mmdir-row]')).filter(function (e) {
+      var p = JSON.parse(e.getAttribute('data-mmdir-path'));
+      return parent === null ? p.length === 1 : p[p.length - 2] === 'n' + parent;
+    }).map(function (e) { return e.getAttribute('data-mmdir-row'); });
+  };
+  const DIR_ROW_STATE = function (id, nth) {
+    return document.querySelectorAll('[data-mmdir-row="' + id + '"]')[nth || 0].getAttribute('data-mmdir-state');
+  };
+  const DIR_LINE = function () {
+    var e = document.querySelector('[data-mmdir-line]');
+    return e ? { id: e.getAttribute('data-mmdir-row'), edge: e.getAttribute('data-mmdir-line'),
+      depth: e.getAttribute('data-mmdir-depth') } : null;
+  };
+  const rowPoint = async (page, id, edge = 'middle', depth = 3, nth = 0) => {
+    const r = await page.evaluate(DIR_BOX, '[data-mmdir-row="' + id + '"]', nth);
+    return { x: edge === 'middle' ? r.x : r.left + 4 + depth * 14,
+      y: edge === 'top' ? r.top + 1 : edge === 'bottom' ? r.bottom - 1 : r.y };
+  };
+  const openRowDirectory = async (tc, kind, opts = {}) => {
+    const page = await openDirectory({ viewport: kind === 'touch' ? [1024, 1000, { touch: true }] : DIR_DESK, ...opts });
+    tc.after(() => page.close());
+    await sleep(300); // initial autosave settled before byte-identity checks
+    return page;
+  };
+
+  for (const kind of ['mouse', 'touch']) {
+    for (const spec of [
+      { name: 'reorders siblings', id: 6, target: 8, edge: 'bottom', depth: 3, parent: 4, order: ['7', '10', '8', '6'], parents: [4] },
+      { name: 'renests at a middle position', id: 3, target: 7, edge: 'top', depth: 3, parent: 4, order: ['6', '3', '7', '10', '8'], parents: [4] },
+      { name: 'lands as first child below an unfolded parent', id: 9, target: 4, edge: 'bottom', depth: 0, lineDepth: 3, parent: 4, order: ['9', '6', '7', '10', '8'], parents: [4] },
+      { name: 'moves to top level by line', id: 6, target: 9, edge: 'bottom', depth: 0, parent: null, order: ['1', '9', '6', '21'], parents: [] },
+      { name: 'nests into a childless row by its middle', id: 6, target: 9, edge: 'middle', parent: 9, order: ['6'], parents: [9] }
+    ]) await t.test('DIRECTORY ROW ' + kind + ': ' + spec.name, async tc => {
+      const page = await openRowDirectory(tc, kind);
+      const raw = await page.evaluate(DIR_RAW), dialogs = page.dialogs.length;
+      const from = await rowPoint(page, spec.id), to = await rowPoint(page, spec.target, spec.edge, spec.depth);
+      const seen = await dirDrag(page, kind, from, to, { before: () => page.evaluate(DIR_LINE) });
+      await dirLanded(page, raw, 'the row placement saved');
+      assert.deepEqual(await page.evaluate(DIR_DRAWN_UNDER, spec.parent), spec.order, 'the tree draws the chosen order');
+      assert.deepEqual(await page.evaluate(DIR_PARENTS, spec.id), spec.parents, 'the stored parent is the chosen one');
+      if (spec.edge === 'middle') assert.equal(seen, null, 'middle is a nest highlight, never a line');
+      else assert.deepEqual(seen, { id: String(spec.target), edge: spec.edge === 'top' ? 'before' : 'after', depth: String(spec.lineDepth ?? spec.depth) });
+      assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+      assert.deepEqual(realErrors(page), []);
+      if (kind === 'mouse' && spec.name === 'reorders siblings') {
+        await page.reload(); await page.skipFirebase();
+        await page.waitFor(HAS_SEL, { args: ['[data-srch-sub="directory"]'], message: 'SRCH after reload' });
+        await page.evaluate(CLICK_SEL, '[data-srch-sub="directory"]');
+        await page.waitFor(HAS_SEL, { args: ['[data-mmdir-row="6"]'], message: 'tree after reload' });
+        assert.deepEqual(await page.evaluate(DIR_DRAWN_UNDER, 4), spec.order, 'placement survives reload');
+      }
+    });
+
+    await t.test('DIRECTORY ROW ' + kind + ': own branch is red and refused byte-identically', async tc => {
+      const page = await openRowDirectory(tc, kind);
+      const raw = await page.evaluate(DIR_RAW), dialogs = page.dialogs.length;
+      const seen = await dirDrag(page, kind, await rowPoint(page, 4), await rowPoint(page, 6),
+        { before: () => page.evaluate(DIR_HIT, '[data-mmdir-row="6"]') });
+      await sleep(350);
+      assert.equal(await page.evaluate(DIR_RAW), raw, 'refused row drop writes nothing');
+      assert.equal(seen, 'refused');
+      assert.match(await page.evaluate(DIR_TOAST), /Can't move “P Monday” into “Acids”/);
+      assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+    });
+
+    await t.test('DIRECTORY ROW ' + kind + ': own drawn place has no line and no write', async tc => {
+      const page = await openRowDirectory(tc, kind);
+      const raw = await page.evaluate(DIR_RAW);
+      const seen = await dirDrag(page, kind, await rowPoint(page, 6), await rowPoint(page, 7, 'top', 3),
+        { before: () => page.evaluate(DIR_LINE) });
+      assert.equal(seen, null, 'a no-op across unrelated stored records shows no line');
+      await sleep(350);
+      assert.equal(await page.evaluate(DIR_RAW), raw, 'a drawn no-op writes nothing');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-mm-detail]'), false, 'the release is not a click');
+    });
+
+    await t.test('DIRECTORY ROW ' + kind + ': short press opens without writing; hold lifts one occurrence only', async tc => {
+      const page = await openRowDirectory(tc, kind);
+      const raw = await page.evaluate(DIR_RAW);
+      const from = await rowPoint(page, 10, 'middle', 3, 1);
+      await dirPress(page, kind, from); await sleep(100);
+      assert.equal(await page.evaluate(DIR_ROW_STATE, 10, 1), 'pressing');
+      await sleep(550);
+      assert.equal(await page.evaluate(DIR_ROW_STATE, 10, 1), 'lifted');
+      assert.equal(await page.evaluate(DIR_ROW_STATE, 10, 0), null, 'its other occurrence stays at rest');
+      await dirRelease(page, kind, from); await sleep(600);
+      assert.equal(await page.evaluate(DIR_RAW), raw, 'hold and release without moving writes nothing');
+      await dirPress(page, kind, from); await sleep(40); await dirRelease(page, kind, from);
+      await page.waitFor(HAS_SEL, { args: ['[data-mm-detail="10"]'], message: 'a short press opening the row' });
+      assert.equal(await page.evaluate(DIR_RAW), raw, 'opening writes no data');
+    });
+
+    await t.test('DIRECTORY ROW ' + kind + ': second parent occurrence moves independently', async tc => {
+      const page = await openRowDirectory(tc, kind);
+      const raw = await page.evaluate(DIR_RAW);
+      await dirDrag(page, kind, await rowPoint(page, 10, 'middle', 3, 1), await rowPoint(page, 3, 'bottom', 1));
+      await dirLanded(page, raw, 'the second occurrence placed');
+      assert.deepEqual(await page.evaluate(DIR_PARENTS, 10), [4, 1], 'the drawn parent 5 is replaced; parent 4 stays');
+      assert.deepEqual(await page.evaluate(DIR_DRAWN_UNDER, 1), ['2', '3', '10']);
+      assert.deepEqual(await page.evaluate(DIR_DRAWN_UNDER, 5), []);
+    });
+
+    await t.test('DIRECTORY ROW ' + kind + ': the horizontal depth pick disambiguates a branch end', async tc => {
+      const page = await openRowDirectory(tc, kind);
+      const raw = await page.evaluate(DIR_RAW), from = await rowPoint(page, 9);
+      const deep = await rowPoint(page, 8, 'bottom', 3), shallow = await rowPoint(page, 8, 'bottom', 2);
+      await dirPress(page, kind, from); await sleep(650); await dirPath(page, kind, from, deep); await sleep(100);
+      assert.equal((await page.evaluate(DIR_LINE)).depth, '3', 'last child of P Monday');
+      await dirPath(page, kind, deep, shallow, 3); await sleep(100);
+      assert.equal((await page.evaluate(DIR_LINE)).depth, '2', 'next sibling of P Monday at the same gap');
+      await dirRelease(page, kind, shallow); await dirLanded(page, raw, 'the shallower position saved');
+      assert.deepEqual(await page.evaluate(DIR_DRAWN_UNDER, 2), ['4', '9', '5']);
+      assert.deepEqual(await page.evaluate(DIR_PARENTS, 9), [2]);
+    });
+  }
+
+  await t.test('DIRECTORY ROW: filtering and a repeated cycle row cannot lift', async tc => {
+    const page = await openRowDirectory(tc, 'mouse');
+    const raw = await page.evaluate(DIR_RAW);
+    const repeated = await rowPoint(page, 21, 'middle', 0, 1);
+    await dirPress(page, 'mouse', repeated); await sleep(650);
+    assert.equal(await page.evaluate(DIR_ROW_STATE, 21, 1), null, 'the ↻ row does not lift');
+    await dirRelease(page, 'mouse', repeated);
+    await page.evaluate(function (src) { new Function('return ' + src)()(document.querySelector('[data-mmdir-filter]'), 'salt'); }, SET_REACT_INPUT);
+    await page.waitFor(function () { return !document.querySelector('[data-mmdir-row="9"]'); }, { message: 'filter applied' });
+    const from = await rowPoint(page, 8);
+    await dirPress(page, 'mouse', from); await sleep(650);
+    assert.equal(await page.evaluate(DIR_ROW_STATE, 8), null, 'a filtered row does not lift');
+    await dirPath(page, 'mouse', from, { x: from.x + 20, y: from.y });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-ghost]'), false);
+    await dirRelease(page, 'mouse', { x: from.x + 20, y: from.y });
+    assert.equal(await page.evaluate(DIR_RAW), raw);
+  });
+
+  await t.test('DIRECTORY ROW phone: moving before the hold scrolls the drawer and lifts nothing', async tc => {
+    const mms = DIR_MMS().concat(Array.from({ length: 40 }, (_, i) => F.mm(100 + i, 'Scroll row ' + i)));
+    const page = await openRowDirectory(tc, 'touch', { viewport: PHONE, mms });
+    await page.evaluate(CLICK_SEL, '[data-mmdir-drawer]');
+    await page.waitFor(function () { return getComputedStyle(document.querySelector('[data-mmdir-bar]')).display === 'flex'; }, { message: 'drawer open' });
+    const raw = await page.evaluate(DIR_RAW), from = await rowPoint(page, 8);
+    const to = { x: from.x, y: from.y - 180 };
+    await dirPress(page, 'touch', from); await sleep(40); await dirPath(page, 'touch', from, to);
+    await sleep(650);
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-state], [data-mmdir-ghost]'), false, 'pre-hold movement lifts nothing');
+    assert.ok(await page.evaluate(function () { return document.querySelector('[data-mmdir-bar-scroll]').scrollTop; }) > 0, 'the drawer really scrolled');
+    await dirRelease(page, 'touch', to); await sleep(300);
+    assert.equal(await page.evaluate(DIR_RAW), raw);
+  });
+
+  await t.test('DIRECTORY ROW phone: a completed hold reorders inside the drawer', async tc => {
+    const page = await openRowDirectory(tc, 'touch', { viewport: PHONE });
+    await page.evaluate(CLICK_SEL, '[data-mmdir-drawer]');
+    await page.waitFor(function () { return getComputedStyle(document.querySelector('[data-mmdir-bar]')).display === 'flex'; }, { message: 'drawer open' });
+    const raw = await page.evaluate(DIR_RAW);
+    await dirDrag(page, 'touch', await rowPoint(page, 6), await rowPoint(page, 8, 'bottom', 3));
+    await dirLanded(page, raw, 'phone row reordered');
+    assert.deepEqual(await page.evaluate(DIR_DRAWN_UNDER, 4), ['7', '10', '8', '6']);
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 6), [4]);
+    assert.equal(await page.evaluate(function () { return getComputedStyle(document.querySelector('[data-mmdir-bar]')).display; }), 'flex', 'a row drop does not open a page and close the drawer');
+  });
+
+  await t.test('DIRECTORY ROW: hover unfolds a target before placement', async tc => {
+    const page = await openRowDirectory(tc, 'mouse');
+    await page.evaluate(CLICK_SEL, '[data-mmdir-caret="4"]');
+    await page.waitFor(function () { return !document.querySelector('[data-mmdir-row="6"]'); }, { message: 'P Monday folded' });
+    const raw = await page.evaluate(DIR_RAW), from = await rowPoint(page, 9), target = await rowPoint(page, 4);
+    await dirPress(page, 'mouse', from); await sleep(650); await dirPath(page, 'mouse', from, target);
+    await page.waitFor(HAS_SEL, { args: ['[data-mmdir-row="6"]'], message: 'hover unfolded P Monday' });
+    const to = await rowPoint(page, 7, 'top', 3);
+    await dirPath(page, 'mouse', target, to); await sleep(100); await dirRelease(page, 'mouse', to);
+    await dirLanded(page, raw, 'placement after unfolding');
+    assert.deepEqual(await page.evaluate(DIR_DRAWN_UNDER, 4), ['6', '9', '7', '10', '8']);
+    assert.deepEqual(await page.evaluate(DIR_PARENTS, 9), [4]);
+  });
+
+  await t.test('DIRECTORY ROW: a held row auto-scrolls the bar near its edge', async tc => {
+    const mms = DIR_MMS().concat(Array.from({ length: 60 }, (_, i) => F.mm(100 + i, 'Scroll row ' + i)));
+    const page = await openRowDirectory(tc, 'mouse', { mms });
+    const raw = await page.evaluate(DIR_RAW), from = await rowPoint(page, 9);
+    const to = await page.evaluate(function () { var r = document.querySelector('[data-mmdir-bar-scroll]').getBoundingClientRect(); return { x: r.left + 100, y: r.bottom - 10 }; });
+    await dirPress(page, 'mouse', from); await sleep(650); await dirPath(page, 'mouse', from, to);
+    await page.waitFor(function () { return document.querySelector('[data-mmdir-bar-scroll]').scrollTop > 30; }, { message: 'the held row scrolled the tree' });
+    assert.equal(await page.evaluate(HAS_SEL, '[data-mmdir-ghost]'), true);
+    await page.session.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await dirRelease(page, 'mouse', to);
+    assert.equal(await page.evaluate(DIR_RAW), raw, 'scroll then cancel writes nothing');
+  });
+
+  await t.test('DIRECTORY ROW: placement keeps an edit adopted from another tab mid-drag', async tc => {
+    const page = await openRowDirectory(tc, 'mouse');
+    const other = await open('index.html', { fresh: false }); tc.after(() => other.close());
+    await other.waitFor(function () { return !!window.TrackStorage; }, { message: 'other tab ready' });
+    await page.session.send('Page.bringToFront');
+    await page.waitFor(function () { return document.visibilityState === 'visible'; }, { message: 'DIRECTORY in front' });
+    const from = await rowPoint(page, 3), to = await rowPoint(page, 7, 'top', 3);
+    await dirPress(page, 'mouse', from); await sleep(650); await dirPath(page, 'mouse', from, to);
+    const slot = await page.evaluate(READ_SLOT);
+    assert.equal(await other.evaluate(WRITE_SLOT_KEY, 'mms', slot.mms.map(m => m.id === 3 ? { ...m, name: 'Biology II', futureField: 'kept' } : m)), true);
+    await page.waitFor(function () { return document.querySelector('[data-mmdir-row="3"]').textContent.includes('Biology II'); }, { message: 'rename adopted during drag' });
+    const raw = await page.evaluate(DIR_RAW);
+    await dirRelease(page, 'mouse', to); await dirLanded(page, raw, 'row placement after the rename');
+    assert.deepEqual(await page.evaluate(DIR_DRAWN_UNDER, 4), ['6', '3', '7', '10', '8']);
+    const saved = (await page.evaluate(READ_SLOT)).mms.find(m => m.id === 3);
+    assert.deepEqual([saved.parentIds, saved.name, saved.futureField], [[4], 'Biology II', 'kept']);
+  });
+
+  await t.test('DIRECTORY ROW: line paint shifts no rows and uses tokens in Grit and Night', async tc => {
+    const page = await openRowDirectory(tc, 'mouse');
+    for (const theme of ['grit', 'dark']) {
+      await page.evaluate(function (v) { TrackTheme.set(v); }, theme);
+      const from = await rowPoint(page, 6), to = await rowPoint(page, 8, 'bottom', 3);
+      const old = await page.evaluate(DIR_BOX, '[data-mmdir-row="8"]');
+      await dirPress(page, 'mouse', from); await sleep(650); await dirPath(page, 'mouse', from, to); await sleep(150);
+      const paint = await page.evaluate(function () {
+        var e = document.querySelector('[data-mmdir-line]'), line = getComputedStyle(e, '::before'), dot = getComputedStyle(e, '::after');
+        var token = getComputedStyle(document.documentElement).getPropertyValue('--color-accent-done').trim();
+        var probe = document.createElement('span'); probe.style.color = token; document.body.append(probe);
+        var color = getComputedStyle(probe).color; probe.remove();
+        return { position: line.position, color: line.backgroundColor, dot: dot.width, expected: color, height: line.height };
+      });
+      assert.equal(paint.position, 'absolute'); assert.equal(paint.height, '2px'); assert.equal(paint.dot, '6px');
+      assert.equal(paint.color, paint.expected, theme + ': theme token reaches the line');
+      assert.deepEqual(await page.evaluate(DIR_BOX, '[data-mmdir-row="8"]'), old, 'line paint cannot shift the target');
+      await page.session.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await dirRelease(page, 'mouse', to); await sleep(600);
+    }
+  });
 
   await t.test('DIRECTORY: SRCH has LIST and DIRECTORY; the tree holds every mind map — a two-parent one under both, a rootless loop from one member — folds and filters', async () => {
     const page = await openDirectory();
