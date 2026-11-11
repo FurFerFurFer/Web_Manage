@@ -18842,7 +18842,9 @@ test('browser suites', skipUnlessChrome, async t => {
      every page carries it, each asserted separately so a page missing its
      script fails alone; that it is a reader; that a closed panel keeps no DOM;
      how it closes; that a link to the page it is on still goes there; that an
-     edit in another tab reaches an open panel; and the phone and print rules. */
+     edit in another tab reaches an open panel; and the phone and print rules.
+     IN PRO (2026-11-11) is the one block on top of the panel: shut until it is
+     clicked, holding no row while shut, each row a link to its mind map. */
 
   const ntsDay = n => {
     const d = new Date(TODAY + 'T12:00:00');
@@ -18853,8 +18855,13 @@ test('browser suites', skipUnlessChrome, async t => {
   // Every ★ Forced state once, beside the quest tree the Quest cases use. The
   // populated slot's own deadlines are March 2026 and would read as overdue, so
   // both lists are replaced outright.
+  // Mind maps 11 and 12 are IN PRO (the stored `unclear` flag); 10 is not, and
+  // is the one the quest tree's to-learn row names. Ids are numbers, as nid()
+  // mints them.
   const NTS_DB = (over = {}) => seedDb(Object.assign({
     goals: QUEST_TREE(),
+    mms: [F.mm(10, 'Mind Map A'), F.mm(11, 'Mind Map B', { type: '2', unclear: true }),
+      F.mm(12, 'Mind Map C', { type: 'anchor', unclear: true }), F.mm(13, 'Mind Map D', { unclear: false })],
     deadlines: [
       F.deadline('nts-due', TODAY, { title: 'Essay draft', time: '14:00' }),
       F.deadline('nts-cau', ntsDay(4), { title: 'Lab report', cautionDates: [TODAY] }),
@@ -18887,6 +18894,28 @@ test('browser suites', skipUnlessChrome, async t => {
   const ntsOpened = page => page.waitFor(function () {
     return !!document.querySelector('#nts-panel [data-nts-section], #nts-panel .nts-empty');
   }, { message: 'the Note to self panel drawn' });
+  // The IN PRO block as it stands: its sections' order, whether its button says
+  // open, the count it carries and the mind maps it lists.
+  const NTS_INPRO = function () {
+    var b = document.querySelector('#nts-panel [data-nts-inpro-toggle]');
+    var c = document.querySelector('#nts-panel [data-nts-inpro-count]');
+    return {
+      sections: Array.prototype.map.call(document.querySelectorAll('#nts-panel [data-nts-section]'),
+        function (e) { return e.getAttribute('data-nts-section'); }),
+      buttons: document.querySelectorAll('#nts-panel [data-nts-section="inpro"] button').length,
+      expanded: b ? b.getAttribute('aria-expanded') : null,
+      count: c ? c.getAttribute('data-nts-inpro-count') : null,
+      rows: Array.prototype.map.call(document.querySelectorAll('#nts-panel [data-nts-inpro]'),
+        function (e) { return e.getAttribute('data-nts-inpro'); }),
+      hrefs: Array.prototype.map.call(document.querySelectorAll('#nts-panel [data-nts-inpro]'),
+        function (e) { return e.getAttribute('href'); })
+    };
+  };
+  const NTS_INPRO_CLICK = function () {
+    var b = document.querySelector('#nts-panel [data-nts-inpro-toggle]');
+    if (b) b.click();
+    return !!b;
+  };
 
   for (const file of PAGES) {
     await t.test('NOTE TO SELF: ' + file + ' — the line opens onto ★ Forced in caution or due, and Quest', async () => {
@@ -18932,6 +18961,10 @@ test('browser suites', skipUnlessChrome, async t => {
           'every quest row links to the Quest tab');
         assert.equal(await page.evaluate(function () { return document.querySelectorAll('[data-quest-row]').length; }),
           homeRows, 'the panel adds nothing a [data-quest-row] selector can find');
+        const inpro = await page.evaluate(NTS_INPRO);
+        assert.deepEqual([inpro.sections, inpro.count, inpro.expanded, inpro.rows],
+          [['inpro', 'forced', 'quest'], '2', 'false', []],
+          'IN PRO is the block on top, counting the mind maps in progress and listing none until clicked');
 
         await page.evaluate(function () { document.getElementById('nts-toggle').click(); });
         assert.equal(await page.evaluate(NTS_SHUT), true, 'the ^ shuts it and its DOM goes');
@@ -19030,6 +19063,112 @@ test('browser suites', skipUnlessChrome, async t => {
     }
   });
 
+  await t.test('NOTE TO SELF: IN PRO is one shut block on top — a click lists the mind maps in progress, another hides them', async () => {
+    const page = await open('index.html', { db: NTS_DB() });
+    try {
+      await ntsReady(page);
+      const before = await page.evaluate(NTS_STORE);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+
+      let b = await page.evaluate(NTS_INPRO);
+      assert.deepEqual(b.rows, [], 'shut: no mind map is drawn until the block is clicked');
+      assert.deepEqual([b.sections[0], b.buttons, b.expanded, b.count], ['inpro', 1, 'false', '2'],
+        'it is the first thing in the panel, one control, carrying the count');
+      assert.equal(await page.evaluate(function () {
+        return /Mind Map [BC]/.test(document.getElementById('nts-panel').textContent);
+      }), false, 'and a shut block holds no name, not even hidden');
+
+      assert.equal(await page.evaluate(NTS_INPRO_CLICK), true);
+      b = await page.evaluate(NTS_INPRO);
+      assert.deepEqual(b.rows, ['11', '12'],
+        'a click lists the mind maps whose IN PRO switch is on — in stored order, and no other');
+      assert.deepEqual(b.hrefs, ['sir-ks02.html?mm=11', 'sir-ks02.html?mm=12'], 'each a link to its mind map');
+      assert.deepEqual([b.expanded, b.count, b.buttons], ['true', '2', 1]);
+      assert.deepEqual(await page.evaluate(function () {
+        return Array.prototype.map.call(document.querySelectorAll('#nts-panel [data-nts-inpro]'), function (e) {
+          return e.querySelector('.nts-title').textContent + ' / ' + e.querySelector('.nts-meta').textContent;
+        });
+      }), ['Mind Map B / Procedural', 'Mind Map C / Anchor'], 'named, with its kind');
+      assert.equal(await page.evaluate(function () {
+        return document.activeElement && document.activeElement.hasAttribute('data-nts-inpro-toggle');
+      }), true, 'focus stays on the block through the redraw');
+      assert.equal(await page.evaluate(NTS_SHUT), false, 'and the panel stays open');
+      assert.deepEqual((await page.evaluate(NTS_INPRO)).sections, ['inpro', 'forced', 'quest'], 'the rest is still under it');
+
+      await page.evaluate(NTS_INPRO_CLICK);
+      b = await page.evaluate(NTS_INPRO);
+      assert.deepEqual([b.rows, b.expanded], [[], 'false'], 'a second click hides them, and their DOM goes');
+
+      await page.evaluate(NTS_INPRO_CLICK);
+      assert.deepEqual((await page.evaluate(NTS_INPRO)).rows, ['11', '12']);
+      await page.evaluate(function () { document.getElementById('nts-toggle').click(); });
+      assert.equal(await page.evaluate(NTS_SHUT), true);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      b = await page.evaluate(NTS_INPRO);
+      assert.deepEqual([b.rows, b.expanded], [[], 'false'], 'it is shut again every time the panel opens');
+
+      await page.evaluate(function () { document.getElementById('nts-toggle').click(); });
+      assert.deepEqual(await page.evaluate(NTS_STORE), before,
+        'a READER: whether the list is open is stored nowhere, and track_db is byte-identical');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('NOTE TO SELF: an IN PRO row opens its mind map in the Knowledge Record, from that page too', async () => {
+    const page = await open('sir-ks02.html', { db: NTS_DB() });
+    try {
+      await ntsReady(page);
+      assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-mm-detail]'); }), false,
+        'no mind map is open to begin with');
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      await page.evaluate(NTS_INPRO_CLICK);
+      // Clicked on the next task, so this evaluate returns before the
+      // navigation the click starts can tear its context down.
+      assert.equal(await page.evaluate(function () {
+        var row = document.querySelector('#nts-panel [data-nts-inpro="11"]');
+        if (row) setTimeout(function () { row.click(); }, 0);
+        return !!row;
+      }), true, 'the row for mind map 11');
+      await page.waitFor(function () {
+        return location.search === '?mm=11' && !!document.querySelector('[data-mm-detail="11"]');
+      }, { timeout: 30000, message: "mind map 11's detail after following its IN PRO row" });
+      assert.equal(await page.evaluate(NTS_SHUT), true, 'and the page it lands on starts with the panel shut');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('NOTE TO SELF: an open IN PRO list follows another tab\'s switch, and stays open', async () => {
+    const page = await open('documentations.html', { db: NTS_DB() });
+    let other = null;
+    try {
+      await ntsReady(page);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      await page.evaluate(NTS_INPRO_CLICK);
+      assert.deepEqual((await page.evaluate(NTS_INPRO)).rows, ['11', '12']);
+      other = await open('index.html', { fresh: false });
+      // What the Knowledge Record's IN PRO switch stores: 11 off, 13 on.
+      assert.equal(await other.evaluate(function () {
+        var db = JSON.parse(localStorage.getItem('track_db'));
+        var s = db.slots[0];
+        s.mms = s.mms.map(function (m) {
+          return m.id === 11 || m.id === 13 ? Object.assign({}, m, { unclear: !m.unclear }) : m;
+        });
+        return window.TrackStorage.saveDB(db);
+      }), true, 'the other tab wrote');
+      await page.waitFor(function () {
+        var c = document.querySelector('#nts-panel [data-nts-inpro-count]');
+        return !c || !document.querySelector('#nts-panel [data-nts-inpro="11"]');
+      }, { message: 'the open panel redrawn after the other tab\'s write' });
+      const b = await page.evaluate(NTS_INPRO);
+      assert.deepEqual([b.rows, b.expanded, b.count], [['12', '13'], 'true', '2'],
+        'the list is still open, without the one switched off and with the one switched on');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+      if (other) await other.close();
+    }
+  });
+
   await t.test('NOTE TO SELF: on a phone it fits, the tab is a finger target, and the header tab under it still answers', async () => {
     const page = await open('progress.html', { db: NTS_DB(), viewport: PHONE });
     try {
@@ -19059,6 +19198,21 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.equal(fit.sideways, false, 'and the page does not scroll sideways');
       assert.ok(fit.bottom <= fit.barTop, 'clear of the bottom tab bar');
       assert.ok(fit.rows > 0 && fit.minRow >= 43.5, 'every row is a 44px target (smallest ' + fit.minRow + ')');
+
+      await page.evaluate(NTS_INPRO_CLICK);
+      const inpro = await page.evaluate(function () {
+        var p = document.getElementById('nts-panel').getBoundingClientRect();
+        var b = document.querySelector('#nts-panel [data-nts-inpro-toggle]').getBoundingClientRect();
+        var rows = Array.prototype.map.call(document.querySelectorAll('#nts-panel [data-nts-inpro]'),
+          function (e) { var r = e.getBoundingClientRect(); return { h: r.height, left: r.left, right: r.right }; });
+        return { btn: b.height, btnLeft: b.left, btnRight: b.right, left: p.left, right: p.right, rows: rows,
+          sideways: document.documentElement.scrollWidth > window.innerWidth };
+      });
+      assert.ok(inpro.btn >= 43.5, 'the IN PRO block is a 44px target (got ' + inpro.btn + ')');
+      assert.ok(inpro.btnLeft >= inpro.left && inpro.btnRight <= inpro.right, 'and sits inside the panel');
+      assert.ok(inpro.rows.length === 2 && inpro.rows.every(r => r.h >= 43.5 && r.left >= inpro.left && r.right <= inpro.right),
+        'its open list is 44px rows inside the panel: ' + JSON.stringify(inpro.rows));
+      assert.equal(inpro.sideways, false, 'and opening it does not make the page scroll sideways');
       assert.deepEqual(realErrors(page), []);
     } finally { await page.close(); }
   });
@@ -19096,6 +19250,11 @@ test('browser suites', skipUnlessChrome, async t => {
       const text = await page.evaluate(function () { return document.getElementById('nts-panel').textContent; });
       assert.match(text, /Nothing in caution or due today/);
       assert.match(text, /No quests yet/);
+      assert.match(text, /No mind map in progress/);
+      assert.deepEqual(await page.evaluate(function () {
+        return [document.querySelectorAll('#nts-panel [data-nts-inpro-empty]').length,
+          document.querySelectorAll('#nts-panel [data-nts-inpro-toggle]').length];
+      }), [1, 0], 'with nothing in progress the block is one muted line, and no control that opens onto nothing');
       assert.deepEqual(realErrors(page), []);
     } finally { await page.close(); }
 
@@ -19115,16 +19274,18 @@ test('browser suites', skipUnlessChrome, async t => {
     const page = await open('sir-ks02.html', { db: NTS_DB({
       goals: [questNode('root', { title: payload, quest: true, star: true })],
       deadlines: [F.deadline('nts-x', TODAY, { title: payload, detail: '</a><b>bold</b>' })],
-      calendarNotes: [F.calNote('nts-y', TODAY, { title: 'A & "B" <i>c</i>' })]
+      calendarNotes: [F.calNote('nts-y', TODAY, { title: 'A & "B" <i>c</i>' })],
+      mms: [F.mm(10, 'Mind Map A'), F.mm(11, 'In <u>progress</u> & "on"', { unclear: true })]
     }) });
     try {
       await ntsReady(page);
       await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      await page.evaluate(NTS_INPRO_CLICK);
       await sleep(200);
       const r = await page.evaluate(function () {
         return {
           pwned: !!window.__ntsPwned,
-          injected: document.querySelectorAll('#nts-panel img, #nts-panel b, #nts-panel i').length,
+          injected: document.querySelectorAll('#nts-panel img, #nts-panel b, #nts-panel i, #nts-panel u').length,
           titles: Array.prototype.map.call(document.querySelectorAll('#nts-panel .nts-title, #nts-panel .quest-title'),
             function (e) { return e.textContent; })
         };
@@ -19133,6 +19294,7 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.equal(r.injected, 0, 'and made no element');
       assert.ok(r.titles.indexOf(payload) >= 0, 'it is shown verbatim');
       assert.ok(r.titles.indexOf('A & "B" <i>c</i>') >= 0);
+      assert.ok(r.titles.indexOf('In <u>progress</u> & "on"') >= 0, 'an IN PRO mind map\'s name too');
       assert.deepEqual(realErrors(page), []);
     } finally { await page.close(); }
   });

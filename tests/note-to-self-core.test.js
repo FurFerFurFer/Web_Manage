@@ -24,6 +24,10 @@
    4. Every value reaching markup is escaped, and every row is a link: a
       deadline to its DUE day, a day note to today, a quest to the Quest tab.
 
+   5. IN PRO (2026-11-11): the mind maps whose `unclear` flag is on, in stored
+      order; ONE block that holds no row until it is open; each row a link to
+      its mind map in the Knowledge Record.
+
    Fixtures are synthetic, always (AGENTS.md, "Preserve old data").
 */
 'use strict';
@@ -145,7 +149,7 @@ test('module surface', () => {
   assert.ok(M, 'note-to-self-core.js published window.TrackNoteToSelf under TZ=' + TZ);
   assert.deepEqual(Object.keys(M).sort(), [
     'QUEST_HREF', 'dayHref', 'dlHref', 'esc', 'forcedCount', 'forcedFor', 'forcedHtml',
-    'overdueDeadlines', 'questHtml', 'shortDay'
+    'inProHtml', 'inProMms', 'mmHref', 'mmKindLabel', 'overdueDeadlines', 'questHtml', 'shortDay'
   ].sort());
   assert.equal(M.QUEST_HREF, 'progress.html#quest');
 });
@@ -330,4 +334,86 @@ test('shortDay shows the year only when it is not today\'s', () => {
   assert.equal(M.shortDay('2026-11-12', '2026-11-08'), '12/11');
   assert.equal(M.shortDay('2025-12-30', '2026-01-02'), '30/12/2025');
   assert.equal(M.shortDay('nope', '2026-11-08'), 'nope');
+});
+
+// ── 5. IN PRO: one block, shut until asked ──────────────────────────────────
+
+const mm = (id, name, over = {}) => Object.assign({ id, name, type: '1', parentIds: [] }, over);
+
+test('inProMms: the mind maps whose IN PRO switch is on, in stored order', () => {
+  const mms = [
+    mm(12, 'Zeta', { unclear: true }),
+    mm(10, 'Alpha'),
+    mm(11, 'Beta', { unclear: false }),
+    mm(13, 'Gamma', { unclear: true, type: '2' }),
+    mm(14, 'Truthy', { unclear: 1 }),
+    mm(15, 'Null', { unclear: null }),
+    null, 42, 'x', [true]
+  ];
+  assert.deepEqual(M.inProMms(slotWith({ mms })).map(m => m.id), [12, 13, 14],
+    'on is any truthy `unclear` (the toggle writes !m.unclear); absent, false and null are off; stored order, not by name');
+  assert.equal(M.inProMms(slotWith({ mms }))[0], mms[0], 'the stored records themselves — nothing is copied or rebuilt');
+});
+
+test('inProMms is total', () => {
+  for (const slot of [null, undefined, 42, 'x', [], {}, { mms: null }, { mms: 'x' }, { mms: { unclear: true } }]) {
+    assert.deepEqual(M.inProMms(slot), [], JSON.stringify(slot));
+  }
+});
+
+test('inProHtml: shut, it is ONE button with the count and holds no row at all', () => {
+  const list = [mm(12, 'Zeta', { unclear: true }), mm(13, 'Gamma', { unclear: true, type: '2' })];
+  const html = M.inProHtml(list, false);
+  assert.equal(/data-nts-inpro="/.test(html), false, 'a shut block draws no mind map');
+  assert.equal(/Zeta|Gamma|nts-inpro-list/.test(html), false, 'not even hidden');
+  assert.equal((html.match(/<button /g) || []).length, 1, 'one control');
+  assert.match(html, /^<button type="button" class="nts-inpro-toggle" data-nts-inpro-toggle="1" aria-expanded="false" title=/);
+  assert.match(html, /data-nts-inpro-count="2">2 mind maps</);
+  assert.match(html, />IN PRO</);
+  assert.equal(M.inProHtml(list), html, 'shut is the default');
+  assert.match(M.inProHtml([list[0]], false), /data-nts-inpro-count="1">1 mind map</, 'one is singular');
+});
+
+test('inProHtml: open, every mind map is a link into the Knowledge Record', () => {
+  const list = [mm(12, 'Zeta', { unclear: true }), mm(13, 'Gamma', { unclear: true, type: '2' }),
+    mm('a b&c', '', { unclear: true, type: 'anchor' })];
+  const html = M.inProHtml(list, true);
+  assert.deepEqual(html.match(/data-nts-inpro="[^"]*"/g),
+    ['data-nts-inpro="12"', 'data-nts-inpro="13"', 'data-nts-inpro="a b&amp;c"'], 'in the order given');
+  assert.match(html, /aria-expanded="true" aria-controls="nts-inpro-list"/);
+  assert.match(html, /<a class="nts-row is-inpro" href="sir-ks02\.html\?mm=12" data-nts-inpro="12"/);
+  assert.match(html, /href="sir-ks02\.html\?mm=a%20b%26c"/, 'the id is URL-encoded inside the link');
+  assert.match(html, /<span class="nts-title">Zeta<\/span><span class="nts-meta">Declarative</);
+  assert.match(html, /<span class="nts-title">Gamma<\/span><span class="nts-meta">Procedural</);
+  assert.match(html, /<span class="nts-title">Untitled<\/span><span class="nts-meta">Anchor</, 'a nameless one still has a row to click');
+  assert.equal(M.mmHref(mm(12, 'Zeta')), 'sir-ks02.html?mm=12');
+});
+
+test('inProHtml: nothing in progress is one muted line and no control', () => {
+  for (const v of [[], null, undefined, 42, 'x', {}, [null, 7]]) {
+    const html = M.inProHtml(v, true);
+    assert.equal(html, '<p class="nts-empty" data-nts-inpro-empty="1">No mind map in progress.</p>', JSON.stringify(v));
+  }
+});
+
+test('inProHtml: a name, a kind and an id are TEXT, never markup', () => {
+  const evil = '<img src=x onerror="window.__p=1">';
+  const html = M.inProHtml([mm('"><b>', evil, { unclear: true, type: '</a><i>' })], true);
+  assert.equal(/<img|<b>|<i>/.test(html), false, 'no element smuggled in through any value');
+  assert.match(html, /<span class="nts-title">&lt;img src=x onerror=&quot;window.__p=1&quot;&gt;<\/span>/);
+  assert.match(html, /mm=%22%3E%3Cb%3E"/);
+});
+
+test('mmKindLabel names a kind exactly as the Knowledge Record does', () => {
+  // The label is a TWIN of mmTypeLabel in sir-ks02.html's inline code, which
+  // cannot be loaded here. Its one line is read from the page and evaluated,
+  // so a kind renamed there fails here instead of drifting.
+  const page = fs.readFileSync(path.join(__dirname, '..', 'sir-ks02.html'), 'utf8');
+  const line = page.match(/const mmTypeLabel = (t => [^\n]*;)\n/);
+  assert.ok(line, 'sir-ks02.html still defines mmTypeLabel on one line');
+  const pageLabel = vm.runInThisContext('(' + line[1].replace(/;$/, '') + ')');
+  for (const t of ['anchor', '1', '2', 'x', '', null, undefined, 2]) {
+    assert.equal(M.mmKindLabel(t), pageLabel(t), 'kind ' + JSON.stringify(t));
+  }
+  assert.equal(M.mmKindLabel('2'), 'Procedural');
 });

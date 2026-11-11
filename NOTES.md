@@ -1175,6 +1175,14 @@ Built on 2026-11-08 (README, "Note to self"). None of these is authorized.
   a cut-off (only the last N days) is the user's call.
 - **Midnight with the panel open.** "Today" is read at each draw, so an open panel shows the new
   day only on its next redraw.
+- **IN PRO rows open S&C.** A row is `sir-ks02.html?mm=<id>`, which opens a mind map on its S&C
+  tab (the same limit as Proposal 21's first item); the IN PRO switch itself sits on the mind
+  map's other tabs. Opening there needs the tab parameter that proposal describes.
+- **One home for a mind map's kind label.** `TrackNoteToSelf.mmKindLabel` is a twin of
+  `sir-ks02.html`'s inline `mmTypeLabel`, held in step by an offline case. Moving the label into
+  a core module both call would remove the twin; it touches the Knowledge Record's own code.
+- **The IN PRO flag has no core reader the Knowledge Record uses.** `sir-ks02.html` still reads
+  and writes `mm.unclear` inline at six sites; `inProMms` is the reader for everything else.
 
 ## Proposal 21: STRAT Spread-From Follow-ups
 

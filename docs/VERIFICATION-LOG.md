@@ -5498,3 +5498,63 @@ ghost and insertion line by eye.
 No source edit region collided. That session appended its STRAT verification entry while this
 task ran; this entry follows it. AGENTS, CONCEPTS, STRAT source/tests and the other session's
 test cases were not edited by this task. No staging, commit, dependency install or deployment.
+
+## 2026-11-11 — Note to self: the IN PRO block on top
+
+**Request.** "add the 'in progress MM' block but only that as 1 block on top, only clicking on
+it will show the list of IN PRO MM". Planned first; the user answered "go" to the plan as
+written: the block first inside the panel, rows as links, read-only, stored order, a muted line
+when there is none, shut every time the panel opens.
+
+**What changed.** `scripts/note-to-self-core.js` gained `inProMms` (any truthy `unclear` on a
+mind map, stored order, total), `inProHtml` (one button with the count; rows only while open; a
+muted line and no button when empty), `mmHref` and `mmKindLabel`. `scripts/note-to-self.js`
+draws the block first, holds whether it is open in a variable that is never stored, and resets
+it whenever the panel opens or shuts. `styles/styles.css` styles the block from the existing
+danger tokens. No slot field, no browser key, no writer. `?v=`: `note-to-self-core.js` and
+`note-to-self.js` 1 → 2, `styles.css` 25 → 26, on all five pages and in ARCHITECTURE.
+
+**Offline.** `tests/note-to-self-core.test.js` 14 → 21 cases, swept under the five timezones by
+`run.js`: the predicate and its order, totality, the shut block holding no row and no name, the
+open rows and their links, the empty line, escaping of name, kind and id, and `mmKindLabel`
+compared with the `mmTypeLabel` line read out of `sir-ks02.html` and evaluated.
+
+**Browser.** Three new cases (the block itself, on Home; a row followed from the Knowledge
+Record itself into `?mm=11` and that mind map's detail; an open list following another tab's
+switch and staying open), and five existing ones extended: each of the five per-page cases
+asserts the section order `inpro, forced, quest`, the count and no rows; the phone case the
+44px block and rows; the empty-workspace case the muted line and no button; the escaping case a
+mind-map name. Fixture mind-map ids are numbers.
+
+**Fail-first**, narrowed to the 15 `NOTE TO SELF` cases with a task-owned preload, each root a
+scratch tree of symlinks plus ONE doctored file, run one at a time between two undoctored
+controls (both 15 of 15):
+
+| Doctor (one rule reversed) | Cases that failed | Message that fired |
+| --- | --- | --- |
+| widget always draws the list open | the 5 per-page cases, the block case | `listing none until clicked`; `shut: no mind map is drawn until the block is clicked` |
+| widget does not reset on open/shut | the block case only | `it is shut again every time the panel opens` |
+| widget does not refocus after the redraw | the block case only | `focus stays on the block through the redraw` |
+| core keeps the rows, `hidden`, while shut | the 5 per-page cases, the block case, the phone case | as the first row; phone: `every row is a 44px target (smallest 0)` |
+| core predicate reversed (`!m.unclear`) | the block, link, other-tab and escaping cases | `a click lists the mind maps whose IN PRO switch is on`; `the row for mind map 11` |
+| core link without `?mm=<id>` | the block and link cases | `each a link to its mind map`; the link case timed out waiting for the detail |
+| stylesheet without the block's 44px | the phone case only | `the IN PRO block is a 44px target (got 36.84375)` |
+
+Every failure is an assertion except the one timeout, which is the symptom itself (the link
+went nowhere). The block case asserts several claims and four doctors each fired a different
+one of them. The always-open and hidden-rows sets overlap by design — both put rows in a shut
+block — and differ only in the phone case. The three offline behaviours with no browser doctor
+(singular count, kind label twin, totality) have only been seen passing.
+
+**Full suite.** `node tests/run.js`: **all 36 suites passed**, 572 browser subtests (569 + 3),
+46.9 minutes at load ~1.4–2.3, mains `1` at both ends, no suspend in the journal for the window,
+HEAD `3cfa7ba` and the MD5 of every page, script, stylesheet and test file identical before and
+after.
+
+**By eye.** Screenshots of the panel with the block shut and open: Home in Night and Grit and
+the Knowledge Record in Night at 1280×800, Progress in Grit and the Knowledge Record in Night at
+390×844. A long name wraps inside the panel on a phone.
+
+**Not covered.** Real touch hardware, print beyond the existing `#nts` rule, and contrast of
+the red label was read by eye and not measured. A row opens the mind map's S&C tab, which does
+not hold the IN PRO switch (NOTES, Proposal 20).

@@ -22,6 +22,11 @@
      due day has passed and which nobody ticked. overdueDeadlines is its only
      definition.
 
+   - IN PRO, as ONE BLOCK ON TOP (the user's 2026-11-11 request): the mind
+     maps whose IN PRO switch is on in the Knowledge Record. inProMms is the
+     one definition of that outside sir-ks02.html; inProHtml draws the block,
+     which is CLOSED until it is clicked and, closed, holds no row at all.
+
    Four rules, the same ones every read-only surface here lives under:
 
    - It is a READER. Nothing here writes anything, anywhere.
@@ -37,6 +42,8 @@
    Every row is a LINK into progress.html (the user's choice, D2): a deadline
    to its own popup in the Schedule, always on its DUE day — the link Home's
    strip already uses — a day note to its day, and a quest to the Quest tab.
+   An IN PRO row is the one link that goes elsewhere: to its mind map in the
+   Knowledge Record, by the ?mm= link Progress and Documentations already use.
 */
 (function (global) {
   'use strict';
@@ -62,6 +69,56 @@
     return 'progress.html?date=' + d.date + '&dl=' + encodeURIComponent(d.id) + '#schedule';
   }
   function dayHref(ds) { return 'progress.html?date=' + ds + '#schedule'; }
+
+  // ── IN PRO ───────────────────────────────────────────────────────────────
+
+  /* The mind maps in progress: the ones whose IN PRO switch is on. The flag is
+     stored as the mind map's `unclear` key — the switch was labelled UNCLEAR
+     until 2026-10-25 and only the word changed — and it is read with the `!!`
+     sir-ks02.html's own toggle writes through, so an absent key and false are
+     one state. In stored order, which is the order the Knowledge Record lists
+     them in. Total: anything that is not a slot with a list of mind maps is
+     an empty list, and an entry that is not a record is skipped. */
+  function inProMms(slot) {
+    if (!isRecord(slot) || !isList(slot.mms)) return [];
+    return slot.mms.filter(function (m) { return isRecord(m) && !!m.unclear; });
+  }
+
+  // sir-ks02.html?mm=<id> opens that mind map's detail (its mmDeepLinkRef
+  // effect). Mind-map ids are numbers; the page compares them as text.
+  function mmHref(mm) { return 'sir-ks02.html?mm=' + encodeURIComponent(mm.id); }
+
+  // A TWIN of sir-ks02.html's mmTypeLabel, which lives in that page's inline
+  // code and cannot be called from here. tests/note-to-self-core.test.js reads
+  // the page's line and fails if the two ever name a kind differently.
+  function mmKindLabel(t) {
+    return t === 'anchor' ? 'Anchor' : t === '1' ? 'Declarative' : t === '2' ? 'Procedural'
+      : String(t == null ? '' : t);
+  }
+
+  /* The IN PRO block. ONE control when there is anything to show: a button
+     carrying the count, and — only while `open` — the list under it. A closed
+     block holds NO rows, for the reason a closed panel holds no DOM. With
+     nothing in progress it is one muted line and no button, because a control
+     that opens onto nothing is a control that does nothing. */
+  function inProHtml(list, open) {
+    var mms = isList(list) ? list.filter(isRecord) : [];
+    if (!mms.length) return '<p class="nts-empty" data-nts-inpro-empty="1">No mind map in progress.</p>';
+    var isOpen = !!open;
+    return '<button type="button" class="nts-inpro-toggle" data-nts-inpro-toggle="1" aria-expanded="' +
+      (isOpen ? 'true' : 'false') + '"' + (isOpen ? ' aria-controls="nts-inpro-list"' : '') +
+      ' title="' + (isOpen ? 'Hide' : 'Show') + ' the mind maps in progress">' +
+      '<span class="nts-inpro-badge">IN PRO</span>' +
+      '<span class="nts-inpro-count" data-nts-inpro-count="' + mms.length + '">' + mms.length +
+      (mms.length === 1 ? ' mind map' : ' mind maps') + '</span>' +
+      '<span class="nts-inpro-caret" aria-hidden="true">' + (isOpen ? '▾' : '▸') + '</span></button>' +
+      (isOpen ? '<div class="nts-inpro-list" id="nts-inpro-list">' + mms.map(function (m) {
+        return '<a class="nts-row is-inpro" href="' + esc(mmHref(m)) + '" data-nts-inpro="' + esc(m.id) +
+          '" title="Open in the Knowledge Record">' +
+          '<span class="nts-title">' + esc(m.name || 'Untitled') + '</span>' +
+          '<span class="nts-meta">' + esc(mmKindLabel(m.type)) + '</span></a>';
+      }).join('') + '</div>' : '');
+  }
 
   // ── ★ Forced ─────────────────────────────────────────────────────────────
 
@@ -245,6 +302,7 @@
     QUEST_HREF: QUEST_HREF,
     esc: esc, dlHref: dlHref, dayHref: dayHref, shortDay: shortDay,
     overdueDeadlines: overdueDeadlines, forcedFor: forcedFor, forcedCount: forcedCount,
-    forcedHtml: forcedHtml, questHtml: questHtml
+    forcedHtml: forcedHtml, questHtml: questHtml,
+    inProMms: inProMms, mmHref: mmHref, mmKindLabel: mmKindLabel, inProHtml: inProHtml
   };
 })(window);

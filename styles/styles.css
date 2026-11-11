@@ -4427,7 +4427,49 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
 
 #nts-panel .nts-open:hover { border-color: var(--color-primary); }
 
+/* IN PRO: the one block on top of the panel (the user's 2026-11-11 request).
+   A button, so every property a browser styles a button with is set here —
+   Home has no Tailwind preflight to reset them. The danger pair is the red
+   the panel already uses for overdue, and follows both appearances. */
+#nts-panel .nts-inpro-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-soft);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#nts-panel .nts-inpro-toggle:hover { border-color: var(--color-danger); }
+
+#nts-panel .nts-inpro-toggle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+#nts-panel .nts-inpro-badge {
+  flex-shrink: 0;
+  font-family: var(--font-data);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--color-danger);
+}
+
+#nts-panel .nts-inpro-count { flex: 1; min-width: 0; }
+#nts-panel .nts-inpro-caret { flex-shrink: 0; color: var(--color-text-muted); }
+#nts-panel .nts-inpro-list { padding: 0.15rem 0.7rem 0; }
+
 @media (pointer: coarse) {
+  #nts-panel .nts-inpro-toggle { min-height: 44px; }
   #nts-panel .nts-row,
   #nts-panel a.quest-row,
   #nts-panel a.quest-star-row,

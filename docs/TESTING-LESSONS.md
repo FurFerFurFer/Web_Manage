@@ -273,4 +273,4 @@ each timing out on its class layer while its Progress twin passes. That is the 2
 load ~1.5–3 the whole run took 21–27 minutes, 29.5–30 at load ~2–4.5, 36 at load ~5.5–6.5, 39 at
 load ~3.3–4 with 417, 35 with 424, 37 with 428 at load ~1.3, 38 with 442 at load ~3.2, 39 with
 443 at load ~1.7–3, 37 with 448 at load ~1–1.8, 38.5 with 463 at load ~1.4–2.1, 45 with 492 at load ~2.4–3.4, 44 with 482
-at load ~2.4–3.2, 42.5 with 505 at load ~1.7–1.8, 42 with 517 at load ~1.3–1.7, 45 with 529 at load ~2.3–2.6, and 51.5 with 569 at load ~3.8–4.2. Treat that range as a load measurement, not a property of the suite.
+at load ~2.4–3.2, 42.5 with 505 at load ~1.7–1.8, 42 with 517 at load ~1.3–1.7, 45 with 529 at load ~2.3–2.6, 51.5 with 569 at load ~3.8–4.2, and 47 with 572 at load ~1.4–2.3 (2026-11-11, when `note-to-self-core` became 21). Treat that range as a load measurement, not a property of the suite.

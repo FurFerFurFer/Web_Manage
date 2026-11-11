@@ -6,8 +6,10 @@
 
    The panel holds everything in Quest, and every ★ Forced day note and
    deadline that is in caution or due — today's, plus deadlines past due that
-   nobody ticked. WHAT it holds is decided in note-to-self-core.js
-   (window.TrackNoteToSelf); this file only draws it.
+   nobody ticked. On top of both sits ONE block, IN PRO (the user's 2026-11-11
+   request): the mind maps in progress, shut until it is clicked. WHAT the
+   panel holds is decided in note-to-self-core.js (window.TrackNoteToSelf);
+   this file only draws it.
 
    Five rules, and the first two are the load-bearing ones:
 
@@ -18,7 +20,9 @@
      panel full of hidden rows would be one more set of elements for every
      existing selector on every page to trip over (the notes widget learned
      the same lesson). The rows' data attributes are `data-nts-*` for the same
-     reason.
+     reason. The IN PRO block is the same rule one level down: shut, it holds
+     no rows, and whether it is open lives in a variable here and nowhere
+     else — it is shut again every time the panel opens.
    - It FLOATS over the page and moves nothing (the user's choice, D3). Pages
      like progress.html are exactly one screen tall, and a strip that pushed
      them down would have meant changing every page's height rules. The tab is
@@ -42,6 +46,10 @@
   if (typeof document === 'undefined') return;
 
   var root = null, toggle = null, panel = null, isOpen = false;
+  // Whether the IN PRO block shows its list. Never stored (this is a READER),
+  // kept across a redraw of an open panel, and reset whenever the panel opens
+  // or shuts.
+  var inProOpen = false;
 
   function today() {
     try { return window.TrackCalendar ? window.TrackCalendar.toDateStr(new Date()) : null; }
@@ -91,6 +99,9 @@
       html += '<p class="nts-empty">No workspace yet — create one on <a href="index.html">Home</a>.</p>';
     } else {
       var slot = read.slot;
+      html += '<section class="nts-section" data-nts-section="inpro">' +
+        M.inProHtml(M.inProMms(slot), inProOpen) + '</section>';
+
       var forced = M.forcedHtml(M.forcedFor(slot, ds), ds, { dayLabel: dayLabel });
       html += '<section class="nts-section" data-nts-section="forced">' +
         '<div class="nts-label">★ Forced — in caution or due</div>' +
@@ -110,6 +121,7 @@
 
   function setOpen(next, focusBack) {
     isOpen = !!next;
+    inProOpen = false;
     toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     toggle.setAttribute('aria-label', isOpen ? 'Close Note to self' : 'Open Note to self');
     root.classList.toggle('is-open', isOpen);
@@ -126,6 +138,16 @@
   // A link to the page this is on, differing only in its #hash, would change
   // nothing on screen: set the address, then reload. See the header.
   function onPanelClick(e) {
+    // The IN PRO block: its one button shows or hides its list. The redraw
+    // replaces the button, so focus is handed to the new one.
+    var inPro = e.target && e.target.closest ? e.target.closest('[data-nts-inpro-toggle]') : null;
+    if (inPro) {
+      inProOpen = !inProOpen;
+      draw();
+      var again = panel.querySelector('[data-nts-inpro-toggle]');
+      if (again) { try { again.focus(); } catch (err) {} }
+      return;
+    }
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var url;
