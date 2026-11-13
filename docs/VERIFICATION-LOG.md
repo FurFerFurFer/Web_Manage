@@ -5664,6 +5664,14 @@ FILES cases (narrowed run) and `file-store.test.js` (13 of 13).
 
 **Full suite.** Started 13:41 under `systemd-inhibit`, on mains, and **still running when this was committed** (the user had to leave; 48 of 602 browser subtests had passed, none failed). Its result is the next line of this entry once it ends; until that line exists, this change has been verified only by the narrowed runs above.
 
+**That run is void.** The laptop suspended during it (`suspend_stats/success` 8 → 9); it ended
+at 21:14 instead of about 14:30, with two cases red right after the sleep — `DOCUMENTATIONS: a
+blank due day disables Save in the EDIT form too` on `CDP connection closed` and `SCOPE GUARD:
+Progress still REFUSES the move Documentations drops` on a timeout. Re-run alone at once, both
+passed. **A fresh full run** then went 21:15:22 → 22:05:01 (50 minutes, load ~2.5): **all 38
+suites passed, 602 of 602 browser subtests**; no suspend (9 → 9), and the MD5 of every file in
+the tree identical before and after.
+
 **Not covered.** A real Google sign-in, upload, download, rename and trash: none has been run
 from here, and whether the console changes took effect is unseen. The first real use on the
 iPad and the laptop is the check.
