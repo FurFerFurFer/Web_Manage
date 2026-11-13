@@ -114,8 +114,14 @@ order field. An unknown `kind` reads as a file. Ids are strings from `TrackStora
 ## Drive
 
 - Scope `drive.file` only: Track sees only files it made. `CONFIG.clientId` in
-  `file-store.js` is the public OAuth Web client id of the Firebase project; empty means
-  "not set up", and FILES then keeps everything on the device.
+  `file-store.js` is the public OAuth Web client id of the Firebase project (its "Web client
+  (auto created by Google Service)", filled in 2026-11-13); empty means "not set up", and
+  FILES then keeps everything on the device. Its **secret** is never needed and never goes in
+  the repository. Google honours the id only from the client's authorized JavaScript
+  origins, which must include `https://furferfurfer.github.io` and `http://127.0.0.1:8765`.
+- **No test reaches Google.** Because the shipped id is real, `tests/browser.test.js`'s
+  `open()` blanks it on every page (`NO_DRIVE`, a setter on `window.TrackFileStore`), and a
+  case that stubs Drive configures its own synthetic id. Product code holds no test switch.
 - Uploads are resumable, in 8 MiB chunks (a multiple of 256 KiB), sequential, and resume from
   the last confirmed byte; network, 5xx, 429 and 403 are retried three times with backoff; a
   401 drops the token and waits for **Connect Drive**; an expired session restarts once.

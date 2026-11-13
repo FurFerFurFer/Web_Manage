@@ -91,9 +91,24 @@ test('browser suites', skipUnlessChrome, async t => {
      deliberately guarded against overwriting, so the stale data wins silently.
      The second tab of a two-tab test must pass fresh:false, or it erases the
      state the first tab is under test with. */
+  /* No case may reach Google. file-store.js ships the REAL OAuth client id,
+     and FILES preloads Google's sign-in the moment it opens when one is set,
+     so every page blanks it: the instant the script assigns TrackFileStore,
+     this setter configures `clientId: ''` — before the tab can mount. A case
+     that stubs Drive configures its own synthetic id afterwards. Product code
+     carries no test switch. */
+  const NO_DRIVE = '(' + function () {
+    var held;
+    Object.defineProperty(window, 'TrackFileStore', {
+      configurable: true,
+      get: function () { return held; },
+      set: function (v) { if (v && typeof v.configure === 'function') v.configure({ clientId: '' }); held = v; }
+    });
+  } + ')();';
   const open = async (file, { db = null, raw = null, hash = '', fresh = true, extra = null,
                               viewport = null } = {}) => {
     const page = await browser.newPage();
+    await page.addInitScript(NO_DRIVE);
     if (fresh) await page.clearStorage(server.origin);
     /* BEFORE goto, and that is not cosmetic. A phone case's real subject is a
        lazy useState initializer that reads TrackViewport.isPhone() exactly once,
@@ -19314,8 +19329,9 @@ test('browser suites', skipUnlessChrome, async t => {
      true-storage.html's _mutateFiles. A file's bytes are in IndexedDB, which
      page.clearStorage() does NOT clear, so openFiles deletes track_files_v1
      BEFORE the tab opens — the FILES code loads only then, so nothing holds
-     the database open yet. No case reaches Google: CONFIG.clientId is empty
-     unless a case stubs Drive (window.google and fetch) itself. */
+     the database open yet. No case reaches Google: open()'s NO_DRIVE blanks
+     the shipped client id unless a case stubs Drive (window.google and fetch)
+     itself. */
   const FILES_RECS = () => [
     { id: 'f-dir', kind: 'folder', name: 'Lectures', createdAt: 1, updatedAt: 1 },
     { id: 'f-sub', kind: 'folder', name: 'Week 1', parentIds: ['f-dir'], createdAt: 1, updatedAt: 1 },
@@ -19422,8 +19438,15 @@ test('browser suites', skipUnlessChrome, async t => {
       await page.evaluate(function () { location.hash = 'files'; return true; });
       await page.waitFor(HAS_SEL, { args: ['[data-files-view]'], message: 'FILES mounted' });
       const got = (await page.evaluate(LOADED)).map(n => n.split('/').pop()).sort();
-      assert.deepEqual(got, ['file-store.js?v=1', 'files-core.js?v=2', 'files-view.js?v=2', 'mm-tree-core.js?v=2'],
+      assert.deepEqual(got, ['file-store.js?v=2', 'files-core.js?v=2', 'files-view.js?v=2', 'mm-tree-core.js?v=2'],
         'exactly the four scripts, and no PDF.js, Markdown renderer or Google sign-in until one is needed');
+      // FILES preloads Google's sign-in when Drive is set up, and the shipped
+      // client id is real; open() blanks it, so nothing here may reach Google
+      await sleep(1500);
+      assert.equal(await page.evaluate(function () {
+        return document.querySelectorAll('script[src*="accounts.google.com"]').length +
+          performance.getEntriesByType('resource').filter(function (e) { return /google\.com|googleapis\.com/.test(e.name); }).length;
+      }), 0, 'no request to Google from a test page');
       assert.equal(await page.evaluate(HAS_SEL, '.track-tabbar [data-tabbar-tab="files"]'), true, 'the phone bar has FILES too');
       assert.deepEqual(realErrors(page), []);
     } finally { await page.close(); }

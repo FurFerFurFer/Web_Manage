@@ -187,6 +187,13 @@ to a past one. Each cost this project real time at least once.
   `rasterization: enabled_force`. A page target refuses the call, and plain
   `--use-gl=angle --use-angle=gl-egl` falls back to software here. Keep that launcher out of
   `tests/`: the suite stays software-rendered, for its speed and repeatability.
+- **A check that something was NOT fetched must wait for it to be fetched.** With the real
+  Drive client id shipped, FILES started preloading Google's sign-in, and the lazy-loading
+  case still passed: it read `performance` entries the instant FILES mounted, before the
+  preload's request had finished. Only a check after a pause, counting `<script>` elements
+  as well as finished requests, failed (2 vs 0). That is why `open()` now blanks the client
+  id on every page (`NO_DRIVE`), and why the case waits 1.5 s before asserting no request to
+  Google.
 
 ---
 

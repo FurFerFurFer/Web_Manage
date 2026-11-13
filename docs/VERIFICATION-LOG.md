@@ -5638,3 +5638,32 @@ that repeated the page selector, so it asked for page 1 inside page 1.
 Pencil, palm rejection and the stylus touch cancel (CDP cannot send `touchType: 'stylus'`;
 only the pen pointer path is driven); real iPad touch, Safari, the share sheet and
 `navigator.storage.persist()`; a 100 MB file (the chunking is proven offline on 20 MiB); print.
+
+## 2026-11-13 — FILES: the Google Drive client id filled in; no test may reach Google
+
+**What changed.** `CONFIG.clientId` in `scripts/file-store.js` is now the Firebase project's
+public OAuth Web client id ("Web client (auto created by Google Service)" of
+`track-sync-2ee32`), supplied by the user, who set up the console side by hand: the Drive API
+enabled, `https://furferfurfer.github.io` and `http://127.0.0.1:8765` as authorized JavaScript
+origins, and the `drive.file` scope; the consent screen is External and In production, so no
+test-user list applies. `file-store.js` went to `?v=2` (`FILES_SCRIPTS`). No secret was asked
+for or stored.
+
+With a real id, FILES preloads Google's sign-in the moment it opens, so the browser suite
+would have called Google from every FILES case. `tests/browser.test.js`'s `open()` now installs
+`NO_DRIVE` on every page: a setter on `window.TrackFileStore` that configures `clientId: ''` the
+instant the script defines it, before the tab can mount. The stubbed-Drive case still sets its
+own synthetic id. Product code carries no test switch.
+
+**Fail-first.** The lazy-loading case was run with the real id and no guard, and **passed** —
+it read `performance` entries the instant FILES mounted, before the preload's request finished
+(TESTING-LESSONS). It gained a check after 1.5 s that counts `<script>` elements to
+`accounts.google.com` as well as finished requests to Google; with no guard that check failed,
+`no request to Google from a test page` (2 vs 0). With `NO_DRIVE` it passes, as do all 30
+FILES cases (narrowed run) and `file-store.test.js` (13 of 13).
+
+**Full suite.** Started 13:41 under `systemd-inhibit`, on mains, and **still running when this was committed** (the user had to leave; 48 of 602 browser subtests had passed, none failed). Its result is the next line of this entry once it ends; until that line exists, this change has been verified only by the narrowed runs above.
+
+**Not covered.** A real Google sign-in, upload, download, rename and trash: none has been run
+from here, and whether the console changes took effect is unseen. The first real use on the
+iPad and the laptop is the check.

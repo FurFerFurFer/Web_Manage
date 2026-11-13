@@ -1693,9 +1693,10 @@ files already in Drive (never one still waiting to upload); opening one download
 else in your Drive. Uploads are resumable, in 8 MiB chunks, and continue from the last chunk
 after a dropped connection. Google's access lasts about an hour and is kept in memory only;
 after that, the next upload, or opening a file this device does not hold, shows **Connect
-Drive**. Folders, names and notes never need it. Until the OAuth client id is filled in
-(`CONFIG.clientId` in `scripts/file-store.js`), Drive is "not set up" and FILES keeps files on
-the device that added them.
+Drive**. Folders, names and notes never need it. The OAuth client id is the Firebase
+project's own Web client (`CONFIG.clientId` in `scripts/file-store.js`, filled in on
+2026-11-13; it is public and grants nothing by itself). Emptied, Drive would be "not set up"
+again and FILES would keep files on the device that added them.
 
 **No lag elsewhere.** Nothing of FILES loads until the tab is first opened: the four scripts
 are injected then, and PDF.js, the Markdown renderer and Google's sign-in only when a viewer

@@ -1204,11 +1204,11 @@ Built on 2026-11-10 (README, "Mind maps and knowledge structure"). None of these
 Built on 2026-11-13 (README, "The FILES tab"; rules in `docs/contracts/files.md`). None of
 these is authorized.
 
-- **Drive is not switched on yet.** `CONFIG.clientId` in `scripts/file-store.js` is empty until
-  the OAuth Web client id of `track-sync-2ee32` is pasted in, with the Drive API enabled, the
-  `drive.file` scope on the consent screen and `https://furferfurfer.github.io` (and
-  `http://127.0.0.1:8765`) as authorized origins. Until then a file stays on the device that
-  added it. Nothing about the real Google sign-in or a real Drive has been verified here.
+- **Drive has never run for real.** The client id is in `CONFIG.clientId` (2026-11-13), and
+  the console side — the Drive API, the two authorized origins, the `drive.file` scope and a
+  test user — was set up by hand in `track-sync-2ee32`, where no agent can see it. No real
+  sign-in, upload, download or trash has been run from here; the suite stubs Drive throughout.
+  The first real use on the iPad and the laptop is the check.
 - **Two tabs of FILES on one device both pump the same queue.** Each tab's `file-store.js` reads
   the shared IndexedDB queue, so both can upload the same file at once. The second copy is sent
   to Drive's trash (`onFilesUploaded` never overwrites a Drive id), so nothing is lost, but the

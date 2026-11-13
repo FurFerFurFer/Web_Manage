@@ -40,11 +40,13 @@
   'use strict';
 
   var CONFIG = {
-    // The OAuth "Web client" id of the Firebase project track-sync-2ee32.
-    // Public by design (it is in every page that signs in with it); empty
-    // means Drive is not set up yet, and files stay on the device they were
-    // added on.
-    clientId: '',
+    // The OAuth "Web client" id of the Firebase project track-sync-2ee32
+    // ("Web client (auto created by Google Service)"), filled in 2026-11-13.
+    // Public by design: it identifies the app, grants nothing, and Google
+    // honours it only from the authorized origins. Empty would mean Drive is
+    // not set up, and files stay on the device they were added on. Its secret
+    // is never needed here and must never be put in this repository.
+    clientId: '614881325342-u1qhoi6svppophums6tsb85g2n78n47l.apps.googleusercontent.com',
     scope: 'https://www.googleapis.com/auth/drive.file',
     folderName: 'Track Files',
     chunkSize: 8 * 1024 * 1024,
