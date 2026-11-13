@@ -5558,3 +5558,83 @@ the Knowledge Record in Night at 1280×800, Progress in Grit and the Knowledge R
 **Not covered.** Real touch hardware, print beyond the existing `#nts` rule, and contrast of
 the red label was read by eye and not measured. A row opens the mind map's S&C tab, which does
 not hold the IN PRO switch (NOTES, Proposal 20).
+
+## 2026-11-13 — Storages → FILES: folders, notes and files, kept in Google Drive; highlights and page pins in the viewer
+
+**What changed.** A FILES tab on `true-storage.html` (README, "The FILES tab"; rules in the new
+`docs/contracts/files.md`): a fold-open tree and folder pages, `+` New note / New folder /
+Upload, rename keeping the extension, delete prompts, hold-to-lift drags ported from SRCH →
+DIRECTORY, image / PDF.js / Markdown / text viewers, Download and Share. A new slot field
+`files` (27 fields; `schema.js` 10 → 11 on all five pages). Three new scripts, loaded only when
+the tab opens: `files-core.js` (records and writers, pure), `file-store.js` (IndexedDB
+`track_files_v1` and the Google Drive adapter), `files-view.js` (the UI, plain JS). New CDN
+dependencies, approved in the plan and lazy: pdf.js 3.11.174 + worker, marked 12.0.2, DOMPurify
+3.1.6 (cdnjs), Google Identity Services. Drive is **not switched on**: `CONFIG.clientId` is
+empty until the user pastes the OAuth client id.
+
+Then, the same day, the viewer's **highlights and named page pins** (a second approved plan):
+a freehand highlighter on PDFs and images (`🖍`, four data colours, `⌫` with Undo; an Apple
+Pencil always draws, a finger or mouse only with `🖍` on) and `📌 Pin page` / `Pins (n)` on a
+PDF. They are optional item keys on the file's record (`highlights`, `pins`), so no new field,
+schema change or migration; the file's bytes are never touched. `files-core.js` and
+`files-view.js` went to `?v=2` (`FILES_SCRIPTS`). A new deliberate exclusion from "confirm
+before deleting" — the eraser, with Undo in place of a prompt — makes nine
+(`destructive-controls.md`, AGENTS.md). An uploaded `.md` that cannot be read is now reported
+with the batch instead of rejecting it.
+
+**Offline.** `tests/files-core.test.js`, 27 cases, run once: a structural case (no date code,
+no id minting, no storage), types, names, the note cap, constructors, every writer (spread,
+unknown keys kept, the very list for a no-op), a folder's children moving up (cycle-guarded),
+refusals, moves and reorders; and 10 marks cases — appending a stroke and every refusal
+(malformed, off a file, a repeated id, past the budget), the readers' totality, erase + Undo
+restoring the list exactly and the last erase deleting the key, pins, marks riding through
+rename / move / delete, `simplifyStroke` and `hitStroke`. `tests/file-store.test.js`, 13 cases,
+run once, against a stubbed Drive `fetch`: chunking byte-exact, retry/backoff, cancel and
+resume, an expired session, 308 without Range, 401, no token, an empty file, trash/rename/gone,
+query quoting, download progress. `tests/schema.test.js` 68 → 71: the count 27, a pre-FILES slot
+gaining `[]`, `files` riding through `normalizeSlot` with unknown keys and a file's
+`highlights` / `pins`, and item validation.
+
+**Browser.** 30 new cases. 21 `FILES …`: lazy loading (nothing on the other three tabs, the
+other four pages referencing none of it, exactly four scripts on first open); tree and page;
+New note writing only `files` with autosave and a sanitised Preview; rename; PNG/JPEG/PDF/.md
+upload through the real file input, bytes in IndexedDB and not in `track_db`, every viewer,
+after a reload too; every delete prompt's Cancel byte-identical; five drags by mouse and the
+same five by touch on an 820×1180 iPad; refusals by both; the phone drawer and its edge
+spring; another tab's write; and a stubbed Drive round trip (Connect, upload, Drive id written
+back, Free up, download again, rename and trash as `PATCH`, no token stored). 9 `FILES marks …`
+/ `FILES pins …`: a mouse stroke only with `🖍` on (a tap is none) writing only the record's
+`highlights` key, the device copy's SHA-256 unchanged and no request at all; a pen
+(`pointerType: 'pen'`) drawing with no tool, and on the iPad a finger scrolling with `🖍` off
+(every touchmove left to the browser, `scrollTop` moved) and drawing without scrolling with it
+on; a stroke's place on the page equal within 0.003 at 100 %, 200 % and after a reload; the
+eraser asking nothing, Undo leaving `track_db` byte-identical, the last erase deleting the key;
+a pin on page 2, the list's jump ("Page 2 of 2", the page at the pane's top), rename, a delete
+whose Cancel is byte-identical and whose OK deletes the key; a PNG's frame, picture and layer
+one 400×300 box with the stroke inside it; the delete prompt naming highlights and pins; another
+tab's stroke and pin appearing without redrawing the page; and the phone toolbar wrapping with
+the pins as a bottom sheet. Five existing field lists and the export → import round trip gained
+`files` (with a marked file record); the Storages tab assertions gained FILES.
+
+**Fail-first**, narrowed with a task-owned preload, in scratch trees of symlinks plus doctored
+copies:
+
+| Doctor | Case that failed | Message that fired |
+| --- | --- | --- |
+| `true-storage.html` loads `mm-tree-core.js` in `<head>` | the lazy-loading case | `multiverse fetched none of the FILES code` (actual: the script) |
+| `remove()` writes before it asks | the delete case | `Cancel on a note: nothing written` |
+| `withHighlight` stamps the file's `updatedAt` | the mouse-stroke case | `only \`highlights\` changed: not updatedAt, not the unknown key` |
+| Undo re-adds erased strokes at the end | the eraser case | `Undo put back the very record: ids, points, order` |
+| `deletePin` writes before it asks | the pins case | `Cancel leaves track_db byte-identical` |
+
+The other cases are new-feature cases and have only been seen passing. Failures on first runs
+that were the tests' own: a tap within the half second after a lift (swallowed by design, as
+in DIRECTORY); the 404 of the sanitiser case's own `<img src=x>`; and a marks wait selector
+that repeated the page selector, so it asked for page 1 inside page 1.
+
+**Full suite.** `node tests/run.js` under `systemd-inhibit --what=sleep:idle`, on mains, 12:33:56 → 13:22:07 (48 minutes): **all 38 suites passed** — the four date suites identical under five timezones, seventeen offline suites once (`files-core` 27, `file-store` 13), then **602 of 602 browser subtests** (572 + the 30 FILES cases). The MD5 of every file in the tree (145) identical before and after; `/sys/power/suspend_stats/success` 8 before and after. Four cases that had timed out on CDP in an earlier, abandoned run on battery (the contention signature) passed. Also: `node --check` over every script, and `git diff --check` clean.
+
+**Not covered.** The real Google sign-in and a real Drive (stubbed throughout); a real Apple
+Pencil, palm rejection and the stylus touch cancel (CDP cannot send `touchType: 'stylus'`;
+only the pen pointer path is driven); real iPad touch, Safari, the share sheet and
+`navigator.storage.persist()`; a 100 MB file (the chunking is proven offline on 20 MiB); print.

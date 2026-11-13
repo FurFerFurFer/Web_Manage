@@ -76,7 +76,8 @@ no error anywhere.
 
 Colour in the React pages splits in two, and the split is the whole rule. **DATA** —
 `PALETTE`, `SA_COLORS`, `STAGE_COLORS_SIR`, `STAGE_COLORS_SCHED`, `STAGE_RING`,
-`FILL_COLORS`, `REF_COLOR`, the Eisenhower quadrant table, and every stored `mm.color` /
+`FILL_COLORS`, `REF_COLOR`, the Eisenhower quadrant table, FILES's highlighter
+`MARK_COLORS` (`files-view.js`; a stored highlight's `color` names one), and every stored `mm.color` /
 `action.color` / `item.chipColor` — is categorical or user-chosen and must stay
 **theme-invariant**. **CHROME** is everything else, and in `progress.html` it resolves from
 the five `--color-accent*` tokens through the single `ACCENT` map declared beside `PALETTE`.

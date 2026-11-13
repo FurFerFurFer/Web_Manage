@@ -90,10 +90,14 @@ const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.te
 // kolb-core.js is handed a Kolb's `day` and a draft's `now`, and receives
 // every new id through `mint`; its structural case rejects date code and id
 // minting both.
+// files-core.js (the FILES tab's records) is handed every id and `now`; its
+// structural case rejects date code, id minting and storage alike.
+// file-store.js reads the clock only as milliseconds (Google's access expiry,
+// retry backoff) and never forms a calendar day, so a zone changes nothing.
 const UNSWEPT_FILES = ['true-storage-core.test.js', 'source-dump-core.test.js', 'graph-layout.test.js',
   'doc-table-core.test.js', 'schedule-paste-core.test.js', 'quest-core.test.js', 'milestone-core.test.js',
   'goal-core.test.js', 'project-core.test.js', 'viewport.test.js', 'journey-core.test.js', 'strat-core.test.js',
-  'mm-tree-core.test.js', 'kolb-core.test.js', 'cdp-cleanup.test.js'];
+  'mm-tree-core.test.js', 'kolb-core.test.js', 'files-core.test.js', 'file-store.test.js', 'cdp-cleanup.test.js'];
 
 for (const tz of zones)
   for (const file of OFFLINE_FILES)

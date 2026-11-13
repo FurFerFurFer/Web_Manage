@@ -1199,6 +1199,49 @@ Built on 2026-11-10 (README, "Mind maps and knowledge structure"). None of these
   writers to one origin at the same moment, or a hand-edited file, can store both. Both are
   shown, never one hidden; nothing tells the user which came first.
 
+## Proposal 22: FILES Follow-ups
+
+Built on 2026-11-13 (README, "The FILES tab"; rules in `docs/contracts/files.md`). None of
+these is authorized.
+
+- **Drive is not switched on yet.** `CONFIG.clientId` in `scripts/file-store.js` is empty until
+  the OAuth Web client id of `track-sync-2ee32` is pasted in, with the Drive API enabled, the
+  `drive.file` scope on the consent screen and `https://furferfurfer.github.io` (and
+  `http://127.0.0.1:8765`) as authorized origins. Until then a file stays on the device that
+  added it. Nothing about the real Google sign-in or a real Drive has been verified here.
+- **Two tabs of FILES on one device both pump the same queue.** Each tab's `file-store.js` reads
+  the shared IndexedDB queue, so both can upload the same file at once. The second copy is sent
+  to Drive's trash (`onFilesUploaded` never overwrites a Drive id), so nothing is lost, but the
+  bytes go up twice. `navigator.locks` around `pump()` would make it one uploader.
+- **Ink beyond the highlighter.** The viewer has one tool, a see-through highlighter of one
+  width (README, "The FILES tab"). A pen, shapes, text boxes, more widths and Pencil-only
+  palm rejection settings are not built; each is another kind of mark on the file record,
+  inside the same 256 KB budget. A real Apple Pencil, palm rejection and iPad Safari have
+  never been driven here: CDP cannot send `touchType: 'stylus'`, so only the pen pointer
+  path is tested.
+- **Export a copy with the highlights burned in.** The marks live only in Track; Download and
+  Share give the original. A burned-in PDF would need a PDF writer (a new dependency) and must
+  never replace the stored bytes.
+- **Highlight by selecting text**, and highlights on notes or plain text. The highlighter draws
+  freehand over a rendered page; pdf.js's text layer is not loaded, and a note has no pages.
+- **A list of every highlight** (by page, with a jump), like the Pins list. Only pins are
+  listed today.
+- **Marks on a re-uploaded file.** Strokes are fractions of each page; if a file's bytes were
+  ever replaced by a different version, its marks would stay where they were. No writer
+  replaces bytes today.
+- **Thumbnails on tiles.** Tiles show a type icon. An image or a PDF's first page drawn small
+  would need a per-device thumbnail cache, never in `track_db`.
+- **A long-press menu** (rename, move to…, delete) on a tile, as the iPad Files app has. The hold
+  is the drag today, so a menu would need its own gesture or a `⋯` button.
+- **Picking existing Drive files into Track.** `drive.file` cannot see them; the Google Picker
+  can grant access per file without widening the scope.
+- **A Firebase Storage adapter.** All cloud code is `file-store.js`'s Drive client; Storage
+  would need the Blaze plan and a `storage.rules` file reviewed and published by hand.
+- **Tree rows do not reorder.** A row drags only onto a folder or Top level; reordering is done
+  among tiles, which draw the same sibling order.
+- **A `.md` over 256 KB is read-only.** It is kept as a file; editing it would mean re-uploading
+  its bytes on every save.
+
 ## Track World: Computer Feasibility
 
 The game project lives entirely in [`World/`](World/) and has its own

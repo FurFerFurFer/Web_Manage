@@ -39,7 +39,7 @@ const S = globalThis.TrackSchema;
 
 const TZ = process.env.TZ || '(system default)';
 
-// The 26 fields as AGENTS.md "Current Data Contract" writes them, in its order.
+// The 27 fields as AGENTS.md "Current Data Contract" writes them, in its order.
 // Written out by hand on purpose: if the table in schema.js is edited, this is
 // the assertion that notices.
 const CONTRACT = [
@@ -47,7 +47,7 @@ const CONTRACT = [
   'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
   'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
   'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
-  'dateNotes', 'kolbDrafts'
+  'dateNotes', 'kolbDrafts', 'files'
 ];
 
 const LISTS = CONTRACT.filter(k => S.SLOT_FIELDS[k] === 'list');
@@ -60,7 +60,7 @@ test('module surface', () => {
     assert.equal(typeof S[name], 'function', name + ' is exported');
   }
   assert.equal(typeof S.SLOT_FIELDS, 'object');
-  assert.equal(S.SLOT_KEYS.length, 26);
+  assert.equal(S.SLOT_KEYS.length, 27);
   assert.ok(Object.isFrozen(S.SLOT_FIELDS), 'the field table is frozen — it is the schema, not a scratch object');
 });
 
@@ -147,8 +147,8 @@ test('GUARD: the five quest keys add NO slot field and raise no validation error
     }]
   });
   assert.deepEqual(Object.keys(quested), CONTRACT,
-    'no SLOT_FIELDS row was added — the slot is still exactly the 26 contract fields');
-  assert.equal(CONTRACT.length, 26);
+    'no SLOT_FIELDS row was added — the slot is still exactly the 27 contract fields');
+  assert.equal(CONTRACT.length, 27);
   assert.deepEqual(S.validateSlot(quested), { ok: true, errors: [] },
     'the quest keys raise no validation error');
 
@@ -832,10 +832,10 @@ test('a non-string detail WARNS and stays editable, and an absent one is fine', 
   assert.equal(absent.ok, true, 'absence is the default and is not damage');
 });
 
-test('GUARD: the detail is an item key, so the slot is still 26 fields', () => {
+test('GUARD: the detail is an item key, so the slot is still 27 fields', () => {
   // If this ever fails, `detail` has become a SLOT_FIELDS row by mistake and
   // the seven hand-written CONTRACT lists all need to follow it.
-  assert.equal(Object.keys(S.createEmptySlot()).length, 26);
+  assert.equal(Object.keys(S.createEmptySlot()).length, 27);
 });
 
 // ── dateNotes: one draft per local day ─────────────────────────────────────
@@ -878,4 +878,38 @@ test('dow 0 is Sunday and is not mistaken for absent', () => {
   // class as having no day at all.
   const r = S.validateSlot({ refSchedules: [{ id: 'r', dow: 0, time: '09:00', duration: 60, title: 'Maths' }] });
   assert.equal(r.ok, true, JSON.stringify(r.errors));
+});
+
+// ── files: the Storages page's FILES tab ───────────────────────────────────
+
+test('a slot from before FILES gains an empty list, and nothing else moves', () => {
+  const old = F.slotWithout(['files'], { trueStorages: [F.trueStorage('ts-1', 'Storage A')] });
+  assert.equal('files' in old, false, 'the fixture really predates the field');
+  assert.deepEqual(S.validateSlot(old), { ok: true, errors: [] }, 'an absent files is an older export, not damage');
+  const out = S.normalizeSlot(old);
+  assert.deepEqual(out.files, []);
+  assert.deepEqual(out.trueStorages, old.trueStorages, 'the storages ride through untouched');
+});
+
+test('files rides through normalizeSlot verbatim, unknown record keys included', () => {
+  const list = [
+    { id: 'd-1', kind: 'folder', name: 'Year 1', createdAt: 1, updatedAt: 1 },
+    { id: 'n-1', kind: 'note', name: 'plan.md', text: '# plan', createdAt: 1, updatedAt: 2, parentIds: ['d-1'] },
+    { id: 'f-1', kind: 'file', name: 'limbs.pdf', mime: 'application/pdf', size: 9, createdAt: 1, updatedAt: 1,
+      driveId: 'drive-1', laterKey: { kept: true },
+      // the viewer's marks: item-level keys, so no slot field and no migration
+      highlights: [{ id: 'h-1', page: 2, color: 'yellow', w: 0.02, pts: [0.1, 0.2, 0.3, 0.25], createdAt: 3 }],
+      pins: [{ id: 'p-1', page: 2, name: 'Results', createdAt: 3, updatedAt: 4 }] }
+  ];
+  assert.deepEqual(S.normalizeSlot({ files: list }).files, list);
+  assert.deepEqual(S.validateSlot(S.normalizeSlot({ files: list })).errors, [], 'and a slot carrying them is valid');
+  assert.equal(S.SLOT_KEYS.length, 27, 'highlights and pins added no slot field');
+});
+
+test('files must be a list of objects', () => {
+  const junk = S.validateSlot({ files: [null] });
+  assert.equal(junk.ok, false, 'a null record is refused');
+  assert.equal(junk.errors[0].field, 'files');
+  assert.equal(S.validateSlot({ files: 'x' }).ok, false, 'a string is refused');
+  assert.deepEqual(S.validateSlot({ files: null }), { ok: true, errors: [] }, 'null is missing, not wrong');
 });

@@ -9,7 +9,7 @@
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=10"></script>
+  <script src="scripts/schema.js?v=11"></script>
   <script src="scripts/milestone-core.js?v=3"></script>
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
@@ -104,6 +104,29 @@
       if (next===before||!Array.isArray(next)) return null;
       db.slots=slots.map(s=>s.id===slotId?{...s,sourceDumps:next}:s);
       return TrackStorage.saveDB(db)?next:null;
+    }
+
+    // `files` is the FILES tab's index: folders, notes (their text) and one
+    // small record per file. A file's BYTES are never here — they are in
+    // IndexedDB (track_files_v1) and Google Drive (file-store.js). This page
+    // owns the key and is its only writer, and every write is a fresh
+    // read-modify-write of that key alone, exactly as _mutateSourceDumps is,
+    // so no React snapshot is ever saved over it. `fn` gets the raw stored
+    // list and returns the next one, or the same one for "no change".
+    //
+    // Three answers, because the FILES tab tells them apart: the stored list;
+    // null when there is nothing to write (a no-op, or the slot was deleted
+    // in another tab); false when the quota guard or an unreadable database
+    // refused the save.
+    function _mutateFiles(slotId, fn) {
+      const db=_getTrackDB(), slots=db.slots||[];
+      const cur=slots.find(s=>s.id===slotId);
+      if (!cur) return null;
+      const before=Array.isArray(cur.files)?cur.files:[];
+      const next=fn(before);
+      if (next===before||!Array.isArray(next)) return null;
+      db.slots=slots.map(s=>s.id===slotId?{...s,files:next}:s);
+      return TrackStorage.saveDB(db)?next:false;
     }
 
     // ── local calendar dates (never toISOString — that is a UTC day) ─────────
@@ -1383,11 +1406,58 @@
        bottom of App, and the hash reader below all map it, so a view added
        here appears in all three places or in none. SOURCE DUMP is second so the
        first two tabs read exactly like KS03's own MULTIVERSE · SOURCE DUMP. */
-    const VIEWS = [["multiverse","MULTIVERSE"],["sourcedump","SOURCE DUMP"],["tree","SRCH"]];
+    const VIEWS = [["multiverse","MULTIVERSE"],["sourcedump","SOURCE DUMP"],["tree","SRCH"],["files","FILES"]];
     const viewFromHash = () => {
       const h = window.location.hash.slice(1);
       return VIEWS.some(([v]) => v === h) ? h : "multiverse";
     };
+
+    // ── FILES: loaded the first time the tab opens ───────────────────────────
+    // None of this is in the page's <head>: MULTIVERSE, SOURCE DUMP, SRCH and
+    // the other four pages never fetch it (a browser case checks), and the
+    // FILES code fetches Google's sign-in, PDF.js and the Markdown renderer
+    // itself, only when they are needed. Order matters: files-core.js builds
+    // on mm-tree-core.js. Keep these ?v= values identical to sir-ks02.html's
+    // mm-tree-core.js tag and to docs/ARCHITECTURE.md.
+    const FILES_SCRIPTS=['scripts/mm-tree-core.js?v=2','scripts/files-core.js?v=2','scripts/file-store.js?v=1','scripts/files-view.js?v=2'];
+    const filesLoaded=new Set();
+    let filesLoad=null;
+    function loadFilesScripts(){
+      if (!filesLoad) {
+        filesLoad=FILES_SCRIPTS.reduce((p,src)=>p.then(()=>filesLoaded.has(src)?null:new Promise((resolve,reject)=>{
+          const s=document.createElement('script');
+          s.src=src;
+          s.onload=()=>{ filesLoaded.add(src); resolve(); };
+          s.onerror=()=>{ s.remove(); reject(new Error('could not load '+src.split('?')[0])); };
+          document.head.appendChild(s);
+        })),Promise.resolve()).then(()=>window.TrackFilesView,e=>{ filesLoad=null; throw e; });
+      }
+      return filesLoad;
+    }
+
+    function FilesHost({files,slotId,mutate,onUploaded}){
+      const [state,setState]=useState(()=>window.TrackFilesView?'ready':'loading');
+      const [attempt,setAttempt]=useState(0);
+      const [error,setError]=useState(null);
+      useEffect(()=>{
+        let alive=true;
+        loadFilesScripts().then(()=>{
+          // Before the first upload can finish: where its Drive id is written.
+          window.TrackFileStore.configure({onUploaded});
+          if (alive) setState('ready');
+        },e=>{ if (alive) { setError(e.message); setState('error'); } });
+        return ()=>{ alive=false; };
+      },[attempt]);
+      if (state==='error') return (
+        <div className="p-6 text-sm text-gray-300 space-y-3" data-files-load-error="true">
+          <div>FILES didn't load ({error}). Nothing is lost: it only needs the connection back.</div>
+          <button type="button" onClick={()=>{ setState('loading'); setAttempt(a=>a+1); }}
+            className="px-3 py-1 rounded border border-gray-700 text-xs text-gray-200">Retry</button>
+        </div>
+      );
+      if (state!=='ready') return <div className="p-6 text-xs text-gray-500" data-files-loading="true">Loading FILES…</div>;
+      return React.createElement(window.TrackFilesView.FilesView,{files,slotId,mutate:fn=>mutate(fn,slotId)});
+    }
 
     function App() {
       // Same contract as documentations.html: decided once at mount, and never
@@ -1403,6 +1473,10 @@
       // stored result here — never the other way round.
       const [dumps,setDumps]=useState([]);
       const [mms,setMms]=useState([]);
+      // `files`, the FILES tab's index. Owned here, but never autosaved: it is
+      // written only through mutateFiles (a fresh read-modify-write), and this
+      // state only ever adopts what was stored.
+      const [files,setFiles]=useState([]);
       const [view,setView]=useState(viewFromHash);
       // The SOURCE DUMP tab's breadcrumb and its brief card ring. Held here,
       // as KS02 holds them in its App, so opening a storage from a chip and
@@ -1446,6 +1520,7 @@
         const visible=visibleDumps(slot.sourceDumps);
         setDumps(visible);
         setMms(slot.mms||[]);
+        setFiles(Array.isArray(slot.files)?slot.files:[]);
         loadedRef.current=true;
         try {
           const q=new URLSearchParams(location.search);
@@ -1531,6 +1606,7 @@
           fresh(setManualPos,slot.trueStoragePos||{});
           fresh(setDumps,visibleDumps(slot.sourceDumps));
           fresh(setMms,slot.mms||[]);
+          fresh(setFiles,Array.isArray(slot.files)?slot.files:[]);
         };
         const onStorage=e=>{ if (!e.key||e.key==='track_db') refresh(); };
         const onVis=()=>{ if (!document.hidden) refresh(); };
@@ -1546,6 +1622,37 @@
         const onHash=()=>setView(viewFromHash());
         window.addEventListener('hashchange',onHash);
         return ()=>window.removeEventListener('hashchange',onHash);
+      },[]);
+
+      // ── FILES writes: each a fresh read-modify-write of `files` in the slot
+      //    whose data is on screen, then the STORED result is adopted ────────
+      const slotIdRef=useRef(null);
+      slotIdRef.current=activeSlotId;
+      // `slotId` is the workspace the FILES tab was showing when the edit was
+      // made — a note flushed as it closes after another tab switched slots
+      // still lands in its own slot, and is adopted only if that is on screen.
+      const mutateFiles=useCallback((fn,slotId)=>{
+        if (!slotId) return null;
+        const r=_mutateFiles(slotId,fn);
+        if (Array.isArray(r)&&slotId===slotIdRef.current) setFiles(r);
+        return r;
+      },[]);
+      // An upload finished — perhaps for a workspace no longer on screen, so
+      // its Drive id goes into THAT slot's record. Answering false makes
+      // file-store.js put the Drive copy in Drive's trash: the record was
+      // deleted meanwhile, the save was refused (the bytes stay on this device
+      // and upload again next time FILES opens), or another tab already
+      // recorded a different copy. Never overwrites a Drive id.
+      const onFilesUploaded=useCallback((slotId,id,driveId)=>{
+        const TF=window.TrackFiles;
+        const r=_mutateFiles(slotId,list=>{
+          const rec=TF.records(list).find(x=>x.id===id);
+          return rec&&!rec.driveId?TF.withDriveId(list,id,driveId):list;
+        });
+        if (Array.isArray(r)) { if (slotId===slotIdRef.current) setFiles(r); return true; }
+        const slot=(_getTrackDB().slots||[]).find(s=>s.id===slotId);
+        const rec=slot?TF.records(slot.files).find(x=>x.id===id):null;
+        return !!(rec&&rec.driveId===driveId);
       },[]);
 
       // ── mutations (every one spreads: a storage may carry keys a later
@@ -1788,6 +1895,15 @@
                 trueStorages={storages} onTagStorage={addTag} onUntagStorage={untagPair}
                 onOpenStorage={openStorage}
                 focusMmId={focusDumpMm}/>
+            </div>
+          ):view==="files"?(
+            // Keyed by workspace: another slot adopted means another tree, so
+            // nothing open, ticked or half-typed carries across.
+            <div className="flex flex-col h-screen-nav" data-files-host="true">
+              {activeSlotId
+                ? <FilesHost key={activeSlotId} files={files} slotId={activeSlotId}
+                    mutate={mutateFiles} onUploaded={onFilesUploaded}/>
+                : <div className="p-6 text-xs text-gray-500">No workspace yet.</div>}
             </div>
           ):(
             <div className="overflow-y-auto h-screen-nav">

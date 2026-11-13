@@ -67,7 +67,11 @@
     dateNotes: 'map',
     // Kolbs begun in the notes widget and not finished yet (kolb-core.js).
     // A draft is NOT a Kolb: nothing that reads `kolbs` sees one until Done.
-    kolbDrafts: 'list'
+    kolbDrafts: 'list',
+    // The Storages page's FILES tab (files-core.js): folders, .md notes with
+    // their text, and file records. A file's BYTES are never here — they are
+    // in Google Drive and each device's IndexedDB — so this stays small.
+    files: 'list'
   };
 
   var SLOT_KEYS = Object.keys(SLOT_FIELDS);

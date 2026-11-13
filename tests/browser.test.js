@@ -3731,7 +3731,7 @@ test('browser suites', skipUnlessChrome, async t => {
       { message: 'the canvas, the first tab' });
     const tabs = await page.evaluate(function () {
       var header = document.querySelector('#root > div > div:first-child');
-      var names = ['MULTIVERSE', 'SOURCE DUMP', 'SRCH'];
+      var names = ['MULTIVERSE', 'SOURCE DUMP', 'SRCH', 'FILES'];
       return {
         header: Array.prototype.map.call(header.querySelectorAll('button'),
           function (b) { return b.textContent.trim(); }).filter(function (t) { return names.indexOf(t) >= 0; }),
@@ -3739,8 +3739,8 @@ test('browser suites', skipUnlessChrome, async t => {
           function (b) { return b.getAttribute('data-tabbar-tab'); })
       };
     });
-    assert.deepEqual(tabs.header, ['MULTIVERSE', 'SOURCE DUMP', 'SRCH'], 'the header, in that order');
-    assert.deepEqual(tabs.bar, ['multiverse', 'sourcedump', 'tree', 'home'], 'and the phone bar, from the same table');
+    assert.deepEqual(tabs.header, ['MULTIVERSE', 'SOURCE DUMP', 'SRCH', 'FILES'], 'the header, in that order');
+    assert.deepEqual(tabs.bar, ['multiverse', 'sourcedump', 'tree', 'files', 'home'], 'and the phone bar, from the same table');
 
     await page.evaluate(function () {
       var header = document.querySelector('#root > div > div:first-child');
@@ -4425,7 +4425,17 @@ test('browser suites', skipUnlessChrome, async t => {
         // a Kolb draft from the notes widget: a canonical list, with a
         // mind-map id that is a NUMBER and a key no version has heard of
         kolbDrafts: [{ id: 'kd-1', createdAt: F.localTs(2026, 3, 9, 20, 0), updatedAt: F.localTs(2026, 3, 9, 20, 5),
-          mmId: 10, experience: 'Half-written', level: '4', laterKey: 'kept' }]
+          mmId: 10, experience: 'Half-written', level: '4', laterKey: 'kept' }],
+        // the FILES tab: a folder, a note, and a file in it carrying the
+        // viewer's highlights and pins (item-level keys no allow-list names)
+        files: [
+          { id: 'fl-d', kind: 'folder', name: 'Lectures', createdAt: 1, updatedAt: 1 },
+          { id: 'fl-n', kind: 'note', name: 'Plan.md', text: '# Plan', createdAt: 1, updatedAt: 2 },
+          { id: 'fl-f', kind: 'file', name: 'Slides.pdf', mime: 'application/pdf', size: 2048, parentIds: ['fl-d'],
+            driveId: 'drv-synthetic', createdAt: 1, updatedAt: 1,
+            highlights: [{ id: 'hl-1', page: 2, color: 'green', w: 0.02, pts: [0.1, 0.2, 0.4, 0.21], createdAt: 3 }],
+            pins: [{ id: 'pn-1', page: 2, name: 'Results', createdAt: 3, updatedAt: 3 }] }
+        ]
       })
     });
     await page.waitFor(function () { return !!window.exportSlot && !!window.importSlot; },
@@ -4512,7 +4522,7 @@ test('browser suites', skipUnlessChrome, async t => {
     for (const key of ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
       'goals', 'saActions', 'saEntries', 'sourceDumps', 'notes', 'mmEntries', 'mgSchedule',
       'calendarNotes', 'deadlines', 'pos', 'levelTemplates', 'docPages',
-      'trueStorages', 'trueStoragePos', 'dateNotes', 'kolbDrafts']) {
+      'trueStorages', 'trueStoragePos', 'dateNotes', 'kolbDrafts', 'files']) {
       assert.deepEqual(imported[key], original[key], key + ' round-tripped unchanged');
     }
 
@@ -4525,7 +4535,7 @@ test('browser suites', skipUnlessChrome, async t => {
       'and the storage parent/child link');
 
     // The allow-list must not silently shrink back.
-    assert.equal(Object.keys(imported).length, 26, 'the imported slot carries all 26 canonical fields');
+    assert.equal(Object.keys(imported).length, 27, 'the imported slot carries all 27 canonical fields');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -4555,7 +4565,7 @@ test('browser suites', skipUnlessChrome, async t => {
     'linChanges', 'linDayTitles', 'goals', 'saActions', 'saEntries', 'sourceDumps',
     'notes', 'mmEntries', 'mgSchedule', 'calendarNotes', 'deadlines', 'pos',
     'levelTemplates', 'docPages', 'trueStorages', 'trueStoragePos', 'refSchedules',
-    'dateNotes', 'kolbDrafts'
+    'dateNotes', 'kolbDrafts', 'files'
   ];
 
   await t.test('every entry point creates a slot with the same canonical shape', async () => {
@@ -7391,7 +7401,7 @@ test('browser suites', skipUnlessChrome, async t => {
     await mountSchedule(page);
     const FOREIGN = ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
       'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes',
-      'dateNotes', 'kolbDrafts'];
+      'dateNotes', 'kolbDrafts', 'files'];
     const before = await page.evaluate(function (keys) {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var s = (db.slots || [])[0] || {};
@@ -9169,7 +9179,7 @@ test('browser suites', skipUnlessChrome, async t => {
     await mountSchedule(page);
     const FOREIGN = ['sessions', 'mms', 'kolbs', 'mgChanges', 'linChanges', 'linDayTitles',
       'pos', 'levelTemplates', 'sourceDumps', 'docPages', 'trueStorages', 'trueStoragePos', 'notes',
-      'dateNotes', 'kolbDrafts'];
+      'dateNotes', 'kolbDrafts', 'files'];
     const SNAP = function (keys) {
       var db = JSON.parse(localStorage.getItem('track_db') || '{}');
       var s = (db.slots || [])[0] || {};
@@ -14247,7 +14257,7 @@ test('browser suites', skipUnlessChrome, async t => {
   await phoneCase('documentations.html', 'documentations', ['pages', 'add', 'home']);
   await phoneCase('sir-ks02.html', 'ks02',
     ['calendar', 'ks02', 'mg', 'ks03', 'kolb', 'srch', 'home']);
-  await phoneCase('true-storage.html', 'true-storage', ['multiverse', 'sourcedump', 'tree', 'home']);
+  await phoneCase('true-storage.html', 'true-storage', ['multiverse', 'sourcedump', 'tree', 'files', 'home']);
 
   await t.test('PHONE/TRUE-STORAGE: the SOURCE DUMP tab is not cropped on a leaf', async () => {
     /* The bar case above measures the default tab, the canvas. The copy of
@@ -19295,6 +19305,1082 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.ok(r.titles.indexOf(payload) >= 0, 'it is shown verbatim');
       assert.ok(r.titles.indexOf('A & "B" <i>c</i>') >= 0);
       assert.ok(r.titles.indexOf('In <u>progress</u> & "on"') >= 0, 'an IN PRO mind map\'s name too');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  // ── Storages → FILES ───────────────────────────────────────────────────────
+  /* The FILES tab: scripts/files-core.js, file-store.js, files-view.js, and
+     true-storage.html's _mutateFiles. A file's bytes are in IndexedDB, which
+     page.clearStorage() does NOT clear, so openFiles deletes track_files_v1
+     BEFORE the tab opens — the FILES code loads only then, so nothing holds
+     the database open yet. No case reaches Google: CONFIG.clientId is empty
+     unless a case stubs Drive (window.google and fetch) itself. */
+  const FILES_RECS = () => [
+    { id: 'f-dir', kind: 'folder', name: 'Lectures', createdAt: 1, updatedAt: 1 },
+    { id: 'f-sub', kind: 'folder', name: 'Week 1', parentIds: ['f-dir'], createdAt: 1, updatedAt: 1 },
+    { id: 'f-pdf', kind: 'file', name: 'Slides.pdf', mime: 'application/pdf', size: 2048, parentIds: ['f-dir'],
+      driveId: 'drv-pdf', createdAt: 1, updatedAt: 1 },
+    { id: 'f-note', kind: 'note', name: 'Plan.md', text: '# Plan\n\n- first\n- second', createdAt: 1, updatedAt: 1,
+      laterKey: 'a key a later version wrote' },
+    { id: 'f-png', kind: 'file', name: 'Photo.png', mime: 'image/png', size: 68, createdAt: 1, updatedAt: 1 }
+  ];
+  const FILES_DESK = [1280, 900];
+  const FILES_IPAD = [820, 1180, { mobile: true, deviceScaleFactor: 2, touch: true }];
+  // A real two-page PDF with a correct xref, built here so it is synthetic.
+  const FILES_PDF = (() => {
+    const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 260] >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 260] >>'];
+    let out = '%PDF-1.4\n';
+    const offs = [];
+    objs.forEach((o, i) => { offs.push(out.length); out += (i + 1) + ' 0 obj\n' + o + '\nendobj\n'; });
+    const xref = out.length;
+    out += 'xref\n0 ' + (objs.length + 1) + '\n0000000000 65535 f \n' +
+      offs.map(n => String(n).padStart(10, '0') + ' 00000 n \n').join('');
+    return out + 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+  })();
+  const FILES_SLOT = function () {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var s = (db.slots || []).filter(function (x) { return x.id === db.activeSlotId; })[0];
+    return s ? s.files : undefined;
+  };
+  const FILES_REC = function (id) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var s = (db.slots || []).filter(function (x) { return x.id === db.activeSlotId; })[0];
+    return (s && s.files || []).filter(function (r) { return r && r.id === id; })[0] || null;
+  };
+  const FILES_RAW = function () { return localStorage.getItem('track_db'); };
+  // Everything in track_db EXCEPT the files key, for "writes only `files`".
+  const FILES_OTHER = function () {
+    var db = JSON.parse(localStorage.getItem('track_db'));
+    return JSON.stringify({ a: db.activeSlotId, s: db.slots.map(function (s) { var c = Object.assign({}, s); delete c.files; return c; }) });
+  };
+  const FILES_TILES = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-files-grid] [data-files-tile]'),
+      function (e) { return e.getAttribute('data-files-tile'); });
+  };
+  const FILES_ROWS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-files-bar] [data-files-row]'),
+      function (e) { return e.getAttribute('data-files-row'); });
+  };
+  const FILES_TOAST = function () { var t = document.querySelector('[data-files-toast]'); return t ? t.textContent : ''; };
+  const FILES_LOCAL = function () {
+    return window.TrackFileStore.refreshLocal().then(function (s) { return Array.from(s).map(String).sort(); });
+  };
+  const FILES_SET = function (setterSrc, sel, value) {
+    new Function('return ' + setterSrc)()(document.querySelector(sel), value);
+    return true;
+  };
+  const openFiles = async ({ files = FILES_RECS(), viewport = FILES_DESK } = {}) => {
+    const page = await open('true-storage.html', { db: seedDb({ files }), viewport });
+    await page.waitFor(HAS_SEL, { args: ['[data-tabbar="true-storage"]'], message: 'the Storages page' });
+    await page.evaluate(function () {
+      return new Promise(function (res) {
+        var r = indexedDB.deleteDatabase('track_files_v1');
+        r.onsuccess = r.onerror = r.onblocked = function () { res(true); };
+      });
+    });
+    await page.evaluate(function () { location.hash = 'files'; return true; });
+    await page.waitFor(HAS_SEL, { args: ['[data-files-view] [data-files-bar]'], message: 'the FILES tab' });
+    return page;
+  };
+  const filesOpen = async (page, id, sel) => {
+    await page.evaluate(CLICK_SEL, '[data-files-tile="' + id + '"]');
+    await page.waitFor(HAS_SEL, { args: [sel || '[data-files-page="' + id + '"], [data-files-viewer="' + id + '"]'],
+      message: 'opening ' + id });
+  };
+  // Press, HOLD past the lift, then aim at `toSel` — measured AFTER the lift,
+  // because Top level only exists while something is lifted.
+  const filesDrag = async (page, kind, from, toSel, { edge = 'middle', before = null } = {}) => {
+    await dirPress(page, kind, from);
+    await sleep(650);
+    const b = await page.evaluate(DIR_BOX, toSel, 0);
+    assert.ok(b, toSel + ' is on screen once lifted');
+    const to = { x: edge === 'left' ? b.left + 5 : b.x, y: b.y };
+    await dirPath(page, kind, from, to);
+    await sleep(150);
+    const seen = before ? await before() : null;
+    await dirRelease(page, kind, to);
+    return seen;
+  };
+
+  await t.test('FILES: nothing of it loads until the tab opens; the other tabs and pages fetch none of it', async () => {
+    const LOADED = function () {
+      return performance.getEntriesByType('resource').map(function (e) { return e.name; })
+        .filter(function (n) { return /files-core|file-store|files-view|mm-tree-core|pdf\.js|marked|dompurify|gsi\/client/.test(n); });
+    };
+    const page = await open('true-storage.html', { db: seedDb({ files: FILES_RECS() }), viewport: FILES_DESK });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-tabbar="true-storage"]'], message: 'the Storages page' });
+      for (const v of ['multiverse', 'sourcedump', 'tree']) {
+        await page.evaluate(function (h) { location.hash = h; return true; }, v);
+        await sleep(300);
+        assert.deepEqual(await page.evaluate(LOADED), [], v + ' fetched none of the FILES code');
+      }
+      assert.equal(await page.evaluate(function () { return typeof window.TrackFilesView + typeof window.TrackFileStore; }),
+        'undefinedundefined');
+      await page.evaluate(function () { location.hash = 'files'; return true; });
+      await page.waitFor(HAS_SEL, { args: ['[data-files-view]'], message: 'FILES mounted' });
+      const got = (await page.evaluate(LOADED)).map(n => n.split('/').pop()).sort();
+      assert.deepEqual(got, ['file-store.js?v=1', 'files-core.js?v=2', 'files-view.js?v=2', 'mm-tree-core.js?v=2'],
+        'exactly the four scripts, and no PDF.js, Markdown renderer or Google sign-in until one is needed');
+      assert.equal(await page.evaluate(HAS_SEL, '.track-tabbar [data-tabbar-tab="files"]'), true, 'the phone bar has FILES too');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+    const fs = require('fs'), path = require('path');
+    for (const p of PAGES.filter(p => p !== 'true-storage.html')) {
+      const src = fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+      assert.doesNotMatch(src, /files-core\.js|file-store\.js|files-view\.js/, p + ' never loads the FILES code');
+    }
+  });
+
+  await t.test('FILES: the tree and a folder page draw the stored records, and ← back goes up', async () => {
+    const page = await openFiles();
+    try {
+      assert.deepEqual(await page.evaluate(FILES_TILES), ['f-dir', 'f-note', 'f-png'], 'the top level, in stored order');
+      assert.deepEqual(await page.evaluate(FILES_ROWS), ['f-dir', 'f-sub', 'f-pdf', 'f-note', 'f-png'], 'the whole tree, unfolded');
+      await filesOpen(page, 'f-dir');
+      assert.deepEqual(await page.evaluate(FILES_TILES), ['f-sub', 'f-pdf']);
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-title]').textContent; }), 'Lectures');
+      assert.match(await page.evaluate(function () {
+        return document.querySelector('[data-files-tile="f-pdf"] [data-files-status]').textContent;
+      }), /^2 KB · in Drive$/);
+      await page.evaluate(CLICK_SEL, '[data-files-back]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-page="top"]'], message: 'back at the top' });
+      // the filter keeps a match's folders, so it is never stranded
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-filter]', 'slides');
+      await page.waitFor(function () { return document.querySelectorAll('[data-files-bar] [data-files-row]').length === 2; },
+        { message: 'the filtered tree' });
+      assert.deepEqual(await page.evaluate(FILES_ROWS), ['f-dir', 'f-pdf']);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES: + New note writes only `files`, autosaves the text, and its Preview cannot run a script', async () => {
+    const page = await openFiles();
+    try {
+      const other = await page.evaluate(FILES_OTHER);
+      await page.evaluate(CLICK_SEL, '[data-files-plus]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-new-note]'], message: 'the + menu' });
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-new-note]');
+      await dirLanded(page, raw, 'the new note saved');
+      const files = await page.evaluate(FILES_SLOT);
+      assert.equal(files.length, 6);
+      assert.deepEqual(files.slice(0, 5), FILES_RECS(), 'every other record byte-identical, its unknown key kept');
+      const made = files[5];
+      assert.equal(made.kind, 'note');
+      assert.equal(made.name, 'Untitled.md');
+      assert.equal(made.text, '');
+      assert.equal('parentIds' in made, false, 'a top-level record carries no parentIds key');
+      assert.equal(typeof made.id, 'string');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-editor]'], message: 'the editor, open on the new note' });
+      const raw2 = await page.evaluate(FILES_RAW);
+      const text = '# Hello\n\n<img src=x onerror="window.__filesPwned=1"><script>window.__filesPwned=2</script>\n\n**bold** [a link](https://example.com)';
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-editor]', text);
+      await dirLanded(page, raw2, 'the typing autosaved');
+      const saved = await page.evaluate(FILES_REC, made.id);
+      assert.equal(saved.text, text);
+      assert.ok(saved.updatedAt >= made.updatedAt);
+      assert.equal(await page.evaluate(FILES_OTHER), other, 'no key but `files` was written, in any slot');
+      await page.evaluate(CLICK_SEL, '[data-files-mode="preview"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-preview="html"] h1'], timeout: 30000, message: 'the Markdown preview (CDN)' });
+      await sleep(400);
+      const r = await page.evaluate(function () {
+        var p = document.querySelector('[data-files-preview="html"]');
+        var a = p.querySelector('a');
+        return { h1: p.querySelector('h1').textContent, strong: p.querySelector('strong').textContent,
+          pwned: window.__filesPwned || 0, handlers: p.querySelectorAll('[onerror], script').length,
+          target: a && a.getAttribute('target'), rel: a && a.getAttribute('rel') };
+      });
+      assert.deepEqual(r, { h1: 'Hello', strong: 'bold', pwned: 0, handlers: 0, target: '_blank', rel: 'noopener noreferrer' });
+      // `<img src=x>` survives sanitising (only its handler is stripped), so
+      // its failed fetch of /x is the payload's own doing
+      assert.deepEqual(realErrors(page).filter(e => !/404 .*\/x$/.test(e)), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES: rename keeps the extension and refuses an empty name; a folder renames from its page', async () => {
+    const page = await openFiles();
+    try {
+      await page.evaluate(CLICK_SEL, '[data-files-select]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-tick="f-png"]'], message: 'Select mode' });
+      await page.evaluate(CLICK_SEL, '[data-files-tick="f-png"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-sel-rename]'], message: 'Rename for one ticked tile' });
+      await page.evaluate(CLICK_SEL, '[data-files-sel-rename]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="rename"]'], message: 'the rename dialog' });
+      assert.deepEqual(await page.evaluate(function () {
+        return [document.querySelector('[data-files-dialog-input]').value, document.querySelector('[data-files-dialog-ext]').textContent];
+      }), ['Photo', '.png'], 'the name is editable; the extension is shown and fixed');
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', '   ');
+      await page.waitFor(function () { return document.querySelector('[data-files-dialog-save]').disabled; }, { message: 'Save disabled' });
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await sleep(200);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'an empty name writes nothing');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', 'Holiday');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await dirLanded(page, raw, 'the rename saved');
+      const rec = await page.evaluate(FILES_REC, 'f-png');
+      assert.equal(rec.name, 'Holiday.png');
+      assert.equal(rec.mime, 'image/png', 'spread, not rebuilt');
+      assert.ok(rec.updatedAt > 1);
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-dialog]'), false, 'the dialog closed');
+
+      await page.evaluate(CLICK_SEL, '[data-files-done]');
+      await filesOpen(page, 'f-dir');
+      await page.evaluate(CLICK_SEL, '[data-files-rename]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="rename"]'], message: 'renaming the folder' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-dialog-ext]'), false, 'a folder has no extension');
+      const raw2 = await page.evaluate(FILES_RAW);
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', 'Lectures 2026');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await dirLanded(page, raw2, 'the folder rename saved');
+      assert.equal((await page.evaluate(FILES_REC, 'f-dir')).name, 'Lectures 2026');
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-title]').textContent; }), 'Lectures 2026');
+      assert.equal(page.dialogs.length, 0, 'renaming asks nothing');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES: an upload of PNG, JPEG, PDF and .md keeps the bytes on the device, never in track_db; each opens in its viewer, after a reload too', async () => {
+    const page = await openFiles({ files: [] });
+    try {
+      const sizes = await page.evaluate(function (pdfText) {
+        function canvasBlob(type, color) {
+          return new Promise(function (res) {
+            var c = document.createElement('canvas'); c.width = 40; c.height = 30;
+            var g = c.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, 40, 30);
+            c.toBlob(res, type, 0.9);
+          });
+        }
+        return Promise.all([canvasBlob('image/png', '#c33'), canvasBlob('image/jpeg', '#36c')]).then(function (b) {
+          var dt = new DataTransfer();
+          dt.items.add(new File([b[0]], 'synthetic.png', { type: 'image/png' }));
+          dt.items.add(new File([b[1]], 'synthetic.jpg', { type: 'image/jpeg' }));
+          dt.items.add(new File([pdfText], 'synthetic.pdf', { type: 'application/pdf' }));
+          dt.items.add(new File(['# Synthetic\n\nSome text.'], 'synthetic.md', { type: 'text/markdown' }));
+          var input = document.querySelector('[data-files-input]');
+          input.files = dt.files;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          return { png: b[0].size, jpg: b[1].size };
+        });
+      }, FILES_PDF);
+      await page.waitFor(function () { var f = (function () {
+        var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+        return (db.slots || [])[0].files || [];
+      })(); return f.length === 4; }, { message: 'four records' });
+      const files = await page.evaluate(FILES_SLOT);
+      const by = Object.fromEntries(files.map(r => [r.name, r]));
+      assert.deepEqual(files.map(r => r.name), ['synthetic.png', 'synthetic.jpg', 'synthetic.pdf', 'synthetic.md'], 'in the order picked');
+      assert.deepEqual([by['synthetic.png'].kind, by['synthetic.png'].mime, by['synthetic.png'].size], ['file', 'image/png', sizes.png]);
+      assert.deepEqual([by['synthetic.jpg'].kind, by['synthetic.jpg'].mime, by['synthetic.jpg'].size], ['file', 'image/jpeg', sizes.jpg]);
+      assert.deepEqual([by['synthetic.pdf'].kind, by['synthetic.pdf'].size], ['file', FILES_PDF.length]);
+      assert.equal(by['synthetic.md'].kind, 'note', 'a small .md becomes an editable note');
+      assert.equal(by['synthetic.md'].text, '# Synthetic\n\nSome text.');
+      for (const r of files) assert.equal('driveId' in r, false, r.name + ': not in Drive (Drive is not set up here)');
+      const raw = await page.evaluate(FILES_RAW);
+      assert.ok(raw.length < 4000, 'track_db holds records, not bytes (' + raw.length + ' chars)');
+      assert.doesNotMatch(raw, /%PDF|iVBOR|data:|base64|JFIF/, 'no file content in track_db');
+      const fileIds = files.filter(r => r.kind === 'file').map(r => String(r.id)).sort();
+      assert.deepEqual(await page.evaluate(FILES_LOCAL), fileIds, 'exactly the three files are kept on this device');
+      await page.waitFor(function () {
+        var t = document.querySelector('[data-files-tile] [data-files-status]');
+        return t && /only on this device/.test(t.textContent);
+      }, { message: 'the status says where the bytes are' });
+
+      const viewers = async () => {
+        await filesOpen(page, by['synthetic.png'].id, '[data-files-image]');
+        await page.waitFor(function () { var i = document.querySelector('[data-files-image]'); return i && i.complete && i.naturalWidth === 40; },
+          { message: 'the PNG drawn' });
+        await page.evaluate(CLICK_SEL, '[data-files-back]');
+        await filesOpen(page, by['synthetic.jpg'].id, '[data-files-image]');
+        await page.waitFor(function () { var i = document.querySelector('[data-files-image]'); return i && i.complete && i.naturalWidth === 40; },
+          { message: 'the JPEG drawn' });
+        await page.evaluate(CLICK_SEL, '[data-files-back]');
+        await filesOpen(page, by['synthetic.pdf'].id, '[data-files-viewer-type="pdf"]');
+        await page.waitFor(HAS_SEL, { args: ['[data-files-pdf-pages="2"] [data-files-pdf-page="1"][data-rendered="true"]'],
+          timeout: 30000, message: 'PDF.js drew page 1 of 2 (CDN)' });
+        assert.equal(await page.evaluate(HAS_SEL, '[data-files-download]'), true, 'Download is offered');
+        await page.evaluate(CLICK_SEL, '[data-files-back]');
+        await filesOpen(page, by['synthetic.md'].id, '[data-files-viewer-type="md"]');
+        await page.waitFor(HAS_SEL, { args: ['[data-files-preview="html"] h1'], timeout: 30000, message: 'the note preview' });
+        await page.evaluate(CLICK_SEL, '[data-files-back]');
+      };
+      await viewers();
+      await page.reload(); await page.skipFirebase();
+      await page.waitFor(HAS_SEL, { args: ['[data-files-view] [data-files-tile]'], message: 'FILES after a reload (#files)' });
+      await viewers();
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES: every delete asks; Cancel leaves track_db byte-identical; a folder\'s contents move up; a file\'s device copy goes', async () => {
+    const page = await openFiles();
+    try {
+      const raw0 = await page.evaluate(FILES_RAW);
+      page.rejectDialogs = true;
+      await filesOpen(page, 'f-note');
+      await page.evaluate(CLICK_SEL, '[data-files-delete]');
+      await sleep(200);
+      assert.match(page.dialogs[0], /^Delete the note “Plan\.md”\?/);
+      assert.match(page.dialogs[0], /cannot be restored/);
+      assert.equal(await page.evaluate(FILES_RAW), raw0, 'Cancel on a note: nothing written');
+      await page.evaluate(CLICK_SEL, '[data-files-back]');
+      await filesOpen(page, 'f-dir');
+      await page.evaluate(CLICK_SEL, '[data-files-delete]');
+      await sleep(200);
+      assert.match(page.dialogs[1], /^Delete the folder “Lectures”\?/);
+      assert.match(page.dialogs[1], /The 2 items inside “Lectures” move up to the top level — nothing in it is deleted\./);
+      assert.equal(await page.evaluate(FILES_RAW), raw0, 'Cancel on a folder: nothing written');
+      page.rejectDialogs = false;
+      await page.evaluate(CLICK_SEL, '[data-files-delete]');
+      await dirLanded(page, raw0, 'the folder delete saved');
+      const files = await page.evaluate(FILES_SLOT);
+      assert.deepEqual(files.map(r => r.id), ['f-sub', 'f-pdf', 'f-note', 'f-png'], 'only the folder went, order kept');
+      assert.equal('parentIds' in files[0], false, 'Week 1 moved up to the top level (key deleted)');
+      assert.equal('parentIds' in files[1], false, 'and so did Slides.pdf');
+      assert.equal(files[1].driveId, 'drv-pdf', 'records are spread, not rebuilt');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-page="top"]'], message: 'the deleted folder\'s page closed' });
+
+      // a file only on this device: its copy in IndexedDB goes with it
+      const id = await page.evaluate(function () {
+        var dt = new DataTransfer();
+        dt.items.add(new File(['synthetic bytes'], 'Local.bin', { type: 'application/octet-stream' }));
+        var input = document.querySelector('[data-files-input]');
+        input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      });
+      assert.ok(id);
+      await page.waitFor(function () { return !!document.querySelector('[data-files-tile][data-files-type="other"]'); }, { message: 'the upload' });
+      const local = await page.evaluate(FILES_LOCAL);
+      assert.equal(local.length, 1);
+      const raw1 = await page.evaluate(FILES_RAW);
+      page.rejectDialogs = true;
+      await filesOpen(page, local[0], '[data-files-other]');
+      await page.evaluate(CLICK_SEL, '[data-files-delete]');
+      await sleep(200);
+      assert.match(page.dialogs[3], /^Delete “Local\.bin”\?/);
+      assert.match(page.dialogs[3], /not yet uploaded to Drive cannot be restored/);
+      assert.equal(await page.evaluate(FILES_RAW), raw1, 'Cancel on a file: nothing written');
+      assert.deepEqual(await page.evaluate(FILES_LOCAL), local, 'and its bytes are still here');
+      page.rejectDialogs = false;
+      await page.evaluate(CLICK_SEL, '[data-files-delete]');
+      await dirLanded(page, raw1, 'the file delete saved');
+      await page.waitFor(function () {
+        return window.TrackFileStore.refreshLocal().then(function (s) { return s.size === 0; });
+      }, { message: 'its device copy removed' });
+      assert.equal(await page.evaluate(FILES_REC, local[0]), null);
+
+      // a file in Drive says it goes to Drive's trash
+      page.rejectDialogs = true;
+      await page.evaluate(CLICK_SEL, '[data-files-select]');
+      await page.evaluate(CLICK_SEL, '[data-files-tick="f-pdf"]');
+      await page.evaluate(CLICK_SEL, '[data-files-sel-delete]');
+      await sleep(200);
+      assert.match(page.dialogs[page.dialogs.length - 1], /Drive's trash, where they can be restored for 30 days/);
+      page.rejectDialogs = false;
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  for (const kind of ['mouse', 'touch']) {
+    const vp = kind === 'touch' ? FILES_IPAD : FILES_DESK;
+    for (const spec of [
+      { name: 'a tile onto a folder tile\'s middle moves it in', from: 'f-png', to: '[data-files-tile="f-dir"]', hit: 'nest', parents: ['f-dir'] },
+      { name: 'a tile onto a folder row on the left moves it there', from: 'f-png', to: '[data-files-row="f-sub"]', parents: ['f-sub'] },
+      { name: 'a tile onto a tile\'s left edge reorders', from: 'f-png', to: '[data-files-tile="f-dir"]', edge: 'left', hit: 'before', order: ['f-png', 'f-dir', 'f-note'] },
+      { name: 'a tile onto Top level leaves its folder', at: 'f-dir', from: 'f-pdf', to: '[data-files-top]', parents: null },
+      { name: 'a tree row onto a folder row moves it there', row: true, from: 'f-png', to: '[data-files-row="f-dir"]', parents: ['f-dir'] }
+    ]) await t.test('FILES drag (' + kind + '): ' + spec.name, async () => {
+      const page = await openFiles({ viewport: vp });
+      try {
+        if (spec.at) await filesOpen(page, spec.at);
+        await sleep(200);
+        const raw = await page.evaluate(FILES_RAW), dialogs = page.dialogs.length;
+        const from = await page.evaluate(DIR_BOX, spec.row ? '[data-files-row="' + spec.from + '"]' : '[data-files-tile="' + spec.from + '"]', 0);
+        const seen = await filesDrag(page, kind, from, spec.to, { edge: spec.edge,
+          before: () => page.evaluate(function (sel) { var e = document.querySelector(sel); return e && e.getAttribute('data-files-hit'); }, spec.to) });
+        if (spec.hit) assert.equal(seen, spec.hit, 'the target showed what the drop would do');
+        await dirLanded(page, raw, 'the drop saved');
+        const rec = await page.evaluate(FILES_REC, spec.from);
+        if (spec.order) assert.deepEqual(await page.evaluate(FILES_TILES), spec.order, 'the page draws the new order');
+        else if (spec.parents === null) assert.equal('parentIds' in rec, false, 'top level deletes the key');
+        else assert.deepEqual(rec.parentIds, spec.parents);
+        assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+        assert.deepEqual(realErrors(page), []);
+      } finally { await page.close(); }
+    });
+
+    await t.test('FILES drag (' + kind + '): a refused drop says why and writes nothing; a tap still opens', async () => {
+      const page = await openFiles({ viewport: vp });
+      try {
+        await sleep(200);
+        const raw = await page.evaluate(FILES_RAW), dialogs = page.dialogs.length;
+        // a folder into its own subfolder
+        let from = await page.evaluate(DIR_BOX, '[data-files-row="f-dir"]', 0);
+        let seen = await filesDrag(page, kind, from, '[data-files-row="f-sub"]',
+          { before: () => page.evaluate(function () { return document.querySelector('[data-files-row="f-sub"]').getAttribute('data-files-hit'); }) });
+        assert.equal(seen, 'refused', 'the row turned red before the drop');
+        await page.waitFor(FILES_TOAST, { message: 'the reason' });
+        assert.equal(await page.evaluate(FILES_TOAST), 'Can\'t move “Lectures” into “Week 1”: “Week 1” is inside it.');
+        await sleep(300);
+        assert.equal(await page.evaluate(FILES_RAW), raw, 'nothing written');
+        // onto a file
+        from = await page.evaluate(DIR_BOX, '[data-files-tile="f-note"]', 0);
+        seen = await filesDrag(page, kind, from, '[data-files-row="f-png"]',
+          { before: () => page.evaluate(function () { return document.querySelector('[data-files-row="f-png"]').getAttribute('data-files-hit'); }) });
+        assert.equal(seen, 'refused');
+        await page.waitFor(function () { return /only a folder can hold things/.test((document.querySelector('[data-files-toast]') || {}).textContent || ''); },
+          { message: 'the file reason' });
+        await sleep(300);
+        assert.equal(await page.evaluate(FILES_RAW), raw, 'nothing written');
+        assert.equal(page.dialogs.length, dialogs, NO_DRAG_DIALOG);
+        // a short press is a tap, which opens — once the half second after a
+        // lift, in which a click is swallowed on purpose, has passed
+        await sleep(600);
+        const b = await page.evaluate(DIR_BOX, '[data-files-tile="f-dir"]', 0);
+        if (kind === 'touch') { await dirTouch(page, 'touchStart', b); await sleep(50); await dirTouch(page, 'touchEnd', b); }
+        else { await dirPress(page, 'mouse', b); await sleep(50); await dirRelease(page, 'mouse', b); }
+        await page.waitFor(HAS_SEL, { args: ['[data-files-page="f-dir"]'], message: 'a tap opening the folder' });
+        assert.equal(await page.evaluate(FILES_RAW), raw);
+        assert.deepEqual(realErrors(page), []);
+      } finally { await page.close(); }
+    });
+  }
+
+  await t.test('FILES (phone): the tree is a drawer; a tile held at the left edge opens it and drops into a folder there', async () => {
+    const page = await openFiles({ viewport: PHONE });
+    try {
+      const DISPLAY = function () { return getComputedStyle(document.querySelector('[data-files-bar]')).display; };
+      assert.equal(await page.evaluate(DISPLAY), 'none', 'the tree is folded away');
+      const w = await page.evaluate(function () {
+        return { doc: document.documentElement.scrollWidth, vw: innerWidth,
+          tile: document.querySelector('[data-files-tile]').getBoundingClientRect().width };
+      });
+      assert.ok(w.doc <= w.vw, 'no sideways scroll (' + w.doc + ' > ' + w.vw + ')');
+      assert.ok(w.tile >= 100, 'tiles are finger-sized (' + w.tile + 'px)');
+      await page.evaluate(CLICK_SEL, '[data-files-drawer-toggle]');
+      await page.waitFor(function () { return getComputedStyle(document.querySelector('[data-files-bar]')).display === 'flex'; },
+        { message: 'the drawer opening' });
+      await page.evaluate(CLICK_SEL, '[data-files-backdrop]');
+      await page.waitFor(function () { return getComputedStyle(document.querySelector('[data-files-bar]')).display === 'none'; },
+        { message: 'the backdrop closing it' });
+
+      const raw = await page.evaluate(FILES_RAW);
+      const from = await page.evaluate(DIR_BOX, '[data-files-tile="f-png"]', 0);
+      await dirPress(page, 'touch', from);
+      await sleep(650);
+      const edge = { x: 8, y: from.y };
+      await dirPath(page, 'touch', from, edge);
+      await page.waitFor(function () { return getComputedStyle(document.querySelector('[data-files-bar]')).display === 'flex'; },
+        { timeout: 3000, message: 'held at the edge, the drawer springs open' });
+      await sleep(100);
+      const row = await page.evaluate(DIR_BOX, '[data-files-row="f-dir"]', 0);
+      await dirPath(page, 'touch', edge, row);
+      await sleep(150);
+      await dirRelease(page, 'touch', row);
+      await dirLanded(page, raw, 'the drop saved');
+      assert.deepEqual((await page.evaluate(FILES_REC, 'f-png')).parentIds, ['f-dir']);
+      await page.waitFor(function () { return getComputedStyle(document.querySelector('[data-files-bar]')).display === 'none'; },
+        { message: 'the drawer it sprang open closes again' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES: another tab\'s write is adopted, and an open item deleted elsewhere closes', async () => {
+    const page = await openFiles();
+    try {
+      await filesOpen(page, 'f-note', '[data-files-viewer="f-note"]');
+      await page.evaluate(function (src, list) {
+        new Function('return ' + src)()('files', list);
+        window.dispatchEvent(new StorageEvent('storage', { key: 'track_db' }));
+        return true;
+      }, WRITE_SLOT_KEY.toString(), FILES_RECS().filter(r => r.id !== 'f-note').concat([
+        { id: 'f-new', kind: 'note', name: 'From elsewhere.md', text: 'x', createdAt: 2, updatedAt: 2 }]));
+      await page.waitFor(HAS_SEL, { args: ['[data-files-page="top"] [data-files-tile="f-new"]'], message: 'the other tab\'s record' });
+      assert.deepEqual(await page.evaluate(FILES_TILES), ['f-dir', 'f-png', 'f-new']);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES + Drive (stubbed): Connect, upload, the Drive id lands in track_db; a rename and a delete follow in Drive', async () => {
+    const page = await openFiles({ files: [] });
+    try {
+      await page.evaluate(function () {
+        window.__drive = { calls: [], bytes: 0 };
+        window.google = { accounts: { oauth2: { initTokenClient: function (o) {
+          return { requestAccessToken: function () { setTimeout(function () { o.callback({ access_token: 'tok-synthetic', expires_in: 3600 }); }, 10); } };
+        } } } };
+        var realFetch = window.fetch;
+        window.fetch = function (url, init) {
+          var u = String(url), m = (init && init.method) || 'GET';
+          if (u.indexOf('googleapis.com') < 0 && u.indexOf('upload.example.test') < 0) return realFetch.apply(this, arguments);
+          window.__drive.calls.push(m + ' ' + u.split('?')[0] + (init && typeof init.body === 'string' && init.body ? ' ' + init.body : ''));
+          var res = function (status, body, headers) {
+            return Promise.resolve(new Response(body == null ? null : JSON.stringify(body), { status: status, headers: headers || {} }));
+          };
+          // the upload URL ends in /drive/v3/files too, so it is matched first
+          if (m === 'POST' && u.indexOf('/upload/drive/v3/files') >= 0) return res(200, {}, { Location: 'https://upload.example.test/s1' });
+          if (m === 'GET' && /\/drive\/v3\/files$/.test(u.split('?')[0])) return res(200, { files: [] });
+          if (m === 'POST' && /\/drive\/v3\/files$/.test(u.split('?')[0])) return res(200, { id: 'drv-folder' });
+          if (m === 'PUT') { window.__drive.bytes += (init.body && init.body.size) || 0; return res(200, { id: 'drv-up-1' }); }
+          if (m === 'GET' && /\/files\/drv-up-1$/.test(u.split('?')[0])) {
+            return Promise.resolve(new Response('synthetic pdf-ish bytes', { status: 200, headers: { 'Content-Length': '23' } }));
+          }
+          if (m === 'PATCH') return res(200, { id: 'x' });
+          return res(500, {});
+        };
+        window.TrackFileStore.configure({ clientId: 'synthetic-client.apps.googleusercontent.com' });
+        return true;
+      });
+      await page.waitFor(HAS_SEL, { args: ['[data-files-connect]'], message: 'Connect Drive' });
+      await page.evaluate(CLICK_SEL, '[data-files-connect]');
+      await page.waitFor(function () { return /connected/.test(document.querySelector('[data-files-drive]').textContent); },
+        { message: 'connected' });
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(function () {
+        var dt = new DataTransfer();
+        dt.items.add(new File(['synthetic pdf-ish bytes'], 'Doc.pdf', { type: 'application/pdf' }));
+        var input = document.querySelector('[data-files-input]');
+        input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      });
+      await dirLanded(page, raw, 'the record');
+      const rec = await page.waitFor(function () {
+        var db = JSON.parse(localStorage.getItem('track_db'));
+        var r = (db.slots[0].files || [])[0];
+        return r && r.driveId ? r : null;
+      }, { message: 'the Drive id written back' });
+      assert.equal(rec.driveId, 'drv-up-1');
+      const d = await page.evaluate(function () { return window.__drive; });
+      assert.equal(d.bytes, 'synthetic pdf-ish bytes'.length, 'every byte went to Drive');
+      const session = d.calls.filter(c => c.indexOf('POST https://www.googleapis.com/upload') === 0)[0];
+      assert.ok(session, 'a resumable session was opened');
+      assert.match(session, /"parents":\["drv-folder"\]/, 'into the Track Files folder');
+      assert.match(session, new RegExp('"trackId":"' + rec.id + '"'));
+      assert.ok(d.calls.some(c => /^POST https:\/\/www\.googleapis\.com\/drive\/v3\/files \{"name":"Track Files"/.test(c)), 'the folder was made once');
+      await page.waitFor(function () { return /in Drive/.test(document.querySelector('[data-files-tile] [data-files-status]').textContent); },
+        { message: 'the tile says in Drive' });
+
+      // "Free up": one click, deliberately unconfirmed — it drops only device
+      // copies already in Drive and writes no track_db key; opening downloads again
+      assert.deepEqual(await page.evaluate(FILES_LOCAL), [String(rec.id)]);
+      const rawFree = await page.evaluate(FILES_RAW), dialogsFree = page.dialogs.length;
+      await page.evaluate(CLICK_SEL, '[data-files-clear]');
+      await page.waitFor(function () { return /Removed 1 downloaded copy/.test((document.querySelector('[data-files-toast]') || {}).textContent || ''); },
+        { message: 'Free up reporting what it removed' });
+      assert.deepEqual(await page.evaluate(FILES_LOCAL), [], 'the device copy is gone');
+      assert.equal(await page.evaluate(FILES_RAW), rawFree, 'and track_db is byte-identical');
+      assert.equal(page.dialogs.length, dialogsFree, 'Free up asks nothing (docs/contracts/files.md)');
+      await filesOpen(page, rec.id, '[data-files-viewer="' + rec.id + '"]');
+      await page.waitFor(function (id) {
+        return window.TrackFileStore.refreshLocal().then(function (s) { return s.has(id); });
+      }, { args: [rec.id], message: 'opening it downloaded it back from Drive' });
+      assert.ok((await page.evaluate(function () { return window.__drive.calls; })).some(c => /^GET .*\/files\/drv-up-1$/.test(c)));
+      await page.evaluate(CLICK_SEL, '[data-files-back]');
+
+      await page.evaluate(CLICK_SEL, '[data-files-select]');
+      await page.evaluate(CLICK_SEL, '[data-files-tick="' + rec.id + '"]');
+      await page.evaluate(CLICK_SEL, '[data-files-sel-rename]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-dialog-input]'], message: 'rename' });
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', 'Renamed');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await page.waitFor(function () { return window.__drive.calls.some(function (c) { return /^PATCH .*\/files\/drv-up-1 \{"name":"Renamed\.pdf"\}$/.test(c); }); },
+        { message: 'Drive renamed it too' });
+
+      const raw2 = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-sel-delete]');
+      await dirLanded(page, raw2, 'the delete');
+      await page.waitFor(function () { return window.__drive.calls.some(function (c) { return /^PATCH .*\/files\/drv-up-1 \{"trashed":true\}$/.test(c); }); },
+        { message: 'Drive moved it to its trash' });
+      assert.ok(!(await page.evaluate(function () { return window.__drive.calls; })).some(c => /^DELETE /.test(c)), 'never a permanent delete');
+      assert.deepEqual(await page.evaluate(FILES_SLOT), []);
+      assert.equal(await page.evaluate(function () {
+        return Object.keys(localStorage).some(function (k) { return String(localStorage.getItem(k)).indexOf('tok-synthetic') >= 0; });
+      }), false, 'the access token is never stored');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  // ── FILES: highlights and pins ─────────────────────────────────────────────
+  /* Viewer-only marks: keys on a file's record in `files`, never a change to
+     its bytes. A file's bytes go in through TrackFileStore.keepLocal, the very
+     call an upload makes, so a viewer opens with no Drive. Strokes are real
+     input: CDP mouse, `pointerType: 'pen'` (CDP cannot send a stylus
+     touchType, so the Pencil's touch cancel is code-read only), and touch. */
+  const MARK_RECS = ({ pdf = {}, png = {} } = {}) => [
+    Object.assign({ id: 'm-pdf', kind: 'file', name: 'Paper.pdf', mime: 'application/pdf', size: FILES_PDF.length,
+      driveId: 'drv-m-pdf', createdAt: 1, updatedAt: 1, laterKey: 'a key a later version wrote' }, pdf),
+    Object.assign({ id: 'm-png', kind: 'file', name: 'Board.png', mime: 'image/png', size: 900,
+      driveId: 'drv-m-png', createdAt: 1, updatedAt: 1 }, png),
+    { id: 'm-note', kind: 'note', name: 'Notes.md', text: 'x', createdAt: 1, updatedAt: 1 }
+  ];
+  const MARK_HLS = () => [
+    { id: 'hl-a', page: 1, color: 'yellow', w: 0.02, pts: [0.2, 0.2, 0.4, 0.2, 0.6, 0.2], createdAt: 5 },
+    { id: 'hl-b', page: 1, color: 'pink', w: 0.02, pts: [0.2, 0.3, 0.6, 0.3], createdAt: 6 },
+    { id: 'hl-c', page: 2, color: 'blue', w: 0.02, pts: [0.2, 0.2, 0.6, 0.2], createdAt: 7 }
+  ];
+  const MARK_SHA = function (blob) {
+    return blob.arrayBuffer().then(function (b) { return crypto.subtle.digest('SHA-256', b); }).then(function (d) {
+      return Array.from(new Uint8Array(d)).map(function (x) { return x.toString(16).padStart(2, '0'); }).join('');
+    });
+  };
+  // Keeps a synthetic PDF (the two-page one) or a 400×300 PNG on the device; its SHA-256.
+  const MARK_KEEP = function (id, what, pdfText, shaSrc) {
+    var sha = new Function('return ' + shaSrc)();
+    var made = what === 'pdf' ? Promise.resolve(new Blob([pdfText], { type: 'application/pdf' }))
+      : new Promise(function (res) {
+        var c = document.createElement('canvas'); c.width = 400; c.height = 300;
+        var g = c.getContext('2d'); g.fillStyle = '#ffffff'; g.fillRect(0, 0, 400, 300);
+        g.fillStyle = '#222222'; g.fillRect(40, 140, 320, 20);
+        c.toBlob(res, 'image/png');
+      });
+    return made.then(function (blob) {
+      return window.TrackFileStore.keepLocal(id, blob).then(function () { return window.TrackFileStore.refreshLocal(); })
+        .then(function () { return sha(blob); });
+    });
+  };
+  const MARK_HASH = function (id, shaSrc) {
+    return window.TrackFileStore.fetchBlob({ id: id }).then(new Function('return ' + shaSrc)());
+  };
+  const MARK_BOX = function (sel) {
+    var el = document.querySelector(sel);
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height, vw: innerWidth, vh: innerHeight };
+  };
+  // Where a stroke is drawn, as fractions of its page's box.
+  const MARK_PLACE = function (id) {
+    var e = document.querySelector('[data-files-mark="' + id + '"]');
+    if (!e) return null;
+    var pg = e.closest('[data-files-pdf-page], [data-files-image-frame]');
+    var a = e.getBoundingClientRect(), b = pg.getBoundingClientRect();
+    return [(a.left - b.left) / b.width, (a.top - b.top) / b.height, (a.right - b.left) / b.width, (a.bottom - b.top) / b.height];
+  };
+  const MARK_SCROLL = function () { return document.querySelector('[data-files-viewer] [data-files-scroll]').scrollTop; };
+  const MARK_AT = function () { var e = document.querySelector('[data-files-pdf-at]'); return e ? e.textContent : ''; };
+  // Bring page n's top to the pane's top, as a reader's scroll would.
+  const MARK_GOTO = function (n) {
+    var sc = document.querySelector('[data-files-viewer] [data-files-scroll]');
+    var pg = sc.querySelector('[data-files-pdf-page="' + n + '"]');
+    sc.scrollTop += pg.getBoundingClientRect().top - sc.getBoundingClientRect().top - 12;
+    return true;
+  };
+  const PAGE1 = '[data-files-pdf-page="1"] [data-files-marks="1"]';
+  const PAGE2 = '[data-files-pdf-page="2"] [data-files-marks="2"]';
+  const IMG1 = '[data-files-image-frame] [data-files-marks="1"]';
+  const markOpen = async (page, id) => {
+    await filesOpen(page, id, '[data-files-viewer="' + id + '"]');
+    if (id === 'm-pdf') await page.waitFor(HAS_SEL, { args: ['[data-files-pdf-page="1"][data-rendered="true"] [data-files-marks="1"]'],
+      timeout: 30000, message: 'PDF.js drew page 1 (CDN), under its marks layer' });
+    else await page.waitFor(HAS_SEL, { args: [IMG1], message: 'the image, under its marks layer' });
+  };
+  const openMarked = async ({ files = MARK_RECS(), viewport = FILES_DESK, view = 'm-pdf' } = {}) => {
+    const page = await openFiles({ files, viewport });
+    const sums = {
+      pdf: await page.evaluate(MARK_KEEP, 'm-pdf', 'pdf', FILES_PDF, MARK_SHA.toString()),
+      png: await page.evaluate(MARK_KEEP, 'm-png', 'png', '', MARK_SHA.toString())
+    };
+    if (view) await markOpen(page, view);
+    return { page, sums };
+  };
+  // A stroke from `from` to `to` (fractions of the box at `sel`), by 'mouse',
+  // 'pen' (a CDP mouse event with pointerType pen) or 'touch'.
+  const markStroke = async (page, kind, sel, from, to, steps = 12) => {
+    const b = await page.evaluate(MARK_BOX, sel);
+    assert.ok(b, sel + ' is on the page');
+    const a = { x: b.left + b.width * from[0], y: b.top + b.height * from[1] };
+    const z = { x: b.left + b.width * to[0], y: b.top + b.height * to[1] };
+    for (const p of [a, z]) assert.ok(p.x > 0 && p.x < b.vw && p.y > 0 && p.y < b.vh, 'the stroke is on screen (' + p.x + ',' + p.y + ')');
+    if (kind === 'touch') {
+      await dirTouch(page, 'touchStart', a);
+      await dirPath(page, 'touch', a, z, steps);
+      await dirTouch(page, 'touchEnd', z);
+      return;
+    }
+    const send = (type, p, buttons) => page.session.send('Input.dispatchMouseEvent',
+      { type, x: p.x, y: p.y, button: 'left', buttons, clickCount: 1, pointerType: kind === 'pen' ? 'pen' : 'mouse' });
+    await send('mouseMoved', a, 0);
+    await send('mousePressed', a, 1);
+    for (let k = 1; k <= steps; k++) {
+      await send('mouseMoved', { x: a.x + (z.x - a.x) * k / steps, y: a.y + (z.y - a.y) * k / steps }, 1);
+      await sleep(16);
+    }
+    await send('mouseReleased', z, 0);
+  };
+  const markMode = async (page, which, on = true) => {
+    await page.evaluate(CLICK_SEL, '[data-files-mark-' + which + ']');
+    await page.waitFor(function (w, o) {
+      var b = document.querySelector('[data-files-mark-' + w + ']');
+      return b && b.getAttribute('aria-pressed') === (o ? 'true' : 'false');
+    }, { args: [which, on], message: '⟨' + which + '⟩ ' + (on ? 'on' : 'off') });
+  };
+  const near = (a, b, tol, message) => assert.ok(Math.abs(a - b) <= tol, message + ' (' + a + ' vs ' + b + ')');
+
+  await t.test('FILES marks: with 🖍 on, a mouse draws on PDF page 1 — only the record\'s `highlights` key is written; the file\'s bytes and Drive are untouched', async () => {
+    const { page, sums } = await openMarked();
+    try {
+      await page.evaluate(function () {
+        window.__net = [];
+        var f = window.fetch;
+        window.fetch = function (u) { window.__net.push(String(u && u.url || u)); return f.apply(this, arguments); };
+        var o = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (m, u) { window.__net.push(String(u)); return o.apply(this, arguments); };
+        return true;
+      });
+      const other = await page.evaluate(FILES_OTHER);
+      const before = await page.evaluate(FILES_SLOT);
+      const raw = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', PAGE1, [0.2, 0.2], [0.7, 0.22]);
+      await sleep(300);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'with 🖍 off, a mouse draws nothing');
+
+      await markMode(page, 'draw');
+      await page.waitFor(HAS_SEL, { args: [PAGE1 + '[data-mode="draw"]'], message: 'the layer in draw mode' });
+      const b = await page.evaluate(MARK_BOX, PAGE1);
+      const tap = { x: b.left + b.width * 0.5, y: b.top + b.height * 0.1 };
+      await dirMouse(page, 'mouseMoved', tap, 0);
+      await dirMouse(page, 'mousePressed', tap, 1);
+      await dirMouse(page, 'mouseReleased', tap, 0);
+      await sleep(300);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'a tap is not a stroke');
+
+      await markStroke(page, 'mouse', PAGE1, [0.2, 0.2], [0.7, 0.22]);
+      await dirLanded(page, raw, 'the stroke saved');
+      const rec = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.equal(rec.highlights.length, 1);
+      const hl = rec.highlights[0];
+      assert.equal(typeof hl.id, 'string');
+      assert.deepEqual([hl.page, hl.color, hl.w], [1, 'yellow', 0.02], 'page 1, the default yellow, the one width');
+      assert.equal(typeof hl.createdAt, 'number');
+      assert.ok(hl.pts.length >= 4 && hl.pts.length % 2 === 0 && hl.pts.length <= 400, hl.pts.length + ' coordinates');
+      assert.ok(hl.pts.every(v => v >= 0 && v <= 1 && Math.round(v * 10000) === v * 10000), 'fractions of the page, to 4 decimals');
+      const n = hl.pts.length;
+      near(hl.pts[0], 0.2, 0.01, 'it starts where the pointer went down (x)');
+      near(hl.pts[1], 0.2, 0.01, 'it starts where the pointer went down (y)');
+      near(hl.pts[n - 2], 0.7, 0.01, 'and ends where it came up (x)');
+      near(hl.pts[n - 1], 0.22, 0.01, 'and ends where it came up (y)');
+      const { highlights, ...rest } = rec;
+      assert.deepEqual(rest, before.find(r => r.id === 'm-pdf'), 'only `highlights` changed: not updatedAt, not the unknown key');
+      assert.deepEqual((await page.evaluate(FILES_SLOT)).filter(r => r.id !== 'm-pdf'), before.filter(r => r.id !== 'm-pdf'),
+        'every other record byte-identical');
+      assert.equal(await page.evaluate(FILES_OTHER), other, 'no key but `files` was written');
+      await page.waitFor(HAS_SEL, { args: [PAGE1 + ' [data-files-mark="' + hl.id + '"]'], message: 'the stroke drawn on page 1' });
+      assert.equal(await page.evaluate(function (id) { return getComputedStyle(document.querySelector('[data-files-mark="' + id + '"]')).stroke; }, hl.id),
+        'rgb(253, 224, 71)', 'painted in the data colour, through style');
+
+      await page.evaluate(CLICK_SEL, '[data-files-mark-color="green"]');
+      const raw2 = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', PAGE1, [0.2, 0.3], [0.6, 0.3]);
+      await dirLanded(page, raw2, 'the green stroke saved');
+      const rec2 = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.deepEqual(rec2.highlights.map(x => x.color), ['yellow', 'green']);
+      assert.deepEqual(rec2.highlights[0], hl, 'the first stroke untouched');
+
+      assert.equal(await page.evaluate(MARK_HASH, 'm-pdf', MARK_SHA.toString()), sums.pdf, 'the device copy is byte-identical');
+      assert.deepEqual((await page.evaluate(function () { return window.__net; })).filter(u => !/^blob:/.test(u)), [],
+        'no request at all while marking: Drive was never asked');
+      assert.equal(page.dialogs.length, 0, 'drawing asks nothing');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES marks (iPad): a pen draws with 🖍 off; a finger scrolls with 🖍 off and draws, without scrolling, with it on', async () => {
+    const { page } = await openMarked({ viewport: FILES_IPAD });
+    try {
+      await page.evaluate(function () {
+        window.__tm = [];
+        window.addEventListener('touchmove', function (e) { window.__tm.push(e.defaultPrevented); }, { passive: true });
+        return true;
+      });
+      const raw = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'pen', PAGE1, [0.2, 0.15], [0.7, 0.18]);
+      await dirLanded(page, raw, 'the pen stroke saved');
+      assert.equal((await page.evaluate(FILES_REC, 'm-pdf')).highlights.length, 1, 'a pen draws with no tool on');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-mark-draw][aria-pressed="true"]'), false);
+
+      const raw2 = await page.evaluate(FILES_RAW);
+      const top0 = await page.evaluate(MARK_SCROLL);
+      await markStroke(page, 'touch', PAGE1, [0.5, 0.6], [0.5, 0.3]);
+      await sleep(500);
+      assert.equal(await page.evaluate(FILES_RAW), raw2, 'a finger with 🖍 off draws nothing');
+      const tm = await page.evaluate(function () { return window.__tm.splice(0); });
+      assert.ok(tm.length > 0 && tm.every(x => x === false), 'its touchmoves were left to the browser (' + JSON.stringify(tm) + ')');
+      const top1 = await page.evaluate(MARK_SCROLL);
+      assert.ok(top1 > top0, 'and it scrolled (' + top0 + ' → ' + top1 + ')');
+
+      await markMode(page, 'draw');
+      const raw3 = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'touch', PAGE1, [0.2, 0.45], [0.7, 0.47]);
+      await dirLanded(page, raw3, 'the finger stroke saved');
+      assert.equal((await page.evaluate(FILES_REC, 'm-pdf')).highlights.length, 2, 'with 🖍 on, a finger draws');
+      assert.equal(await page.evaluate(MARK_SCROLL), top1, 'and the page did not move under it');
+      const tm2 = await page.evaluate(function () { return window.__tm.splice(0); });
+      assert.ok(tm2.length > 0 && tm2.every(x => x === true), 'every touchmove was the stroke\'s (' + JSON.stringify(tm2) + ')');
+
+      const w = await page.evaluate(function () {
+        var bar = document.querySelector('[data-files-tools]');
+        return { doc: document.documentElement.scrollWidth, vw: innerWidth, bar: bar.scrollWidth, barW: bar.clientWidth };
+      });
+      assert.ok(w.doc <= w.vw && w.bar <= w.barW, 'the toolbar fits the iPad without sideways scroll (' + JSON.stringify(w) + ')');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES marks: a stroke keeps its place on the page at 100%, at 200%, and after a reload', async () => {
+    const { page } = await openMarked();
+    try {
+      await markMode(page, 'draw');
+      const raw = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', PAGE1, [0.3, 0.25], [0.6, 0.27]);
+      await dirLanded(page, raw, 'the stroke saved');
+      const id = (await page.evaluate(FILES_REC, 'm-pdf')).highlights[0].id;
+      await page.waitFor(HAS_SEL, { args: ['[data-files-mark="' + id + '"]'], message: 'the stroke drawn' });
+      const at100 = await page.evaluate(MARK_PLACE, id);
+      const w100 = (await page.evaluate(MARK_BOX, PAGE1)).width;
+      near(at100[0], 0.3, 0.02, 'drawn where it was made');
+      for (const z of ['125%', '150%', '200%']) {
+        await page.evaluate(CLICK_SEL, '[data-files-zoom-in]');
+        await page.waitFor(function (t) { return document.querySelector('[data-files-zoom-level]').textContent === t; }, { args: [z], message: 'zoom ' + z });
+      }
+      await page.waitFor(function (w) { var e = document.querySelector('[data-files-pdf-page="1"]'); return e && e.getBoundingClientRect().width > w * 1.9; },
+        { args: [w100], message: 'the page at twice the width' });
+      const at200 = await page.evaluate(MARK_PLACE, id);
+      at100.forEach((v, i) => near(at200[i], v, 0.003, 'at 200%, edge ' + i + ' is where it was on the page'));
+
+      await page.reload(); await page.skipFirebase();
+      await page.waitFor(HAS_SEL, { args: ['[data-files-view] [data-files-tile="m-pdf"]'], message: 'FILES after a reload' });
+      await markOpen(page, 'm-pdf');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-mark="' + id + '"]'], message: 'the stroke after a reload' });
+      const again = await page.evaluate(MARK_PLACE, id);
+      at100.forEach((v, i) => near(again[i], v, 0.003, 'after a reload, edge ' + i + ' is where it was'));
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES marks: the eraser asks nothing; Undo restores the identical record; erasing the last stroke deletes the key', async () => {
+    const files = MARK_RECS({ pdf: { highlights: MARK_HLS() } });
+    const { page } = await openMarked({ files });
+    try {
+      const raw0 = await page.evaluate(FILES_RAW);
+      const rec0 = await page.evaluate(FILES_REC, 'm-pdf');
+      await page.waitFor(HAS_SEL, { args: [PAGE1 + ' [data-files-mark="hl-a"]'], message: 'the stored strokes drawn' });
+      await markMode(page, 'erase');
+      await markStroke(page, 'mouse', PAGE1, [0.4, 0.15], [0.4, 0.25]);
+      await dirLanded(page, raw0, 'the erase saved');
+      assert.deepEqual((await page.evaluate(FILES_REC, 'm-pdf')).highlights.map(x => x.id), ['hl-b', 'hl-c'],
+        'the stroke crossed went; the other on its page and the one on page 2 stayed');
+      assert.equal(page.dialogs.length, 0, 'erasing asks nothing (a deliberate exclusion: Undo instead)');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-mark="hl-a"]'), false, 'and it is gone from the page');
+      assert.match(await page.evaluate(FILES_TOAST), /Erased a highlight\.\s*Undo$/);
+
+      const raw1 = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-toast-action]');
+      await dirLanded(page, raw1, 'the Undo saved');
+      assert.deepEqual(await page.evaluate(FILES_REC, 'm-pdf'), rec0, 'Undo put back the very record: ids, points, order');
+      assert.equal(await page.evaluate(FILES_RAW), raw0, 'track_db byte-identical to before the erase');
+      await page.waitFor(HAS_SEL, { args: [PAGE1 + ' [data-files-mark="hl-a"]'], message: 'the stroke drawn again' });
+
+      const raw2 = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', PAGE1, [0.4, 0.15], [0.4, 0.35]);
+      await dirLanded(page, raw2, 'the second erase saved');
+      assert.deepEqual((await page.evaluate(FILES_REC, 'm-pdf')).highlights.map(x => x.id), ['hl-c'], 'one gesture, two strokes');
+      assert.match(await page.evaluate(FILES_TOAST), /Erased 2 highlights\./);
+
+      await page.evaluate(MARK_GOTO, 2);
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pdf-page="2"][data-rendered="true"] [data-files-marks="2"] [data-files-mark="hl-c"]'],
+        timeout: 30000, message: 'page 2 drawn, with its stroke' });
+      const raw3 = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', PAGE2, [0.4, 0.15], [0.4, 0.25]);
+      await dirLanded(page, raw3, 'the last erase saved');
+      const last = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.equal('highlights' in last, false, 'the last erase DELETES the key');
+      const { highlights, ...rest0 } = rec0;
+      assert.deepEqual(last, rest0, 'and nothing else on the record changed');
+      assert.equal(page.dialogs.length, 0);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES pins: pin page 2 as "Results", jump to it from the list, rename it; deleting asks, Cancel is byte-identical, the last pin deletes the key', async () => {
+    const { page } = await openMarked();
+    try {
+      assert.equal(await page.evaluate(MARK_AT), 'Page 1 of 2');
+      await page.evaluate(MARK_GOTO, 2);
+      await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 of 2'; }, { message: 'reading page 2' });
+      await page.evaluate(CLICK_SEL, '[data-files-pin-add]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="pin"]'], message: 'the pin dialog' });
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-dialog-input]').value; }), 'Page 2', 'the page you are on, named for it');
+      const raw = await page.evaluate(FILES_RAW);
+      const before = await page.evaluate(FILES_REC, 'm-pdf');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', '  Results ');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await dirLanded(page, raw, 'the pin saved');
+      const rec = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.equal(rec.pins.length, 1);
+      const pin = rec.pins[0];
+      assert.equal(typeof pin.id, 'string');
+      assert.deepEqual([pin.page, pin.name], [2, 'Results'], 'page 2, the name cleaned');
+      assert.ok(typeof pin.createdAt === 'number' && pin.updatedAt === pin.createdAt);
+      const { pins, ...rest } = rec;
+      assert.deepEqual(rest, before, 'only `pins` changed on the record');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-dialog]'), false, 'the dialog closed');
+      await page.waitFor(function () {
+        var f = document.querySelector('[data-files-pdf-page="2"] [data-files-pin-flag]');
+        return f && f.textContent === '📌 Results';
+      }, { message: 'page 2 flagged' });
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-pins]').textContent; }), 'Pins (1)');
+
+      await page.evaluate(function () { document.querySelector('[data-files-viewer] [data-files-scroll]').scrollTop = 0; return true; });
+      await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 1 of 2'; }, { message: 'back on page 1' });
+      await page.evaluate(CLICK_SEL, '[data-files-pins]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="' + pin.id + '"]'], message: 'the pin list' });
+      await page.evaluate(CLICK_SEL, '[data-files-pin-jump="' + pin.id + '"]');
+      await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 of 2'; }, { message: 'the jump' });
+      await sleep(200);
+      assert.equal(await page.evaluate(MARK_AT), 'Page 2 of 2', 'still page 2 once the scroll settles');
+      const gap = await page.evaluate(function () {
+        var sc = document.querySelector('[data-files-viewer] [data-files-scroll]');
+        return document.querySelector('[data-files-pdf-page="2"]').getBoundingClientRect().top - sc.getBoundingClientRect().top;
+      });
+      assert.ok(gap >= 0 && gap <= 20, 'page 2 is at the top of the pane (' + gap + 'px)');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pin-list]'), false, 'the list closed');
+
+      await page.evaluate(CLICK_SEL, '[data-files-pins]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-rename="' + pin.id + '"]'], message: 'the list, to rename' });
+      await page.evaluate(CLICK_SEL, '[data-files-pin-rename="' + pin.id + '"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="pin-rename"]'], message: 'the rename dialog' });
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-dialog-input]').value; }), 'Results');
+      const raw2 = await page.evaluate(FILES_RAW);
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', 'Results, final');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await dirLanded(page, raw2, 'the rename saved');
+      const pin2 = (await page.evaluate(FILES_REC, 'm-pdf')).pins[0];
+      assert.deepEqual([pin2.id, pin2.page, pin2.name, pin2.createdAt], [pin.id, 2, 'Results, final', pin.createdAt]);
+      assert.ok(pin2.updatedAt >= pin.updatedAt);
+      assert.equal(page.dialogs.length, 0, 'pinning and renaming ask nothing');
+
+      await page.evaluate(CLICK_SEL, '[data-files-pins]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-delete="' + pin.id + '"]'], message: 'the list again' });
+      const raw3 = await page.evaluate(FILES_RAW);
+      page.rejectDialogs = true;
+      await page.evaluate(CLICK_SEL, '[data-files-pin-delete="' + pin.id + '"]');
+      page.rejectDialogs = false;
+      assert.equal(page.dialogs.length, 1, 'deleting a pin asks');
+      assert.match(page.dialogs[0], /^Delete the pin “Results, final” on page 2\?/);
+      await sleep(200);
+      assert.equal(await page.evaluate(FILES_RAW), raw3, 'Cancel leaves track_db byte-identical');
+      await page.evaluate(CLICK_SEL, '[data-files-pin-delete="' + pin.id + '"]');
+      await dirLanded(page, raw3, 'OK deleted it');
+      const gone = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.equal('pins' in gone, false, 'the last pin DELETES the key');
+      assert.deepEqual(gone, before, 'the record is as it was before the pin');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pin-flag]'), false, 'the flag is gone');
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-pins]').textContent; }), 'Pins (0)');
+      assert.deepEqual(realErrors(page), []);
+    } finally { page.rejectDialogs = false; await page.close(); }
+  });
+
+  await t.test('FILES marks: a stroke on a PNG lands inside the image, whose frame is the picture\'s own size', async () => {
+    const { page, sums } = await openMarked({ view: 'm-png' });
+    try {
+      const fr = await page.evaluate(function () {
+        var f = document.querySelector('[data-files-image-frame]').getBoundingClientRect();
+        var i = document.querySelector('[data-files-image]').getBoundingClientRect();
+        var s = document.querySelector('[data-files-image-frame] [data-files-marks]').getBoundingClientRect();
+        return [f.width, f.height, i.width, i.height, s.width, s.height, f.left - i.left, f.top - i.top, f.left - s.left, f.top - s.top];
+      });
+      assert.deepEqual(fr, [400, 300, 400, 300, 400, 300, 0, 0, 0, 0], 'frame, picture and layer are one box (fit, 400×300)');
+      await markMode(page, 'draw');
+      const raw = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', IMG1, [0.25, 0.5], [0.75, 0.5]);
+      await dirLanded(page, raw, 'the stroke saved');
+      const hl = (await page.evaluate(FILES_REC, 'm-png')).highlights[0];
+      assert.equal(hl.page, 1, 'an image is page 1');
+      near(hl.pts[0], 0.25, 0.01, 'x');
+      near(hl.pts[1], 0.5, 0.01, 'y');
+      near(hl.pts[hl.pts.length - 2], 0.75, 0.01, 'end x');
+      await page.waitFor(HAS_SEL, { args: [IMG1 + ' [data-files-mark="' + hl.id + '"]'], message: 'drawn' });
+      const at = await page.evaluate(MARK_PLACE, hl.id);
+      assert.ok(at[0] >= 0 && at[2] <= 1 && at[1] >= 0 && at[3] <= 1, 'inside the frame (' + at + ')');
+      assert.equal(await page.evaluate(MARK_HASH, 'm-png', MARK_SHA.toString()), sums.png, 'the picture\'s bytes unchanged');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES marks: deleting a file says its highlights and pins go with it; Cancel is byte-identical', async () => {
+    const files = MARK_RECS({
+      pdf: { highlights: MARK_HLS().slice(0, 2), pins: [{ id: 'pn-1', page: 2, name: 'Results', createdAt: 5, updatedAt: 5 }] },
+      png: { highlights: MARK_HLS().slice(0, 1) }
+    });
+    const { page } = await openMarked({ files, view: null });
+    try {
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-select]');
+      await page.evaluate(CLICK_SEL, '[data-files-tick="m-pdf"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-sel-delete]'], message: 'one ticked' });
+      page.rejectDialogs = true;
+      await page.evaluate(CLICK_SEL, '[data-files-sel-delete]');
+      assert.match(page.dialogs[0], /\nIts 2 highlights and 1 pin go with it\.(\n|$)/);
+      await page.evaluate(CLICK_SEL, '[data-files-tick="m-png"]');
+      await page.waitFor(function () { return /Delete 2/.test(document.querySelector('[data-files-sel-delete]').textContent); }, { message: 'two ticked' });
+      await page.evaluate(CLICK_SEL, '[data-files-sel-delete]');
+      page.rejectDialogs = false;
+      assert.match(page.dialogs[1], /\nTheir 3 highlights and 1 pin go with them\.(\n|$)/);
+      await sleep(200);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'Cancel leaves track_db byte-identical');
+      assert.deepEqual(realErrors(page), []);
+    } finally { page.rejectDialogs = false; await page.close(); }
+  });
+
+  await t.test('FILES marks: another tab\'s stroke and pin appear on the open PDF, which is not reloaded', async () => {
+    const { page } = await openMarked();
+    try {
+      await page.evaluate(function () { document.querySelector('[data-files-pdf-page="1"] canvas').__mark = 1; return true; });
+      await page.evaluate(function (src, list) {
+        new Function('return ' + src)()('files', list);
+        window.dispatchEvent(new StorageEvent('storage', { key: 'track_db' }));
+        return true;
+      }, WRITE_SLOT_KEY.toString(), MARK_RECS({ pdf: { highlights: MARK_HLS().slice(0, 1),
+        pins: [{ id: 'pn-x', page: 1, name: 'From the iPad', createdAt: 9, updatedAt: 9 }] } }));
+      await page.waitFor(HAS_SEL, { args: [PAGE1 + ' [data-files-mark="hl-a"]'], message: 'the other tab\'s stroke' });
+      await page.waitFor(function () {
+        var f = document.querySelector('[data-files-pdf-page="1"] [data-files-pin-flag]');
+        return f && f.textContent === '📌 From the iPad';
+      }, { message: 'and its pin' });
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-pdf-page="1"] canvas').__mark; }), 1,
+        'the page was not drawn again');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES marks (phone): the viewer\'s toolbar wraps rather than scrolling sideways; Pins opens as a bottom sheet', async () => {
+    const { page } = await openMarked({ viewport: PHONE,
+      files: MARK_RECS({ pdf: { pins: [{ id: 'pn-1', page: 2, name: 'Results', createdAt: 5, updatedAt: 5 }] } }) });
+    try {
+      const w = await page.evaluate(function () {
+        var bar = document.querySelector('[data-files-tools]');
+        var out = Array.prototype.filter.call(bar.querySelectorAll('button'), function (b) { var r = b.getBoundingClientRect(); return r.right > innerWidth || r.left < 0; });
+        return { doc: document.documentElement.scrollWidth, vw: innerWidth, bar: bar.scrollWidth, barW: bar.clientWidth, out: out.length,
+          swatch: document.querySelector('[data-files-mark-color]').getBoundingClientRect().width };
+      });
+      assert.ok(w.doc <= w.vw, 'no sideways scroll (' + w.doc + ' > ' + w.vw + ')');
+      assert.ok(w.bar <= w.barW && w.out === 0, 'every tool is on screen (' + JSON.stringify(w) + ')');
+      assert.ok(w.swatch >= 24, 'swatches are finger-sized (' + w.swatch + 'px)');
+      await page.evaluate(CLICK_SEL, '[data-files-pins]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="pn-1"]'], message: 'the pin sheet' });
+      const sheet = await page.evaluate(function () {
+        var s = document.querySelector('[data-files-pin-list]'), r = s.getBoundingClientRect();
+        return { pos: getComputedStyle(s).position, left: r.left, right: r.right, bottom: r.bottom, vw: innerWidth, vh: innerHeight };
+      });
+      assert.deepEqual([sheet.pos, sheet.left, sheet.right, sheet.bottom], ['fixed', 0, sheet.vw, sheet.vh], 'a full-width sheet on the bottom edge');
+      await page.evaluate(CLICK_SEL, '[data-files-pin-jump="pn-1"]');
+      await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 of 2'; }, { message: 'the jump' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pin-list]'), false, 'the sheet closed');
+      await page.evaluate(CLICK_SEL, '[data-files-pins]');
+      await page.evaluate(CLICK_SEL, '[data-files-pin-backdrop]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-pin-list]'); }, { message: 'the backdrop closes it' });
       assert.deepEqual(realErrors(page), []);
     } finally { await page.close(); }
   });
