@@ -154,6 +154,16 @@ not frame the levels better than the descriptions above.
   links. An MM's **S&C** tab gathers every section written for it.
 - **True Storage** — a storage is a **source**, not knowledge: a real place where material
   lives. Storages are tagged to the Source Dump sections they relate to.
+- **A text's file** (confirmed 2026-11-14). An MM's S&C is the source of material the user
+  uses. Its **links** navigate on their own; its **texts** mostly come from **files**, so each
+  text block is connected to the file it came from, and the connection works **both ways** —
+  from the text to its file, and from a file to every text that uses it. **One file per text,
+  but one file can serve many texts.** Opening it means the file, not a page in it ("just the
+  file"). The user's words: "for the links I could easily navigate but for the text mostly it
+  is files"; "exactly one but on the opposite files can be linked more than 1".
+- **For now, True Storage is SOURCE DUMP and FILES.** The user, 2026-11-14: "just for now in
+  true storage tab SRCH and Multiverse serves no purpose". They were hidden, not deleted; whether
+  storages themselves still have a role is open (NOTES, Proposal 22).
 
 ## The Schedule's four kinds of work
 

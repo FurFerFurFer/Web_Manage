@@ -334,7 +334,88 @@
     return transfer('links', dumps, dumpId, fromSectionId, citationId, toMmId, newSectionId);
   }
 
+  // ── a text block's file (the FILES tab) ──────────────────────────────────
+  //
+  // A text block names at most ONE record of the slot's `files` list in its
+  // `fileId`; one file may be named by any number of blocks. The link lives
+  // on the BLOCK, in `sourceDumps`, so both Source Dump pages make and remove
+  // it through the two writers below, and `files` stays true-storage.html's
+  // alone. The other direction, which blocks name a file, is a READ
+  // (blocksForFile) and is never stored.
+  //
+  // Absent means "no file", and unlinking DELETES the key. Deleting the file
+  // in FILES leaves the key where it is: the chip reads "file removed" and
+  // stays removable by hand, the rule a storage tag already follows. A
+  // transfer (`->`) moves the block whole, so its file goes with it.
+
+  function isFileId(v) {
+    return (typeof v === 'string' && v !== '') || (typeof v === 'number' && isFinite(v));
+  }
+
+  function fileIdOf(block) {
+    return isMap(block) && isFileId(block.fileId) ? block.fileId : null;
+  }
+
+  // Apply `fn` to the FIRST block with this id in one section. The legacy
+  // block (a section's `text`, shown as one block) is in no list, so it is
+  // never found: it cannot carry a file.
+  function editBlock(dumps, dumpId, sectionId, blockId, fn) {
+    return editSection(dumps, dumpId, sectionId, function (s) {
+      var list = blocksOf(s);
+      for (var i = 0; i < list.length; i++) {
+        if (!isMap(list[i]) || list[i].id !== blockId) continue;
+        var after = fn(list[i]);
+        if (after === list[i]) return s;
+        var next = list.slice();
+        next[i] = after;
+        return Object.assign({}, s, { textBlocks: next });
+      }
+      return s;
+    });
+  }
+
+  // Link one file. REFUSED when the block already names a different file:
+  // one file per block, and another tab's link is not overwritten from a
+  // stale picker — the user unlinks first.
+  function withBlockFile(dumps, dumpId, sectionId, blockId, fileId) {
+    if (!isFileId(fileId)) return dumps;
+    return editBlock(dumps, dumpId, sectionId, blockId, function (b) {
+      if (fileIdOf(b) !== null) return b;
+      return Object.assign({}, b, { fileId: fileId });
+    });
+  }
+
+  function withoutBlockFile(dumps, dumpId, sectionId, blockId) {
+    return editBlock(dumps, dumpId, sectionId, blockId, function (b) {
+      if (!('fileId' in b)) return b;
+      var n = Object.assign({}, b);
+      delete n.fileId;
+      return n;
+    });
+  }
+
+  // Every text block naming `fileId`, in stored order, as {dump, section,
+  // block}. A flat scan of the list, not a walk, so there is no cycle to meet.
+  function blocksForFile(dumps, fileId) {
+    var out = [];
+    if (!isList(dumps) || !isFileId(fileId)) return out;
+    dumps.forEach(function (d) {
+      if (!isMap(d)) return;
+      sectionsOf(d).forEach(function (s) {
+        if (!isMap(s)) return;
+        blocksOf(s).forEach(function (b) {
+          if (isMap(b) && b.fileId === fileId) out.push({ dump: d, section: s, block: b });
+        });
+      });
+    });
+    return out;
+  }
+
   global.TrackSourceDump = {
+    fileIdOf: fileIdOf,
+    withBlockFile: withBlockFile,
+    withoutBlockFile: withoutBlockFile,
+    blocksForFile: blocksForFile,
     pathTo: pathTo,
     textBlocksOf: textBlocksOf,
     isLegacyBlock: isLegacyBlock,

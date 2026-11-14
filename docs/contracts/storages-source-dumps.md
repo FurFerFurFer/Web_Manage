@@ -67,9 +67,45 @@ A `trueStorages` item is a **storage**, owned by `true-storage.html`, and it may
 The **Source Dump page exists twice**: `SourceDumpView` (with `TransferPicker` and `StorageTags`) in `sir-ks02.html`, under KS03, and its documented twin in `true-storage.html`, the SOURCE DUMP tab. Both edit the same `sourceDumps`. Five rules follow, and the first two are the load-bearing ones:
 
 - **Every source-dump writer has ONE definition, in `source-dump-core.js`.** Both pages' handlers are one-line delegates that only mint ids: KS02 passes `nid()` and feeds its autosave; True Storage passes `TrackStorage.newId()` strings and goes through `_mutateSourceDumps`. Never spell a `sourceDumps` transform at a call site — two spellings of one edit is how the same click would come to store two different things. The writers return their input **unchanged** when nothing changes, which is what lets the RMW skip the write and lets React bail out of an autosave.
-- **The UI is a TWIN, and a change to one copy is a change to both.** It is a copy rather than a shared file because the pages have no module system and the app is supported opened from disk, where a separately loaded JSX file cannot be fetched. The tripwire is the browser case `PARITY: the SOURCE DUMP copy draws exactly the controls KS02 draws`, which collects every control both pages draw for one seed and fails on any difference. The twin's header comment lists its only three intended differences — the MM name is a link into KS02 (`?mm=`, its S&C tab), a storage chip opens the storage in place, and tagging acts on True Storage's own state — and a fourth must be added there on purpose, not discovered by the parity case.
+- **The UI is a TWIN, and a change to one copy is a change to both.** It is a copy rather than a shared file because the pages have no module system and the app is supported opened from disk, where a separately loaded JSX file cannot be fetched. The tripwire is the browser case `PARITY: the SOURCE DUMP copy draws exactly the controls KS02 draws`, which collects every control both pages draw for one seed and fails on any difference. The twin's header comment lists its only four intended differences — the MM name is a link into KS02 (`?mm=`, its S&C tab), a storage chip opens the storage in place, tagging acts on True Storage's own state, and a text block's file chip opens the file in place (2026-11-14) — and a fifth must be added there on purpose, not discovered by the parity case.
 - **`sourceDumps` holds ids of both types.** A record minted on True Storage carries a string; KS02's carry `nid()` numbers. Every reader compares stored values with `===` and a query string with `String()`; nothing may coerce a dump, section, block or citation id with `Number()`, `parseInt` or a DOM dataset. The one numeric reader is `repairTransferredParentSCDumps`, whose `Number.isFinite` check deliberately skips string ids — correct, because its heuristic is about ids from KS02's own counter.
 - `TrackSourceDump.withEntry` **refuses** a parent id that is not in the list it is handed. A parent deleted in another tab would otherwise get a child whose `parentId` names nothing — reachable from no root, so stored, synced and unreachable. It also empties only the FIRST record with the parent id, so a duplicated id cannot lose the other record's sections.
 - KS02's `?mm=<id>` (with no `?dump=`) opens that MM on its S&C tab; with `?dump=` present, `mm` stays the dump card's ring. The two effects never compete for one URL, and a browser case pins the precedence.
 
 A storage's `link` is at most **one**, and clearing it **deletes the key** rather than storing `''` — the same absence-is-meaningful rule as a day note's `time`. A storage that never had a link and one whose link was cleared must be the same state.
+
+## A text block's file
+
+Added 2026-11-14. A Source Dump **text block** (`{id, title, explanation}`) may name ONE record
+of the slot's `files` list — a file or a note, never a folder — in **`fileId`**. One file may be
+named by any number of blocks. The user's words: "for the text mostly it is files … connect each
+file with each text and make it work both ways"; "exactly one, but on the opposite files can be
+linked more than 1"; open "just the file", not a page.
+
+- **The link lives on the block, in `sourceDumps`, and nowhere else.** Its writers are
+  `TrackSourceDump.withBlockFile` and `withoutBlockFile`, so both Source Dump pages make it
+  the way they make every other source-dump edit: KS02 through its autosave, True Storage
+  through `_mutateSourceDumps`. **No page writes `files` for a link**, and KS02 only ever
+  READS `files` (its `files` state is never part of `_writeSlotKeys`).
+- **The other direction is a read, never stored.** `TrackSourceDump.blocksForFile` lists the
+  blocks naming a file; True Storage turns that into the FILES viewer's "Used in" rows
+  (`usesOf`). Storing it on the file record too would be a second copy of one fact, and the
+  two would drift the first time a tab missed a write.
+- **One file per block, and a second is REFUSED**, not swapped: `withBlockFile` returns its
+  input when the block already names a valid file. Another tab's link is never overwritten
+  from a stale picker; the user unlinks first.
+- **Absence is "no file", and unlinking DELETES the key** — never `null` or `''`. A malformed
+  `fileId` reads as none (`fileIdOf`) and an unlink removes it.
+- **Deleting the file does not touch the block.** The chip reads *file removed* and keeps its
+  `×`, the same rule as a storage tag whose pair no longer resolves. Deleting the block takes
+  its link with it; a transfer (`->`) moves the block whole, link included.
+- **The legacy block** (a section's `text`, drawn as one block) is in no list, so it cannot
+  carry a file: neither page offers `+ file` on it, and the writer cannot find it.
+- **The chip is drawn under every text block**: KS02's SOURCE DUMP leaf card and S&C → SOURCE
+  (with `+ file` and `×`), KS02's S&C → BLOCKS cards (the chip alone), and True Storage's
+  SOURCE DUMP leaf card. It is one component per page, `BlockFile`, a documented twin. On
+  KS02 it is a link, `true-storage.html?file=<id>#files`; on True Storage it opens the file in
+  place (twin difference 4). The picker lists `TrackFiles.linkables` — files and notes in
+  stored order with their folders — and searches names and folder names.
+- **Unlinking asks**, in the handler on both pages (every path through it removes a link),
+  with one text: "Unlink this file from the text block? The file itself is not deleted."

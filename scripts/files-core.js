@@ -222,6 +222,23 @@
   }
 
   function pathTo(list, id) { return tree().pathTo(records(list), id); }
+
+  // ── for a Source Dump text block's file link ──
+  // Loaded EAGERLY by sir-ks02.html and true-storage.html for this (rule 10 of
+  // docs/contracts/files.md); the rest of FILES still loads only with its tab.
+
+  // The record with this id, or null — the first, as the tab draws it.
+  function recordOf(list, id) { return byIdOf(list).get(id) || null; }
+
+  // What a text block may link to: every file and note (never a folder), in
+  // stored order, each with the names of the folders above it, top first.
+  function linkables(list) {
+    var byId = byIdOf(list);
+    return records(list).filter(function (r) { return !isFolder(r); }).map(function (r) {
+      var up = pathTo(list, r.id).slice(0, -1);
+      return { rec: r, folders: up.map(function (fid) { var f = byId.get(fid); return f && typeof f.name === 'string' ? f.name : '?'; }) };
+    });
+  }
   function descendantIds(list, id) { return tree().descendantIds(records(list), id); }
 
   // ── constructors (the caller passes id and now) ──────────────────────────
@@ -613,6 +630,8 @@
     childrenOf: childrenOf,
     pathTo: pathTo,
     descendantIds: descendantIds,
+    recordOf: recordOf,
+    linkables: linkables,
     newFolder: newFolder,
     newNote: newNote,
     newFile: newFile,

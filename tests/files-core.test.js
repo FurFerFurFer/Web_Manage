@@ -457,3 +457,28 @@ test('hitStroke: within half the width plus the tolerance, in page widths', () =
   assert.equal(TF.hitStroke(null, 0.3, 0.5, 0, 1), false, 'total');
   assert.equal(TF.hitStroke(h, 'x', 0.5, 0, 1), false);
 });
+
+// ── what a Source Dump text block may link to ───────────────────────────────
+
+test('recordOf finds a record by its stored id, and nothing else', () => {
+  const L = deepFreeze(LIB());
+  assert.equal(TF.recordOf(L, 'f-limbs'), L[0]);
+  assert.equal(TF.recordOf(L, 'nope'), null);
+  assert.equal(TF.recordOf(L, null), null);
+  assert.equal(TF.recordOf('junk', 'f-limbs'), null);
+  assert.equal(TF.recordOf([file(5, 'n.pdf')], '5'), null, '=== on stored ids');
+});
+
+test('linkables: every file and note, never a folder, in stored order, with the folders above it', () => {
+  const got = TF.linkables(deepFreeze(LIB()));
+  assert.deepEqual(got.map(o => o.rec.id), ['f-limbs', 'n-plan', 'f-photo', 'n-loose']);
+  assert.deepEqual(got.map(o => o.folders), [['Year 1', 'Anatomy'], ['Year 1', 'Anatomy'], ['Year 1'], []]);
+  assert.deepEqual(TF.linkables('junk'), []);
+});
+
+test('linkables ends on a folder cycle rather than the stack', () => {
+  const L = deepFreeze([folder('a', 'A', 'b'), folder('b', 'B', 'a'), file('f', 'x.pdf', 'a')]);
+  const got = TF.linkables(L);
+  assert.equal(got.length, 1);
+  assert.ok(got[0].folders.length <= 2, 'each folder at most once: ' + JSON.stringify(got[0].folders));
+});

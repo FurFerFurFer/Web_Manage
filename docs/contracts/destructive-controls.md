@@ -55,3 +55,9 @@ parent, or the top level) and are not deleted; a note's text cannot be restored;
 Drive goes to Drive's trash for 30 days; a file not yet uploaded cannot be restored; a file's
 highlights and pins go with it. A **pin's** `🗑` asks in its own handler, `deletePin` in
 `FileView` (every path deletes), after the "no such pin" guard and before the write.
+
+A text block's file link (2026-11-14) is unlinked by the chip's `×`, and asks in the handler
+on both pages — `unlinkBlockFile` in `sir-ks02.html` and in `true-storage.html` — because every
+path through it removes a link. The text is one, word for word: "Unlink this file from the text
+block? The file itself is not deleted." Linking asks nothing, and a block naming a deleted file
+keeps its `×`. Pinned by `TEXT ↔ FILE (KS02): unlink asks; Cancel keeps every byte …`.

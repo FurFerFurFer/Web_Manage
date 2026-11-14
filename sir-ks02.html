@@ -14,9 +14,10 @@
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
-  <script src="scripts/source-dump-core.js?v=1"></script>
+  <script src="scripts/source-dump-core.js?v=2"></script>
   <script src="scripts/strat-core.js?v=2"></script>
   <script src="scripts/mm-tree-core.js?v=2"></script>
+  <script src="scripts/files-core.js?v=3"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/calendar-core.js?v=14"></script>
   <script src="scripts/note-to-self-core.js?v=2"></script>
@@ -1249,6 +1250,7 @@
       sourceDumps,onAddDumpURLLink,onRemoveDumpURLLink,onGoToSourceDump,
       onAddDumpMMLink,onUpdateMMSCOrder,onUpdateMMSCAggOrder,onAddDumpTextBlock,onRemoveDumpTextBlock,onToggleSourceDumpActivation,onToggleUnclear,
       trueStorages,onTagStorage,onUntagStorage,
+      files,onLinkBlockFile,onUnlinkBlockFile,
       /* SRCH → DIRECTORY only, and absent everywhere else: `embedded` sizes the
          panel to the pane it sits in rather than to the screen, and the two
          slots put the trail above it and the CHILDREN list below whichever
@@ -1690,6 +1692,9 @@
 	                        )} className="text-red-800 hover:text-red-500 text-xs shrink-0 px-1">x</button>}
 	                      </div>
 	                      <div className="text-xs text-gray-300 whitespace-pre-wrap">{tb.explanation}</div>
+	                      <BlockFile block={tb} files={files}
+	                        onLink={isMigrated(tb.id)?null:(fid=>onLinkBlockFile(dump.id,link.id,tb.id,fid))}
+	                        onUnlink={()=>onUnlinkBlockFile(dump.id,link.id,tb.id)}/>
 	                    </div>
 	                  ))}
                   {scTextBlockForm&&scTextBlockForm.dumpId===dump.id&&scTextBlockForm.linkId===link.id?(
@@ -1951,6 +1956,7 @@
                                 <div className="select-text">
                                   {block.item.title&&<div className="text-xs font-bold text-gray-200 mb-0.5">{block.item.title}</div>}
                                   <div className="text-xs text-gray-300 whitespace-pre-wrap">{block.item.explanation}</div>
+                                  <BlockFile block={block.item} files={files}/>
                                 </div>
                               )}
                               {block.itemType==='link'&&(
@@ -2016,6 +2022,7 @@
                                   <div className="select-text">
                                     {block.item.title&&<div className="text-xs font-bold text-gray-200 mb-0.5">{block.item.title}</div>}
                                     <div className="text-xs text-gray-300 whitespace-pre-wrap">{block.item.explanation}</div>
+                                    <BlockFile block={block.item} files={files}/>
                                   </div>
                                 )}
                                 {block.itemType==='link'&&(
@@ -3196,7 +3203,76 @@
       );
     }
 
-    function SourceDumpView({sourceDumps,mms,mmColor,dumpPath,setDumpPath,onAddEntry,onDeleteEntry,onRename,onAddMMLink,onRemoveMMLink,onAddURLLink,onRemoveURLLink,onAddTextBlock,onRemoveTextBlock,onTransferTextBlock,onTransferURLLink,onOpenMMSC,trueStorages,onTagStorage,onUntagStorage,focusMmId}) {
+    // ── a text block's file ─────────────────────────────────────────────────
+    // A text block may name ONE file or note from the FILES tab on the Storages
+    // page, in its `fileId`; one file may serve many blocks. The link is made
+    // and removed only through TrackSourceDump.withBlockFile / withoutBlockFile
+    // — `sourceDumps`, this page's own key — and `files` is only READ here,
+    // through files-core.js (docs/contracts/storages-source-dumps.md). Drawn
+    // under every text block this page shows: the SOURCE DUMP leaf card and the
+    // S&C tab's SOURCE (with + file and ×), and the BLOCKS cards (the chip
+    // alone). A documented TWIN of BlockFile in true-storage.html, whose chip
+    // opens the file in place instead of following the link.
+    function fileHref(id){ return `true-storage.html?file=${encodeURIComponent(id)}#files`; }
+    function BlockFile({block,files,onLink,onUnlink,onOpen}){
+      const [picking,setPicking]=useState(false);
+      const [q,setQ]=useState("");
+      const id=TrackSourceDump.fileIdOf(block);
+      if(id==null&&!onLink) return null;
+      const rec=id==null?null:TrackFiles.recordOf(files,id);
+      const all=picking&&id==null?TrackFiles.linkables(files):[];
+      const needle=q.trim().toLowerCase();
+      const options=all.filter(o=>!needle||[o.rec.name,...o.folders].some(n=>String(n||"").toLowerCase().includes(needle)));
+      const icon=r=>r&&r.kind==="note"?"📝":"📄";
+      return (
+        <div className="mt-1" data-block-file={String(block.id)}>
+          {id!=null?(
+            <span className="inline-flex items-center gap-1 max-w-full bg-gray-900 border border-gray-700 rounded pl-2 pr-1 py-0.5">
+              {rec?(
+                <a href={fileHref(id)} data-block-file-chip={String(id)}
+                  onClick={e=>{if(onOpen){e.preventDefault();onOpen(id);}}}
+                  className="text-xs text-cyan-300 hover:text-cyan-200 truncate">{icon(rec)} {rec.name}</a>
+              ):(
+                <span data-block-file-missing={String(id)} className="text-xs text-gray-500 italic">📄 file removed</span>
+              )}
+              {onUnlink&&<button onClick={onUnlink} data-block-file-unlink={String(block.id)}
+                title="Unlink this file" className="text-gray-600 hover:text-red-400 text-xs px-0.5">×</button>}
+            </span>
+          ):(
+            <button onClick={()=>{setPicking(p=>!p);setQ("");}} data-block-file-add={String(block.id)}
+              className="text-xs text-gray-600 hover:text-gray-300">+ file</button>
+          )}
+          {picking&&id==null&&(
+            <div className="mt-1 bg-gray-900 border border-gray-700 rounded p-2" data-block-file-picker={String(block.id)}>
+              {!all.length?(
+                <div className="text-xs text-gray-600 text-center py-2">
+                  No files yet. Add them in <a href="true-storage.html#files" className="text-cyan-300 underline">FILES</a>.
+                </div>
+              ):(
+                <>
+                  <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="search files..."
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs outline-none mb-1"/>
+                  <div className="max-h-48 overflow-y-auto">
+                    {!options.length&&<div className="text-xs text-gray-600 text-center py-2">No matches.</div>}
+                    {options.map(o=>(
+                      <div key={String(o.rec.id)} data-block-file-option={String(o.rec.id)}
+                        onClick={()=>{onLink(o.rec.id);setPicking(false);setQ("");}}
+                        className="px-2 py-1 rounded cursor-pointer hover:bg-gray-800">
+                        <div className="text-xs text-gray-200 truncate">{icon(o.rec)} {o.rec.name}</div>
+                        {o.folders.length>0&&<div className="text-[10px] text-gray-600 truncate">{o.folders.join(" › ")}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button onClick={()=>setPicking(false)} className="text-xs text-gray-500 hover:text-gray-300 mt-1">cancel</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function SourceDumpView({sourceDumps,mms,mmColor,dumpPath,setDumpPath,onAddEntry,onDeleteEntry,onRename,onAddMMLink,onRemoveMMLink,onAddURLLink,onRemoveURLLink,onAddTextBlock,onRemoveTextBlock,onTransferTextBlock,onTransferURLLink,onOpenMMSC,trueStorages,onTagStorage,onUntagStorage,files,onLinkBlockFile,onUnlinkBlockFile,focusMmId}) {
       const [showCreate,setShowCreate]=useState(false);
       const [createTitle,setCreateTitle]=useState("");
       const [mmPickerFor,setMmPickerFor]=useState(null);
@@ -3305,6 +3381,9 @@
 	                          )}
 	                        </div>
 	                        <div className="text-xs text-gray-300 whitespace-pre-wrap">{tb.explanation}</div>
+	                        <BlockFile block={tb} files={files}
+	                          onLink={TrackSourceDump.isLegacyBlock(link,tb)?null:(fid=>onLinkBlockFile(currentEntry.id,link.id,tb.id,fid))}
+	                          onUnlink={()=>onUnlinkBlockFile(currentEntry.id,link.id,tb.id)}/>
 	                      </div>
 	                    ))}
                     {transferPickerFor?.linkId===link.id&&transferPickerFor?.itemType==="text"&&(
@@ -3542,6 +3621,10 @@
       const [dumpPath,setDumpPath]=useState([]);
       // Read-only here except through _mutateSlotKey: true-storage.html owns it.
       const [trueStorages,setTrueStorages]=useState([]);
+      // Read-only here, always: true-storage.html owns `files` and writes it
+      // through _mutateFiles alone. It must never join the autosave below. This
+      // page reads it for one thing — the name on a text block's file chip.
+      const [files,setFiles]=useState([]);
       const [focusDumpMm,setFocusDumpMm]=useState(null);
       const dumpDeepLinkRef=useRef(false);
       const mmDeepLinkRef=useRef(false);
@@ -3615,6 +3698,7 @@
           fresh(setMgSchedule,slot.mgSchedule||{});
           fresh(setSourceDumps,(slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
           fresh(setTrueStorages,slot.trueStorages||[]);
+          fresh(setFiles,Array.isArray(slot.files)?slot.files:[]);
         };
         const onStorage=e=>{ if (!e.key||e.key==='track_db') refresh(); };
         const onVis=()=>{ if (!document.hidden) refresh(); };
@@ -3711,6 +3795,7 @@
         setMgSchedule(slot.mgSchedule||{});
         setSourceDumps((slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
         setTrueStorages(slot.trueStorages||[]);
+        setFiles(Array.isArray(slot.files)?slot.files:[]);
       }
       function openMM(id,mode="ks03"){setSelectedMM(id);setSelectedMMMode(mode);}
 
@@ -3781,6 +3866,16 @@
       function removeDumpTextBlock(dumpId,linkId,blockId){setSourceDumps(p=>TrackSourceDump.withoutTextBlock(p,dumpId,linkId,blockId));}
       function transferDumpTextBlock(dumpId,fromLinkId,blockId,toMmId){const id=nid();setSourceDumps(p=>TrackSourceDump.transferTextBlock(p,dumpId,fromLinkId,blockId,toMmId,id));}
       function transferDumpURLLink(dumpId,fromLinkId,urlId,toMmId){const id=nid();setSourceDumps(p=>TrackSourceDump.transferURLLink(p,dumpId,fromLinkId,urlId,toMmId,id));}
+      // A text block's file. The link is the block's own `fileId`, inside
+      // sourceDumps, so it is saved by the autosave like every edit above; the
+      // file record itself is never touched. Unlinking asks, in the handler,
+      // because every path through it removes a link — the text that
+      // true-storage.html's twin asks, word for word.
+      function linkBlockFile(dumpId,linkId,blockId,fileId){setSourceDumps(p=>TrackSourceDump.withBlockFile(p,dumpId,linkId,blockId,fileId));}
+      function unlinkBlockFile(dumpId,linkId,blockId){
+        if(!window.confirm('Unlink this file from the text block?\n\nThe file itself is not deleted.')) return;
+        setSourceDumps(p=>TrackSourceDump.withoutBlockFile(p,dumpId,linkId,blockId));
+      }
       function toggleSourceDumpActivation(mmId){
         setMms(p=>p.map(m=>m.id===mmId?{...m,sourceDumpActivated:!m.sourceDumpActivated}:m));
       }
@@ -4111,6 +4206,9 @@
         trueStorages,
         onTagStorage:tagStorage,
         onUntagStorage:untagStorage,
+        files,
+        onLinkBlockFile:linkBlockFile,
+        onUnlinkBlockFile:unlinkBlockFile,
       };
 
       /* The ONE view table for this page. The header below and the phone bar at
@@ -4454,6 +4552,7 @@
                   onTransferTextBlock={transferDumpTextBlock} onTransferURLLink={transferDumpURLLink}
                   onOpenMMSC={(mmId)=>{setSelectedMM(mmId);setSelectedMMMode("sc");setView("ks03");}}
                   trueStorages={trueStorages} onTagStorage={tagStorage} onUntagStorage={untagStorage}
+                  files={files} onLinkBlockFile={linkBlockFile} onUnlinkBlockFile={unlinkBlockFile}
                   focusMmId={focusDumpMm}/>
               )}
             </div>

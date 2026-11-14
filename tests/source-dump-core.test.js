@@ -92,8 +92,8 @@ test('the module exports exactly the documented surface', () => {
   // Written out by hand on purpose: if an export is added or renamed, this is
   // the case that notices.
   assert.deepEqual(Object.keys(SD).sort(), [
-    'canLinkMM', 'inheritsLinks', 'isLeafMM', 'isLegacyBlock', 'pathTo',
-    'textBlocksOf', 'transferTextBlock', 'transferURLLink',
+    'blocksForFile', 'canLinkMM', 'fileIdOf', 'inheritsLinks', 'isLeafMM', 'isLegacyBlock', 'pathTo',
+    'textBlocksOf', 'transferTextBlock', 'transferURLLink', 'withBlockFile', 'withoutBlockFile',
     'withEntry', 'withMMLink', 'withTextBlock', 'withTitle', 'withURLLink',
     'withoutEntry', 'withoutMMLink', 'withoutTextBlock', 'withoutURLLink'
   ].sort());
@@ -451,6 +451,9 @@ test('every writer is total over damaged input', () => {
       SD.transferURLLink(j, 'd', 5, 1, 11, 'x');
       SD.pathTo('d', j);
       SD.inheritsLinks(j, 'd');
+      SD.withBlockFile(j, 'd', 5, 1, 'f');
+      SD.withoutBlockFile(j, 'd', 5, 1);
+      SD.blocksForFile(j, 'f');
     }, 'input ' + JSON.stringify(j));
   }
   assert.equal(SD.withTitle('not a list', 'd', 'x'), 'not a list', 'a non-list comes back as it came');
@@ -464,4 +467,88 @@ test('a write that lands is a NEW list; the input is never mutated', () => {
   SD.withEntry(L, { id: 'n', title: 'Sub', parentId: 'd-1', createdAt: 'x' });
   SD.withoutEntry(L, 'd-1');
   assert.equal(JSON.stringify(L), snapshot);
+});
+
+// ── a text block's file ────────────────────────────────────────────────────
+// One file per block, the link stored on the block as `fileId`, and the
+// reverse direction (which blocks name a file) a read. README, "The SOURCE
+// DUMP tab"; docs/contracts/storages-source-dumps.md.
+
+test('withBlockFile links ONE file to one block, spreading it and nothing else', () => {
+  const L = LIST();
+  const next = SD.withBlockFile(L, 'd-1', 90, 501, 'f-pdf');
+  assert.notEqual(next, L);
+  const s = byId(next, 'd-1').mmLinks[0];
+  assert.deepEqual(s.textBlocks[1], { id: 501, title: 'T501', explanation: 'E501', fileId: 'f-pdf' });
+  assert.equal(s.textBlocks[0], L[0].mmLinks[0].textBlocks[0], 'the other block is the same object');
+  assert.equal(next[1], L[1], 'another dump is the same object');
+  assert.equal(SD.fileIdOf(s.textBlocks[1]), 'f-pdf');
+  assert.equal(SD.fileIdOf(s.textBlocks[0]), null);
+});
+
+test('a block keeps keys it has not heard of through a link and an unlink', () => {
+  const L = freeze([dump('d', { mmLinks: [link('s', 10, { textBlocks: [block('b', { laterKey: 7 })] })] })]);
+  const linked = SD.withBlockFile(L, 'd', 's', 'b', 'f');
+  assert.equal(linked[0].mmLinks[0].textBlocks[0].laterKey, 7);
+  const back = SD.withoutBlockFile(linked, 'd', 's', 'b');
+  assert.deepEqual(back[0].mmLinks[0].textBlocks[0], { id: 'b', title: 'Tb', explanation: 'Eb', laterKey: 7 });
+  assert.equal('fileId' in back[0].mmLinks[0].textBlocks[0], false, 'unlinking DELETES the key, never stores null or ""');
+});
+
+test('a second file is REFUSED: one file per block, unlink first', () => {
+  const L = freeze(SD.withBlockFile(LIST(), 'd-1', 90, 500, 'f-a'));
+  assert.equal(SD.withBlockFile(L, 'd-1', 90, 500, 'f-b'), L, 'a different file: the same list back');
+  assert.equal(SD.withBlockFile(L, 'd-1', 90, 500, 'f-a'), L, 'the same file again: a no-op');
+});
+
+test('link and unlink are no-ops, the same list back, for anything they cannot do', () => {
+  const L = LIST();
+  assert.equal(SD.withBlockFile(L, 'd-1', 90, 999, 'f'), L, 'no such block');
+  assert.equal(SD.withBlockFile(L, 'd-1', 91, 500, 'f'), L, 'the block is in another section');
+  assert.equal(SD.withBlockFile(L, 'nope', 90, 500, 'f'), L, 'no such dump');
+  for (const bad of ['', null, undefined, NaN, {}, []]) {
+    assert.equal(SD.withBlockFile(L, 'd-1', 90, 500, bad), L, 'a file id of ' + String(bad) + ' is refused');
+  }
+  assert.equal(SD.withoutBlockFile(L, 'd-1', 90, 500), L, 'unlinking a block with no file');
+  // The legacy block is the section's `text`, in no list: it cannot carry one.
+  const legacy = freeze([dump('d', { mmLinks: [link('s', 10, { text: 'Old prose' })] })]);
+  const shown = SD.textBlocksOf(legacy[0].mmLinks[0])[0];
+  assert.equal(SD.isLegacyBlock(legacy[0].mmLinks[0], shown), true);
+  assert.equal(SD.withBlockFile(legacy, 'd', 's', shown.id, 'f'), legacy);
+});
+
+test('a malformed fileId reads as none, can be linked over, and is removed by an unlink', () => {
+  const L = freeze([dump('d', { mmLinks: [link('s', 10, { textBlocks: [block('b', { fileId: '' })] })] })]);
+  assert.equal(SD.fileIdOf(L[0].mmLinks[0].textBlocks[0]), null);
+  assert.equal(SD.withBlockFile(L, 'd', 's', 'b', 'f').at(0).mmLinks[0].textBlocks[0].fileId, 'f');
+  assert.equal('fileId' in SD.withoutBlockFile(L, 'd', 's', 'b')[0].mmLinks[0].textBlocks[0], false);
+});
+
+test('only the FIRST block with a duplicated id is linked', () => {
+  const L = freeze([dump('d', { mmLinks: [link('s', 10, { textBlocks: [block('b'), block('b')] })] })]);
+  const tbs = SD.withBlockFile(L, 'd', 's', 'b', 'f')[0].mmLinks[0].textBlocks;
+  assert.deepEqual(tbs.map(SD.fileIdOf), ['f', null]);
+});
+
+test('blocksForFile lists every block naming the file, across dumps and id types, in stored order', () => {
+  let L = LIST();
+  L = SD.withBlockFile(L, 7, 'l-s', 'b-s', 'f-pdf');
+  L = SD.withBlockFile(L, 'd-1', 90, 501, 'f-pdf');
+  L = SD.withBlockFile(L, 'd-1', 90, 500, 'f-other');
+  const got = SD.blocksForFile(L, 'f-pdf');
+  assert.deepEqual(got.map(u => [u.dump.id, u.section.id, u.block.id]), [['d-1', 90, 501], [7, 'l-s', 'b-s']]);
+  assert.equal(got[0].dump, L[0], 'the records themselves, not copies');
+  assert.deepEqual(SD.blocksForFile(L, 'f-none'), []);
+  assert.deepEqual(SD.blocksForFile(L, ''), [], 'an empty id names nothing');
+  // === on stored values: a numeric file id is not its string.
+  const N = SD.withBlockFile(LIST(), 'd-1', 90, 500, 5);
+  assert.equal(SD.blocksForFile(N, '5').length, 0);
+  assert.equal(SD.blocksForFile(N, 5).length, 1);
+});
+
+test('a transfer moves a block whole, its file with it; deleting a block or a dump forgets nothing else', () => {
+  const L = freeze(SD.withBlockFile(LIST(), 'd-1', 90, 500, 'f'));
+  const moved = SD.transferTextBlock(L, 'd-1', 90, 500, 11, 'new');
+  assert.deepEqual(SD.blocksForFile(moved, 'f').map(u => u.section.id), [91]);
+  assert.deepEqual(SD.blocksForFile(SD.withoutTextBlock(L, 'd-1', 90, 500), 'f'), []);
 });

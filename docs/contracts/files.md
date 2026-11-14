@@ -78,10 +78,14 @@ order field. An unknown `kind` reads as a file. Ids are strings from `TrackStora
    (`moveRefusal`: `self`, `inside`, `not-folder`). A refused drop writes nothing and says why.
 9. **Rename keeps the extension** (`renamedName`); an empty name is impossible. A file's Drive
    copy is renamed after it; a rename during an upload is carried into the finished copy.
-10. **Nothing of FILES loads until the tab opens.** The four scripts are injected by
-    `loadFilesScripts` (their `?v=` values live in `FILES_SCRIPTS`, and `mm-tree-core.js`'s must
-    match `sir-ks02.html`'s tag). PDF.js, marked, DOMPurify and Google's sign-in load only when
-    first needed. No other page references any of it. A browser case checks both.
+10. **Nothing of FILES loads until the tab opens — except its pure index.** `file-store.js`
+    and `files-view.js` are injected by `loadFilesScripts` (their `?v=` values live in
+    `FILES_SCRIPTS`). PDF.js, marked, DOMPurify and Google's sign-in load only when first
+    needed. Since 2026-11-14 `files-core.js` (and `mm-tree-core.js` under it) is loaded WITH
+    the page by `true-storage.html` and `sir-ks02.html`, because a Source Dump text block's
+    file chip needs a file's name on any tab; it is pure — no Drive, no IndexedDB, no viewer.
+    `index.html`, `progress.html` and `documentations.html` reference none of it. A browser
+    case checks all of this.
 11. **A note's Preview goes through DOMPurify**, always; links open in a new tab with
     `noopener`. Never render note text, or an uploaded `.md`, as raw HTML.
 12. **Highlights and pins never touch the file.** No mark changes the bytes on the device or
@@ -110,6 +114,21 @@ order field. An unknown `kind` reads as a file. Ids are strings from `TrackStora
 17. **Highlighter colours are DATA colours** (`MARK_COLORS` in `files-view.js`), the same in
     both appearances, and reach the SVG through `style`, never a presentation attribute
     (`docs/contracts/appearance.md`).
+
+## Source Dump text blocks
+
+A text block may name one file or note in its `fileId` (inside `sourceDumps`); the rules are
+in `docs/contracts/storages-source-dumps.md`, "A text block's file". For this file:
+
+- **Nothing about a link is stored in `files`.** No writer here knows of links; deleting a
+  record leaves every `fileId` naming it, and the chip reads *file removed*.
+- **The viewer's "Used in N text blocks"** (`UsedIn` in `files-view.js`) is drawn from the
+  page's `usesOf` prop: `files-view.js` never reads `sourceDumps` itself. A row calls
+  `onOpenUse`, which opens SOURCE DUMP on that title with the MM's card ringed.
+- **Opening on request:** `FilesView`'s `openRequest` (`{id, n}`) opens one record; `n`
+  changes per request. True Storage sets it from a chip and from `?file=<id>` (an id naming
+  nothing opens FILES at the top) and clears it when a tab is tapped, so FILES then opens on
+  its folders.
 
 ## Drive
 

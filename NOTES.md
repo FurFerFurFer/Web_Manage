@@ -1241,6 +1241,19 @@ these is authorized.
   among tiles, which draw the same sibling order.
 - **A `.md` over 256 KB is read-only.** It is kept as a file; editing it would mean re-uploading
   its bytes on every save.
+- **Text ↔ file, what was left out** (the link itself was built 2026-11-14; README, "A text
+  block's file"). Linking starts only from the text: the viewer's **Used in** list shows and
+  follows links but cannot make one, so linking from a file would need a picker of titles, MMs
+  and blocks there. The link names the file, not a page ("just the file"); a page or a `📌` pin
+  would be one more key on the block. The storage editor's expanded tag rows show text blocks
+  read-only and draw no file chip. FILES's delete prompt does not say how many text blocks name
+  the file (they keep the link and read *file removed*). And the source-dump-only importer
+  carries `fileId` into another workspace, where it names nothing.
+- **MULTIVERSE and SRCH on True Storage are hidden, not gone** (2026-11-14: "for now … serve no
+  purpose"). Still to decide: bring them back, remove them for good, or retire storages
+  altogether — the `STORAGE` chips and `+ storage` on every Source & Cite card still work, and
+  `+Storage` in the header still creates one. Removing the views would delete code only, never
+  `trueStorages` or `trueStoragePos`.
 
 ## Track World: Computer Feasibility
 

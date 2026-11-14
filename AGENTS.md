@@ -81,7 +81,7 @@ and why — is `docs/ARCHITECTURE.md`; read a file's row there before editing it
 | `progress.html` | Goals, milestones, progress, supporting actions, the Schedule |
 | `sir-ks02.html` | The **Knowledge Record** (displayed name only; "KS02" still means this page): mind maps, Kolb, SIR, MG, LIN, source dumps. Never rename the file, the `ks02` / `ks02_slots` / `ks02_activeSlotId` keys, `.ks02-page`, `data-tabbar="ks02"` or the `ks02` view key |
 | `documentations.html` | Documentation pages (Events and Projects tabs), tables, timetable paste, print/PDF |
-| `true-storage.html` | Storages canvas and tree, and the SOURCE DUMP tab (a twin of KS02's page) |
+| `true-storage.html` | Storages: the SOURCE DUMP tab (a twin of KS02's page) and FILES; canvas and tree hidden |
 | `scripts/schema.js` | `TrackSchema`: the `SLOT_FIELDS` table, `createEmptySlot`, `normalizeSlot`, `validateSlot`, `validateDatabase` |
 | `scripts/storage-guard.js` | `TrackStorage`: `loadDB`, `saveDB`, `newId`, the damage and quota banners |
 | `scripts/firebase-sync.js` | Firebase auth and gzipped, chunked whole-database sync |
@@ -713,9 +713,9 @@ it describes. **Read it when you need it**: to audit what was verified and when,
 work in an area whose entry records a defect or a known gap, or to check whether something
 is covered by a test or only by code reading. A new entry is appended there, not here.
 
-What a passing run looks like, as of 2026-11-13: `node tests/run.js`, **38 suites** —
+What a passing run looks like, as of 2026-11-14: `node tests/run.js`, **38 suites** —
 `calendar-core`, `schema`, `notes-core` and `note-to-self-core` swept under five timezones
-with identical results, seventeen more offline suites once each, then **602 browser
+with identical results, seventeen more offline suites once each, then **607 browser
 subtests** in headless Chrome. **In the last one to six days of a month, six timetable
 cases fail on a date bug in the suite itself** (NOTES, Proposal 7): the Home and
 Documentations twins of three cases, each timing out on its class layer while its Progress

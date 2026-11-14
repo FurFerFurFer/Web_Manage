@@ -14,7 +14,9 @@
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
-  <script src="scripts/source-dump-core.js?v=1"></script>
+  <script src="scripts/source-dump-core.js?v=2"></script>
+  <script src="scripts/mm-tree-core.js?v=2"></script>
+  <script src="scripts/files-core.js?v=3"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/calendar-core.js?v=14"></script>
   <script src="scripts/note-to-self-core.js?v=2"></script>
@@ -638,6 +640,8 @@
     //   3. Tag and untag act on this page's OWN trueStorages, through its state
     //      and autosave; KS02 has to reach that foreign key through
     //      _mutateSlotKey. The untag prompt is KS02's text, word for word.
+    //   4. A text block's FILE chip opens that file here, on the FILES tab
+    //      (onOpenFile), instead of reloading this page with ?file=.
 
     function TransferPicker({mms,mmColor,currentMmId,search,setSearch,onSelect,onCancel}){
       const options=mms.filter(m=>TrackSourceDump.canLinkMM(m,mms)&&m.id!==currentMmId&&m.name.toLowerCase().includes(search.toLowerCase()));
@@ -718,7 +722,70 @@
       );
     }
 
-    function SourceDumpView({sourceDumps,mms,mmColor,dumpPath,setDumpPath,onAddEntry,onDeleteEntry,onRename,onAddMMLink,onRemoveMMLink,onAddURLLink,onRemoveURLLink,onAddTextBlock,onRemoveTextBlock,onTransferTextBlock,onTransferURLLink,onLeaveForMM,trueStorages,onTagStorage,onUntagStorage,onOpenStorage,focusMmId}) {
+    // ── a text block's file — a documented TWIN of BlockFile in sir-ks02.html.
+    // One file or note per text block, in the block's `fileId`, written only
+    // through TrackSourceDump.withBlockFile / withoutBlockFile; `files` is read
+    // through files-core.js. TWIN DIFFERENCE 4: the chip opens the file here.
+    function fileHref(id){ return `true-storage.html?file=${encodeURIComponent(id)}#files`; }
+    function BlockFile({block,files,onLink,onUnlink,onOpen}){
+      const [picking,setPicking]=useState(false);
+      const [q,setQ]=useState("");
+      const id=TrackSourceDump.fileIdOf(block);
+      if(id==null&&!onLink) return null;
+      const rec=id==null?null:TrackFiles.recordOf(files,id);
+      const all=picking&&id==null?TrackFiles.linkables(files):[];
+      const needle=q.trim().toLowerCase();
+      const options=all.filter(o=>!needle||[o.rec.name,...o.folders].some(n=>String(n||"").toLowerCase().includes(needle)));
+      const icon=r=>r&&r.kind==="note"?"📝":"📄";
+      return (
+        <div className="mt-1" data-block-file={String(block.id)}>
+          {id!=null?(
+            <span className="inline-flex items-center gap-1 max-w-full bg-gray-900 border border-gray-700 rounded pl-2 pr-1 py-0.5">
+              {rec?(
+                <a href={fileHref(id)} data-block-file-chip={String(id)}
+                  onClick={e=>{if(onOpen){e.preventDefault();onOpen(id);}}}
+                  className="text-xs text-cyan-300 hover:text-cyan-200 truncate">{icon(rec)} {rec.name}</a>
+              ):(
+                <span data-block-file-missing={String(id)} className="text-xs text-gray-500 italic">📄 file removed</span>
+              )}
+              {onUnlink&&<button onClick={onUnlink} data-block-file-unlink={String(block.id)}
+                title="Unlink this file" className="text-gray-600 hover:text-red-400 text-xs px-0.5">×</button>}
+            </span>
+          ):(
+            <button onClick={()=>{setPicking(p=>!p);setQ("");}} data-block-file-add={String(block.id)}
+              className="text-xs text-gray-600 hover:text-gray-300">+ file</button>
+          )}
+          {picking&&id==null&&(
+            <div className="mt-1 bg-gray-900 border border-gray-700 rounded p-2" data-block-file-picker={String(block.id)}>
+              {!all.length?(
+                <div className="text-xs text-gray-600 text-center py-2">
+                  No files yet. Add them in <a href="true-storage.html#files" className="text-cyan-300 underline">FILES</a>.
+                </div>
+              ):(
+                <>
+                  <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="search files..."
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs outline-none mb-1"/>
+                  <div className="max-h-48 overflow-y-auto">
+                    {!options.length&&<div className="text-xs text-gray-600 text-center py-2">No matches.</div>}
+                    {options.map(o=>(
+                      <div key={String(o.rec.id)} data-block-file-option={String(o.rec.id)}
+                        onClick={()=>{onLink(o.rec.id);setPicking(false);setQ("");}}
+                        className="px-2 py-1 rounded cursor-pointer hover:bg-gray-800">
+                        <div className="text-xs text-gray-200 truncate">{icon(o.rec)} {o.rec.name}</div>
+                        {o.folders.length>0&&<div className="text-[10px] text-gray-600 truncate">{o.folders.join(" › ")}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button onClick={()=>setPicking(false)} className="text-xs text-gray-500 hover:text-gray-300 mt-1">cancel</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function SourceDumpView({sourceDumps,mms,mmColor,dumpPath,setDumpPath,onAddEntry,onDeleteEntry,onRename,onAddMMLink,onRemoveMMLink,onAddURLLink,onRemoveURLLink,onAddTextBlock,onRemoveTextBlock,onTransferTextBlock,onTransferURLLink,onLeaveForMM,trueStorages,onTagStorage,onUntagStorage,onOpenStorage,files,onLinkBlockFile,onUnlinkBlockFile,onOpenFile,focusMmId}) {
       const [showCreate,setShowCreate]=useState(false);
       const [createTitle,setCreateTitle]=useState("");
       const [mmPickerFor,setMmPickerFor]=useState(null);
@@ -830,6 +897,10 @@
                           )}
                         </div>
                         <div className="text-xs text-gray-300 whitespace-pre-wrap">{tb.explanation}</div>
+                        <BlockFile block={tb} files={files}
+                          onLink={TrackSourceDump.isLegacyBlock(link,tb)?null:(fid=>onLinkBlockFile(currentEntry.id,link.id,tb.id,fid))}
+                          onUnlink={()=>onUnlinkBlockFile(currentEntry.id,link.id,tb.id)}
+                          onOpen={onOpenFile}/>
                       </div>
                     ))}
                     {transferPickerFor?.linkId===link.id&&transferPickerFor?.itemType==="text"&&(
@@ -1402,24 +1473,32 @@
 
     // ── app ──────────────────────────────────────────────────────────────────
 
-    /* The ONE view table for this page. The header, the phone bar at the
-       bottom of App, and the hash reader below all map it, so a view added
-       here appears in all three places or in none. SOURCE DUMP is second so the
-       first two tabs read exactly like KS03's own MULTIVERSE · SOURCE DUMP. */
+    /* The ONE view table for this page. The hash reader below maps all of it;
+       the header and the phone bar at the bottom of App map TABS, the views
+       shown as tabs, so a view added here appears in both bars or in neither.
+
+       MULTIVERSE and SRCH are HIDDEN, not removed (2026-11-14: "for now …
+       SRCH and Multiverse serve no purpose"). They are off both bars and the
+       page opens on SOURCE DUMP, but #multiverse and #tree still open them, a
+       storage still opens from its chip, and nothing about `trueStorages` or
+       `trueStoragePos` changed. Bringing one back is putting it in TABS. */
     const VIEWS = [["multiverse","MULTIVERSE"],["sourcedump","SOURCE DUMP"],["tree","SRCH"],["files","FILES"]];
+    const HIDDEN_VIEWS = ["multiverse","tree"];
+    const TABS = VIEWS.filter(([v]) => !HIDDEN_VIEWS.includes(v));
     const viewFromHash = () => {
       const h = window.location.hash.slice(1);
-      return VIEWS.some(([v]) => v === h) ? h : "multiverse";
+      return VIEWS.some(([v]) => v === h) ? h : "sourcedump";
     };
 
     // ── FILES: loaded the first time the tab opens ───────────────────────────
-    // None of this is in the page's <head>: MULTIVERSE, SOURCE DUMP, SRCH and
-    // the other four pages never fetch it (a browser case checks), and the
-    // FILES code fetches Google's sign-in, PDF.js and the Markdown renderer
-    // itself, only when they are needed. Order matters: files-core.js builds
-    // on mm-tree-core.js. Keep these ?v= values identical to sir-ks02.html's
-    // mm-tree-core.js tag and to docs/ARCHITECTURE.md.
-    const FILES_SCRIPTS=['scripts/mm-tree-core.js?v=2','scripts/files-core.js?v=2','scripts/file-store.js?v=2','scripts/files-view.js?v=2'];
+    // None of this is in the page's <head>: the other tabs and the other four
+    // pages never fetch it (a browser case checks), and the FILES code fetches
+    // Google's sign-in, PDF.js and the Markdown renderer itself, only when they
+    // are needed. files-core.js and mm-tree-core.js, the pure index it builds
+    // on, ARE in the <head>, here and in sir-ks02.html: a text block's file
+    // chip needs a file's name on any tab. Keep these ?v= values identical to
+    // docs/ARCHITECTURE.md.
+    const FILES_SCRIPTS=['scripts/file-store.js?v=2','scripts/files-view.js?v=3'];
     const filesLoaded=new Set();
     let filesLoad=null;
     function loadFilesScripts(){
@@ -1435,7 +1514,7 @@
       return filesLoad;
     }
 
-    function FilesHost({files,slotId,mutate,onUploaded}){
+    function FilesHost({files,slotId,mutate,onUploaded,openRequest,usesOf,onOpenUse}){
       const [state,setState]=useState(()=>window.TrackFilesView?'ready':'loading');
       const [attempt,setAttempt]=useState(0);
       const [error,setError]=useState(null);
@@ -1456,7 +1535,7 @@
         </div>
       );
       if (state!=='ready') return <div className="p-6 text-xs text-gray-500" data-files-loading="true">Loading FILES…</div>;
-      return React.createElement(window.TrackFilesView.FilesView,{files,slotId,mutate:fn=>mutate(fn,slotId)});
+      return React.createElement(window.TrackFilesView.FilesView,{files,slotId,mutate:fn=>mutate(fn,slotId),openRequest,usesOf,onOpenUse});
     }
 
     function App() {
@@ -1477,6 +1556,9 @@
       // written only through mutateFiles (a fresh read-modify-write), and this
       // state only ever adopts what was stored.
       const [files,setFiles]=useState([]);
+      // A request for FILES to open one record — from a text block's file
+      // chip, or ?file=. `n` lets the same file be asked for twice.
+      const [fileRequest,setFileRequest]=useState(null);
       const [view,setView]=useState(viewFromHash);
       // The SOURCE DUMP tab's breadcrumb and its brief card ring. Held here,
       // as KS02 holds them in its App, so opening a storage from a chip and
@@ -1538,6 +1620,15 @@
           // numbers when KS02 minted them and strings when this page did, and a
           // query string is always text, so compare as text. An id naming
           // nothing opens the tab at Home, with no error.
+          // ?file=<id> opens that file or note on the FILES tab — where a text
+          // block's file chip in KS02 leads. File ids are strings as stored; an
+          // id naming nothing opens FILES at the top, with no error.
+          const wantFile=q.get('file');
+          if (wantFile!=null) {
+            setView('files');
+            const rec=TrackFiles.records(slot.files).find(r=>String(r.id)===wantFile);
+            if (rec) setFileRequest({id:rec.id,n:1});
+          }
           const wantDump=q.get('dump');
           if (wantDump!=null) {
             setView('sourcedump');
@@ -1818,6 +1909,39 @@
 
       const openStorage=id=>{setSelectedId(id);};
 
+      // ── a text block's file. The link is the block's `fileId`, inside
+      //    sourceDumps — KS02's key — so both writes go through editDumps, a
+      //    fresh read-modify-write, like every other SOURCE DUMP edit. Unlink
+      //    asks in the handler (every path removes a link), with KS02's text. ──
+      function linkBlockFile(dumpId,linkId,blockId,fileId){editDumps(d=>SD.withBlockFile(d,dumpId,linkId,blockId,fileId));}
+      function unlinkBlockFile(dumpId,linkId,blockId){
+        if(!window.confirm('Unlink this file from the text block?\n\nThe file itself is not deleted.')) return;
+        editDumps(d=>SD.withoutBlockFile(d,dumpId,linkId,blockId));
+      }
+      // Both ways, in place: a chip opens its file on FILES, and a row of the
+      // viewer's "Used in" list opens SOURCE DUMP on that title with the MM's
+      // card ringed — the ?dump=&mm= state, set directly.
+      function openFile(id){ setFileRequest({id,n:Date.now()}); setSelectedId(null); setView('files'); }
+      function openUse(use){
+        setDumpPath(SD.pathTo(use.dumpId,dumps));
+        setFocusDumpMm(use.mmId);
+        setSelectedId(null);
+        setView('sourcedump');
+      }
+      // Every text block naming a file, as the FILES viewer lists them: the
+      // title's trail and the MM, then the block's title or its first line.
+      const usesOf=useCallback(fileId=>SD.blocksForFile(dumps,fileId).map(({dump,section,block})=>{
+        const mm=mms.find(m=>m.id===section.mmId);
+        const trail=SD.pathTo(dump.id,dumps).map(id=>{const d=dumps.find(x=>x.id===id);return d?d.title:"?";});
+        const first=String(block.explanation||"").split("\n").map(x=>x.trim()).find(Boolean)||"";
+        return {
+          key:`${dump.id}:${section.id}:${block.id}`,
+          dumpId:dump.id, mmId:section.mmId,
+          where:`${trail.join(" › ")} › ${mm?mm.name:"unknown MM"}`,
+          label:block.title||first||"text"
+        };
+      }),[dumps,mms]);
+
       if (!slotReady) {
         return (
           <div className="min-h-screen bg-gray-950 text-gray-100 font-mono text-sm flex items-center justify-center p-6">
@@ -1836,15 +1960,17 @@
       }
 
       // VIEWS is the one view table, declared above App so the hash reader can
-      // use it too; the header below and the phone bar both map it.
-      const goToView = v => { setView(v); setSelectedId(null); };
+      // use it too; the header below and the phone bar both map TABS from it.
+      // A tab tapped is a fresh start: FILES opens on its folders, not on the
+      // file a chip asked for earlier.
+      const goToView = v => { setView(v); setSelectedId(null); setFileRequest(null); };
 
       return (
         <div className="min-h-screen bg-gray-950 text-gray-100 font-mono text-sm select-none">
           <div className="flex items-center justify-between px-3 py-3 bg-gray-900 border-b border-gray-800">
             <a href="index.html" className="text-gray-600 hover:text-gray-300 transition-colors text-xs">← TRACK</a>
             <div className="flex gap-1">
-              {VIEWS.map(([v,l])=>(
+              {TABS.map(([v,l])=>(
                 <button key={v} onClick={()=>goToView(v)}
                   className={`px-2 py-1 rounded text-xs font-bold transition ${view===v?"bg-white text-gray-950":"text-gray-400 hover:text-white"}`}>{l}</button>
               ))}
@@ -1894,6 +2020,8 @@
                 onLeaveForMM={leaveForMM}
                 trueStorages={storages} onTagStorage={addTag} onUntagStorage={untagPair}
                 onOpenStorage={openStorage}
+                files={files} onLinkBlockFile={linkBlockFile} onUnlinkBlockFile={unlinkBlockFile}
+                onOpenFile={openFile}
                 focusMmId={focusDumpMm}/>
             </div>
           ):view==="files"?(
@@ -1902,7 +2030,8 @@
             <div className="flex flex-col h-screen-nav" data-files-host="true">
               {activeSlotId
                 ? <FilesHost key={activeSlotId} files={files} slotId={activeSlotId}
-                    mutate={mutateFiles} onUploaded={onFilesUploaded}/>
+                    mutate={mutateFiles} onUploaded={onFilesUploaded}
+                    openRequest={fileRequest} usesOf={usesOf} onOpenUse={openUse}/>
                 : <div className="p-6 text-xs text-gray-500">No workspace yet.</div>}
             </div>
           ):(
@@ -1923,7 +2052,7 @@
               is the only thing that tells the two bars apart — without it a
               missing bar here would pass a test against that page's markup. */}
           <nav className="track-tabbar" data-tabbar="true-storage" aria-label="Sections">
-            {VIEWS.map(([v,l])=>(
+            {TABS.map(([v,l])=>(
               <button key={v} type="button" className="track-tabbar-btn"
                 data-tabbar-tab={v}
                 aria-current={!current && view===v ? 'page' : undefined}

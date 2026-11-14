@@ -2948,8 +2948,10 @@ test('browser suites', skipUnlessChrome, async t => {
   const withQuery = (query, hash) => query + hash;
 
   await t.test('a storage created on True Storage persists in the canonical shape', async () => {
+    // #multiverse: the canvas is hidden from the tabs (2026-11-14) but still
+    // opens by its hash, and the reload below keeps it.
     const page = await open('true-storage.html', {
-      db: seedDb({ trueStorages: [], trueStoragePos: {} })
+      db: seedDb({ trueStorages: [], trueStoragePos: {} }), hash: '#multiverse'
     });
     await page.waitFor(function () {
       return !!Array.prototype.find.call(document.querySelectorAll('button'),
@@ -3418,7 +3420,8 @@ test('browser suites', skipUnlessChrome, async t => {
           F.trueStorage('ts-3', 'Storage C', { parentIds: ['ts-2'] })
         ],
         trueStoragePos: {}
-      })
+      }),
+      hash: '#multiverse'
     });
     await waitMounted(page, 'true-storage.html');
     assert.deepEqual(realErrors(page), []);
@@ -3441,7 +3444,8 @@ test('browser suites', skipUnlessChrome, async t => {
           F.trueStorage('ts-2', 'Storage B', { parentIds: ['ts-1'] })
         ],
         trueStoragePos: {}
-      })
+      }),
+      hash: '#multiverse'
     });
     await waitMounted(page, 'true-storage.html');
     assert.deepEqual(realErrors(page), []);
@@ -3740,10 +3744,15 @@ test('browser suites', skipUnlessChrome, async t => {
       { message: "KS02's SOURCE DUMP view" });
   };
 
-  await t.test('SOURCE DUMP is True Storage\'s second tab, and #sourcedump and #tree each open theirs', async () => {
+  await t.test('True Storage opens on SOURCE DUMP, shows SOURCE DUMP and FILES only, and #multiverse and #tree still open theirs', async () => {
+    // MULTIVERSE and SRCH are hidden, not removed (2026-11-14): off both bars,
+    // still reachable by hash. Named first: the page with no hash opens on
+    // SOURCE DUMP at Home.
     const page = await open('true-storage.html', { db: tagSeed() });
-    await page.waitFor(function () { return !!document.querySelector('[data-sid]'); },
-      { message: 'the canvas, the first tab' });
+    await page.waitFor(function () { return !!document.querySelector('[data-dump-row="d-1"]'); },
+      { message: 'SOURCE DUMP at Home, the first tab' });
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-sid]'); }), false,
+      'and not the canvas');
     const tabs = await page.evaluate(function () {
       var header = document.querySelector('#root > div > div:first-child');
       var names = ['MULTIVERSE', 'SOURCE DUMP', 'SRCH', 'FILES'];
@@ -3754,8 +3763,12 @@ test('browser suites', skipUnlessChrome, async t => {
           function (b) { return b.getAttribute('data-tabbar-tab'); })
       };
     });
-    assert.deepEqual(tabs.header, ['MULTIVERSE', 'SOURCE DUMP', 'SRCH', 'FILES'], 'the header, in that order');
-    assert.deepEqual(tabs.bar, ['multiverse', 'sourcedump', 'tree', 'files', 'home'], 'and the phone bar, from the same table');
+    assert.deepEqual(tabs.header, ['SOURCE DUMP', 'FILES'], 'the header, in that order');
+    assert.deepEqual(tabs.bar, ['sourcedump', 'files', 'home'], 'and the phone bar, from the same table');
+
+    await page.evaluate(function () { location.hash = '#multiverse'; return true; });
+    await page.waitFor(function () { return !!document.querySelector('[data-sid="ts-1"]'); },
+      { message: '#multiverse still opening the canvas' });
 
     await page.evaluate(function () {
       var header = document.querySelector('#root > div > div:first-child');
@@ -3782,17 +3795,22 @@ test('browser suites', skipUnlessChrome, async t => {
   await t.test('PARITY: the SOURCE DUMP copy draws exactly the controls KS02 draws', async () => {
     // Every kind of row on screen at once: two leaves at Home; on the leaf, two
     // MM cards, one carrying a text block, a citation and a storage chip.
+    // Block 500 names a file (a chip and its ×), 501 names none (+ file), 502
+    // names one that is gone (file removed, and its ×).
     const db = () => tagSeed({
       sourceDumps: [
         F.dump('d-1', '2026-03-08', { mmLinks: [
           F.dumpLink(90, 10, {
-            textBlocks: [{ id: 500, title: 'Why', explanation: 'Because.' }],
+            textBlocks: [{ id: 500, title: 'Why', explanation: 'Because.', fileId: 'f-pdf' },
+              { id: 501, title: 'How', explanation: 'So.' },
+              { id: 502, title: 'Gone', explanation: 'Was.', fileId: 'f-gone' }],
             links: [{ id: 600, label: 'Paper', url: 'https://example.com/p' }]
           }),
           F.dumpLink(91, 11)
         ] }),
         F.dump('d-2', '2026-03-09', { mmLinks: [F.dumpLink(92, 10)] })
-      ]
+      ],
+      files: [{ id: 'f-pdf', kind: 'file', name: 'Slides.pdf', mime: 'application/pdf', size: 2048, createdAt: 1, updatedAt: 1 }]
     });
 
     const ts = await open('true-storage.html', { db: db(), hash: '#sourcedump' });
@@ -14272,11 +14290,11 @@ test('browser suites', skipUnlessChrome, async t => {
   await phoneCase('documentations.html', 'documentations', ['pages', 'add', 'home']);
   await phoneCase('sir-ks02.html', 'ks02',
     ['calendar', 'ks02', 'mg', 'ks03', 'kolb', 'srch', 'home']);
-  await phoneCase('true-storage.html', 'true-storage', ['multiverse', 'sourcedump', 'tree', 'files', 'home']);
+  await phoneCase('true-storage.html', 'true-storage', ['sourcedump', 'files', 'home']);
 
   await t.test('PHONE/TRUE-STORAGE: the SOURCE DUMP tab is not cropped on a leaf', async () => {
-    /* The bar case above measures the default tab, the canvas. The copy of
-       KS02's page is a different layout — a breadcrumb, MM cards with inline
+    /* The bar case above measures the default tab, SOURCE DUMP at Home. The
+       copy of KS02's page is a different layout — a breadcrumb, MM cards with inline
        forms and storage chips — so it is measured on its own, on a leaf, where
        the most is drawn. */
     const page = await open('true-storage.html', {
@@ -19421,9 +19439,12 @@ test('browser suites', skipUnlessChrome, async t => {
   };
 
   await t.test('FILES: nothing of it loads until the tab opens; the other tabs and pages fetch none of it', async () => {
+    // files-core.js (and mm-tree-core.js under it) are the exception, loaded
+    // with the page here and in KS02: a text block's file chip needs a name on
+    // any tab. They are the pure index — no Drive, no viewer, no PDF.js.
     const LOADED = function () {
       return performance.getEntriesByType('resource').map(function (e) { return e.name; })
-        .filter(function (n) { return /files-core|file-store|files-view|mm-tree-core|pdf\.js|marked|dompurify|gsi\/client/.test(n); });
+        .filter(function (n) { return /file-store|files-view|pdf\.js|marked|dompurify|gsi\/client/.test(n); });
     };
     const page = await open('true-storage.html', { db: seedDb({ files: FILES_RECS() }), viewport: FILES_DESK });
     try {
@@ -19435,11 +19456,13 @@ test('browser suites', skipUnlessChrome, async t => {
       }
       assert.equal(await page.evaluate(function () { return typeof window.TrackFilesView + typeof window.TrackFileStore; }),
         'undefinedundefined');
+      assert.equal(await page.evaluate(function () { return typeof window.TrackFiles; }), 'object',
+        'the pure index is there for the chips');
       await page.evaluate(function () { location.hash = 'files'; return true; });
       await page.waitFor(HAS_SEL, { args: ['[data-files-view]'], message: 'FILES mounted' });
       const got = (await page.evaluate(LOADED)).map(n => n.split('/').pop()).sort();
-      assert.deepEqual(got, ['file-store.js?v=2', 'files-core.js?v=2', 'files-view.js?v=2', 'mm-tree-core.js?v=2'],
-        'exactly the four scripts, and no PDF.js, Markdown renderer or Google sign-in until one is needed');
+      assert.deepEqual(got, ['file-store.js?v=2', 'files-view.js?v=3'],
+        'exactly the two scripts, and no PDF.js, Markdown renderer or Google sign-in until one is needed');
       // FILES preloads Google's sign-in when Drive is set up, and the shipped
       // client id is real; open() blanks it, so nothing here may reach Google
       await sleep(1500);
@@ -19453,7 +19476,9 @@ test('browser suites', skipUnlessChrome, async t => {
     const fs = require('fs'), path = require('path');
     for (const p of PAGES.filter(p => p !== 'true-storage.html')) {
       const src = fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
-      assert.doesNotMatch(src, /files-core\.js|file-store\.js|files-view\.js/, p + ' never loads the FILES code');
+      assert.doesNotMatch(src, /file-store\.js|files-view\.js/, p + ' never loads the FILES code');
+      if (p === 'sir-ks02.html') assert.match(src, /<script src="scripts\/files-core\.js\?v=3"><\/script>/, 'KS02 reads file names through files-core.js');
+      else assert.doesNotMatch(src, /files-core\.js/, p + ' never loads files-core.js');
     }
   });
 
@@ -20407,4 +20432,230 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.deepEqual(realErrors(page), []);
     } finally { await page.close(); }
   });
+  const FILES_SET_ANY = function (setterSrc, sel, value) {
+    new Function('return ' + setterSrc)()(document.querySelector(sel), value);
+    return true;
+  };
+
+  // ── TEXT ↔ FILE: a Source Dump text block linked to a file in FILES ───────
+  /* One file per text block, stored on the block as `fileId` inside
+     sourceDumps; a file may serve many blocks, and which blocks name it is a
+     READ the FILES viewer lists ("Used in"). KS02 writes the link through its
+     autosave (its own key), True Storage through _mutateSourceDumps; neither
+     page writes `files` for it. README, "The SOURCE DUMP tab" and "The FILES
+     tab"; docs/contracts/storages-source-dumps.md. */
+  const TF_FILE = (id, name, over = {}) =>
+    Object.assign({ id, kind: 'file', name, mime: 'application/pdf', size: 2048, createdAt: 1, updatedAt: 1 }, over);
+  const TF_FILES = () => [
+    { id: 'f-dir', kind: 'folder', name: 'Lectures', createdAt: 1, updatedAt: 1 },
+    TF_FILE('f-pdf', 'Slides.pdf', { parentIds: ['f-dir'], driveId: 'drv-pdf' }),
+    { id: 'f-note', kind: 'note', name: 'Plan.md', text: '# Plan\n\n- first', createdAt: 1, updatedAt: 1 },
+    TF_FILE('f-png', 'Photo.png', { mime: 'image/png', size: 68 })
+  ];
+  const TF_DB = (blocks90 = null, blocks92 = null) => tagSeed({
+    sourceDumps: [
+      F.dump('d-1', '2026-03-08', { mmLinks: [
+        F.dumpLink(90, 10, { textBlocks: blocks90 || [{ id: 500, title: 'Why', explanation: 'Because.' },
+          { id: 501, title: 'How', explanation: 'So.' }] }),
+        F.dumpLink(91, 11)
+      ] }),
+      F.dump('d-2', '2026-03-09', { mmLinks: [F.dumpLink(92, 10, { textBlocks: blocks92 || [] })] })
+    ],
+    files: TF_FILES()
+  });
+  const TF_BLOCK = function (dumpId, mmId, blockId) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    var d = ((((db.slots || [])[0] || {}).sourceDumps) || []).filter(function (x) { return x.id === dumpId; })[0];
+    var s = d && d.mmLinks.filter(function (l) { return l.mmId === mmId; })[0];
+    return (s && s.textBlocks.filter(function (b) { return b.id === blockId; })[0]) || null;
+  };
+  const TF_KEY = function (key) {
+    var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+    return JSON.stringify(((db.slots || [])[0] || {})[key]);
+  };
+  const TF_OPTIONS = function (blockId) {
+    return Array.prototype.map.call(document.querySelectorAll('[data-block-file-picker="' + blockId + '"] [data-block-file-option]'),
+      function (e) { return e.getAttribute('data-block-file-option'); });
+  };
+
+  await t.test('TEXT ↔ FILE (KS02 S&C): + file links ONE file to one text block, as fileId on the block; files is never written', async () => {
+    const page = await open('sir-ks02.html', { db: TF_DB(), hash: withQuery('?mm=10', '#ks03') });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-block-file-add="500"]'], message: "+ file under MM 10's text block on S&C" });
+      const filesBefore = await page.evaluate(TF_KEY, 'files');
+      const storagesBefore = await page.evaluate(TF_KEY, 'trueStorages');
+      await page.evaluate(CLICK_SEL, '[data-block-file-add="500"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-block-file-picker="500"] [data-block-file-option]'], message: 'the file picker' });
+      assert.deepEqual(await page.evaluate(TF_OPTIONS, 500), ['f-pdf', 'f-note', 'f-png'],
+        'every file and note in stored order, and no folder');
+      assert.match(await page.evaluate(function () {
+        return document.querySelector('[data-block-file-option="f-pdf"]').textContent;
+      }), /Slides\.pdf.*Lectures/, 'a file shows the folder it is in');
+
+      await page.evaluate(CLICK_SEL, '[data-block-file-option="f-pdf"]');
+      const stored = await page.waitFor(function () {
+        var db = JSON.parse(localStorage.getItem('track_db') || '{}');
+        var d = (((db.slots || [])[0] || {}).sourceDumps || [])[0];
+        var b = d && d.mmLinks[0].textBlocks[0];
+        return b && b.fileId ? d.mmLinks[0].textBlocks : false;
+      }, { message: 'the link being saved' });
+      assert.deepEqual(stored, [{ id: 500, title: 'Why', explanation: 'Because.', fileId: 'f-pdf' },
+        { id: 501, title: 'How', explanation: 'So.' }], 'the block carries the id; its neighbour is untouched');
+      await sleep(400);
+      assert.equal(await page.evaluate(TF_KEY, 'files'), filesBefore, 'files is byte-identical — KS02 only reads it');
+      assert.equal(await page.evaluate(TF_KEY, 'trueStorages'), storagesBefore);
+
+      const chip = await page.waitFor(function () {
+        var a = document.querySelector('[data-block-file="500"] [data-block-file-chip="f-pdf"]');
+        return a ? { text: a.textContent, href: a.getAttribute('href') } : false;
+      }, { message: 'the chip' });
+      assert.deepEqual(chip, { text: '📄 Slides.pdf', href: 'true-storage.html?file=f-pdf#files' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-block-file-add="500"]'), false, 'one file per block: + file is gone');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-block-file-add="501"]'), true, 'the other block still offers it');
+
+      // BLOCKS draws the chip and nothing to change it with.
+      await page.evaluate(function () {
+        Array.prototype.find.call(document.querySelectorAll('button'), function (b) { return b.textContent.trim() === 'BLOCKS'; }).click();
+        return true;
+      });
+      await page.waitFor(HAS_SEL, { args: ['[data-block-file="500"] [data-block-file-chip="f-pdf"]'], message: 'the chip on BLOCKS' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-block-file-unlink], [data-block-file-add]'), false,
+        'BLOCKS shows the chip only');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TEXT ↔ FILE (KS02): unlink asks; Cancel keeps every byte, OK deletes the key; a deleted file reads "file removed"', async () => {
+    const page = await open('sir-ks02.html', {
+      db: TF_DB([{ id: 500, title: 'Why', explanation: 'Because.', fileId: 'f-pdf' },
+        { id: 501, title: 'How', explanation: 'So.', fileId: 'f-gone' }]),
+      hash: withQuery('?dump=d-1', '#ks03')
+    });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-source-dump-view] [data-block-file-chip="f-pdf"]'], message: 'the chip on the SOURCE DUMP leaf' });
+      assert.equal(await page.evaluate(function () {
+        var e = document.querySelector('[data-block-file="501"] [data-block-file-missing="f-gone"]');
+        return e ? e.textContent : null;
+      }), '📄 file removed', 'a link to a file that is gone stays, and says so');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-block-file-unlink="501"]'), true, 'and is removable by hand');
+
+      const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+      page.rejectDialogs = true;
+      await page.evaluate(CLICK_SEL, '[data-block-file-unlink="500"]');
+      await sleep(500);
+      page.rejectDialogs = false;
+      assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+        'Cancel: track_db byte-identical');
+      assert.equal(page.dialogs.length > 0 ? page.dialogs[page.dialogs.length - 1] : null,
+        'Unlink this file from the text block?\n\nThe file itself is not deleted.', 'the prompt was shown');
+
+      await page.evaluate(CLICK_SEL, '[data-block-file-unlink="500"]');
+      const after = await page.waitFor(function (f) {
+        var b = new Function('return ' + f)()('d-1', 10, 500);
+        return b && !('fileId' in b) ? b : false;
+      }, { args: [TF_BLOCK.toString()], message: 'the key being deleted' });
+      assert.deepEqual(after, { id: 500, title: 'Why', explanation: 'Because.' }, 'the key is DELETED, never null or ""');
+      await page.waitFor(HAS_SEL, { args: ['[data-block-file-add="500"]'], message: '+ file back' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TEXT ↔ FILE (True Storage): linking is a fresh read-modify-write of sourceDumps; the picker searches folders too', async () => {
+    const page = await open('true-storage.html', { db: TF_DB(), hash: withQuery('?dump=d-1', '#sourcedump') });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-block-file-add="500"]'], message: '+ file on the leaf' });
+      const filesBefore = await page.evaluate(TF_KEY, 'files');
+      const storagesBefore = await page.evaluate(TF_KEY, 'trueStorages');
+      // Another writer lands a title this page has never seen, in this same
+      // tab, so no storage event: the page's copy is stale on purpose.
+      const seeded = (await page.evaluate(STORED_DUMPS)).concat([
+        { id: 'd-x', title: 'Written elsewhere', createdAt: '2026-03-11', parentId: null, mmLinks: [] }]);
+      assert.notEqual(await page.evaluate(WRITE_SLOT_KEY, 'sourceDumps', seeded), false);
+
+      await page.evaluate(CLICK_SEL, '[data-block-file-add="500"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-block-file-picker="500"] input'], message: 'the picker' });
+      await page.evaluate(FILES_SET_ANY, SET_REACT_INPUT, '[data-block-file-picker="500"] input', 'lect');
+      await page.waitFor(function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-block-file-option]'),
+          function (e) { return e.getAttribute('data-block-file-option'); }).join() === 'f-pdf';
+      }, { message: 'a search matching the folder "Lectures"' });
+      await page.evaluate(CLICK_SEL, '[data-block-file-option="f-pdf"]');
+      const after = await page.waitFor(function (f) {
+        var b = new Function('return ' + f)()('d-1', 10, 500);
+        return b && b.fileId ? JSON.parse(localStorage.getItem('track_db')).slots[0].sourceDumps : false;
+      }, { args: [TF_BLOCK.toString()], message: 'the link being saved' });
+      assert.ok(after.some(d => d.id === 'd-x'), 'the title written elsewhere survived: the write read the stored list');
+      assert.equal(after[0].mmLinks[0].textBlocks[0].fileId, 'f-pdf');
+      await sleep(400);
+      assert.equal(await page.evaluate(TF_KEY, 'files'), filesBefore, 'files is byte-identical');
+      assert.equal(await page.evaluate(TF_KEY, 'trueStorages'), storagesBefore, 'trueStorages is byte-identical');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TEXT ↔ FILE (True Storage): a chip opens its file in place; "Used in" lists every block; a row leads back to the title, ringed', async () => {
+    const page = await open('true-storage.html', {
+      db: TF_DB([{ id: 500, title: 'Why', explanation: 'Because.', fileId: 'f-note' }],
+        [{ id: 502, title: '', explanation: '\n  First line\nsecond', fileId: 'f-note' }]),
+      hash: withQuery('?dump=d-1', '#sourcedump')
+    });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-dump-mm="10"] [data-block-file-chip="f-note"]'], message: 'the chip on the leaf' });
+      const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+      assert.equal(await page.evaluate(function () {
+        return document.querySelector('[data-block-file-chip="f-note"]').textContent;
+      }), '📝 Plan.md', 'a note shows as a note');
+
+      await page.evaluate(CLICK_SEL, '[data-block-file-chip="f-note"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-view] [data-files-viewer="f-note"]'], message: 'the note open on FILES' });
+      assert.equal(await page.evaluate(function () { return location.search; }), '?dump=d-1', 'in place: the page did not navigate');
+
+      assert.equal(await page.evaluate(function () {
+        var e = document.querySelector('[data-files-used-in]'); return e ? e.getAttribute('data-files-used-in') : null;
+      }), '2', 'two text blocks name it');
+      await page.evaluate(CLICK_SEL, '[data-files-used-in-toggle]');
+      const rows = await page.waitFor(function () {
+        var r = Array.prototype.map.call(document.querySelectorAll('[data-files-use]'), function (e) { return e.textContent; });
+        return r.length ? r : false;
+      }, { message: 'the Used in list' });
+      assert.deepEqual(rows, ['Dump d-1 › Mind Map A · Why', 'Dump d-2 › Mind Map A · First line'],
+        'the trail and the MM, then the title or the first line');
+
+      await page.evaluate(CLICK_SEL, '[data-files-use="d-2:92:502"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-source-dump-view] [data-dump-mm="10"]'], message: 'back on SOURCE DUMP' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-dump-crumb="d-2"]'), true, 'on the title d-2');
+      assert.match(await page.evaluate(function () { return document.querySelector('[data-dump-mm="10"]').className; }),
+        /ring-1/, "with that MM's card ringed");
+      assert.equal(await page.evaluate(HAS_SEL, '[data-block-file="502"] [data-block-file-chip="f-note"]'), true);
+
+      // A tab tapped is a fresh start: FILES opens on its folders.
+      await page.evaluate(function () {
+        var header = document.querySelector('#root > div > div:first-child');
+        Array.prototype.find.call(header.querySelectorAll('button'), function (b) { return b.textContent.trim() === 'FILES'; }).click();
+        return true;
+      });
+      await page.waitFor(HAS_SEL, { args: ['[data-files-view] [data-files-grid]'], message: 'FILES at the top' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-viewer]'), false);
+      assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+        'reading and following links wrote nothing');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TEXT ↔ FILE: ?file= opens that file on FILES; an id naming nothing opens FILES at the top', async () => {
+    const page = await open('true-storage.html', { db: TF_DB(), hash: withQuery('?file=f-note', '#files') });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-files-viewer="f-note"]'], message: '?file= opening the note' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-used-in]'), false, 'no block names it: no list');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+    const stale = await open('true-storage.html', { db: TF_DB(), hash: withQuery('?file=nope', '#files') });
+    try {
+      await stale.waitFor(HAS_SEL, { args: ['[data-files-view] [data-files-grid]'], message: 'FILES at the top' });
+      await sleep(300);
+      assert.equal(await stale.evaluate(HAS_SEL, '[data-files-viewer]'), false);
+      assert.deepEqual(realErrors(stale), []);
+    } finally { await stale.close(); }
+  });
+
 });

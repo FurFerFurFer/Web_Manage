@@ -236,6 +236,18 @@
     // deleted in another tab, or another workspace adopted: back to the top
     useEffect(function () { if (openId != null && !byId.has(openId)) setOpenId(null); }, [openId, byId]);
     useEffect(function () { setOpenId(null); setSelected([]); setSelectMode(false); }, [slotId]);
+    // Asked by the page to open one record: a Source Dump text block's file
+    // chip, or ?file=. Declared AFTER the reset above, so on mount the request
+    // wins. `n` changes per request, so the same file can be asked for again.
+    var req = props.openRequest;
+    useEffect(function () {
+      if (req && byId.has(req.id)) { setOpenId(req.id); setDrawer(false); setPlusOpen(false); }
+    }, [req && req.n]);
+
+    // The text blocks that name the open record (a READ the page answers from
+    // sourceDumps: this script never sees that key), and where a tap on one
+    // goes. Absent props: no list.
+    var uses = open && !TF.isFolder(open) && props.usesOf ? props.usesOf(open.id) : [];
 
     var folderId = open ? (TF.isFolder(open) ? open.id : TF.folderOf(files, open.id)) : null;
     var folder = folderId != null ? byId.get(folderId) : null;
@@ -514,12 +526,12 @@
     if (open && !TF.isFolder(open)) {
       page = TF.kindOf(open) === 'note'
         ? h(NoteView, {
-          key: open.id, rec: open, fresh: freshNote === open.id, onText: saveText,
+          key: open.id, rec: open, fresh: freshNote === open.id, onText: saveText, uses: uses, onUse: props.onOpenUse,
           onBack: goUp, onRename: function () { startRename(open.id); }, onDelete: function () { remove([open.id]); },
           trail: trail, nameOf: nameOf, onCrumb: openRec, phone: phone, onDrawer: function () { setDrawer(true); }
         })
         : h(FileView, {
-          key: open.id, rec: open, ov: ov, say: say, write: write,
+          key: open.id, rec: open, ov: ov, say: say, write: write, uses: uses, onUse: props.onOpenUse,
           onBack: goUp, onRename: function () { startRename(open.id); }, onDelete: function () { remove([open.id]); },
           trail: trail, nameOf: nameOf, onCrumb: openRec, phone: phone, onDrawer: function () { setDrawer(true); }
         });
@@ -928,6 +940,28 @@
 
   // ── a note ───────────────────────────────────────────────────────────────
 
+  // "Used in N text blocks", under a file's or a note's head: the Source Dump
+  // text blocks whose `fileId` names it. Closed until tapped; a row opens
+  // SOURCE DUMP on that title with the MM's card ringed. Drawn only when at
+  // least one block names the record.
+  function UsedIn(p) {
+    var s1 = useState(false), shown = s1[0], setShown = s1[1];
+    var uses = p.uses || [];
+    if (!uses.length) return null;
+    var n = uses.length;
+    return h('div', { className: 'px-3 py-1.5 border-b border-gray-800 text-xs', 'data-files-used-in': String(n) },
+      h('button', { type: 'button', 'data-files-used-in-toggle': true, 'aria-expanded': shown ? 'true' : 'false',
+        onClick: function () { setShown(!shown); }, className: 'text-gray-400' },
+        (shown ? '▾ ' : '▸ ') + 'Used in ' + n + ' text block' + (n === 1 ? '' : 's')),
+      shown ? h('div', { className: 'mt-1 space-y-0.5' }, uses.map(function (u) {
+        return h('button', { key: u.key, type: 'button', 'data-files-use': u.key,
+          onClick: function () { if (p.onUse) p.onUse(u); },
+          className: 'block w-full text-left rounded px-2 py-1 hover:bg-gray-800 truncate' },
+          h('span', { className: 'text-gray-500' }, u.where + ' · '),
+          h('span', { className: 'text-gray-200' }, u.label));
+      })) : null);
+  }
+
   function NoteView(p) {
     var rec = p.rec;
     var s1 = useState(typeof rec.text === 'string' ? rec.text : ''), draft = s1[0], setDraft = s1[1];
@@ -975,6 +1009,7 @@
         btn('✎ Rename', { 'data-files-rename': true, onClick: p.onRename }),
         btn('🗑', { 'data-files-delete': true, onClick: p.onDelete, title: 'Delete this note' }),
         h('span', { 'data-files-save': saveState, className: cls('text-[11px]', saveState === 'saved' || saveState === 'saving' ? 'text-gray-500' : 'text-red-400') }, stateText)),
+      h(UsedIn, { uses: p.uses, onUse: p.onUse }),
       mode === 'edit'
         ? h('textarea', {
           'data-files-editor': true, value: draft, autoFocus: !!p.fresh, spellCheck: true,
@@ -1128,6 +1163,7 @@
         btn('✎ Rename', { 'data-files-rename': true, onClick: p.onRename }),
         btn('🗑', { 'data-files-delete': true, onClick: p.onDelete, title: 'Delete this file' }),
         h('span', { className: 'text-[11px] text-gray-500' }, statusLine(rec, dl, p.ov, 0))),
+      h(UsedIn, { uses: p.uses, onUse: p.onUse }),
       h('div', { className: 'flex-1 min-h-0 flex flex-col' }, body));
   }
 

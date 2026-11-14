@@ -5675,3 +5675,47 @@ the tree identical before and after.
 **Not covered.** A real Google sign-in, upload, download, rename and trash: none has been run
 from here, and whether the console changes took effect is unseen. The first real use on the
 iPad and the laptop is the check.
+
+## 2026-11-14 — A text block's file: Source Dump texts ↔ FILES, both ways; MULTIVERSE and SRCH hidden
+
+**What changed.** A Source Dump text block may name ONE file or note from FILES in its
+`fileId` (inside `sourceDumps`); one file may serve many blocks. New in `source-dump-core.js`
+(`?v=2`): `fileIdOf`, `withBlockFile` (refuses a second file), `withoutBlockFile` (deletes the
+key), `blocksForFile` (the read behind "Used in"). New in `files-core.js` (`?v=3`): `recordOf`,
+`linkables`. `files-core.js` and `mm-tree-core.js` now load with the page in `sir-ks02.html` and
+`true-storage.html` (rule 10 of the FILES contract changed on purpose); `FILES_SCRIPTS` is
+`file-store.js?v=2` and `files-view.js?v=3`. `BlockFile` (a twin on both pages) draws `+ file`,
+the chip and `×` under every text block — KS02's SOURCE DUMP leaf, S&C → SOURCE, S&C → BLOCKS
+(chip only) and True Storage's SOURCE DUMP leaf. True Storage: the chip opens the file in place
+(twin difference 4), `?file=<id>` opens one, FILES shows "Used in N text blocks" and a row
+returns to SOURCE DUMP on that title with the card ringed. KS02 holds `files` read-only. True
+Storage opens on SOURCE DUMP; MULTIVERSE and SRCH are hidden (`HIDDEN_VIEWS`), still opened by
+`#multiverse` / `#tree`. The user's choices (2026-11-14): one file per text, many texts per
+file, open "just the file", hide the two tabs.
+
+**Offline.** `source-dump-core.test.js` gained 8 cases (41), `files-core.test.js` 3 (30), all
+passing.
+
+**Fail-first.** The five new browser cases could not exist before the feature, so each was
+also run against a doctored scratch tree (`TRACK_TEST_ROOT`, symlinks plus two edited pages,
+nothing doctored in the repository) with three planted mistakes. Each failed on its own
+message: True Storage's link written from the React copy — `the title written elsewhere
+survived: the write read the stored list`; KS02's unlink writing before it asks — `Cancel:
+track_db byte-identical`; a tab tap keeping the old file request — `FILES at the top` timed
+out. The other two new cases passed there, as they should (nothing they check was doctored).
+
+**Changed cases.** The tabs case now asserts the header `SOURCE DUMP, FILES`, the phone bar
+`sourcedump, files, home`, the page opening on SOURCE DUMP, and `#multiverse` / `#tree` still
+opening theirs; three canvas cases open `#multiverse`; the PHONE bar list; the lazy-loading case
+expects two injected scripts, `TrackFiles` present, KS02 loading `files-core.js` and the other
+three pages none of it; PARITY seeds a linked, an unlinked and a dangling block. A narrowed run
+(task-owned preload in the scratchpad) of the ten new and changed cases: 10 of 10.
+
+**Full suite.** `node tests/run.js`, 09:26:20 → 10:16:17 (50 minutes, load ~2.2–2.6): **all 38
+suites passed, 607 of 607 browser subtests** (602 + 5). Started on battery at 70% at the
+user's choice and ended on mains; `suspend_stats/success` 10 → 10, so no sleep; the MD5 of
+every script, page and test identical before and after; HEAD `1f05f33` at both ends.
+
+**Not covered.** Real iPad touch on the chip and picker; a PDF opened from a chip with its bytes
+only in Drive (the in-place case opens a note); two tabs linking at once (the refusal is proven
+offline, not across tabs); the Storage editor's tag rows, which draw no chip.
