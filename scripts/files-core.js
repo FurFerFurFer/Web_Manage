@@ -330,7 +330,21 @@
   // 'file' record, kept in the slot so both devices see them:
   //
   //   highlights: [{id, page, color, w, pts: [x0, y0, x1, y1, …], createdAt}]
-  //   pins:       [{id, page, name, createdAt, updatedAt}]
+  //   pins:       [{id, page, pageEnd?, name, createdAt, updatedAt}]
+  //   bookmarks:  [page, page, …]
+  //
+  // Since 2026-11-15 (the user's request to copy Notability's page panel)
+  // `highlights` holds three kinds of mark, told apart by `tool`:
+  //
+  //   absent  — a freehand highlighter stroke, as above (colour from COLORS)
+  //   'pen'   — a freehand pen stroke: the same shape, thinner, PEN_COLORS
+  //   'text'  — a highlight made by selecting a PDF's typed text:
+  //             {id, page, color, tool: 'text', rects: [x, y, w, h, …], createdAt}
+  //
+  // and a pin may cover a RANGE of pages (`pageEnd`, absent for one page),
+  // and a note ('.md') takes `highlights` too — over its Preview, which is cut
+  // into virtual pages of NOTE_PAGE_RATIO so a mark is stored the same way.
+  // `bookmarks` is the pages the user flagged, with no name.
   //
   // - The file's BYTES are never touched, and nothing but the viewer draws
   //   these: not a tile, not the tree, not Drive.
@@ -343,16 +357,37 @@
   //   rule withDriveId follows). A pin's own `updatedAt` is its rename's.
 
   var COLORS = ['yellow', 'green', 'blue', 'pink'];
+  var PEN_COLORS = ['black', 'red', 'blue', 'green'];
   var MARKS_MAX_BYTES = 256 * 1024;
   var STROKE_MAX_POINTS = 200;
+  var RECTS_MAX = 400;            // boxes in one text highlight
+  var NOTE_PAGE_RATIO = 1.4142;   // a note's virtual ink page: height / width
 
   function isNum(v) { return typeof v === 'number' && isFinite(v); }
   function isFrac(v) { return isNum(v) && v >= 0 && v <= 1; }
   function isPage(v) { return isNum(v) && v >= 1 && Math.floor(v) === v; }
 
+  function isStrokeShape(h) {
+    return isFrac(h.w) && h.w > 0 && isList(h.pts) && h.pts.length >= 4 && h.pts.length % 2 === 0 && h.pts.every(isFrac);
+  }
+  function isRectsShape(h) {
+    if (!isList(h.rects) || h.rects.length < 4 || h.rects.length % 4 !== 0 || !h.rects.every(isFrac)) return false;
+    for (var i = 0; i < h.rects.length; i += 4) if (!(h.rects[i + 2] > 0 && h.rects[i + 3] > 0)) return false;
+    return true;
+  }
+  // Any mark the viewer can draw. A `tool` this version does not know is not
+  // one: it is skipped by the readers and kept by every writer.
   function isHighlight(h) {
-    return isMap(h) && isId(h.id) && isPage(h.page) && COLORS.indexOf(h.color) >= 0 && isFrac(h.w) && h.w > 0 &&
-      isList(h.pts) && h.pts.length >= 4 && h.pts.length % 2 === 0 && h.pts.every(isFrac);
+    if (!isMap(h) || !isId(h.id) || !isPage(h.page)) return false;
+    if (h.tool === undefined) return COLORS.indexOf(h.color) >= 0 && isStrokeShape(h);
+    if (h.tool === 'pen') return PEN_COLORS.indexOf(h.color) >= 0 && isStrokeShape(h);
+    if (h.tool === 'text') return COLORS.indexOf(h.color) >= 0 && isRectsShape(h);
+    return false;
+  }
+  // 'highlight' | 'pen' | 'text', or null for something the viewer cannot draw.
+  function markKind(h) {
+    if (!isHighlight(h)) return null;
+    return h.tool === undefined ? 'highlight' : h.tool;
   }
   function isPin(p) {
     return isMap(p) && isId(p.id) && isPage(p.page) && typeof p.name === 'string' && p.name !== '';
@@ -375,31 +410,109 @@
       .map(function (x) { return x.p; });
   }
 
+  // A pin's pages: `page` alone, or `page`…`pageEnd`. A `pageEnd` that is not
+  // a page at or after `page` reads as one page (total, never thrown on).
+  function pinEnd(pin) {
+    return isPin(pin) && isPage(pin.pageEnd) && pin.pageEnd >= pin.page ? pin.pageEnd : (isPin(pin) ? pin.page : 0);
+  }
+
+  // The bookmarked pages, ascending, each once.
+  function bookmarksOf(rec) {
+    var all = isMap(rec) && isList(rec.bookmarks) ? rec.bookmarks.filter(isPage) : [];
+    return all.filter(function (n, i) { return all.indexOf(n) === i; }).sort(function (a, b) { return a - b; });
+  }
+
+  // The pages that carry a mark of any kind, ascending, each once — the
+  // panel's "Notes" list.
+  function markedPages(rec) {
+    var seen = {}, out = [];
+    highlightsOf(rec).forEach(function (h) { if (!seen[h.page]) { seen[h.page] = true; out.push(h.page); } });
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  // The pages a panel list — and the finder — covers, ascending, each once,
+  // inside 1…total. `scope` is {kind, pinId?}: 'bookmarks', 'notes' (marked
+  // pages), 'outline' (every pin's range, or the one pin `pinId` names), and
+  // anything else is every page.
+  function scopePages(rec, scope, total) {
+    var n = isPage(total) ? total : 0, kind = isMap(scope) ? scope.kind : scope, out = [], seen = {};
+    function add(pg) { if (pg >= 1 && pg <= n && !seen[pg]) { seen[pg] = true; out.push(pg); } }
+    if (kind === 'bookmarks') bookmarksOf(rec).forEach(add);
+    else if (kind === 'notes') markedPages(rec).forEach(add);
+    else if (kind === 'outline') {
+      pinsOf(rec).forEach(function (pin) {
+        if (isMap(scope) && scope.pinId !== undefined && scope.pinId !== null && pin.id !== scope.pinId) return;
+        for (var pg = pin.page, end = Math.min(pinEnd(pin), n); pg <= end; pg++) add(pg);
+      });
+    } else for (var k = 1; k <= n; k++) out.push(k);
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  // A typed page number: the page it names inside 1…total, or null. Digits
+  // only — "12", " 12 " — never "1e1", "12.5" or "-3".
+  function pageFromText(text, total) {
+    var s = typeof text === 'string' ? text.trim() : (isNum(text) ? String(text) : '');
+    if (!/^[0-9]{1,7}$/.test(s)) return null;
+    var v = parseInt(s, 10);
+    return v >= 1 && (!isPage(total) || v <= total) ? v : null;
+  }
+
+  // ── the finder ──
+  // Text made comparable: compatibility-DEcomposed (NFKD, so normalising one
+  // character at a time — which the viewer does to map a hit back onto the
+  // page — gives what normalising the whole text gives), lower-cased, every
+  // run of whitespace one space. Used on a page's text and the query alike.
+  function searchNorm(text) {
+    var s = typeof text === 'string' ? text : '';
+    try { s = s.normalize('NFKD'); } catch (e) { /* an engine without normalize */ }
+    return s.toLowerCase().replace(/\s+/g, ' ');
+  }
+  // Every place `needle` starts in `hay` (both already searchNorm'd), not
+  // overlapping. A blank needle finds nothing.
+  function searchHits(hay, needle) {
+    var out = [];
+    if (typeof hay !== 'string' || typeof needle !== 'string' || !needle.trim()) return out;
+    for (var i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + needle.length)) out.push(i);
+    return out;
+  }
+
   // What a file's marks weigh in the slot, and whether one more still fits
-  // the budget (the same 256 KB a note may hold).
+  // the budget (the same 256 KB a note may hold). Bookmarks count once there
+  // are any, so a record without them weighs what it always did.
   function marksBytes(rec) {
     if (!isMap(rec)) return 0;
-    return textBytes(JSON.stringify([isList(rec.highlights) ? rec.highlights : [], isList(rec.pins) ? rec.pins : []]));
+    return textBytes(JSON.stringify([isList(rec.highlights) ? rec.highlights : [], isList(rec.pins) ? rec.pins : []])) +
+      (isList(rec.bookmarks) ? textBytes(JSON.stringify(rec.bookmarks)) : 0);
   }
   function marksFit(rec, extra) {
     return marksBytes(rec) + (extra === undefined ? 0 : textBytes(JSON.stringify(extra)) + 1) <= MARKS_MAX_BYTES;
   }
 
+  // Highlights go on a file or on a note; pins and bookmarks name PAGES of a
+  // file, so only a file takes them.
   function markable(list, fileId) {
+    var rec = byIdOf(list).get(fileId);
+    return rec && (kindOf(rec) === 'file' || kindOf(rec) === 'note') ? rec : null;
+  }
+  function pageMarkable(list, fileId) {
     var rec = byIdOf(list).get(fileId);
     return rec && kindOf(rec) === 'file' ? rec : null;
   }
   function hasItem(items, id) { return isList(items) && items.some(function (x) { return isMap(x) && x.id === id; }); }
 
-  // One stroke appended, SPREAD so a key a later version wrote survives.
-  // Refused (input returned): not a file, a malformed stroke, too many
-  // points, an id already stored, or past the budget — which the viewer
-  // tells apart with marksFit.
+  // One mark appended, SPREAD so a key a later version wrote survives.
+  // Refused (input returned): not a file or a note, a malformed mark, too
+  // many points or boxes, an id already stored, or past the budget — which
+  // the viewer tells apart with marksFit.
   function withHighlight(list, fileId, h) {
     var rec = markable(list, fileId);
-    if (!rec || !isHighlight(h) || h.pts.length > STROKE_MAX_POINTS * 2 || hasItem(rec.highlights, h.id) || !marksFit(rec, h)) return list;
+    if (!rec || !isHighlight(h) || hasItem(rec.highlights, h.id)) return list;
+    var text = h.tool === 'text';
+    if (text ? h.rects.length > RECTS_MAX * 4 : h.pts.length > STROKE_MAX_POINTS * 2) return list;
+    if (!marksFit(rec, h)) return list;
     var cur = isList(rec.highlights) ? rec.highlights : [];
-    return withPatched(list, fileId, { highlights: cur.concat([Object.assign({}, h, { pts: h.pts.slice() })]) });
+    var item = Object.assign({}, h, text ? { rects: h.rects.slice() } : { pts: h.pts.slice() });
+    return withPatched(list, fileId, { highlights: cur.concat([item]) });
   }
 
   // Where each of `ids` sits in the stored list — what Undo needs to put an
@@ -439,21 +552,53 @@
     return withPatched(list, fileId, { highlights: cur });
   }
 
-  // A pin: `{id, page, name, createdAt, updatedAt}` from the caller, its name
-  // cleaned like any name. Refused for a blank name, a bad page, a repeated
-  // id, a non-file, or past the budget.
+  // A pin: `{id, page, pageEnd?, name, createdAt, updatedAt}` from the caller,
+  // its name cleaned like any name. Refused for a blank name, a bad page, a
+  // `pageEnd` that is not a page at or after `page`, a repeated id, a
+  // non-file, or past the budget. A `pageEnd` equal to `page` is one page,
+  // and is not stored.
   function withPin(list, fileId, pin) {
-    var rec = markable(list, fileId);
+    var rec = pageMarkable(list, fileId);
     if (!rec || !isMap(pin) || !isId(pin.id) || !isPage(pin.page) || hasItem(rec.pins, pin.id)) return list;
+    if (pin.pageEnd !== undefined && !(isPage(pin.pageEnd) && pin.pageEnd >= pin.page)) return list;
     var name = cleanName(pin.name);
     if (!name) return list;
     var item = Object.assign({}, pin, { name: name });
+    if (item.pageEnd === undefined || item.pageEnd === item.page) delete item.pageEnd;
     if (!marksFit(rec, item)) return list;
     return withPatched(list, fileId, { pins: (isList(rec.pins) ? rec.pins : []).concat([item]) });
   }
 
+  // A pin's name and pages changed together (the Edit pin dialog). `change`
+  // is {name, page, pageEnd}; each key left out keeps what is stored, except
+  // that a `page` given with no `pageEnd` makes it one page. Refused for a
+  // blank name or a range that is not page ≤ pageEnd; a change that changes
+  // nothing returns the input, and only a real change stamps `updatedAt`.
+  function withPinEdited(list, fileId, pinId, change, now) {
+    var rec = pageMarkable(list, fileId);
+    if (!rec || !isList(rec.pins) || !isMap(change)) return list;
+    var found = false, changed = false, bad = false;
+    var next = rec.pins.map(function (p) {
+      if (found || !isMap(p) || p.id !== pinId) return p;
+      found = true;
+      if (!isPin(p)) { bad = true; return p; }
+      var name = change.name === undefined ? p.name : cleanName(change.name);
+      var page = change.page === undefined ? p.page : change.page;
+      var end = change.page === undefined && change.pageEnd === undefined ? pinEnd(p)
+        : (change.pageEnd === undefined ? page : change.pageEnd);
+      if (!name || !isPage(page) || !isPage(end) || end < page) { bad = true; return p; }
+      if (name === p.name && page === p.page && end === pinEnd(p)) return p;
+      changed = true;
+      var out = Object.assign({}, p, { name: name, page: page });
+      if (end > page) out.pageEnd = end; else delete out.pageEnd;
+      if (now !== undefined) out.updatedAt = now;
+      return out;
+    });
+    return changed && !bad ? withPatched(list, fileId, { pins: next }) : list;
+  }
+
   function withPinRenamed(list, fileId, pinId, text, now) {
-    var rec = markable(list, fileId);
+    var rec = pageMarkable(list, fileId);
     var name = cleanName(text);
     if (!rec || !isList(rec.pins) || !name) return list;
     var found = false, changed = false;
@@ -470,11 +615,31 @@
   }
 
   function withoutPin(list, fileId, pinId) {
-    var rec = markable(list, fileId);
+    var rec = pageMarkable(list, fileId);
     if (!rec || !isList(rec.pins)) return list;
     var next = rec.pins.filter(function (p) { return !(isMap(p) && p.id === pinId); });
     if (next.length === rec.pins.length) return list;
     return withPatched(list, fileId, { pins: next.length ? next : undefined });
+  }
+
+  // A page bookmarked: its number appended. Refused for a non-file, a bad
+  // page, one already bookmarked, or past the budget. A stored item this
+  // version cannot read is kept.
+  function withBookmark(list, fileId, page) {
+    var rec = pageMarkable(list, fileId);
+    if (!rec || !isPage(page) || bookmarksOf(rec).indexOf(page) >= 0) return list;
+    if (!marksFit(rec, page)) return list;
+    return withPatched(list, fileId, { bookmarks: (isList(rec.bookmarks) ? rec.bookmarks : []).concat([page]) });
+  }
+
+  // …and un-bookmarked: every copy of the number goes; the last one DELETES
+  // the key.
+  function withoutBookmark(list, fileId, page) {
+    var rec = pageMarkable(list, fileId);
+    if (!rec || !isList(rec.bookmarks)) return list;
+    var next = rec.bookmarks.filter(function (n) { return n !== page; });
+    if (next.length === rec.bookmarks.length) return list;
+    return withPatched(list, fileId, { bookmarks: next.length ? next : undefined });
   }
 
   // ── stroke geometry ──
@@ -521,11 +686,56 @@
     return out;
   }
 
-  // Whether the point (x, y) touches a stroke: within half its width plus
-  // `tol`, both in page widths. The eraser's test.
+  // A text selection's boxes made storable: `rects` is a flat [x, y, w, h, …]
+  // in fractions of the page (a browser gives one box per run of text, often
+  // several to a line and some overlapping). Boxes on one LINE — sharing more
+  // than half the shorter one's height — that touch or nearly touch are
+  // joined; each is clamped to the page, rounded to 4 decimals, and a
+  // sliver is dropped. At most RECTS_MAX boxes; [] for anything malformed.
+  function lineRects(rects) {
+    if (!isList(rects) || rects.length % 4 || !rects.every(isNum)) return [];
+    var boxes = [];
+    for (var i = 0; i < rects.length; i += 4) {
+      var x0 = Math.max(0, rects[i]), y0 = Math.max(0, rects[i + 1]);
+      var x1 = Math.min(1, rects[i] + rects[i + 2]), y1 = Math.min(1, rects[i + 1] + rects[i + 3]);
+      if (x1 - x0 > 0.0005 && y1 - y0 > 0.0005) boxes.push([x0, y0, x1, y1]);
+    }
+    boxes.sort(function (a, b) { return (a[1] + a[3]) - (b[1] + b[3]) || a[0] - b[0]; });
+    var lines = [];
+    boxes.forEach(function (b) {
+      for (var k = lines.length - 1; k >= 0 && k >= lines.length - 8; k--) {
+        var l = lines[k];
+        var over = Math.min(l[3], b[3]) - Math.max(l[1], b[1]);
+        var gap = Math.max(l[0], b[0]) - Math.min(l[2], b[2]);
+        if (over > 0.5 * Math.min(l[3] - l[1], b[3] - b[1]) && gap <= 0.012) {
+          l[0] = Math.min(l[0], b[0]); l[1] = Math.min(l[1], b[1]); l[2] = Math.max(l[2], b[2]); l[3] = Math.max(l[3], b[3]);
+          return;
+        }
+      }
+      lines.push(b.slice());
+    });
+    var out = [];
+    lines.slice(0, RECTS_MAX).forEach(function (l) {
+      var x = round4(l[0]), y = round4(l[1]), w = round4(l[2] - l[0]), hh = round4(l[3] - l[1]);
+      if (w > 0 && hh > 0 && x + w <= 1.0001 && y + hh <= 1.0001) out.push(x, y, Math.min(w, round4(1 - x)), Math.min(hh, round4(1 - y)));
+    });
+    return out;
+  }
+
+  // Whether the point (x, y) touches a mark: for a stroke, within half its
+  // width plus `tol`; for a text highlight, inside one of its boxes grown by
+  // `tol` — all in page widths. The eraser's test.
   function hitStroke(h, x, y, tol, ratio) {
     if (!isHighlight(h) || !isNum(x) || !isNum(y)) return false;
-    var r = isNum(ratio) && ratio > 0 ? ratio : 1, reach = h.w / 2 + (isNum(tol) && tol > 0 ? tol : 0), p = h.pts;
+    var r = isNum(ratio) && ratio > 0 ? ratio : 1, t = isNum(tol) && tol > 0 ? tol : 0;
+    if (h.tool === 'text') {
+      for (var k = 0; k < h.rects.length; k += 4) {
+        if (x >= h.rects[k] - t && x <= h.rects[k] + h.rects[k + 2] + t &&
+          y * r >= h.rects[k + 1] * r - t && y * r <= (h.rects[k + 1] + h.rects[k + 3]) * r + t) return true;
+      }
+      return false;
+    }
+    var reach = h.w / 2 + t, p = h.pts;
     for (var i = 0; i + 3 < p.length; i += 2) {
       if (segDist(x, y * r, p[i], p[i + 1] * r, p[i + 2], p[i + 3] * r) <= reach) return true;
     }
@@ -640,10 +850,22 @@
     withText: withText,
     withDriveId: withDriveId,
     COLORS: COLORS,
+    PEN_COLORS: PEN_COLORS,
     MARKS_MAX_BYTES: MARKS_MAX_BYTES,
     STROKE_MAX_POINTS: STROKE_MAX_POINTS,
+    RECTS_MAX: RECTS_MAX,
+    NOTE_PAGE_RATIO: NOTE_PAGE_RATIO,
     highlightsOf: highlightsOf,
+    markKind: markKind,
     pinsOf: pinsOf,
+    pinEnd: pinEnd,
+    bookmarksOf: bookmarksOf,
+    markedPages: markedPages,
+    scopePages: scopePages,
+    pageFromText: pageFromText,
+    searchNorm: searchNorm,
+    searchHits: searchHits,
+    lineRects: lineRects,
     marksBytes: marksBytes,
     marksFit: marksFit,
     withHighlight: withHighlight,
@@ -651,8 +873,11 @@
     withoutHighlights: withoutHighlights,
     withHighlightsRestored: withHighlightsRestored,
     withPin: withPin,
+    withPinEdited: withPinEdited,
     withPinRenamed: withPinRenamed,
     withoutPin: withoutPin,
+    withBookmark: withBookmark,
+    withoutBookmark: withoutBookmark,
     simplifyStroke: simplifyStroke,
     hitStroke: hitStroke,
     withRemoved: withRemoved,

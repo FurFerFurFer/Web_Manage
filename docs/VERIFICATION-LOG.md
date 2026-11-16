@@ -5719,3 +5719,215 @@ every script, page and test identical before and after; HEAD `1f05f33` at both e
 **Not covered.** Real iPad touch on the chip and picker; a PDF opened from a chip with its bytes
 only in Drive (the in-place case opens a note); two tabs linking at once (the refusal is proven
 offline, not across tabs); the Storage editor's tag rows, which draw no chip.
+
+## 2026-11-15 — The Schedule page: five tabs, a goal overview, a flat mind-map list; the goal tree hidden
+
+**What changed.** `progress.html` is shown as **Schedule** and opens on the timeline (the user's
+2026-11-15 request: "I want schedule to be the main character"). ONE table, `TABS`, draws the
+header, a sub-tab strip and the phone bar: SCHEDULE · ★ CALENDAR · ● LEARN (MIND MAPS · MG) ·
+▲ PROJECT (PROGRESSION · MILESTONES · QUEST) · ■ ACTIONS. `resolveView` reads the address once
+(`DEFAULT_VIEW` `schedule`, `VIEW_ALIASES` `#goals` → `progress`, `HIDDEN_VIEWS` the goal tree);
+the seven older view keys are unchanged. SCHEDULE and ★ CALENDAR are one `SchedulePanel` (`view`
+prop) whose timeline is hidden, not replaced. New readers: `ProgressionOverview` (every goal, only
+its sub-goals, each a link to Projects; `SubGoalProgress` is the goal panel's BY SUBGOAL drawing,
+extracted) and `MindMapsPanel` over `learnLists`, the Schedule's ● Learn order and pins moved into
+one function that the picker now calls too (`buildMMTree` and `MMTreeNode` are gone).
+`GoalTabsPanel` takes `?goal=<id>`. `documentations.html`: `↗ Goal tree` and `edit ↗` on a goal's
+page, both `progress.html?goal=<id>#progress`. Wording only: `index.html`, `true-storage.html`,
+`scripts/note-to-self.js` (`?v=3`). `styles/styles.css` (`?v=27`): a rule that matched nothing
+since the `TIMELINE | CALENDAR` group left the nav row, removed.
+
+**Stored data.** None of it. No key was added, renamed, migrated or re-read differently; the two
+new views and both new links write nothing, and a case asserts `track_db` byte-identical across
+MIND MAPS. Nothing here needed a schema, import/export or sync check.
+
+**A bug this fixed.** The old `TIMELINE | CALENDAR` switch REPLACED the timeline node, and the
+mount-only Shift+wheel listener stayed on the dead one: after one look at the calendar the gesture
+did nothing until a reload. `docs/contracts/appearance.md` already described this failure for the
+phone pane; the desktop switch had it. The baseline `unmount` below is that bug, reintroduced.
+
+**Code that was written and then deleted.** A hand-written restore of the timeline's `scrollTop`
+after ★ CALENDAR. Its baseline (`no-restore`: the restore removed, nothing else) failed NOTHING —
+headless Chrome keeps a hidden node's `scrollTop` — so the restore was unproven and came out. What
+remains is the once-only scroll to 08:00 the first time the timeline is shown, which
+`no-first-0800` does fail. The claim is Chrome's only (NOTES, Proposal 23); the page's older
+comment beside `phoneScrollRef` says the opposite and was left alone.
+
+**Fail-first.** Thirteen baselines, each ONE file with ONE rule reversed, in a scratch tree
+(`TRACK_TEST_ROOT`; symlinks, `tests/` copied for real, nothing doctored in the repository; the
+harness prints its root and refuses a byte-identical file). Each ran only its own group of cases
+through a task-owned preload, and every failure below is the case's own assertion, not a timeout:
+
+| Baseline (the rule reversed) | Failed | Message |
+| --- | --- | --- |
+| `unmount` — `key={schedView}` on the timeline wrapper | 2 of 3 ★ CALENDAR | `Shift+wheel still moves the week after the calendar — a listener left on an unmounted node moves nothing`; `the same hour is in view, not the top of the day` |
+| `no-first-0800` — the first-shown scroll removed | 1 of 3 | `the same 08:00 a page opened on the Schedule shows` |
+| `lastsub` — `lastSub` starts empty | 1 of 15 TABS | `back on QUEST, where ▲ PROJECT was left` |
+| `default-view` — `DEFAULT_VIEW = 'progress'` | 2 of 15 | `no address at all opens the Schedule, which has no sub-tabs`; `#no-such-view`: `what schedule draws` |
+| `no-alias` — `VIEW_ALIASES = []` | 1 of 15 | `#goals`: `what progress draws` |
+| `all-children` — every child listed, not only sub-goals | 2 of 4 PROGRESSION | `a goal with no sub-goals says so`; `each sub-goal is a link to ITS page — a linked one to its original's` |
+| `no-goal-href` — every link opens the top of Documentations | 1 of 4 | `each sub-goal is a link to ITS page — a linked one to its original's` |
+| `raw-sessions` — MIND MAPS handed the stored sessions | 2 of 5 MIND MAPS | `Swimming is not under SIR DUE TODAY`; the order case |
+| `stored-order` — the rest in stored order | 1 of 5 | `owed to Chapter one, then the review due today, then S4 before S2 before S1` |
+| `late-amber` — a late milestone's row amber | 1 of 5 | `its gap is drawn in var(--color-danger), not amber` |
+| `goal-ignored` — the tree ignores `?goal=` | 1 of 1 | `the tree opens on Pass the exam, which holds Practice — not on the first goal` |
+| `old-tree-link` — `documentations.html` links `#goals` | 1 of 1 | `↗ Goal tree, and To learn's edit ↗, both name this goal` |
+| `thin-subtabs` — no 44px minimum | 2 of 2 PHONE | `sub-tab "mindmaps" is 34px tall, under the 44px target`; the same for `progression` |
+
+Twelve ran 17:40 → 17:52 and `late-amber` at 22:02 (its first `from` text occurred three times in
+the page and the harness refused it). Every other case in each group passed its baseline, so no
+failure set contains another's except `default-view`, whose two cases are the two ways of naming
+no view. Not disjoint by design: `all-children` and `no-goal-href` share the links case, because a
+task drawn as a sub-goal is also a wrong link.
+
+**After the baselines, before the green run**, three served files changed: a comment in
+`progress.html`, the dead rule and a comment in `styles.css`, and `?v=27` on the five pages. None
+touches a reversed rule; the green run below is on the final tree.
+
+**Changed cases.** Seven cases that clicked the `CALENDAR` button by its text now click
+`[data-tab="calendar"]`; the phone nav case asserts the row's own last control (TASKS) is hit-tested
+on screen in two rows, and that ★ CALENDAR is on the bar; twenty-odd goal-tree cases open
+`#progress`, since no address no longer opens the tree; the phone Milestones case goes through
+▲ PROJECT; the LOOP MIND MAPS case asserts every mind map of a parent loop is in the flat list.
+
+**New cases: 30** (607 → 637): the page's name and tabs; thirteen addresses; a tab's remembered
+sub-tab; three for ★ CALENDAR; four for PROGRESSION; five for MIND MAPS; the Projects ↔ tree link;
+two phone sub-tab cases.
+
+**Smoke.** Fourteen addresses (none, the eight views, `#learn`, `#project`, `#progress`, `#goals`,
+`#nonsense`) at 1280px and at 390×844 with touch: 28 mounts, title `Schedule`, the right tab lit,
+no page error. The suite's own `smoke:` cases for the five pages are in the green run.
+
+**Green, on the final tree.** A narrowed run (the same task-owned preload) of the 30 new cases, the
+six `smoke:` cases — all five pages mount with no page error, and an empty install — the eight
+PHONE/PROGRESS cases and LOOP MIND MAPS, 22:09 → 22:15: **43 of 43**, plan `ran 43, skipped 594`.
+The MD5 of every page, script, stylesheet and test was identical before and after, and
+`suspend_stats/success` read 15 at both ends.
+
+**Offline.** `node tests/run.js --offline`, 22:15: **all 37 offline suites passed** — the four date
+suites under five timezones, seventeen once. No core module changed.
+
+**Full suite, the next day (2026-11-16).** It could not run on 2026-11-15: the machine was on
+battery, 55% at 22:02 and 42% at 22:15, the 13 minutes the checks above took. (It had also slept,
+lid closed, 18:02 → 20:06 — after the first twelve baselines finished at 17:52 and before anything
+else here ran.) `node tests/run.js`, 12:17:59 → 13:19:21 (61 minutes, load 2.9 at the start and
+6.8 at the end): **all 38 suites passed, 637 of 637 browser subtests** (607 + 30), no case
+failing or retried. On mains throughout; `suspend_stats/success` 16 → 16, so no sleep; HEAD
+`98bf43a` at both ends.
+
+**What that run was run against, which is not the working tree.** Another session was editing
+the FILES scripts in the same working tree while this ran — `scripts/files-view.js` changed in the
+minute the run was about to start — and a run against code that changes during it is not a run.
+So the suite ran from a FROZEN COPY in a scratch directory: every tracked file from HEAD
+`98bf43a`, then this change's 19 files from the working tree, real files and no symlinks, with
+`tests/` in the copy and `TRACK_TEST_ROOT` naming it. A task-owned script proved the copy is
+exactly "HEAD + this change" — the tracked files that differ from HEAD in it are those 19 and no
+others, each byte-identical to the working tree's at the start — and the copy's manifest MD5 was
+the same before and after. The run therefore says NOTHING about the other session's work, which
+was left out (`scripts/files-core.js`, `scripts/files-view.js`, and by the end
+`tests/files-core.test.js` and two contract files). By the end that session had also edited six
+of the 19 files — `NOTES.md`, `README.md`, `docs/ARCHITECTURE.md`, `sir-ks02.html`,
+`tests/browser.test.js`, `true-storage.html` — in FILES lines only (a diff of each against the
+copy shows no Schedule line removed). The working tree as it now stands, both changes together,
+has NOT been run by this entry: whoever lands second runs the suite again.
+
+**Not covered.** Real touch hardware on the sub-tab strip; any browser but headless Chrome — in
+particular the hour in view after ★ CALENDAR in Firefox or on an iPad; print; the live Firebase
+project (nothing in this change reaches sync). Whether the goal tree holds a fifth edit Projects
+lacks was not proven exhaustively (NOTES, Proposal 23).
+
+## 2026-11-16 — FILES viewer: page rail and pad, the Pages panel, bookmarks, pin ranges, Find, text selection, a pen, ink on notes
+
+**What changed.** The user asked for what two Notability screen recordings show (a 22-second
+one of the side panel, a 7-second one of the full-screen grid), plus pin ranges typed as page
+numbers, a finder limited to the list on screen, selectable typed text ("select is select then
+i choose to copy or highlight"), writing on `.md` notes ("Pencil + highlighter on notes") and
+an eraser for all of it. `scripts/files-view.js` (`?v=4`): `PdfView` rewritten around
+`PageRail`, `PagesPanel`, `PdfThumb`, `PdfPage` (canvas + pdf.js text layer + finder boxes),
+`PinDialog`; `useMarks` / `markTools` shared by PDFs, images and notes; `MarkLayer` listens on
+the surface under it; `NotePaper`. `scripts/files-core.js` (`?v=4`), all additive: `PEN_COLORS`,
+`RECTS_MAX`, `NOTE_PAGE_RATIO`, `markKind`, `pinEnd`, `bookmarksOf`, `markedPages`, `scopePages`,
+`pageFromText`, `searchNorm`, `searchHits`, `lineRects`, `withPinEdited`, `withBookmark`,
+`withoutBookmark`; `withHighlight` takes pen and text marks and acts on notes; `withPin` takes
+`pageEnd`. Removed from the viewer: the `Pins (n)` dropdown and its phone bottom sheet — pins
+are the panel's Outline.
+
+**Stored data.** Three additions on a `files` record, each absent when empty, none migrated:
+`highlights[].tool` (`'pen'` or `'text'`, with `rects` for text), `pins[].pageEnd`, `bookmarks`.
+A record written before today reads exactly as it did. A cached copy of the older viewer
+skips a mark whose `tool` it does not know (it was already total over malformed items) and its
+writers keep it; it reads a ranged pin as its first page. Notes now carry `highlights`; no mark
+writer touches a note's `text` or `updatedAt`.
+
+**Changed cases** (`tests/browser.test.js`). `FILES pins: pin page 2 as "Results" …` reaches
+the pin through ▦ Pages → Outline, expects the side panel to stay open after a jump, and reads
+`1 pin` / `0 pins` from the panel. `FILES marks (phone): …` expects the full-screen panel
+(covering the screen down to the tab bar, no expand button, closed by a jump and by Close) in
+place of the bottom sheet. Before either was edited, a narrowed run of the 35 existing `FILES`
+and `TEXT ↔ FILE` cases against the new viewer failed exactly these two and passed 33: the
+marks, drag, upload, Drive-stub and link cases needed no change. The loader case expects
+`files-view.js?v=4`; the KS02 source case `files-core.js?v=4`. `tests/files-core.test.js`:
+the assertion that a note refuses a highlight now asserts that it takes one.
+
+**New cases.** Twelve browser cases, over a six-page synthetic PDF with real text
+(`FILES_PDF_TEXT`, built in the test; no personal file): the rail and pad (keys, typed digits,
+Enter, Escape, a page the PDF lacks refused, nothing written); the pad on an iPad viewport
+(read-only field, no focus) and a finger that starts on a line of text still scrolling;
+bookmarks (only `bookmarks` written, one tap off with no prompt, last one deletes the key, the
+Bookmarks list); a pin range (auto name, both refusals before any write, `pageEnd` stored,
+the flag, ▤, the delete prompt naming the range, an edit to one page deleting `pageEnd`); Find
+in All pages / Bookmarks / every pin / one pin's range with the per-page counts and the boxes
+on the page; the scan message on a PDF with no text; text selection (Copy through a stubbed
+clipboard, Highlight storing one `tool: 'text'` mark whose box is where the drag was, the
+PDF's SHA-256 unchanged, the eraser and Undo); the pen (stroke, dot, pen swatches, the Notes
+list, erase); thumbnails with marks and ribbons, the side panel staying open, the full-screen
+grid closing on a jump; ink on a note (only `highlights` written, text and `updatedAt`
+untouched, Edit shows none, eraser + Undo, the delete prompt); a note on a phone (flowing text
+until a tool is on, then the sheet scaled to fit); the delete prompt counting pen strokes and
+bookmarks. Eleven new `files-core` cases (41 in the suite) cover every new function, total
+over junk input.
+
+**Fail-first.** One defect was found by looking at a phone screenshot, not by a test: in the
+full-screen panel the page's own top-centre handle (`#nts-toggle`, fixed, `z-index: 49`)
+covered the middle of the Find box. Fixed by the header row's top padding; the phone case
+gained "nothing covers the Find box" (`elementFromPoint` 3px inside the box's top centre). Against
+a scratch tree of symlinks holding the one pre-fix `files-view.js` (`TRACK_TEST_ROOT`, never
+in the repository) that case **failed** on exactly that assertion (`false !== true`); against
+the repository it passes. The other new cases are for new behaviour and had no earlier code
+to fail on; the two changed cases failed on the new viewer before they were edited (above).
+
+**Full suite.** `node tests/run.js` on a frozen copy of the working tree (rsync without
+`.git`; MD5 of all 95 pages, scripts, stylesheets and tests identical before and after),
+12:33 → 13:36 on 2026-11-16, mains power, `suspend_stats/success` 16 at both ends: **all 38
+suites passed, 649 of 649 browser subtests** (637 + 12). This is the first run of this change
+together with the uncommitted Schedule-page change of 2026-11-15, whose own entry above was
+waiting on a full run: the tree held both. 63 minutes, with another session's full run
+overlapping for part of it. Two things changed after that copy was taken — the Find-box
+padding and its assertion. On the final tree a narrowed run (a task-owned preload matching
+`^FILES|TEXT ↔ FILE|^smoke`) passed **53 of 53**, 13:36 → 13:39, plan `ran 53, skipped 596`;
+`node --check` passes on every script; `node tests/run.js --offline` passed all 37 offline
+suites at 12:31, before the copy.
+
+**A second full run, on the final tree, by another session.** `node tests/run.js` in the
+repository itself, 12:55 → 13:56 on 2026-11-16 (60 min 51 s), mains power at both ends, no
+suspend line in the journal for the window, HEAD `98bf43a` at both ends: **all 38 suites
+passed, 649 of 649 browser subtests**, no `not ok` line in the log. So the Find-box padding and
+its assertion, which the frozen copy above did not hold, have now been through a full run too.
+MD5 of the 90 tracked and untracked files outside `World/`, before and after: every page,
+script, stylesheet and test identical; three files differed — `AGENTS.md`,
+`docs/TESTING-LESSONS.md` and this log, which the session above was writing during the run.
+Load 3.7 at the start (its run overlapping) and 1.7 at the end.
+
+**Looked at, not asserted.** Headless Chrome screenshots at 1280×900 (Grit and Night),
+820×1180 and 390×844 with touch: the rail and pad, the side panel, the menu of lists, the
+full-screen grid, the pin dialog, find boxes, a text highlight, pen marks, the note's sheet.
+The rail and pad were moved to the middle of the right edge, and the panel's footer buttons
+to the left, because the floating notes button covered them in the bottom-right corner.
+
+**Not covered.** A real iPad, Safari and a real Apple Pencil (CDP has no stylus touch type):
+Safari's selection handles and callout beside the Copy / Highlight bar, press-and-hold
+selection, palm rejection on a note's sheet. A long real PDF (thumbnails and Find were run on
+six pages). Thai text in Find and in selection. PDFs with rotated pages under the text layer
+(the CSS for pdf.js's rotation attribute is in place and unexercised). `execCommand('copy')`
+as the fallback when the Clipboard API refuses. The live Firebase project and Google Drive
+(nothing here reaches either; the suite stubs Drive).

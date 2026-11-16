@@ -6,6 +6,7 @@ the `files` slot field, `scripts/files-core.js`, `scripts/file-store.js`,
 `track_files_v1` IndexedDB database, or anything that talks to Google Drive.
 
 Added 2026-11-13 with the FILES tab on the Storages page; highlights and page pins the same day.
+Pen strokes, text highlights, bookmarks, pin ranges and ink on a note: 2026-11-15.
 
 ---
 
@@ -15,7 +16,7 @@ Added 2026-11-13 with the FILES tab on the Storages page; highlights and page pi
 | --- | --- | --- |
 | Folders, notes, one record per file (name, order, size, MIME, Drive id) | slot field `files` in `track_db` | yes, with the workspace |
 | A note's text (≤ 256 KB, `NOTE_MAX_BYTES`) | the note's record, `text` | yes |
-| A PDF's or an image's highlights and page pins (≤ 256 KB together, `MARKS_MAX_BYTES`) | the file's record, `highlights` and `pins` | yes |
+| A PDF's or an image's marks, page pins and bookmarks, and a note's marks (≤ 256 KB together a record, `MARKS_MAX_BYTES`) | the record, `highlights`, `pins` and `bookmarks` | yes |
 | A file's bytes | Google Drive ("Track Files" folder), and a copy per device in IndexedDB `track_files_v1` | Drive only |
 | The upload queue, the Drive folder id | `track_files_v1` (`queue`, `meta` stores) | never — per device |
 | The Google access token | memory only | never |
@@ -33,16 +34,29 @@ Added 2026-11-13 with the FILES tab on the Storages page; highlights and page pi
 `{id, kind, name, createdAt, updatedAt}` plus, by kind:
 
 - `folder` — nothing else.
-- `note` — `text` (a string, possibly empty). Its name always ends `.md`.
+- `note` — `text` (a string, possibly empty). Its name always ends `.md`. It may carry
+  `highlights` (below), drawn on its Preview; never `pins` or `bookmarks`.
 - `file` — `size` (bytes), `mime` (absent when the browser gave none), `driveId` (absent
   until an upload finished), and the viewer's marks, each absent when there are none:
-  - `highlights: [{id, page, color, w, pts, createdAt}]` — a freehand highlighter stroke.
-    `page` is 1-based (an image is page 1); `color` is one of `COLORS` (`yellow`, `green`,
-    `blue`, `pink`); `w` and every value of `pts` (`[x0, y0, x1, y1, …]`, at most 200 points)
-    are fractions 0–1 of the page's rendered box — pdf.js's viewport, which includes the page's
-    own rotation, or the image's natural size. Stored order is drawing order.
-  - `pins: [{id, page, name, createdAt, updatedAt}]` — a named page. `updatedAt` is the
-    pin's last rename.
+  - `highlights` — every mark, of three kinds told apart by `tool` (`markKind`). Stored order
+    is drawing order. `page` is 1-based (an image is page 1; a note's Preview is cut into
+    pages `NOTE_PAGE_RATIO` tall). Every coordinate is a fraction 0–1 of the page's rendered
+    box — pdf.js's viewport, which includes the page's own rotation, the image's natural
+    size, or the note's fixed-width sheet.
+    - no `tool`: `{id, page, color, w, pts, createdAt}` — a freehand highlighter stroke.
+      `color` is one of `COLORS` (`yellow`, `green`, `blue`, `pink`); `pts` is
+      `[x0, y0, x1, y1, …]`, at most 200 points.
+    - `tool: 'pen'`: the same shape, `color` one of `PEN_COLORS` (`black`, `red`, `blue`,
+      `green`).
+    - `tool: 'text'`: `{id, page, color, tool, rects, createdAt}` — a highlight over selected
+      text. `rects` is `[x, y, w, h, …]`, one box a line (`lineRects`), at most `RECTS_MAX`
+      (400) boxes; `color` is one of `COLORS`.
+    - any other `tool` was written by a later version: readers skip it, writers keep it.
+  - `pins: [{id, page, pageEnd?, name, createdAt, updatedAt}]` — a named page, or a range
+    when `pageEnd` > `page`. **A one-page pin has no `pageEnd` key** (`pinEnd` reads it, and
+    reads an unusable value as one page). `updatedAt` is the pin's last edit.
+  - `bookmarks: [page, …]` — page numbers, each once, in the order made (`bookmarksOf`
+    reads them sorted).
 
 A record inside a folder has `parentIds: [folderId]` — **one** parent, in the same shape as
 mind maps so `TrackMMTree` can walk it. At the top level the key is **absent**, never `[]`:
@@ -92,28 +106,52 @@ order field. An unknown `kind` reads as a file. Ids are strings from `TrackStora
     in Drive, sends a Drive request, or shows on a tile or in the tree; Download and Share give
     the original. A browser case compares the device copy's SHA-256 and watches the network.
 13. **Marks have their own writers and no date code**: `withHighlight`,
-    `withoutHighlights`, `withHighlightsRestored`, `withPin`, `withPinRenamed`, `withoutPin`.
-    They act on `kind: 'file'` records only, validate what they are given (a whole page, an
-    even `pts` of at least two points all in 0–1, a known colour, a name through
-    `cleanName`), refuse a repeated id, spread, and keep a malformed item they did not write.
-    **None stamps the file's `updatedAt`**, because the file did not change — the rule
-    `withDriveId` follows. Removing the last one DELETES the key.
-14. **One budget per file:** 256 KB of `highlights` and `pins` together (`marksFit`). A
-    writer past it returns the list unchanged; the viewer checks `marksFit` first and says
-    "This file's highlights are full". Undo is not held to it: it only returns what was stored.
+    `withoutHighlights`, `withHighlightsRestored`, `withPin`, `withPinEdited`,
+    `withPinRenamed`, `withoutPin`, `withBookmark`, `withoutBookmark`. The highlight writers
+    act on `kind: 'file'` and `kind: 'note'` records; the pin and bookmark writers on
+    `kind: 'file'` only. They validate what they are given (a whole page, an even `pts` of at
+    least two points all in 0–1 or `rects` in fours inside the page with a size, a colour of
+    the mark's own kind, a name through `cleanName`, a `pageEnd` not before `page`), refuse a
+    repeated id, spread, and keep a malformed item they did not write. **None stamps the
+    record's `updatedAt`** — not a file's, because the file did not change (the rule
+    `withDriveId` follows), and not a note's, because its text did not. **No mark writer
+    touches a note's `text`.** Removing the last one DELETES the key; a pin made one page
+    DELETES `pageEnd`.
+14. **One budget per record:** 256 KB of `highlights`, `pins` and `bookmarks` together
+    (`marksFit`). A writer past it returns the list unchanged; the viewer checks `marksFit`
+    first and says the highlights are full. Undo is not held to it: it only returns what was
+    stored.
 15. **A stroke is stored simplified**: `simplifyStroke` (Ramer–Douglas–Peucker, both ends
     kept, distances measured with the page's height/width ratio so x and y count alike),
     clamped to 0–1, rounded to 4 decimals, thinned to 200 points. A stroke shorter than
     0.004 page widths is a tap and is not stored.
 16. **Input:** an Apple Pencil (`pointerType 'pen'`) always draws; a finger or a mouse only
-    while `🖍` is on; with `⌫` on, every pointer erases. The touch listeners on the layer are
-    **native and non-passive** (React's are passive) and cancel a touch only for a stylus,
-    for every touch while a tool is on, or for a palm during a Pencil stroke — never a
-    finger with no tool on, which must scroll. One stroke at a time; it stays on the page it
-    started on (pointer capture, clamped).
-17. **Highlighter colours are DATA colours** (`MARK_COLORS` in `files-view.js`), the same in
-    both appearances, and reach the SVG through `style`, never a presentation attribute
-    (`docs/contracts/appearance.md`).
+    while `🖍` or `✒` is on; with `⌫` on, every pointer erases. **With no tool on, the marks
+    layer takes no pointer at all** (`pointer-events: none`), so the PDF's text under it can
+    be selected and a finger scrolls; its listeners are therefore on the SURFACE under it
+    (the PDF page, the image's frame, the note's sheet), and a press counts only inside the
+    layer's own box. With a tool on, the text layer steps aside (`data-off`). The touch
+    listeners are **native and non-passive** (React's are passive) and cancel a touch only
+    for a stylus, for every touch while a tool is on, or for a palm during a Pencil stroke —
+    never a finger with no tool on, which must scroll. One stroke at a time; it stays on the
+    page it started on (pointer capture, clamped).
+17. **Mark colours are DATA colours** (`MARK_COLORS`, `PEN_INK` and the finder's `FIND_COLOR`
+    in `files-view.js`), the same in both appearances, and reach the SVG through `style`,
+    never a presentation attribute (`docs/contracts/appearance.md`). A note's sheet is white
+    in both appearances for the same reason: ink is drawn for a white page.
+18. **A text highlight is the selection's boxes, not its words.** `selectionMarks` reads only
+    text nodes inside a page's text layer; `lineRects` joins them into one box a line; one
+    selection is ONE write, with one mark per page it covers. The words are not stored.
+19. **The finder writes nothing and searches only what the panel's list covers.**
+    `scopePages(rec, scope, total)` is the one definition of each list — all pages, the
+    bookmarks, the pages with marks, every pin's range, or one pin's — and the finder scans
+    exactly those pages. Text is compared through `searchNorm` (NFKD, lower case, runs of
+    whitespace as one space); `findRects` depends on it giving, one character at a time, what
+    it gives for the whole text.
+20. **Ink on a note is positioned on a sheet of one fixed width** (`PAPER_W`, 720 CSS px,
+    scaled to fit a narrower pane), so a line breaks where it broke when the ink was drawn.
+    It does not follow the text: an edit above a stroke leaves the stroke where it was. That
+    is a stated limit (README, NOTES), not a defect to patch by moving marks.
 
 ## Source Dump text blocks
 
@@ -158,8 +196,13 @@ in `docs/contracts/storages-source-dumps.md`, "A text block's file". For this fi
   prompt: a prompt on every touch would make an eraser unusable. In its place the message
   after each erase offers **Undo**, which writes back the very records at their stored
   places (`highlightEntries` → `withHighlightsRestored`), leaving `track_db` byte-identical
-  to before. **Deleting a pin is NOT excluded**: its name would be lost, so `deletePin` asks
+  to before. It erases pen strokes and text highlights the same way, on a note as on a
+  file. **Deleting a pin is NOT excluded**: its name would be lost, so `deletePin` asks
   after its no-op guard and before the write.
+- **Taking a bookmark off** (added 2026-11-15): the ribbon on a thumbnail and `🔖` in the
+  toolbar are toggles. A bookmark holds nothing but its page number, so the same tap that
+  made it puts it back exactly; a prompt would guard nothing.
 
-All three are pinned by browser cases (`FILES drag …`, "Free up" writes no `track_db` key,
-and `FILES marks: the eraser asks nothing; Undo restores the identical record …`).
+All four are pinned by browser cases (`FILES drag …`, "Free up" writes no `track_db` key,
+`FILES marks: the eraser asks nothing; Undo restores the identical record …`, and
+`FILES bookmarks: … one tap takes one off, asking nothing …`).

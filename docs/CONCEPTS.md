@@ -20,6 +20,7 @@ days. It is the count of them."* **MG always means Marginal Gains** — never "m
 |---|---|---|
 | **Knowledge Record** | The page `sir-ks02.html`: every mind map and everything relating to it. It was the "KS02 Tracker". | the page's own **KS02** tab |
 | **KS** | "Knowledge System", the old name behind KS02 and KS03 | — |
+| **Schedule** (the page) | The page `progress.html`, called "Progress" until 2026-11-15. The user: "for this page I want schedule to be the main character" — it opens on the Schedule, and its other tabs are the four kinds of work a day holds (see "The Schedule's four kinds of work"). Lines here and in the README that still say "Progress" mean this page | the page's own **SCHEDULE** tab, which is the hour timeline alone; **PROGRESSION**, the overview of every goal under ▲ PROJECT |
 | **Declarative** / **Procedural** | The two learnable kinds of mind map. Stored as type `1` / `2`; shown as "T1" / "T2" until 2026-10-08. | SIR's review numbers T1–T5 |
 | **Phase** (S1–S4) | One step of building a mind map | an SIR review |
 | **Journal** | The notes widget's one free draft per day (`dateNotes`; its tab was called "Date") | a day note; the Journey |
@@ -30,8 +31,8 @@ days. It is the count of them."* **MG always means Marginal Gains** — never "m
 | **STRAT** | A strategy written on a mind map; every mind map under it shows it too (see below) | a **comment**, which is ticked off and belongs to its mind map alone |
 | **Core Routine** | The supporting actions — the Schedule's ■ button (see below) | a **routine task**: a goal task repeated on chosen days, which belongs to **Chosen** |
 | **Events** | Documentations' tab of ordinary documentation pages — every page not attached to a goal. They were simply "pages" until **Projects** arrived beside them (built 2026-10-29) | **Projects** |
-| **Projects** | Documentations' tab where every goal and sub-goal from Progress **is** a page, "synced with Progress": the page "mirrors all the task and to learn in directory form", everything on it can be edited except mind maps, and a milestone is "a highlighted area, not a task block". A page added under a goal or sub-goal is an **attached page**, linked from that goal's row in both Documentations and Progress, and drawn on the goal's page as a **hyperlink the user places** — "all across the goal/subgoal's page even in between tasks" (2026-10-29). The goal's page carries no "mm/dd/yyyy detail": a milestone's dates are set in Progress, and a task's day on the Schedule | a documentation page *about* a goal, which would be a copy; a project page is the goal itself, so nesting or moving a sub-goal moves its page with it |
-| **Note to self** | The line across the top of every page whose `v` drops a panel down: everything in **Quest** — where the user puts "every idea and essential task" themselves — and every ★ Forced day note and deadline that is "in caution or due": today's, plus deadlines past due that nobody ticked. Every row is a link into Progress; nothing is written there (built 2026-11-08) | a note of any kind — it stores nothing of its own; not the Journal, not a day note, not the notes widget |
+| **Projects** | Documentations' tab where every goal and sub-goal from Progress **is** a page, "synced with Progress": the page "mirrors all the task and to learn in directory form", everything on it can be edited except mind maps, and a milestone is "a highlighted area, not a task block". Since 2026-11-15 it is also **where a goal is edited** — the user: "obviously you can edit in DOCUMENT's projects tab" — and the Schedule page shows goals only as an overview (see "The Schedule's four kinds of work"); what Projects cannot edit yet is in NOTES. A page added under a goal or sub-goal is an **attached page**, linked from that goal's row in both Documentations and Progress, and drawn on the goal's page as a **hyperlink the user places** — "all across the goal/subgoal's page even in between tasks" (2026-10-29). The goal's page carries no "mm/dd/yyyy detail": a milestone's dates are set in the Schedule page's ▲ PROJECT → MILESTONES, and a task's day on the Schedule | a documentation page *about* a goal, which would be a copy; a project page is the goal itself, so nesting or moving a sub-goal moves its page with it |
+| **Note to self** | The line across the top of every page whose `v` drops a panel down: everything in **Quest** — where the user puts "every idea and essential task" themselves — and every ★ Forced day note and deadline that is "in caution or due": today's, plus deadlines past due that nobody ticked. Every row is a link into the Schedule page; nothing is written there (built 2026-11-08) | a note of any kind — it stores nothing of its own; not the Journal, not a day note, not the notes widget |
 
 Still to be renamed (NOTES, Proposal 17): the **KS02** tab, which shows mind maps by phase,
 and the two screens both called **KS03** — the panel inside a mind map (phase, SIR,
@@ -188,6 +189,30 @@ per kind:
 
 The app works this way since 2026-10-14 (README, "Schedule and supporting actions").
 
+**The page's tabs are the Schedule and these four kinds, in the buttons' order** (confirmed
+2026-11-15): "I want the tabs to be schedule and other 4 main addings". Each tab holds what its
+button picks from:
+
+| Tab | Kind | Holds |
+|---|---|---|
+| **SCHEDULE** | — | the hour timeline alone, by week or by day |
+| 1 ★ **CALENDAR** | Forced — "pretty much events that happens in a day scale" | the month calendar, which was a view inside the Schedule tab |
+| 2 ● **LEARN** | Learn | **MIND MAPS** and **MG** |
+| 3 ▲ **PROJECT** | Chosen | **PROGRESSION**, **MILESTONES** and **QUEST** |
+| 4 ■ **ACTIONS** | Core Routine | the supporting actions |
+
+- **PROGRESSION is an overview, not the goal tree.** The user: "DON'T show the full goal and sub
+  goal and details INSTEAD … just laid every ULT goal in vertical and show ONLY SUBGOALS under
+  them (with progression chart) — in each subgoal clicking them would lead to project in DOC". A
+  goal is read in full, and edited, on its page in Documentations → Projects.
+- **MIND MAPS is ● Learn's list.** The user: "keep the KS03 stage but rearrange it to fit the one
+  in circle learn add button in schedule … put all MM in one list and order by KS03 and
+  highlight by SIR or milestone day". One list, every mind map once, with its phase; what a
+  milestone still asks for today first, then the SIR reviews due today, then the rest by phase.
+
+The app works this way since 2026-11-15, with one gap: the goal tree the page used to open on is
+hidden rather than gone, because four edits exist only there (NOTES).
+
 **Each button ADDS its kind of work to the day** (confirmed 2026-10-21). ★ Forced works the way the
 other three do: a day note or a deadline is on the hour grid only once it is picked there, and each
 pick puts one block on that day — a normal block, ticked when that session is done — so a deadline
@@ -210,5 +235,5 @@ original is done when all its sub-tasks are.
 program, **iCanStudy**, and the user will explain it (noted 2026-10-19). Take it from them; do
 not fill the gaps from general knowledge of the program. The parts below probably rest on it.
 
-Progress (goals, milestones, quests), the rest of the Schedule, Documentations (beyond the
+The Schedule page's ▲ PROJECT (goals, milestones, quests), the rest of the Schedule, Documentations (beyond the
 Events / Projects words above), Home, and where the Journal sits in the learning loop.

@@ -26,7 +26,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=26">
+  <link rel="stylesheet" href="styles/styles.css?v=27">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -2809,7 +2809,7 @@
           <div data-proj-row={rowKey || undefined}
             className={"group mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded text-[11px]"
               + (hit ? ' ring-1 ring-indigo-500 bg-indigo-950/30' : '')}>
-            <span title={span + ' — dates are set in Progress → Milestones'} className={late ? 'text-red-300' : 'text-cyan-200'}>⚑</span>
+            <span title={span + ' — dates are set in Schedule → ▲ Project → Milestones'} className={late ? 'text-red-300' : 'text-cyan-200'}>⚑</span>
             {editable ? (
               <input data-proj-ms-title value={titleDraft} onChange={e => setTitleDraft(e.target.value)}
                 onBlur={commitTitle} onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { setTitleDraft(def.title || ''); } }}
@@ -3187,7 +3187,7 @@
           </div>
           {firstWithWork && (
             <div className="mt-1 text-[11px] text-amber-300/90">
-              This {node.isSubGoal ? 'sub-goal' : 'goal'}'s tasks, to-learn and milestones will move into the new sub-goal — Progress's rule for a first sub-goal.
+              This {node.isSubGoal ? 'sub-goal' : 'goal'}'s tasks, to-learn and milestones will move into the new sub-goal — the goal tree's rule for a first sub-goal.
             </div>
           )}
         </div>
@@ -3199,7 +3199,7 @@
       const node = TrackGoals.findNode(goals, goalId);
       if (!node || node.isLink) return (
         <div data-proj-missing className="flex h-full items-center justify-center p-6 text-center text-xs text-gray-600">
-          This goal is not in your goals any more — it was deleted, here or in Progress.
+          This goal is not in your goals any more — it was deleted, here or in the goal tree.
         </div>
       );
       const path = TrackGoals.findNodePath(goals, goalId) || [node];
@@ -3226,6 +3226,16 @@
       const unplaced = (node.milestones || []).filter(m => m && !used.has(m.id));
       const learn = learnRows(node, ctx.mms);
       const section = "mb-2 mt-8 text-[10px] font-bold uppercase tracking-widest text-gray-600";
+      /* The way to the goal tree (progress.html, a hidden view there). This
+         page edits everything about a goal except four things that still live
+         only in the tree: which mind maps it needs, a mind map's target, a
+         linked task or sub-goal, and the order of its milestone types. */
+      const treeHref = 'progress.html?goal=' + encodeURIComponent(node.id) + '#progress';
+      const learnEdit = (
+        <a data-proj-learn-edit href={treeHref}
+          title="Add or remove this goal's mind maps and set their targets — in the goal tree"
+          className="ml-auto rounded border border-gray-800 px-2 py-0.5 font-normal normal-case tracking-normal text-gray-500 hover:border-gray-600 hover:text-gray-200">edit ↗</a>
+      );
       const empty = (node.children || []).filter(Boolean).length === 0 && unplaced.length === 0
         && ctx.places.size === 0;
       return (
@@ -3238,7 +3248,9 @@
               </React.Fragment>
             ))}
             <span className="text-gray-400">{ancestors.length ? '◆' : '🎯'} {node.title || 'Untitled'}</span>
-            <a href="progress.html#goals" className="ml-auto rounded border border-gray-800 px-2 py-0.5 hover:border-gray-600 hover:text-gray-200">↗ Progress</a>
+            <a data-proj-tree-link href={treeHref}
+              title="This goal in the goal tree — where its mind maps and their targets, linked tasks and linked sub-goals are set"
+              className="ml-auto rounded border border-gray-800 px-2 py-0.5 hover:border-gray-600 hover:text-gray-200">↗ Goal tree</a>
           </div>
           <div className="mb-1 flex items-baseline gap-3">
             <GoalTitle node={node} ctx={ctx} />
@@ -3275,13 +3287,19 @@
               className="mt-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800/60 hover:text-sky-300">＋ page</button>
           </div>
 
-          {(learn.length > 0 || ctx.learnPlaces.length > 0) && (
+          {/* The list is read-only here; `edit ↗` is the way to the one place
+              that changes it. A goal that holds sub-goals keeps no to-learn of
+              its own (it moved into the first sub-goal), so an empty heading
+              is drawn only where a list could be started. */}
+          {(learn.length > 0 || ctx.learnPlaces.length > 0) ? (
             <>
-              <div className={section}>To learn</div>
+              <div className={section + ' flex items-center'}>To learn{learnEdit}</div>
               <div data-proj-learn className="proj-dir" {...dropZone}>
                 <ToLearnList rows={learn} goal={node} ctx={ctx} />
               </div>
             </>
+          ) : subs.length === 0 && (
+            <div data-proj-learn-empty className={section + ' flex items-center'}>To learn{learnEdit}</div>
           )}
 
           {ctx.mutate && (
@@ -3585,7 +3603,7 @@
                   className="rounded bg-gray-700 px-2 py-1 text-xs text-gray-100 hover:bg-gray-600 disabled:opacity-40">add</button>
               </div>
               {kids.length === 0 && notes.length > 0 && (
-                <div className="text-[11px] text-gray-500">This task's notes move to its first sub-task — the rule Progress follows.</div>
+                <div className="text-[11px] text-gray-500">This task's notes move to its first sub-task — the goal tree's rule.</div>
               )}
             </div>
 
@@ -4460,7 +4478,7 @@
               ) : (
                 <p className="text-xs leading-relaxed">
                   Older Track data was found that has not been migrated. Open
-                  <a href="progress.html" className="mx-1 text-cyan-300 underline">Progress</a>or
+                  <a href="progress.html" className="mx-1 text-cyan-300 underline">Schedule</a>or
                   <a href="sir-ks02.html" className="mx-1 text-cyan-300 underline">Knowledge Record</a>
                   once to migrate it, or create a workspace on the
                   <a href="index.html" className="mx-1 text-cyan-300 underline">Home</a>page.
@@ -4840,6 +4858,6 @@
   <script src="scripts/journey-core.js?v=2"></script>
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
-  <script src="scripts/note-to-self.js?v=2"></script>
+  <script src="scripts/note-to-self.js?v=3"></script>
 </body>
 </html>

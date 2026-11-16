@@ -112,9 +112,9 @@
         '<div class="nts-label">Quest</div>' +
         (q.starred ? '<div class="nts-quest-starred">' + q.starred + '</div>' : '') +
         (q.list || '<p class="nts-empty">No quests yet — pick some in <a href="' +
-          esc(M.QUEST_HREF) + '">Progress</a>.</p>') +
+          esc(M.QUEST_HREF) + '">Schedule</a>.</p>') +
         '</section>' +
-        '<a class="nts-open" href="' + esc(M.QUEST_HREF) + '">Edit quests in Progress →</a>';
+        '<a class="nts-open" href="' + esc(M.QUEST_HREF) + '">Edit quests in Schedule →</a>';
     }
     panel.innerHTML = html;
   }

@@ -16,7 +16,7 @@
   <script src="scripts/true-storage-core.js?v=3"></script>
   <script src="scripts/source-dump-core.js?v=2"></script>
   <script src="scripts/mm-tree-core.js?v=2"></script>
-  <script src="scripts/files-core.js?v=3"></script>
+  <script src="scripts/files-core.js?v=4"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/calendar-core.js?v=14"></script>
   <script src="scripts/note-to-self-core.js?v=2"></script>
@@ -27,7 +27,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=26">
+  <link rel="stylesheet" href="styles/styles.css?v=27">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -1498,7 +1498,7 @@
     // on, ARE in the <head>, here and in sir-ks02.html: a text block's file
     // chip needs a file's name on any tab. Keep these ?v= values identical to
     // docs/ARCHITECTURE.md.
-    const FILES_SCRIPTS=['scripts/file-store.js?v=2','scripts/files-view.js?v=3'];
+    const FILES_SCRIPTS=['scripts/file-store.js?v=2','scripts/files-view.js?v=4'];
     const filesLoaded=new Set();
     let filesLoad=null;
     function loadFilesScripts(){
@@ -1948,8 +1948,8 @@
             <div className="max-w-md text-center">
               <div className="text-sm font-bold text-amber-300 mb-2">No workspace available yet</div>
               <div className="text-xs text-gray-400 mb-4">
-                Either this browser's stored data could not be read, or older Progress or Knowledge Record
-                data is waiting to be migrated. Open <a href="progress.html" className="text-cyan-300 underline">Progress</a> or
+                Either this browser's stored data could not be read, or older Schedule or Knowledge Record
+                data is waiting to be migrated. Open <a href="progress.html" className="text-cyan-300 underline">Schedule</a> or
                 <a href="sir-ks02.html" className="text-cyan-300 underline mx-1">Knowledge Record</a>
                 first, or start from the <a href="index.html" className="text-cyan-300 underline">Home</a> page.
               </div>
@@ -2077,6 +2077,6 @@
   <script src="scripts/journey-core.js?v=2"></script>
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
-  <script src="scripts/note-to-self.js?v=2"></script>
+  <script src="scripts/note-to-self.js?v=3"></script>
 </body>
 </html>

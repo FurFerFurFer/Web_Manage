@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Progress & Schedule</title>
+  <title>Schedule</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%23b91c1c%22/%3E%3Ccircle cx=%2213.5%22 cy=%2218.5%22 r=%229.5%22 fill=%22white%22/%3E%3Ccircle cx=%2213.5%22 cy=%2218.5%22 r=%227%22 fill=%22%23b91c1c%22/%3E%3Ccircle cx=%2213.5%22 cy=%2218.5%22 r=%224.6%22 fill=%22white%22/%3E%3Ccircle cx=%2213.5%22 cy=%2218.5%22 r=%222.2%22 fill=%22%23b91c1c%22/%3E%3Cg stroke=%22%23b91c1c%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cpath d=%22M13.5 18.5L20.9 11.1%22 stroke-width=%224.4%22/%3E%3Cpath d=%22M16 16L19.2 12.8%22 stroke-width=%225.8%22/%3E%3Cpath d=%22M20.6 11.4L24.7 11.3L26.1 9.9L23.4 8.6L22.1 5.9L20.7 7.3Z%22 fill=%22%23b91c1c%22 stroke-width=%222.4%22/%3E%3C/g%3E%3Cg stroke=%22white%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cpath d=%22M13.5 18.5L20.9 11.1%22 stroke-width=%222%22/%3E%3Cpath d=%22M16 16L19.2 12.8%22 stroke-width=%223.4%22/%3E%3C/g%3E%3Cpath d=%22M20.6 11.4L24.7 11.3L26.1 9.9L23.4 8.6L22.1 5.9L20.7 7.3Z%22 fill=%22white%22/%3E%3C/svg%3E">
   <link rel="apple-touch-icon" href="assets/icons/progress-180.png?v=1">
   <script src="scripts/theme.js?v=1"></script>
@@ -30,7 +30,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=26">
+  <link rel="stylesheet" href="styles/styles.css?v=27">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -1280,23 +1280,6 @@
       return TrackMilestone.sirDoneMap(sessions);
     }
 
-    // The Mind Maps tab's tree, with buildToLearnTree's guard: a mind map is
-    // not drawn again under itself on one branch, and a parent cycle with no
-    // root above it is drawn from its first member rather than vanishing.
-    function buildMMTree(mms) {
-      const byId = Object.fromEntries(mms.map(m => [m.id, m]));
-      const placed = new Set();
-      function buildNode(mm, seen) {
-        placed.add(mm.id);
-        const next = new Set([...seen, mm.id]);
-        const children = mms.filter(m => !next.has(m.id) && (m.parentIds || []).includes(mm.id));
-        return { mm, children: children.map(c => buildNode(c, next)) };
-      }
-      const roots = mms.filter(m => !(m.parentIds || []).some(pid => byId[pid])).map(m => buildNode(m, new Set()));
-      mms.forEach(m => { if (!placed.has(m.id)) roots.push(buildNode(m, new Set())); });
-      return roots;
-    }
-
     function getMMDescendants(mmId, mms, _visited = new Set()) {
       return TrackGoals.getMMDescendants(mmId, mms, _visited);
     }
@@ -1457,28 +1440,112 @@
       );
     }
 
-    // ── MMTreeNode + MindMapsPanel ────────────────────────────────────────────
+    // ── ● Learn: one order, one set of pins ───────────────────────────────────
 
-    function MMTreeNode({ node, depth, sirDoneMap }) {
-      const [collapsed, setCollapsed] = useState(false);
-      const { mm, children } = node;
+    /* How ● Learn lists mind maps, in ONE place. Two surfaces draw it — the
+       Schedule's ● Learn panel, for the day it was opened on, and ● LEARN →
+       MIND MAPS, for today — and a rule spelled at two surfaces of one page is
+       how the two come to disagree (the unreachedOn lesson).
+
+       learnWeight is the order, furthest along first: SIR by reviews done,
+       then the phases S4 down to S1, then a mind map with no phase (an
+       anchor), and FINISHED last. */
+    const LEARN_PHASE_WEIGHT = { '4': 6, '3': 7, '2': 8, '1': 9, finished: 11 };
+    function learnWeight(mm, sirDoneMap) {
+      const stg = stageOf(mm);
+      if (stg === 'sir') {
+        const d = (sirDoneMap || {})[mm.id] || 0;
+        return d >= 5 ? 1 : d >= 4 ? 2 : d >= 3 ? 3 : d >= 2 ? 4 : 5;
+      }
+      return stg == null ? 10 : (LEARN_PHASE_WEIGHT[stg] ?? 10);
+    }
+
+    /* What a day's ● Learn holds, before any text filter:
+       - `unreached` — TrackMilestone.unreachedOn for the day: the mind maps
+         still short of the milestone covering it, or of one already overdue,
+         from today on. A Procedural one is pinned by its MG (`mgPinIds`), any
+         other as a mind map to study (`mmPinIds`);
+       - `sirDue` — the mind maps with an SIR review due that day that no
+         milestone already pinned, in learnWeight order;
+       - `rest` — every mind map that is neither, in learnWeight order.
+       `sessions` must be the LIVE ones (TrackMilestone.liveSessions): a
+       Procedural mind map has no SIR, and its stored sessions are due nowhere.
+       Never re-spell a group at a call site. */
+    function learnLists(mms, lateReport, sessions, sirDoneMap, ds, todayStr) {
+      const all = mms || [];
+      const byW = (a, b) => learnWeight(a, sirDoneMap) - learnWeight(b, sirDoneMap);
+      const unreached = TrackMilestone.unreachedOn(lateReport, all, ds, todayStr);
+      const mgPinIds = new Set(unreached.filter(r => r.procedural).map(r => r.mmId));
+      const mmPinIds = new Set(unreached.filter(r => !r.procedural).map(r => r.mmId));
+      const dueIds = new Set((sessions || [])
+        .filter(s => s && s.date === ds && !s.done && !s.skipped)
+        .map(s => s.mmId));
+      const sirPinIds = new Set([...dueIds].filter(id => !mmPinIds.has(id)));
+      return {
+        unreached, mgPinIds, mmPinIds, sirPinIds,
+        sirDue: all.filter(m => sirPinIds.has(m.id)).sort(byW),
+        rest:   all.filter(m => !mmPinIds.has(m.id) && !sirPinIds.has(m.id)).sort(byW),
+      };
+    }
+
+    // A phase as ● Learn writes it: 'S1'…'S4', 'SIR T1'…'SIR T5', 'FIN'.
+    function learnPhaseLabel(s) {
+      return s==='finished'?'FIN':s==='sir'?'SIR T1':s==='sir1'?'SIR T2':s==='sir2'?'SIR T3':s==='sir3'?'SIR T4':s==='sir4'?'SIR T5':s==='sir5'?'FIN':s?`S${s}`:null;
+    }
+    // The phase a mind map is IN: its SIR review number while it is in SIR.
+    function learnStageLabel(mm, sirDoneMap) {
+      if (stageOf(mm) === 'sir') { const d = ((sirDoneMap || {})[mm.id] || 0); return d >= 5 ? 'FIN' : `SIR T${d+1}`; }
+      return learnPhaseLabel(stageOf(mm));
+    }
+    // How far an unreached record is from its waypoint: "S1 → S3" for a phase,
+    // "Lv 3 → 5" for a level. A Procedural waypoint carries its level alone
+    // (targetFor), so it reads as the level only.
+    function learnGap(r, sirDoneMap) {
+      const parts = [];
+      if (r.waypoint.stage) parts.push(`${learnStageLabel(r.mm, sirDoneMap) || '—'} → ${learnPhaseLabel(r.waypoint.stage) || r.waypoint.stage}`);
+      if (r.waypoint.level) parts.push(`Lv ${r.mm.rating || 0} → ${r.waypoint.level}`);
+      return parts.join(' · ');
+    }
+    const learnMilestoneName = r => r.st.title || r.st.ownerTitle || 'milestone';
+
+    // The milestone that asks for this mind map and whose dates cover `ds` —
+    // what tints a row cyan in ● Learn.
+    function activeMilestoneForMM(goals, mmId, ds) {
+      for (const goal of goals || []) {
+        for (const owner of collectMilestoneOwners(goal, goals || [])) {
+          const entries = ((owner.mmTargets || {})[mmId] || {}).milestones || [];
+          for (const e of entries) {
+            const m = (owner.milestones || []).find(x => x.id === e.milestoneId);
+            if (m?.startDate && m?.endDate && ds >= m.startDate && ds <= m.endDate)
+              return { title: m.title || owner.title, isActive: true };
+          }
+        }
+      }
+      return { title: null, isActive: false };
+    }
+
+    // ── LearnMMRow + MindMapsPanel ────────────────────────────────────────────
+
+    /* One mind map in ● LEARN → MIND MAPS: its badge (name, kind, phase,
+       level), what ● Learn says about it today (`note`), and for a mind map in
+       SIR its five reviews. `tone` is the highlight — a var() string from
+       ACCENT, so it goes in a style and never in a class. The row is a link:
+       this list is a READER, and a mind map is opened in the Knowledge Record.
+       `data-mm-tree-sir` keeps the name it had when this was a tree. */
+    function LearnMMRow({ mm, sirDoneMap, state, tone, note }) {
       const sirDone = stageOf(mm) === 'sir' ? ((sirDoneMap || {})[mm.id] || 0) : 0;
       return (
-        <div>
-          <div style={{ paddingLeft: depth * 20 }}
-            className="flex flex-col gap-1 py-1 px-2 rounded hover:bg-gray-800/40">
-            <div className="flex items-center gap-2">
-              {children.length > 0
-                ? <button onClick={() => setCollapsed(c => !c)}
-                    className="text-gray-600 hover:text-gray-300 text-xs w-3 flex-shrink-0">
-                    {collapsed ? '▶' : '▼'}
-                  </button>
-                : <span className="w-3 flex-shrink-0" />
-              }
+          <a href={'sir-ks02.html?mm=' + encodeURIComponent(mm.id)}
+            data-learn-mm={mm.id} data-learn-mm-state={state}
+            title="Open in the Knowledge Record"
+            className="flex flex-col gap-1 py-1.5 px-2 rounded hover:bg-gray-800/40"
+            style={tone ? { boxShadow: `inset 2px 0 0 ${tone}` } : undefined}>
+            <div className="flex items-center gap-2 flex-wrap">
               <MindMapsBadge mm={mm} sirDoneMap={sirDoneMap} />
+              {note}
             </div>
             {stageOf(mm) === 'sir' && (
-              <div data-mm-tree-sir={mm.id} style={{ paddingLeft: 20 }} className="flex items-center gap-1 pb-1">
+              <div data-mm-tree-sir={mm.id} className="flex items-center gap-1 pb-1">
                 {SIR_INTERVALS.map((iv, i) => {
                   const done = i < sirDone;
                   const isNext = i === sirDone;
@@ -1503,20 +1570,33 @@
                 <span className="text-[9px] text-gray-600 ml-1">{sirDone >= 5 ? 'FIN' : `T${sirDone+1}`}</span>
               </div>
             )}
-          </div>
-          {children.length > 0 && !collapsed && children.map(child => (
-            <MMTreeNode key={child.mm.id} node={child} depth={depth + 1} sirDoneMap={sirDoneMap} />
-          ))}
-        </div>
+          </a>
       );
     }
 
-    function MindMapsPanel() {
-      const mms = _readMMs();
-      const sessions = TrackMilestone.liveSessions(_readSessions(), mms);
-      const sirDoneMap = buildSirDoneMap(sessions);
-      const tree = buildMMTree(mms);
-      if (!mms.length) return (
+    /* ● LEARN → MIND MAPS: every mind map in ONE list, laid out as the
+       Schedule's ● Learn panel lays out a day — and the day here is TODAY.
+       First what today still owes a milestone (amber, red when the milestone
+       is overdue), then the SIR reviews due today (green), then every other
+       mind map; each group in learnLists' order, and a mind map that a
+       milestone covering today asks for is cyan, as in the panel. Each mind
+       map is drawn ONCE.
+
+       The one difference from the panel: a Procedural mind map below its
+       milestone's level is pinned there by its MG, and here — a list of mind
+       maps — as the mind map, with its level gap. Its MG is ● LEARN → MG.
+
+       It was a parent/child tree until the tabs were grouped (the user's
+       2026-11-15 request); the phase badge and the SIR strip are what it
+       kept. `sessions` are the LIVE ones, from App. */
+    function MindMapsPanel({ goals, mms, sessions, sirDoneMap }) {
+      const all = mms || [];
+      const today = toDateStr(new Date());
+      const report = useMemo(
+        () => TrackMilestone.report(goals || [], mms || [], sirDoneMap || {}, today),
+        [goals, mms, sirDoneMap, today]
+      );
+      if (!all.length) return (
         <div className="text-center py-16 text-gray-700">
           <div className="text-3xl mb-3">◎</div>
           <div className="text-sm">No Mind Maps in this slot.</div>
@@ -1525,13 +1605,56 @@
           </div>
         </div>
       );
+      const lists = learnLists(all, report, sessions, sirDoneMap, today, today);
+      const owed = new Set(lists.unreached.map(r => r.mmId));
+      const sirDue = lists.sirDue.filter(m => !owed.has(m.id));
+      const rest = lists.rest.filter(m => !owed.has(m.id));
+      // "· Chapter one" on a row a covering milestone asks for
+      const covering = mm => {
+        const { title, isActive } = activeMilestoneForMM(goals, mm.id, today);
+        return isActive
+          ? <span data-learn-mm-milestone={mm.id} className="text-[9px] text-cyan-400 truncate" style={{ maxWidth: 160 }}>{title}</span>
+          : null;
+      };
+      const caption = (key, text, style, cls) => (
+        <div data-learn-mm-group={key} style={style}
+          className={`px-2 pt-2 pb-1 text-[9px] font-bold tracking-widest ${cls || ''}`}>{text}</div>
+      );
       return (
-        <div>
+        <div data-learn-mm-list>
           <div className="text-gray-700 tracking-widest mb-4 text-xs">
-            {mms.length} MIND MAPS — read only · manage in Knowledge Record
+            {all.length} MIND MAPS — in ● Learn's order for today · read only · manage in Knowledge Record
           </div>
           <div className="rounded-xl border border-gray-800 bg-gray-900/70 px-3 py-2">
-            {tree.map(node => <MMTreeNode key={node.mm.id} node={node} depth={0} sirDoneMap={sirDoneMap} />)}
+            {lists.unreached.length > 0 && caption('milestone', 'MILESTONE NOT REACHED YET', { color: ACCENT.pending })}
+            {lists.unreached.map(r => {
+              const tone = r.late ? ACCENT.danger : ACCENT.pending;
+              return (
+                <LearnMMRow key={r.mmId} mm={r.mm} sirDoneMap={sirDoneMap}
+                  state={r.late ? 'late' : 'owed'} tone={tone}
+                  note={<>
+                    <span data-learn-mm-gap={r.mmId} className="text-[9px]" style={{ color: tone }}>{learnGap(r, sirDoneMap)}</span>
+                    <span className={`text-[9px] truncate ${r.late ? '' : 'text-cyan-400'}`}
+                      style={{ maxWidth: 160, color: r.late ? ACCENT.danger : undefined }}>
+                      {r.late ? `${learnMilestoneName(r)} · ${TrackMilestone.label(r.st)}` : `${learnMilestoneName(r)}, until ${r.st.endDate}`}
+                    </span>
+                  </>} />
+              );
+            })}
+            {sirDue.length > 0 && caption('sir', 'SIR DUE TODAY', null, 'text-emerald-600')}
+            {sirDue.map(mm => (
+              <LearnMMRow key={mm.id} mm={mm} sirDoneMap={sirDoneMap}
+                state="sir" tone={ACCENT.done} note={covering(mm)} />
+            ))}
+            {(lists.unreached.length > 0 || sirDue.length > 0) && rest.length > 0
+              && caption('rest', 'EVERY OTHER MIND MAP', null, 'text-gray-600')}
+            {rest.map(mm => {
+              const note = covering(mm);
+              return (
+                <LearnMMRow key={mm.id} mm={mm} sirDoneMap={sirDoneMap}
+                  state={note ? 'covered' : 'plain'} tone={note ? ACCENT.live : null} note={note} />
+              );
+            })}
           </div>
         </div>
       );
@@ -3426,6 +3549,164 @@
       );
     }
 
+    // A goal's first-level sub-goals, each link resolved to its original (a
+    // link whose original is gone is left out). Read by a goal's PROGRESSION
+    // panel and by ▲ PROJECT → PROGRESSION.
+    function subGoalsOf(node, goals) {
+      return (node.children || []).filter(c => c.isSubGoal).map(c => resolveLinkedTask(c, goals)).filter(Boolean);
+    }
+
+    // How far a node's OWN to-learn list is toward its targets: `total` is the
+    // mind maps that carry a target, `done` the sum of their fractions.
+    function learnProgressOf(node, mms, sirDoneMap) {
+      const targets = node.mmTargets || {};
+      let done = 0, total = 0;
+      (node.toLearn || []).forEach(mmId => {
+        const mm = (mms || []).find(m => m.id === mmId);
+        if (!mm) return;
+        const tgt = targetOf(mm, targets[mmId]) || {};
+        if (!(tgt.stage || tgt.level)) return;
+        total++;
+        done += mmProgressFraction(mm, tgt, sirDoneMap);
+      });
+      return { done, total };
+    }
+
+    /* One sub-goal's progression — ring, title, tasks done, mind maps learned,
+       bar — without the box around it. ONE drawing for two surfaces, so they
+       cannot show different numbers: a goal's PROGRESSION panel puts it in a
+       plain row, and ▲ PROJECT → PROGRESSION in a link to the sub-goal's page
+       in Documentations → Projects. */
+    function SubGoalProgress({ sg, goalColor, goals, mms, sirDoneMap }) {
+      const rS = 28, circS = 2 * Math.PI * rS;
+      const sp = countProgress(sg, goals ? id => findNode(goals, id) : null);
+      const spPct = sp.total ? Math.round(sp.done / sp.total * 100) : 0;
+      const spFull = sp.done === sp.total && sp.total > 0;
+      const spColor = spFull ? ACCENT.done : goalColor;
+      const sgMm = learnProgressOf(sg, mms, sirDoneMap);
+      return (
+        <>
+          <div className="relative flex-shrink-0">
+            <svg width={70} height={70} viewBox="0 0 70 70">
+              <circle cx={35} cy={35} r={rS} fill="none" strokeWidth={8} style={{stroke: ACCENT.track}}/>
+              <circle cx={35} cy={35} r={rS} fill="none"
+                strokeWidth={8}
+                strokeLinecap="round"
+                strokeDasharray={`${(spPct / 100) * circS} ${circS}`}
+                transform="rotate(-90 35 35)"
+                style={{ stroke: spColor, transition: 'stroke-dasharray 0.5s ease' }}/>
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span data-subgoal-pct={sg.id} className="text-sm font-bold tabular-nums leading-none" style={{ color: spColor }}>{spPct}%</span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1 flex-1 min-w-0">
+            <span className="text-xs font-semibold text-gray-200 truncate">{sg.title}</span>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span data-subgoal-tasks={sg.id} className="text-[10px] font-mono text-gray-500 tabular-nums">{sp.done}/{sp.total} tasks</span>
+              {sgMm.total > 0 && (
+                <span data-subgoal-learn={sg.id} className={`text-[10px] font-mono tabular-nums ${sgMm.done >= sgMm.total ? 'text-emerald-500' : 'text-purple-400'}`}>
+                  {Math.round(sgMm.done * 10) / 10}/{sgMm.total} learned
+                </span>
+              )}
+            </div>
+            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mt-0.5">
+              <div className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${spPct}%`, backgroundColor: spColor }} />
+            </div>
+          </div>
+        </>
+      );
+    }
+
+    /* ▲ PROJECT → PROGRESSION: every ultimate goal, top to bottom, and under
+       each ONLY its sub-goals, with their progression (the user's 2026-11-15
+       request: "don't show the full goal and sub goal and details"). No tasks,
+       no to-learn rows, no detail — a goal or a sub-goal is a LINK to its page
+       in Documentations → Projects, where it is read in full and edited.
+
+       A READER: it writes nothing. The numbers are the goal PROGRESSION
+       panel's BY SUBGOAL ones, from the same functions and the same drawing.
+       Sub-goals are the first level only — a sub-goal's own sub-goals are
+       inside its number, and on its page. A goal's colour is its place in
+       PALETTE, as on the goal tree's tabs. */
+    function ProgressionOverview({ goals, mms, sirDoneMap }) {
+      const list = goals || [];
+      const resolveLink = id => findNode(list, id);
+      const projectsHref = id => 'documentations.html?goal=' + encodeURIComponent(id);
+      if (!list.length) return (
+        <div data-progression-empty className="text-center py-16 text-gray-700">
+          <div className="text-3xl mb-3">▲</div>
+          <div className="text-sm">No goals yet.</div>
+          <div className="text-xs mt-1 text-gray-500">
+            Add one in <a href="documentations.html" className="text-indigo-400 hover:underline">Documentations → Projects</a>.
+          </div>
+        </div>
+      );
+      const r = 34, circ = 2 * Math.PI * r;
+      return (
+        <div data-progression className="max-w-3xl mx-auto w-full p-6 flex flex-col gap-5">
+          <div className="text-gray-700 tracking-widest text-xs">
+            PROGRESSION — every goal and its sub-goals · open one to read and edit it in Documentations → Projects
+          </div>
+          {list.map((g, idx) => {
+            const color = PALETTE[idx % PALETTE.length];
+            const p = countProgress(g, resolveLink);
+            const pct = p.total ? Math.round(p.done / p.total * 100) : 0;
+            const shown = (p.total > 0 && p.done === p.total) ? ACCENT.done : color;
+            const subs = subGoalsOf(g, list);
+            return (
+              <section key={g.id} data-progression-goal={g.id}
+                className="rounded-xl border border-gray-800 bg-gray-900/70 overflow-hidden">
+                <a href={projectsHref(g.id)} data-progression-link={g.id}
+                  title="Open this goal's page in Documentations → Projects"
+                  className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/40 transition-colors">
+                  <div className="relative flex-shrink-0">
+                    <svg width={84} height={84} viewBox="0 0 84 84">
+                      <circle cx={42} cy={42} r={r} fill="none" strokeWidth={9} style={{ stroke: ACCENT.track }}/>
+                      <circle cx={42} cy={42} r={r} fill="none"
+                        strokeWidth={9}
+                        strokeLinecap="round"
+                        strokeDasharray={`${(pct / 100) * circ} ${circ}`}
+                        transform="rotate(-90 42 42)"
+                        style={{ stroke: shown, transition: 'stroke-dasharray 0.6s ease' }}/>
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span data-progression-pct={g.id} className="text-lg font-black tabular-nums leading-none" style={{ color: shown }}>{pct}%</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1 flex-1 min-w-0">
+                    <span className="text-sm font-bold text-gray-100 truncate">{g.title || 'Untitled'}</span>
+                    <span className="text-[10px] font-mono text-gray-500 tabular-nums">
+                      {p.done}/{p.total} tasks · {subs.length} sub-goal{subs.length === 1 ? '' : 's'}
+                    </span>
+                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mt-0.5">
+                      <div className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${pct}%`, backgroundColor: shown }} />
+                    </div>
+                  </div>
+                  <span className="flex-shrink-0 text-[11px] text-gray-500">↗ Projects</span>
+                </a>
+                {subs.length > 0 ? (
+                  <div className="flex flex-col gap-2 px-4 pb-4 pt-1">
+                    {subs.map((sg, i) => (
+                      <a key={sg.id + ':' + i} href={projectsHref(sg.id)} data-progression-sub={sg.id}
+                        title="Open this sub-goal's page in Documentations → Projects"
+                        className="flex items-center gap-4 px-3 py-2.5 rounded-xl bg-gray-900/40 hover:bg-gray-800/60 transition-colors">
+                        <SubGoalProgress sg={sg} goalColor={color} goals={list} mms={mms} sirDoneMap={sirDoneMap} />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <div data-progression-nosubs={g.id} className="px-4 pb-3 text-[10px] text-gray-600 italic">No sub-goals.</div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      );
+    }
+
     function GoalProgressPanel({ node, goalColor, mms, sirDoneMap, goals }) {
       const [viewType, setViewType] = React.useState('subgoal');
 
@@ -3438,9 +3719,7 @@
 
       const isGoalLike      = !((node.children || []).some(c => c.isSubGoal));
       const isGoalContainer = !isGoalLike;
-      const subGoals        = isGoalContainer
-        ? (node.children || []).filter(c => c.isSubGoal).map(c => resolveLinkedTask(c, goals)).filter(Boolean)
-        : [];
+      const subGoals        = isGoalContainer ? subGoalsOf(node, goals) : [];
 
       function collectToLearn(n) {
         const sgs = (n.children || []).filter(c => c.isSubGoal);
@@ -3486,22 +3765,6 @@
       const uniquePct    = uniqueTotal ? Math.round(uniqueDone / uniqueTotal * 100) : 0;
       const uniqueFull   = uniqueDone === uniqueTotal && uniqueTotal > 0;
       const uniqueColor  = uniqueFull ? ACCENT.done : goalColor;
-
-      // Per-subgoal MM targets helper
-      function subGoalMmProg(sg) {
-        const tl = sg.toLearn || [];
-        const targets = sg.mmTargets || {};
-        let done = 0, total = 0;
-        tl.forEach(mmId => {
-          const mm = (mms || []).find(m => m.id === mmId);
-          if (!mm) return;
-          const tgt = targetOf(mm, targets[mmId]) || {};
-          if (!(tgt.stage || tgt.level)) return;
-          total++;
-          done += mmProgressFraction(mm, tgt, sirDoneMap);
-        });
-        return { done, total };
-      }
 
       // MM progress for UNIQUE TOTAL view (deduplicated across subgoals)
       const mmProg = (() => {
@@ -3578,56 +3841,18 @@
           </div>
 
           {/* BY SUBGOAL: per-subgoal mini rings */}
-          {activeView === 'subgoal' && subGoals.length > 0 && (() => {
-            const rS = 28, circS = 2 * Math.PI * rS;
-            return (
-              <div>
-                <div className="text-[10px] tracking-widest text-gray-600 mb-3">SUBGOALS</div>
-                <div className="flex flex-col gap-3">
-                  {subGoals.map(sg => {
-                    const sp = countProgress(sg, resolveLink);
-                    const spPct = sp.total ? Math.round(sp.done / sp.total * 100) : 0;
-                    const spFull = sp.done === sp.total && sp.total > 0;
-                    const spColor = spFull ? ACCENT.done : goalColor;
-                    const sgMm = subGoalMmProg(sg);
-                    return (
-                      <div key={sg.id} className="flex items-center gap-4 px-3 py-2.5 rounded-xl bg-gray-900/40">
-                        <div className="relative flex-shrink-0">
-                          <svg width={70} height={70} viewBox="0 0 70 70">
-                            <circle cx={35} cy={35} r={rS} fill="none" strokeWidth={8} style={{stroke: ACCENT.track}}/>
-                            <circle cx={35} cy={35} r={rS} fill="none"
-                              strokeWidth={8}
-                              strokeLinecap="round"
-                              strokeDasharray={`${(spPct / 100) * circS} ${circS}`}
-                              transform="rotate(-90 35 35)"
-                              style={{ stroke: spColor, transition: 'stroke-dasharray 0.5s ease' }}/>
-                          </svg>
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="text-sm font-bold tabular-nums leading-none" style={{ color: spColor }}>{spPct}%</span>
-                          </div>
-                        </div>
-                        <div className="flex flex-col gap-1 flex-1 min-w-0">
-                          <span className="text-xs font-semibold text-gray-200 truncate">{sg.title}</span>
-                          <div className="flex items-center gap-3 flex-wrap">
-                            <span className="text-[10px] font-mono text-gray-500 tabular-nums">{sp.done}/{sp.total} tasks</span>
-                            {sgMm.total > 0 && (
-                              <span data-subgoal-learn={sg.id} className={`text-[10px] font-mono tabular-nums ${sgMm.done >= sgMm.total ? 'text-emerald-500' : 'text-purple-400'}`}>
-                                {Math.round(sgMm.done * 10) / 10}/{sgMm.total} learned
-                              </span>
-                            )}
-                          </div>
-                          <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mt-0.5">
-                            <div className="h-full rounded-full transition-all duration-500"
-                              style={{ width: `${spPct}%`, backgroundColor: spColor }} />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+          {activeView === 'subgoal' && subGoals.length > 0 && (
+            <div>
+              <div className="text-[10px] tracking-widest text-gray-600 mb-3">SUBGOALS</div>
+              <div className="flex flex-col gap-3">
+                {subGoals.map(sg => (
+                  <div key={sg.id} className="flex items-center gap-4 px-3 py-2.5 rounded-xl bg-gray-900/40">
+                    <SubGoalProgress sg={sg} goalColor={goalColor} goals={goals} mms={mms} sirDoneMap={sirDoneMap} />
+                  </div>
+                ))}
               </div>
-            );
-          })()}
+            </div>
+          )}
 
           {/* UNIQUE TOTAL: deduplicated task list */}
           {activeView === 'unique' && uniqueLeaves.length > 0 && (
@@ -4088,7 +4313,7 @@
                 <div className="text-center text-gray-700">
                   <div className="text-3xl mb-3">◇</div>
                   <div className="text-sm">No milestones yet.</div>
-                  <div className="text-xs mt-1">Add milestones inside a leaf subgoal in Progress.</div>
+                  <div className="text-xs mt-1">Add milestones on a goal's page in Documentations → Projects.</div>
                 </div>
               </div>
             ) : (
@@ -4265,8 +4490,17 @@
 
     // ── GoalTabsPanel ─────────────────────────────────────────────────────────
 
-    function GoalTabsPanel({ goals, setGoals, mms, sirDoneMap, docPages }) {
-      const [activeGoalId, setActiveGoalId] = useState(goals[0]?.id || null);
+    function GoalTabsPanel({ goals, setGoals, mms, sirDoneMap, docPages, initialGoalId }) {
+      // `initialGoalId` is the node a link from Documentations → Projects named
+      // (?goal=). The tabs are the ULTIMATE goals, so it opens the one that
+      // holds that node; a stale or hand-typed id matches nothing and opens
+      // the first goal, as no id does.
+      const [activeGoalId, setActiveGoalId] = useState(() => {
+        const holder = initialGoalId
+          ? goals.find(g => g.id === initialGoalId || containsId(g.children || [], initialGoalId))
+          : null;
+        return (holder || goals[0])?.id || null;
+      });
       // Which half of the 65/35 detail split a phone is showing. Desktop
       // renders both and ignores this.
       const isPhone = useIsPhone();
@@ -5185,7 +5419,13 @@
 
     // ── SchedulePanel ─────────────────────────────────────────────────────────
 
-    function SchedulePanel({ goals, setGoals, saActions, setSaActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, refSchedules, setRefSchedules, initialDate, initialDeadlineId, onOpenMilestone }) {
+    /* ONE panel behind TWO tabs. SCHEDULE is `view="timeline"` and ★ CALENDAR
+       is `view="calendar"`: the month view shares this panel's composers and
+       popups (the day-note and deadline composers, the deadline popup, the ⚑
+       into Milestones), so it is a view of the panel, not a component of its
+       own. App renders the two tabs from one element, which is what keeps this
+       instance — and its timeline node — alive across the switch. */
+    function SchedulePanel({ view, goals, setGoals, saActions, setSaActions, saEntries, setSaEntries, mms, mmEntries, setMmEntries, sessions, mgChanges, mgSchedule, setMgSchedule, sourceDumps, selectedMilestone, calendarNotes, setCalendarNotes, deadlines, setDeadlines, docPages, refSchedules, setRefSchedules, initialDate, initialDeadlineId, onOpenMilestone }) {
       const START_HOUR  = 0;
       const END_HOUR    = 24;
       const TIME_COL_W  = 56;
@@ -5208,7 +5448,7 @@
       const HOURS       = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
 
       const STAGE_COLORS_SCHED = {ks02:'#7c3aed',1:'#7c3aed',2:'#2563eb',3:'#0891b2',4:'#0d9488',sir:'#059669',sir1:'#059669',sir2:'#059669',sir3:'#059669',sir4:'#059669',sir5:'#059669',finished:'#4b5563'};
-      const stageLabel = s => s==='finished'?'FIN':s==='sir'?'SIR T1':s==='sir1'?'SIR T2':s==='sir2'?'SIR T3':s==='sir3'?'SIR T4':s==='sir4'?'SIR T5':s==='sir5'?'FIN':s?`S${s}`:null;
+      const stageLabel = learnPhaseLabel;
       const scheduledSirStageLabel = session => {
         const repIndex = Number(session?.repIndex);
         return Number.isInteger(repIndex) && repIndex >= 0 && repIndex < SIR_INTERVALS.length
@@ -5217,7 +5457,7 @@
       };
       const sirSessionDisplayDate = session =>
         session?.done && session.finishDate ? session.finishDate : session?.date;
-      const sirStageLabel = (mm) => { if (stageOf(mm)==='sir') { const d=(sirDoneMap[mm.id]||0); return d>=5?'FIN':`SIR T${d+1}`; } return stageLabel(stageOf(mm)); };
+      const sirStageLabel = (mm) => learnStageLabel(mm, sirDoneMap);
 
       const ultimateMMs = useMemo(() => {
         const ids = new Set(goals.flatMap(g => g.toLearn || []));
@@ -5313,7 +5553,10 @@
       selectedForDragRef.current   = selectedForDrag;
       selectedForResizeRef.current = selectedForResize;
 
-      const [schedView, setSchedView] = useState('timeline');
+      // 'timeline' | 'calendar' — the tab's choice (see the note above this
+      // component). It was this panel's own TIMELINE / CALENDAR switch until
+      // ★ CALENDAR became a tab.
+      const schedView = view === 'calendar' ? 'calendar' : 'timeline';
       const [calDate,   setCalDate]   = useState({ year: new Date().getFullYear(), month: new Date().getMonth() });
       const [selDay,    setSelDay]    = useState(null);
       const [calNoteOpenDay, setCalNoteOpenDay] = useState(null);
@@ -5423,6 +5666,9 @@
       // element loses its layout box, and the pane is hidden rather than
       // unmounted (see the timeline's own style comment for why).
       const phoneScrollRef  = useRef(0);
+      // Whether the timeline has been scrolled to 08:00 while it had a layout
+      // box. See the layout effect that does it.
+      const morningScrolledRef = useRef(false);
       // moved   = finger travelled past TOUCH_SLOP, so the gesture is not a tap (whatever else happens)
       // dragging = we took the gesture over from the browser (armed block) — preventDefault, follow, commit on release
       const touchRef        = useRef(null); // { type, item, offsetY, startX, startY, moved, dragging }
@@ -5475,6 +5721,27 @@
         if (isPhone && phonePane === 'timeline' && containerRef.current)
           containerRef.current.scrollTop = phoneScrollRef.current;
       }, [phonePane, isPhone]);
+
+      /* ★ CALENDAR is this panel with the timeline HIDDEN (see the wrapper in
+         the render). A panel MOUNTED on the calendar ran the 08:00 effect
+         above against a node with no layout box, which takes no scrollTop — so
+         the first time the timeline is SHOWN does it instead. Once: after that
+         the hour in view is the reader's.
+
+         Nothing here puts that hour back after a look at the calendar:
+         measured 2026-11-15, headless Chrome keeps a hidden node's scrollTop
+         itself, so a restore written here could not be seen to fail and was
+         taken out. No other engine was measured (NOTES, Proposal 23). What no
+         browser can keep is the scrollTop of a node that was REPLACED — the
+         hour survives because the timeline is never unmounted, and a browser
+         case pins both. */
+      React.useLayoutEffect(() => {
+        const el = containerRef.current;
+        if (schedView !== 'timeline' || !el || morningScrolledRef.current) return;
+        morningScrolledRef.current = true;
+        const headerH = headerRef.current ? headerRef.current.offsetHeight : 0;
+        el.scrollTop = headerH + (8 - START_HOUR) * pxPerHourRef.current;
+      }, [schedView]);
 
       // Shift + wheel → navigate one day left or right (1 notch = 1 day)
       useEffect(() => {
@@ -6013,18 +6280,10 @@
         };
       }
 
+      // Delegate: the rule is activeMilestoneForMM's, which ● LEARN → MIND MAPS
+      // reads too.
       function findActiveMsForMM(mmId, ds) {
-        for (const goal of goals || []) {
-          for (const owner of collectMilestoneOwners(goal, goals || [])) {
-            const entries = ((owner.mmTargets || {})[mmId] || {}).milestones || [];
-            for (const e of entries) {
-              const m = (owner.milestones || []).find(x => x.id === e.milestoneId);
-              if (m?.startDate && m?.endDate && ds >= m.startDate && ds <= m.endDate)
-                return { title: m.title || owner.title, isActive: true };
-            }
-          }
-        }
-        return { title: null, isActive: false };
+        return activeMilestoneForMM(goals, mmId, ds);
       }
 
       function getAllParentNodeIds(nodes) {
@@ -7317,10 +7576,11 @@
       return (
         <div className="flex flex-col h-full">
 
-          {/* Nav bar */}
+          {/* Nav bar — the timeline's: which days, and WEEK or DAY. ★ CALENDAR
+              has its own month header, so the bar is not drawn there. */}
+          {schedView === 'timeline' && (
           <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-gray-800"
             data-sched-nav data-timeline-mode={timelineMode}>
-            {schedView === 'timeline' && <>
               {timelineMode === 'week' ? <>
                 <button onClick={() => { const d = new Date(anchor); d.setDate(d.getDate()-1); setAnchor(d); }}
                   className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-gray-400">&#8249;</button>
@@ -7367,17 +7627,18 @@
                   ))}
                 </div>
               )}
-            </>}
-            {schedView === 'calendar' && <span className="flex-1" />}
-            <div className="flex gap-1 ml-auto">
-              {[['timeline','TIMELINE'],['calendar','CALENDAR']].map(([v,l])=>(
-                <button key={v} data-sched-view={v} onClick={()=>setSchedView(v)}
-                  className={`text-xs px-2 py-1 rounded font-bold transition ${schedView===v?'bg-white text-gray-950':'text-gray-500 hover:text-white'}`}>{l}</button>
-              ))}
-            </div>
           </div>
+          )}
 
           {/* Timeline view — 65/35 split in day mode, full width in week mode.
+
+              HIDDEN on ★ CALENDAR, never unmounted — the phone pane's rule
+              below, one level up. The scroll container inside binds two
+              useEffect(…, []) to containerRef (the scroll-to-08:00 and the
+              non-passive Shift+wheel listener), so unmounting it once leaves
+              that listener on a dead node for the rest of the session. The old
+              TIMELINE / CALENDAR switch did unmount it, and Shift+wheel was
+              dead after one look at the calendar.
 
               Clicking anywhere that is not a block or a chip CANCELS the
               selection. Besides tapping the armed thing again, this is the only
@@ -7392,8 +7653,9 @@
               synthesizes a click, so anything that let that click bubble out to
               here would un-arm itself the instant it was armed. Two GUARD cases
               in tests/browser.test.js pin exactly that, per surface. */}
-          {schedView === 'timeline' && (
             <div className="flex flex-1 overflow-hidden"
+              data-sched-timeline-wrap
+              style={{ display: schedView === 'timeline' ? undefined : 'none' }}
               onClick={() => { setSelectedForResize(null); setSelectedForDrag(null); setMatrixArmedId(null); }}>
               <div ref={containerRef}
                 data-sched-timeline
@@ -9248,7 +9510,6 @@
                 </div>
               )}
             </div>
-          )}
 
           {/* Day-view overlays — rendered here, outside the timeline scroller, so they
                are not clipped to it and their z-50 is not trapped under the sticky header */}
@@ -9945,37 +10206,29 @@
             const nameHit = m => !q || String(m.name || '').toLowerCase().includes(q);
             const mgHit = m => nameHit(m) || String(m.currentMG || '').toLowerCase().includes(q);
             const close = () => { setLearnPickerDay(null); setSearch(''); };
-            const _mmSortW = { '4':6, '3':7, '2':8, '1':9, finished:11 };
-            const _mmW = mm => { const stg = stageOf(mm); if (stg==='sir') { const d=sirDoneMap[mm.id]||0; return d>=5?1:d>=4?2:d>=3?3:d>=2?4:5; } return stg==null?10:(_mmSortW[stg]??10); };
-            const byW = (a, b) => _mmW(a) - _mmW(b);
-            const unreached = TrackMilestone.unreachedOn(lateReport, mms || [], ds, todayStr);
-            const mgPinIds = new Set(unreached.filter(r => r.procedural).map(r => r.mmId));
-            const mmPinIds = new Set(unreached.filter(r => !r.procedural).map(r => r.mmId));
-            // Through liveSessions, as every other surface draws sessions: a
-            // Procedural mind map has no SIR, and its stored sessions are not
-            // due anywhere — this group read storage raw until it was rebuilt.
-            const dueIds = new Set(TrackMilestone.liveSessions(_readSessions(), mms || [])
-              .filter(s => s && s.date === ds && !s.done && !s.skipped)
-              .map(s => s.mmId));
-            const sirPinIds = new Set([...dueIds].filter(id => !mmPinIds.has(id)));
+            // The day's groups and their order are learnLists' — the one
+            // definition ● LEARN → MIND MAPS reads too. Sessions are read
+            // FRESH and through liveSessions, as every other surface draws
+            // them: a Procedural mind map has no SIR, and its stored sessions
+            // are not due anywhere — this group read storage raw until it was
+            // rebuilt. The text filter is applied AFTER the groups are taken,
+            // and filtering a sorted list keeps its order.
+            const lists = learnLists(mms, lateReport,
+              TrackMilestone.liveSessions(_readSessions(), mms || []), sirDoneMap, ds, todayStr);
+            const unreached = lists.unreached;
+            const mgPinIds = lists.mgPinIds;
             const pinMG = unreached.filter(r => r.procedural && mgHit(r.mm));
             const pinMM = unreached.filter(r => !r.procedural && nameHit(r.mm));
-            const pinSIR = (mms || []).filter(m => sirPinIds.has(m.id) && nameHit(m)).sort(byW);
-            const tabMMs = (mms || []).filter(m => !mmPinIds.has(m.id) && !sirPinIds.has(m.id) && nameHit(m)).sort(byW);
+            const pinSIR = lists.sirDue.filter(nameHit);
+            const tabMMs = lists.rest.filter(nameHit);
             const allMGs = (mms || []).filter(m => TrackMilestone.isProcedural(m));
             const tabMGs = allMGs.filter(m => !mgPinIds.has(m.id) && mgHit(m));
             const dayMGs = getMGsForDay(ds, mgSchedule);
             const showMG = !isPastDay;
             const tab = showMG ? learnTab : 'mm';
-            // "S1 → S3" for a phase, "Lv 3 → 5" for a level; a Procedural
-            // waypoint carries its level alone (targetFor).
-            const gapOf = r => {
-              const parts = [];
-              if (r.waypoint.stage) parts.push(`${sirStageLabel(r.mm) || '—'} → ${stageLabel(r.waypoint.stage) || r.waypoint.stage}`);
-              if (r.waypoint.level) parts.push(`Lv ${r.mm.rating || 0} → ${r.waypoint.level}`);
-              return parts.join(' · ');
-            };
-            const msName = r => r.st.title || r.st.ownerTitle || 'milestone';
+            // "S1 → S3" for a phase, "Lv 3 → 5" for a level — learnGap.
+            const gapOf = r => learnGap(r, sirDoneMap);
+            const msName = learnMilestoneName;
             const pinTitle = r => r.late
               ? `${msName(r)} · ${TrackMilestone.label(r.st)}`
               : `${msName(r)}, until ${r.st.endDate}: ${gapOf(r)}`;
@@ -11168,7 +11421,7 @@
                 data-quest-search placeholder="Search goals and mind maps…"
                 className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white outline-none placeholder-gray-600 mb-2" />
               {pickTree.length === 0
-                ? <div className="text-xs text-gray-600 py-2">No goals yet — add one in PROGRESS first.</div>
+                ? <div className="text-xs text-gray-600 py-2">No goals yet — add one in Documentations → Projects first.</div>
                 : pickTree.map(entry => <PickRow key={entry.node.id} entry={entry} />)}
             </div>
           )}
@@ -11214,6 +11467,73 @@
       );
     }
 
+    // ── The page's tabs ───────────────────────────────────────────────────────
+
+    /* The ONE tab table for this page. The header, the sub-tab strip under it
+       and the phone bar all map it, which is what stops any of them becoming a
+       second, driftable list of sections — add a tab here and it appears in
+       every place or in none.
+
+       The page is the SCHEDULE plus the four kinds of work a day holds, in the
+       order of the Schedule's four add buttons (docs/CONCEPTS.md): ★ Forced is
+       what the CALENDAR holds, ● LEARN is the mind maps and MGs, ▲ PROJECT is
+       what Chosen picks from, and ■ ACTIONS is the Core Routine.
+
+       A row is [key, label, phone label, accent, subs]. `subs` is null for a
+       tab that is its own view, else [[view, label, accent], …]. A VIEW key is
+       what `tab` state holds and what the URL hash names. The seven views that
+       existed before the tabs were grouped keep their keys: `#quest`, `#mg`,
+       `#schedule` and the rest are links in other pages and in bookmarks.
+
+       `short` is the phone label: a bar that scrolls to reach a tab is a worse
+       bar. `accent` is the underline colour of the tab or sub-tab showing. */
+    const TABS = [
+      ['schedule', 'SCHEDULE',   'SCHED',   'border-indigo-500 text-indigo-300',   null],
+      ['calendar', '★ CALENDAR', '★ CAL',   'border-amber-500 text-amber-300',     null],
+      ['learn',    '● LEARN',    '● LEARN', 'border-emerald-500 text-emerald-300', [
+        ['mindmaps', 'MIND MAPS', 'border-indigo-500 text-indigo-300'],
+        ['mg',       'MG',        'border-emerald-500 text-emerald-300'],
+      ]],
+      ['project',  '▲ PROJECT',  '▲ PROJ',  'border-indigo-500 text-indigo-300',   [
+        ['progression', 'PROGRESSION', 'border-indigo-500 text-indigo-300'],
+        ['milestones',  'MILESTONES',  'border-cyan-500 text-cyan-300'],
+        ['quest',       'QUEST',       'border-amber-500 text-amber-300'],
+      ]],
+      ['actions',  '■ ACTIONS',  '■ ACTS',  'border-violet-500 text-violet-300',   null],
+    ];
+
+    /* HIDDEN, not removed — True Storage's rule for MULTIVERSE and SRCH. The
+       goal tree is on neither bar, and `#progress`, its key since before the
+       tabs were grouped, still opens it. Goals are edited in Documentations →
+       Projects; the tree is kept because four edits exist nowhere else yet —
+       which mind maps a goal needs, a mind map's target, a linked task or
+       sub-goal, and the order of a goal's milestone types (NOTES). A goal's
+       page in Projects links here. [view, the tab it is shown under]. */
+    const HIDDEN_VIEWS = [['progress', 'project']];
+    // `documentations.html` linked `#goals` before any view had that name.
+    const VIEW_ALIASES = [['goals', 'progress']];
+    const DEFAULT_VIEW = 'schedule';
+
+    // The view a URL hash names. A tab's own key opens its first sub-tab, and
+    // anything unknown — or nothing — opens the Schedule.
+    function resolveView(hash) {
+      const alias = VIEW_ALIASES.find(a => a[0] === hash);
+      const h = alias ? alias[1] : hash;
+      for (const [key, , , , subs] of TABS) {
+        if (h === key) return subs ? subs[0][0] : key;
+        if (subs && subs.some(s => s[0] === h)) return h;
+      }
+      return HIDDEN_VIEWS.some(v => v[0] === h) ? h : DEFAULT_VIEW;
+    }
+
+    // The tab a view is shown under.
+    function tabOfView(view) {
+      const hidden = HIDDEN_VIEWS.find(v => v[0] === view);
+      if (hidden) return hidden[1];
+      const row = TABS.find(([key, , , , subs]) => key === view || (subs && subs.some(s => s[0] === view)));
+      return row ? row[0] : DEFAULT_VIEW;
+    }
+
     // ── App ───────────────────────────────────────────────────────────────────
 
     function App() {
@@ -11249,8 +11569,37 @@
       // refresh below adopts what it wrote — the calendarNotes arrangement
       // exactly.
       const [refSchedules, setRefSchedules] = useState(() => initialSlot.refSchedules || []);
-      const [tab, setTab] = useState(() => window.location.hash.slice(1) || 'progress');
+      // `tab` holds a VIEW key (see TABS): a tab with no sub-tabs is its own
+      // view, and a tab with sub-tabs shows one of them.
+      const [tab, setTab] = useState(() => resolveView(window.location.hash.slice(1)));
+      // The sub-tab each tab was last left on, so going back to ● LEARN or
+      // ▲ PROJECT returns to it. Not stored: where one reader was is not data.
+      // A hidden view is never remembered — a tab reopens on what it lists.
+      // It starts out holding the view the address opened: a page opened at
+      // `#quest` was never PRESSED onto QUEST, and must still come back to it.
+      const [lastSub, setLastSub] = useState(() => {
+        const row = TABS.find(r => r[4] && r[4].some(s => s[0] === tab));
+        return row ? { [row[0]]: tab } : {};
+      });
+      function openView(view) {
+        setTab(view);
+        const row = TABS.find(r => r[4] && r[4].some(s => s[0] === view));
+        if (row) setLastSub(prev => prev[row[0]] === view ? prev : { ...prev, [row[0]]: view });
+      }
+      function openTab(row) {
+        const [key, , , , subs] = row;
+        openView(subs ? (lastSub[key] || subs[0][0]) : key);
+      }
+      const activeTab = tabOfView(tab);
+      const activeSubs = (TABS.find(r => r[0] === activeTab) || [])[4] || null;
+      const isPhone = useIsPhone();
       const [selectedMilestone, setSelectedMilestone] = useState(null);
+
+      // ?goal=<goal node id>#progress — the way in from a goal's page in
+      // Documentations → Projects: the hidden goal tree, opened on the
+      // ultimate goal that holds that node.
+      const initialGoalId = useMemo(
+        () => new URLSearchParams(window.location.search).get('goal') || null, []);
 
       // ?date=YYYY-MM-DD#schedule — deep link from the universal calendar on index.html.
       // The date rides in the query string, not the hash, so hash parsing above stays intact.
@@ -11330,7 +11679,7 @@
       // so the tab mounts with the row already selected and scrolls it in.
       function openMilestone(ownerId, milestoneId) {
         setSelectedMilestone({ ownerId, milestoneId });
-        setTab('milestones');
+        openView('milestones');
       }
 
       const allLeaves  = flattenAll(goals).filter(isCountableLeaf);
@@ -11362,26 +11711,9 @@
         [linChanges]
       );
 
-      /* The ONE tab table for this page. The header below and the phone bar at
-         the bottom of this component both map it, which is what stops the bar
-         from becoming a second, driftable list of sections — add a tab here and
-         it appears in both places or in neither.
-
-         `short` is the phone label: seven full names do not fit 390px, and a
-         bar that scrolls to reach a tab is a worse bar. `accent` is the
-         header's existing per-tab underline colour, moved rather than changed. */
-      const TABS = [
-        ['progress',   'PROGRESS',   'PROG',  'border-indigo-500 text-indigo-300'],
-        ['milestones', 'MILESTONES', 'MILE',  'border-cyan-500 text-cyan-300'],
-        ['quest',      'QUEST',      'QUEST', 'border-amber-500 text-amber-300'],
-        ['schedule',   'SCHEDULE',   'SCHED', 'border-indigo-500 text-indigo-300'],
-        ['actions',    'ACTIONS',    'ACTS',  'border-indigo-500 text-indigo-300'],
-        ['mindmaps',   'MIND MAPS',  'MM',    'border-indigo-500 text-indigo-300'],
-        ['mg',         'MG',         'MG',    'border-emerald-500 text-emerald-300'],
-      ];
-
       return (
-        <div className="h-screen bg-gray-950 text-gray-300 font-mono flex flex-col text-xs overflow-hidden">
+        <div className="h-screen bg-gray-950 text-gray-300 font-mono flex flex-col text-xs overflow-hidden"
+          data-view={tab}>
 
           {/* Header */}
           <header className="sticky top-0 z-10 flex items-center gap-0 border-b border-gray-800 bg-gray-900/90 backdrop-blur-sm">
@@ -11390,21 +11722,23 @@
               ← TRACK
             </a>
 
-            {/* The same TABS table the phone bar maps. `data-tab-quest` is a
-                test hook that predates this lift and is kept on the tab it was
-                attached to. */}
-            {TABS.map(([key, label, , accent]) => (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                {...(key === 'quest' ? { 'data-tab-quest': true } : {})}
-                className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
-                  tab === key ? accent : 'border-transparent text-gray-600 hover:text-gray-400'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            {/* The same TABS table the phone bar maps. */}
+            {TABS.map(row => {
+              const [key, label, , accent] = row;
+              return (
+                <button
+                  key={key}
+                  data-tab={key}
+                  aria-current={activeTab === key ? 'page' : undefined}
+                  onClick={() => openTab(row)}
+                  className={`px-5 py-3 tracking-widest transition-colors border-b-2 ${
+                    activeTab === key ? accent : 'border-transparent text-gray-600 hover:text-gray-400'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
 
             <div className="flex items-center gap-4 ml-auto">
               {streak > 0 && (
@@ -11431,14 +11765,47 @@
             <div className="theme-toggle-host" data-theme-toggle-host></div>
           </header>
 
-          {/* Tab: PROGRESS */}
-          {tab === 'progress' && (
-            <div className="flex-1 flex flex-col min-h-0">
-              <GoalTabsPanel goals={goals} setGoals={setGoals} mms={mms} sirDoneMap={sirDoneMap} docPages={docPages} />
+          {/* Sub-tabs — the showing tab's views, from its TABS row. Outside the
+              <header>, which styles.css sizes as one scrolling row. On the
+              hidden goal tree none of them is current, and the strip says
+              where the reader is instead. `data-tab-quest` is a test hook that
+              predates the grouping and is kept on QUEST. */}
+          {activeSubs && (
+            <div data-subtabs={activeTab}
+              className="flex-shrink-0 flex items-center border-b border-gray-800 bg-gray-900/60 overflow-x-auto">
+              {activeSubs.map(([key, label, accent]) => (
+                <button key={key} type="button" data-subtab={key}
+                  aria-current={tab === key ? 'page' : undefined}
+                  {...(key === 'quest' ? { 'data-tab-quest': true } : {})}
+                  onClick={() => openView(key)}
+                  className={`flex-shrink-0 px-4 py-2 text-[11px] tracking-widest transition-colors border-b-2 ${isPhone ? 'min-h-[2.75rem] ' : ''}${
+                    tab === key ? accent : 'border-transparent text-gray-600 hover:text-gray-400'
+                  }`}>{label}</button>
+              ))}
+              {tab === 'progress' && (
+                <span data-subtab-hidden="progress"
+                  className="flex-shrink-0 ml-auto px-4 text-[10px] tracking-widest text-gray-600">GOAL TREE</span>
+              )}
             </div>
           )}
 
-          {/* Tab: MILESTONES */}
+          {/* ▲ PROJECT: PROGRESSION — every goal and its sub-goals, read only */}
+          {tab === 'progression' && (
+            <div className="flex-1 overflow-y-auto">
+              <ProgressionOverview goals={goals} mms={mms} sirDoneMap={sirDoneMap} />
+            </div>
+          )}
+
+          {/* The goal tree — in HIDDEN_VIEWS: on no bar, opened by `#progress`
+              and by a goal's page in Documentations → Projects */}
+          {tab === 'progress' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <GoalTabsPanel goals={goals} setGoals={setGoals} mms={mms} sirDoneMap={sirDoneMap} docPages={docPages}
+                initialGoalId={initialGoalId} />
+            </div>
+          )}
+
+          {/* ▲ PROJECT: MILESTONES */}
           {tab === 'milestones' && (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <MilestonesPanel
@@ -11450,7 +11817,7 @@
             </div>
           )}
 
-          {/* Tab: QUEST */}
+          {/* ▲ PROJECT: QUEST */}
           {tab === 'quest' && (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <QuestPanel
@@ -11461,10 +11828,14 @@
             </div>
           )}
 
-          {/* Tab: SCHEDULE */}
-          {tab === 'schedule' && (
+          {/* SCHEDULE and ★ CALENDAR — ONE element for both tabs, never two
+              conditionals: that is what makes React keep the panel, and the
+              timeline node its mount-only effects are bound to, across the
+              switch (see SchedulePanel). */}
+          {(tab === 'schedule' || tab === 'calendar') && (
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <SchedulePanel
+                view={tab === 'calendar' ? 'calendar' : 'timeline'}
                 goals={goals} setGoals={setGoals}
                 saActions={saActions} setSaActions={setSaActions} saEntries={saEntries} setSaEntries={setSaEntries}
                 mms={mms} mmEntries={mmEntries} setMmEntries={setMmEntries}
@@ -11483,9 +11854,9 @@
             </div>
           )}
 
-          {/* Tab: ACTIONS */}
+          {/* ■ ACTIONS */}
           {tab === 'actions' && (
-            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full" data-actions-tab>
               <div className="text-gray-700 tracking-widest mb-6 text-xs">
                 SUPPORTING ACTIONS — define a time slot · add to any day with ■ Core Routine in the Schedule
               </div>
@@ -11496,14 +11867,14 @@
             </div>
           )}
 
-          {/* Tab: MIND MAPS */}
+          {/* ● LEARN: MIND MAPS */}
           {tab === 'mindmaps' && (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
-              <MindMapsPanel />
+              <MindMapsPanel goals={goals} mms={mms} sessions={liveSessions} sirDoneMap={sirDoneMap} />
             </div>
           )}
 
-          {/* Tab: MG */}
+          {/* ● LEARN: MG */}
           {tab === 'mg' && (
             <div className="flex-1 overflow-y-auto">
               <MGPanel
@@ -11526,14 +11897,15 @@
               own dlDone and noteTimed.
 
               It maps TABS, the same table the header above maps, so the two
-              cannot list different sections. Seven tabs at the top of a phone
-              are a two-handed reach; here they are under the thumb. */}
+              cannot list different sections. Tabs at the top of a phone are a
+              two-handed reach; here they are under the thumb. A tab's sub-tabs
+              are the strip under the header, on a phone as on a desktop. */}
           <nav className="track-tabbar" data-tabbar="progress" aria-label="Sections">
-            {TABS.map(([key, , short]) => (
-              <button key={key} type="button" className="track-tabbar-btn"
-                data-tabbar-tab={key}
-                aria-current={tab === key ? 'page' : undefined}
-                onClick={() => setTab(key)}>{short}</button>
+            {TABS.map(row => (
+              <button key={row[0]} type="button" className="track-tabbar-btn"
+                data-tabbar-tab={row[0]}
+                aria-current={activeTab === row[0] ? 'page' : undefined}
+                onClick={() => openTab(row)}>{row[2]}</button>
             ))}
             <a className="track-tabbar-btn track-tabbar-home" data-tabbar-tab="home"
               href="index.html" aria-label="Track home">⌂</a>
@@ -11548,6 +11920,6 @@
   <script src="scripts/journey-core.js?v=2"></script>
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
-  <script src="scripts/note-to-self.js?v=2"></script>
+  <script src="scripts/note-to-self.js?v=3"></script>
 </body>
 </html>

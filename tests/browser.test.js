@@ -365,7 +365,8 @@ test('browser suites', skipUnlessChrome, async t => {
       F.emptySlot({ id: 'slot-a', name: 'Alpha', goals: [F.task('goal-a', { title: 'Goal A' })] }),
       F.emptySlot({ id: 'slot-b', name: 'Beta',  goals: [F.task('goal-b', { title: 'Goal B' })] })
     ], 'slot-a');
-    const progress = await open('progress.html', { db });
+    // on the goal tree, where a goal is added — a hidden view, opened by its hash
+    const progress = await open('progress.html', { db, hash: '#progress' });
     await progress.waitFor(function () { return document.body.textContent.indexOf('Goal A') >= 0; },
       { message: 'Progress showing slot A' });
     const home = await open('index.html', { fresh: false });
@@ -1600,8 +1601,8 @@ test('browser suites', skipUnlessChrome, async t => {
 
     // the month grid and the day panel both live in the CALENDAR view
     await page.evaluate(function () {
-      Array.prototype.find.call(document.querySelectorAll('#root button'),
-        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      // ★ CALENDAR is a tab of its own; it was a switch inside the Schedule
+      document.querySelector('#root [data-tab="calendar"]').click();
       return true;
     });
     await page.waitFor(function () {
@@ -1649,8 +1650,8 @@ test('browser suites', skipUnlessChrome, async t => {
       var el = document.querySelector('#root'); return !!el && el.children.length > 0;
     }, { message: 'progress.html mounting' });
     await page.evaluate(function () {
-      Array.prototype.find.call(document.querySelectorAll('#root button'),
-        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      // ★ CALENDAR is a tab of its own; it was a switch inside the Schedule
+      document.querySelector('#root [data-tab="calendar"]').click();
       return true;
     });
     await page.waitFor(function () {
@@ -1968,8 +1969,8 @@ test('browser suites', skipUnlessChrome, async t => {
     // the timeline followed to day 22, so check the month grid instead, where
     // every day of the run-up is visible at once
     await page.evaluate(function () {
-      Array.prototype.find.call(document.querySelectorAll('#root button'),
-        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      // ★ CALENDAR is a tab of its own; it was a switch inside the Schedule
+      document.querySelector('#root [data-tab="calendar"]').click();
       return true;
     });
     const marks = await page.waitFor(function () {
@@ -2017,8 +2018,8 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.match(followed, wantLabel, 'the timeline re-anchored on the new due day');
 
     await page.evaluate(function () {
-      Array.prototype.find.call(document.querySelectorAll('#root button'),
-        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      // ★ CALENDAR is a tab of its own; it was a switch inside the Schedule
+      document.querySelector('#root [data-tab="calendar"]').click();
       return true;
     });
     const month = await page.waitFor(function () {
@@ -2059,8 +2060,8 @@ test('browser suites', skipUnlessChrome, async t => {
       var el = document.querySelector('#root'); return !!el && el.children.length > 0;
     }, { message: 'progress.html mounting' });
     await page.evaluate(function () {
-      Array.prototype.find.call(document.querySelectorAll('#root button'),
-        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      // ★ CALENDAR is a tab of its own; it was a switch inside the Schedule
+      document.querySelector('#root [data-tab="calendar"]').click();
       return true;
     });
     await page.waitFor(function () {
@@ -6243,16 +6244,13 @@ test('browser suites', skipUnlessChrome, async t => {
           milestones: [F.milestone('ms-1', '2026-03-01', '2026-03-10')],
           mmTargets: { 10: { milestones: [{ milestoneId: 'ms-1', stage: 'CE', level: 3 }] } }
         })]
-      })
+      }),
+      // the goal tree is a hidden view since the tabs were grouped
+      hash: '#progress'
     });
 
-    await page.waitFor(function () {
-      var b = Array.prototype.find.call(document.querySelectorAll('button'),
-        function (x) { return x.textContent.trim() === 'PROGRESS'; });
-      if (!b) return false;
-      b.click();
-      return true;
-    }, { message: 'the PROGRESS tab' });
+    await page.waitFor(function () { return !!document.querySelector('[data-subtab-hidden="progress"]'); },
+      { message: 'the goal tree' });
 
     /* Two elements carry the milestone title — the MILESTONES section row and
        the chip. Only the chip is `inline-flex`, and its × is behind hover
@@ -7652,8 +7650,8 @@ test('browser suites', skipUnlessChrome, async t => {
     const page = await open('progress.html', { db, hash: '#schedule' });
     await mountSchedule(page);
     await page.evaluate(function () {
-      Array.prototype.find.call(document.querySelectorAll('#root button'),
-        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      // ★ CALENDAR is a tab of its own; it was a switch inside the Schedule
+      document.querySelector('#root [data-tab="calendar"]').click();
       return true;
     });
     const marks = await page.waitFor(function () {
@@ -10931,7 +10929,7 @@ test('browser suites', skipUnlessChrome, async t => {
   };
 
   await t.test('ACCENT: the progression donut follows the theme under Grit', async () => {
-    const page = await open('progress.html', { db: accentGoalsDb(), extra: { track_theme: 'grit' } });
+    const page = await open('progress.html', { db: accentGoalsDb(), hash: '#progress', extra: { track_theme: 'grit' } });
     await page.waitFor(function () { return !!document.querySelector('[data-accent="donut-arc"]'); },
       { message: 'the donut arc (a partially complete parent goal)' });
 
@@ -10960,7 +10958,7 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('ACCENT: the hero ring TRACK follows the theme under Grit', async () => {
-    const page = await open('progress.html', { db: accentGoalsDb(), extra: { track_theme: 'grit' } });
+    const page = await open('progress.html', { db: accentGoalsDb(), hash: '#progress', extra: { track_theme: 'grit' } });
     await page.waitFor(function () { return !!document.querySelector('[data-accent="hero-track"]'); },
       { message: 'the hero progression ring' });
 
@@ -10978,7 +10976,7 @@ test('browser suites', skipUnlessChrome, async t => {
        sweep that "finishes the job" by tokenising it trips this case. Passes
        on both sides of the accent change by design. */
     const arcOf = async theme => {
-      const page = await open('progress.html', { db: accentGoalsDb(), extra: { track_theme: theme } });
+      const page = await open('progress.html', { db: accentGoalsDb(), hash: '#progress', extra: { track_theme: theme } });
       await page.waitFor(function () { return !!document.querySelector('[data-accent="hero-arc"]'); },
         { message: 'the hero arc' });
       const stroke = (await page.evaluate(READ_ACCENT_HOOKS))['hero-arc'].stroke;
@@ -10998,7 +10996,7 @@ test('browser suites', skipUnlessChrome, async t => {
        lighter (#818cf8, #a78bfa), the values their class siblings already
        render in Night. The user chose this over byte-identical Night. This
        case pins the rendered half of that decision. */
-    const page = await open('progress.html', { db: accentGoalsDb(), extra: { track_theme: 'dark' } });
+    const page = await open('progress.html', { db: accentGoalsDb(), hash: '#progress', extra: { track_theme: 'dark' } });
     await page.waitFor(function () { return !!document.querySelector('[data-accent="donut-arc"]'); },
       { message: 'the donut arc under Night' });
     const arc = (await page.evaluate(READ_ACCENT_HOOKS))['donut-arc'];
@@ -14285,8 +14283,10 @@ test('browser suites', skipUnlessChrome, async t => {
       await page.close();
     });
 
+  // The Schedule and the four add kinds, in the Schedule's add-button order —
+  // five tabs where there were seven, so the bar no longer has to scroll.
   await phoneCase('progress.html', 'progress',
-    ['progress', 'milestones', 'quest', 'schedule', 'actions', 'mindmaps', 'mg', 'home']);
+    ['schedule', 'calendar', 'learn', 'project', 'actions', 'home']);
   await phoneCase('documentations.html', 'documentations', ['pages', 'add', 'home']);
   await phoneCase('sir-ks02.html', 'ks02',
     ['calendar', 'ks02', 'mg', 'ks03', 'kolb', 'srch', 'home']);
@@ -14359,7 +14359,8 @@ test('browser suites', skipUnlessChrome, async t => {
        is what makes that a decision rather than an accident. A future change
        that "made the two splits uniform" would have to break either this case
        or the schedule's; it cannot satisfy both. */
-    const page = await open('progress.html', { db: seedDb(), viewport: PHONE });
+    // the goal tree: a hidden view since the tabs were grouped, opened by its hash
+    const page = await open('progress.html', { db: seedDb(), hash: '#progress', viewport: PHONE });
     await page.waitFor(function () { return !!document.querySelector('[data-goal-split]'); },
       { message: 'the goal detail split' });
 
@@ -14469,13 +14470,21 @@ test('browser suites', skipUnlessChrome, async t => {
        panes carry their widths as INLINE styles (`flex: '0 0 40%'`), which no
        stylesheet rule can beat without !important — so the switcher has to
        unmount, and `inDom` is what proves it did rather than merely hiding. */
+    /* Reached the way a thumb reaches it: ▲ PROJ on the bar, then the
+       MILESTONES sub-tab in the strip under the header. */
     const page = await open('progress.html', { db: seedDb(), viewport: PHONE });
-    await page.waitFor(function () {
-      var b = Array.prototype.find.call(document.querySelectorAll('header button'),
-        function (x) { return x.textContent.trim() === 'MILESTONES'; });
-      if (b) b.click();
-      return !!document.querySelector('[data-ms-split]');
-    }, { message: 'the Milestones split' });
+    await page.waitFor(function () { return !!document.querySelector('.track-tabbar [data-tabbar-tab="project"]'); },
+      { message: 'the phone bar' });
+    await page.evaluate(function () {
+      document.querySelector('.track-tabbar [data-tabbar-tab="project"]').click(); return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-subtabs="project"] [data-subtab="milestones"]'); },
+      { message: "▲ PROJECT's sub-tabs" });
+    await page.evaluate(function () {
+      document.querySelector('[data-subtab="milestones"]').click(); return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-ms-split]'); },
+      { message: 'the Milestones split' });
 
     const read = function () {
       var l = document.querySelector('[data-ms-pane="list"]');
@@ -14511,25 +14520,27 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('PHONE/PROGRESS: the Schedule nav wraps so CALENDAR stays TAPPABLE', async () => {
-    /* Reported directly: "I can't click on calendar cus it's clipped out". In
-       day mode that row's children come to ~546px in a 390px box, and CALENDAR
-       is the last of them, so it fell off the right edge into the viewport clip.
+  await t.test('PHONE/PROGRESS: the Schedule nav wraps, its last control stays TAPPABLE, and ★ CALENDAR is on the bar', async () => {
+    /* Reported directly, when the row still ended in TIMELINE|CALENDAR: "I
+       can't click on calendar cus it's clipped out". In day mode the row's
+       children came to ~546px in a 390px box, and CALENDAR, being last, fell
+       off the right edge into the viewport clip. The row wraps since then.
 
-       `elementFromPoint` is the assertion that matters, not presence and not
-       even the rect: the button was always in the DOM with a sane-looking
-       width, it was simply drawn past the edge where no finger could land. */
+       CALENDAR has left the row — it is a tab of its own — so the control that
+       can fall off the edge now is the GRID|TASKS switcher, the row's last
+       child in day mode. `elementFromPoint` is the assertion that matters, not
+       presence and not even the rect: the button was always in the DOM with a
+       sane-looking width, it was simply drawn past the edge where no finger
+       could land. */
     const page = await open('progress.html', { db: seedDb(), hash: '#schedule', viewport: PHONE });
-    await page.waitFor(function () { return !!document.querySelector('[data-sched-nav]'); },
-      { message: 'the schedule nav bar' });
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-nav] [data-sched-pane="matrix"]'); },
+      { message: 'the schedule nav bar and its GRID|TASKS switcher' });
 
     const m = await page.evaluate(function () {
       var nav = document.querySelector('[data-sched-nav]');
       var vw = document.documentElement.clientWidth;
-      var cal = Array.prototype.find.call(nav.querySelectorAll('button'),
-        function (b) { return b.textContent.trim() === 'CALENDAR'; });
-      if (!cal) return { calendar: null };
-      var r = cal.getBoundingClientRect();
+      var last = nav.querySelector('[data-sched-pane="matrix"]');
+      var r = last.getBoundingClientRect();
       var hit = document.elementFromPoint(Math.round(r.left + r.width / 2),
                                           Math.round(r.top + r.height / 2));
       /* align-items:center puts differently-sized children on one line at
@@ -14552,22 +14563,33 @@ test('browser suites', skipUnlessChrome, async t => {
       });
       return {
         vw: vw, wrap: getComputedStyle(nav).flexWrap, rows: bands.length,
-        navRight: Math.round(nav.getBoundingClientRect().right),
-        calendar: { left: Math.round(r.left), right: Math.round(r.right),
-          hit: hit === cal ? 'self' : (cal.contains(hit) ? 'child'
+        buttons: Array.prototype.map.call(nav.querySelectorAll('button'),
+          function (b) { return b.textContent.trim(); }),
+        last: { left: Math.round(r.left), right: Math.round(r.right),
+          hit: hit === last ? 'self' : (last.contains(hit) ? 'child'
                : (hit ? hit.tagName.toLowerCase() : 'null')) }
       };
     });
 
-    assert.notEqual(m.calendar, null, 'the CALENDAR button renders at all');
-    assert.equal(m.calendar.hit, 'self',
-      'CALENDAR takes its own tap (got ' + m.calendar.hit + ' at '
-      + m.calendar.left + '–' + m.calendar.right + ' in a ' + m.vw + 'px viewport)');
-    assert.ok(m.calendar.right <= m.vw + 1,
+    assert.equal(m.last.hit, 'self',
+      'TASKS, the last control, takes its own tap (got ' + m.last.hit + ' at '
+      + m.last.left + '–' + m.last.right + ' in a ' + m.vw + 'px viewport)');
+    assert.ok(m.last.right <= m.vw + 1,
       'and is drawn inside the viewport, not past its right edge');
     assert.equal(m.wrap, 'wrap', 'the row wraps rather than clipping');
-    assert.ok(m.rows >= 2 && m.rows <= 3,
-      'into a predictable 2-3 lines, not one clipped line and not a ragged pile (' + m.rows + ')');
+    assert.equal(m.rows, 2,
+      'into two lines — the date, then every control — not one clipped line and not a ragged pile (' + m.rows + ')');
+    assert.deepEqual(m.buttons, ['‹', '›', 'today', 'WEEK', 'DAY', 'GRID', 'TASKS'],
+      'the row holds the timeline\'s own controls and no TIMELINE or CALENDAR button');
+
+    // and the calendar is one tap away, on the bar
+    await page.evaluate(function () {
+      document.querySelector('.track-tabbar [data-tabbar-tab="calendar"]').click(); return true;
+    });
+    await page.waitFor(function () { return !!document.querySelector('[data-sched-month-day]'); },
+      { message: 'the month grid after tapping ★ CAL on the bar' });
+    assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-sched-nav]'); }), false,
+      'the timeline\'s nav row is not drawn over the month view');
 
     assert.deepEqual(realErrors(page), []);
     await page.close();
@@ -15229,8 +15251,8 @@ test('browser suites', skipUnlessChrome, async t => {
     const page = await openHere(tc, 'progress.html', { db: lateDb(), hash: '#schedule' });
     await mountSchedule(page);
     await page.evaluate(function () {
-      Array.prototype.find.call(document.querySelectorAll('#root button'),
-        function (b) { return b.textContent.trim() === 'CALENDAR'; }).click();
+      // ★ CALENDAR is a tab of its own; it was a switch inside the Schedule
+      document.querySelector('#root [data-tab="calendar"]').click();
       return true;
     });
     const flags = await page.waitFor(function () {
@@ -15625,7 +15647,7 @@ test('browser suites', skipUnlessChrome, async t => {
   await t.test('P17 PROGRESS: the Schedule month view and its day panel leave them out too', async tc => {
     const page = await openHere(tc, 'progress.html', { db: p17Db(), hash: '#schedule' });
     await mountSchedule(page);
-    await page.evaluate(CLICK_SEL, '[data-sched-view="calendar"]');
+    await page.evaluate(CLICK_SEL, '[data-tab="calendar"]');
     await page.waitFor(function (d) {
       return !!document.querySelector('[data-sched-month-day="' + d + '"] [data-sched-sir-dot="10"]');
     }, { args: [TODAY], message: "the Declarative MM's dot on today" });
@@ -15814,7 +15836,8 @@ test('browser suites', skipUnlessChrome, async t => {
       mmTargets: { '11': { stage: '4', level: 3 }, '15': { stage: '3' }, '10': { stage: '4' } } })]
   });
   const openLearnGoal = async tc => {
-    const page = await openHere(tc, 'progress.html', { db: p17LearnDb() });
+    // the goal tree: a hidden view since the tabs were grouped
+    const page = await openHere(tc, 'progress.html', { db: p17LearnDb(), hash: '#progress' });
     await page.waitFor(function () {
       return !!document.querySelector('[data-learn-row="10"]') && !!document.querySelector('[data-goal-hero-pct]');
     }, { message: "the goal's to-learn rows and its hero ring" });
@@ -15911,7 +15934,7 @@ test('browser suites', skipUnlessChrome, async t => {
     const db = p17LearnDb();
     const g = db.slots[0].goals[0];
     db.slots[0].goals = [F.task('g-p17c', { title: 'Container', children: [Object.assign({}, g, { id: 'sg-p17', isSubGoal: true })] })];
-    const page = await openHere(tc, 'progress.html', { db });
+    const page = await openHere(tc, 'progress.html', { db, hash: '#progress' });
     const txt = await page.waitFor(function () {
       var e = document.querySelector('[data-subgoal-learn="sg-p17"]');
       return e ? e.textContent.trim() : false;
@@ -16196,8 +16219,9 @@ test('browser suites', skipUnlessChrome, async t => {
       autoSub('sg-short', 21, { stage: '4' })
     ] })]
   });
+  // (the goal tree is a hidden view since the tabs were grouped: `#progress`)
   const openAuto = async tc => {
-    const page = await openHere(tc, 'progress.html', { db: autoDb() });
+    const page = await openHere(tc, 'progress.html', { db: autoDb(), hash: '#progress' });
     await renderedOrError(page, '[data-goal-node="sg-short"]', 'the five sub-goals');
     return page;
   };
@@ -16251,7 +16275,7 @@ test('browser suites', skipUnlessChrome, async t => {
   };
 
   await t.test('LOOP GOALS: a task linked under its own descendant is drawn once, as a loop row', async tc => {
-    const page = await openHere(tc, 'progress.html', { db: loopDb() });
+    const page = await openHere(tc, 'progress.html', { db: loopDb(), hash: '#progress' });
     await renderedOrError(page, '[data-link-loop="lp-link"]', 'the loop row in the goal tree');
     assert.match(await page.evaluate(function () { return document.querySelector('[data-link-loop="lp-link"]').textContent; }),
       /Loop A/, 'it names the task it leads back to');
@@ -16259,7 +16283,7 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('LOOP GOALS: the loop row unlinks — Cancel writes nothing, OK removes only the link', async tc => {
-    const page = await openHere(tc, 'progress.html', { db: loopDb() });
+    const page = await openHere(tc, 'progress.html', { db: loopDb(), hash: '#progress' });
     await renderedOrError(page, '[data-link-loop="lp-link"] button', "the loop row's unlink");
     const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
     const dialogsBefore = page.dialogs.length;
@@ -16286,7 +16310,7 @@ test('browser suites', skipUnlessChrome, async t => {
       F.task('sg-x', { title: 'Sub X', isSubGoal: true,
         children: [{ id: 'sg-link', linkedTaskId: 'g-top', isLink: true, isSubGoal: true }] })
     ] })] });
-    const page = await openHere(tc, 'progress.html', { db });
+    const page = await openHere(tc, 'progress.html', { db, hash: '#progress' });
     await renderedOrError(page, '[data-link-loop="sg-link"]', 'the loop row under the sub-goal');
     assert.deepEqual(realErrors(page), []);
   });
@@ -16324,14 +16348,14 @@ test('browser suites', skipUnlessChrome, async t => {
   };
 
   await t.test('LOOP TO LEARN: a parent cycle under a root mind map is drawn once', async tc => {
-    const page = await openHere(tc, 'progress.html', { db: mmLoopDb(false) });
+    const page = await openHere(tc, 'progress.html', { db: mmLoopDb(false), hash: '#progress' });
     await renderedOrError(page, '[data-learn-row="31"]', "the cycle's second mind map");
     assert.deepEqual(await page.evaluate(LEARN_ROWS), ['30', '31', '32'], 'Root > One > Two, and Two is not drawn round again');
     assert.deepEqual(realErrors(page), []);
   });
 
   await t.test('LOOP TO LEARN: a parent cycle with no root still shows every mind map', async tc => {
-    const page = await openHere(tc, 'progress.html', { db: mmLoopDb(true) });
+    const page = await openHere(tc, 'progress.html', { db: mmLoopDb(true), hash: '#progress' });
     await renderedOrError(page, '[data-goal-node="g-mmloop"]', 'the goal');
     assert.deepEqual(await page.evaluate(LEARN_ROWS), ['30', '31'], 'both rows — they used to vanish');
     assert.deepEqual(realErrors(page), []);
@@ -16339,7 +16363,14 @@ test('browser suites', skipUnlessChrome, async t => {
 
   await t.test('LOOP MIND MAPS: the Mind Maps tab draws a parent cycle once', async tc => {
     const page = await openHere(tc, 'progress.html', { db: mmLoopDb(false), hash: '#mindmaps' });
-    await renderedOrError(page, '[data-mm-badge-stage="31"]', "the cycle's second mind map in the tree");
+    /* The tab was a parent/child tree, which is what walked the cycle. It is
+       one flat list since the tabs were grouped, so there is no walk left to
+       loop — and all three are still there, once each. */
+    await renderedOrError(page, '[data-mm-badge-stage="31"]', "the cycle's second mind map in the list");
+    assert.deepEqual((await page.evaluate(function () {
+      return Array.prototype.map.call(document.querySelectorAll('[data-learn-mm]'),
+        function (e) { return e.getAttribute('data-learn-mm'); });
+    })).sort(), ['30', '31', '32'], 'Root, One and Two, each drawn once');
     assert.deepEqual(realErrors(page), []);
   });
 
@@ -16361,7 +16392,7 @@ test('browser suites', skipUnlessChrome, async t => {
   };
 
   await t.test('LOOP PICKER: "link existing task" leaves out a task\'s own ancestors', async tc => {
-    const page = await openHere(tc, 'progress.html', { db: pickDb() });
+    const page = await openHere(tc, 'progress.html', { db: pickDb(), hash: '#progress' });
     await renderedOrError(page, '[data-link-task-open="pk-b"]', "Pick B's link button");
     await page.evaluate(CLICK_SEL, '[data-link-task-open="pk-b"]');
     const picks = await page.waitFor(function (f) {
@@ -16373,7 +16404,7 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('LOOP PICKER: "link sub-goal" leaves out the goal a sub-goal sits in', async tc => {
-    const page = await openHere(tc, 'progress.html', { db: pickDb() });
+    const page = await openHere(tc, 'progress.html', { db: pickDb(), hash: '#progress' });
     await renderedOrError(page, '[data-link-goal-open="sg-y"]', "Sub Y's link button");
     await page.evaluate(CLICK_SEL, '[data-link-goal-open="sg-y"]');
     const picks = await page.waitFor(function (f) {
@@ -17506,7 +17537,7 @@ test('browser suites', skipUnlessChrome, async t => {
     assert.deepEqual(await page.evaluate(function (sel) {
       return Array.prototype.map.call(document.querySelectorAll(sel + '[title]'), function (e) { return e.getAttribute('title'); })
         .filter(function (t) { return /\d{4}-\d{2}-\d{2}/.test(t); });
-    }, MS), ['2026-03-01 → 2026-03-05 — dates are set in Progress → Milestones', '2026-03-01 → 2026-03-05'],
+    }, MS), ['2026-03-01 → 2026-03-05 — dates are set in Schedule → ▲ Project → Milestones', '2026-03-01 → 2026-03-05'],
       'what the dates are is still one hover away, on ⚑ and on the late label');
     assert.match(await page.evaluate(function (sel) { return document.querySelector(sel).textContent; }, MS + '[data-proj-ms-label]'),
       /^OVERDUE · /, 'and the lateness they cause still shows');
@@ -17931,8 +17962,8 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
-  await t.test('PROJECTS: Progress\'s ↗ Projects opens the goal\'s page, and a sub-goal row has the same link', async () => {
-    const prog = await open('progress.html', { db: PROJ_SEED() });
+  await t.test('PROJECTS: the goal tree\'s ↗ Projects opens the goal\'s page, and a sub-goal row has the same link', async () => {
+    const prog = await open('progress.html', { db: PROJ_SEED(), hash: '#progress' });
     try {
       await waitMounted(prog, 'progress.html');
       await prog.waitFor(function () { return !!document.querySelector('[data-goal-projects-link="pg-1"]'); }, { message: 'the ↗ Projects button' });
@@ -17998,8 +18029,8 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.close();
   });
 
-  await t.test('PROJECTS: Progress draws a 📄 chip on a goal with pages, and none on one without', async () => {
-    const page = await open('progress.html', { db: PROJ_SEED() });
+  await t.test('PROJECTS: the goal tree draws a 📄 chip on a goal with pages, and none on one without', async () => {
+    const page = await open('progress.html', { db: PROJ_SEED(), hash: '#progress' });
     await waitMounted(page, 'progress.html');
     await page.waitFor(function () { return !!document.querySelector('[data-goal-doc-chip]'); },
       { message: 'a goal row\'s 📄 chip' });
@@ -19461,7 +19492,7 @@ test('browser suites', skipUnlessChrome, async t => {
       await page.evaluate(function () { location.hash = 'files'; return true; });
       await page.waitFor(HAS_SEL, { args: ['[data-files-view]'], message: 'FILES mounted' });
       const got = (await page.evaluate(LOADED)).map(n => n.split('/').pop()).sort();
-      assert.deepEqual(got, ['file-store.js?v=2', 'files-view.js?v=3'],
+      assert.deepEqual(got, ['file-store.js?v=2', 'files-view.js?v=4'],
         'exactly the two scripts, and no PDF.js, Markdown renderer or Google sign-in until one is needed');
       // FILES preloads Google's sign-in when Drive is set up, and the shipped
       // client id is real; open() blanks it, so nothing here may reach Google
@@ -19477,7 +19508,7 @@ test('browser suites', skipUnlessChrome, async t => {
     for (const p of PAGES.filter(p => p !== 'true-storage.html')) {
       const src = fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
       assert.doesNotMatch(src, /file-store\.js|files-view\.js/, p + ' never loads the FILES code');
-      if (p === 'sir-ks02.html') assert.match(src, /<script src="scripts\/files-core\.js\?v=3"><\/script>/, 'KS02 reads file names through files-core.js');
+      if (p === 'sir-ks02.html') assert.match(src, /<script src="scripts\/files-core\.js\?v=4"><\/script>/, 'KS02 reads file names through files-core.js');
       else assert.doesNotMatch(src, /files-core\.js/, p + ' never loads files-core.js');
     }
   });
@@ -20024,10 +20055,10 @@ test('browser suites', skipUnlessChrome, async t => {
       timeout: 30000, message: 'PDF.js drew page 1 (CDN), under its marks layer' });
     else await page.waitFor(HAS_SEL, { args: [IMG1], message: 'the image, under its marks layer' });
   };
-  const openMarked = async ({ files = MARK_RECS(), viewport = FILES_DESK, view = 'm-pdf' } = {}) => {
+  const openMarked = async ({ files = MARK_RECS(), viewport = FILES_DESK, view = 'm-pdf', bytes = FILES_PDF } = {}) => {
     const page = await openFiles({ files, viewport });
     const sums = {
-      pdf: await page.evaluate(MARK_KEEP, 'm-pdf', 'pdf', FILES_PDF, MARK_SHA.toString()),
+      pdf: await page.evaluate(MARK_KEEP, 'm-pdf', 'pdf', bytes, MARK_SHA.toString()),
       png: await page.evaluate(MARK_KEEP, 'm-png', 'png', '', MARK_SHA.toString())
     };
     if (view) await markOpen(page, view);
@@ -20065,6 +20096,62 @@ test('browser suites', skipUnlessChrome, async t => {
     }, { args: [which, on], message: '⟨' + which + '⟩ ' + (on ? 'on' : 'off') });
   };
   const near = (a, b, tol, message) => assert.ok(Math.abs(a - b) <= tol, message + ' (' + a + ' vs ' + b + ')');
+  /* The pages panel (2026-11-15). A six-page PDF with real TEXT — Helvetica,
+     14pt, at most three lines a page — built here so it is synthetic. "safe"
+     occurs 6 times, on pages 1 (twice), 2, 3 (twice) and 6. */
+  const FILES_PDF_TEXT = (() => {
+    const pages = [
+      ['Chemical safety course', 'Read the Safety Data Sheet', 'before any lab work.'],
+      ['Policy and structure', 'The safety centre reports', 'to the university.'],
+      ['Accident pyramid', 'Unsafe condition', 'Unsafe act'],
+      ['Protective equipment', 'Goggles and gloves'],
+      ['Waste handling', 'Label every bottle'],
+      ['Emergency numbers', 'Stay safe and call for help']
+    ];
+    const objs = ['<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [' + pages.map((_, i) => (4 + i * 2) + ' 0 R').join(' ') + '] /Count ' + pages.length + ' >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+    pages.forEach((lines, i) => {
+      const stream = 'BT /F1 14 Tf 24 350 Td ' + lines.map(l => '(' + l + ') Tj 0 -22 Td').join(' ') + ' ET';
+      objs.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << /Font << /F1 3 0 R >> >> /Contents ' + (5 + i * 2) + ' 0 R >>');
+      objs.push('<< /Length ' + stream.length + ' >>\nstream\n' + stream + '\nendstream');
+    });
+    let out = '%PDF-1.4\n';
+    const offs = [];
+    objs.forEach((o, i) => { offs.push(out.length); out += (i + 1) + ' 0 obj\n' + o + '\nendobj\n'; });
+    const xref = out.length;
+    out += 'xref\n0 ' + (objs.length + 1) + '\n0000000000 65535 f \n' +
+      offs.map(n => String(n).padStart(10, '0') + ' 00000 n \n').join('');
+    return out + 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+  })();
+  const pdfAt = (page, text) => page.waitFor(function (t) { var e = document.querySelector('[data-files-pdf-at]'); return !!e && e.textContent === t; },
+    { args: [text], message: text });
+  // Open ▦ Pages if it is shut, and choose one of its four lists.
+  const pagesList = async (page, kind) => {
+    if (!(await page.evaluate(HAS_SEL, '[data-files-pages]'))) await page.evaluate(CLICK_SEL, '[data-files-pages-toggle]');
+    await page.waitFor(HAS_SEL, { args: ['[data-files-pages] [data-files-scope]'], message: 'the pages panel' });
+    await page.evaluate(CLICK_SEL, '[data-files-scope]');
+    await page.waitFor(HAS_SEL, { args: ['[data-files-scope-menu] [data-files-scope-item="' + kind + '"]'], message: 'the menu of lists' });
+    await page.evaluate(CLICK_SEL, '[data-files-scope-item="' + kind + '"]');
+    await page.waitFor(function (k) {
+      return !document.querySelector('[data-files-scope-menu]') && !!document.querySelector('[data-files-scope="' + k + '"]') &&
+        !document.querySelector('[data-files-outline-back]');
+    }, { args: [kind], message: 'the ' + kind + ' list' });
+  };
+  const PAGES_THUMBS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-files-pages] [data-files-thumb]'), function (e) { return Number(e.getAttribute('data-files-thumb')); });
+  };
+  const PAGES_COUNT = function () { var e = document.querySelector('[data-files-pages] [data-files-find-count]'); return e ? e.textContent : null; };
+  const pagesShow = (page, thumbs, count, message) => page.waitFor(function (want, c) {
+    var e = document.querySelector('[data-files-pages] [data-files-find-count]');
+    var got = Array.prototype.map.call(document.querySelectorAll('[data-files-pages] [data-files-thumb]'), function (x) { return Number(x.getAttribute('data-files-thumb')); });
+    return !!e && e.textContent === c && e.getAttribute('data-done') === 'true' && JSON.stringify(got) === JSON.stringify(want);
+  }, { args: [thumbs, count], message: message + ' — ' + count + ' ' + JSON.stringify(thumbs) });
+  const TEXT_AT = function (sel) { var e = document.querySelector(sel); return e ? e.textContent : null; };
+  const VALUE_AT = function (sel) { var e = document.querySelector(sel); return e ? e.value : null; };
+  const PRESSED = function (sel) { var e = document.querySelector(sel); return e ? e.getAttribute('aria-pressed') : null; };
+  const pressKey = (page, key, vk) => page.session.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code: key, windowsVirtualKeyCode: vk })
+    .then(() => page.session.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key, windowsVirtualKeyCode: vk }));
 
   await t.test('FILES marks: with 🖍 on, a mouse draws on PDF page 1 — only the record\'s `highlights` key is written; the file\'s bytes and Drive are untouched', async () => {
     const { page, sums } = await openMarked();
@@ -20251,7 +20338,7 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
-  await t.test('FILES pins: pin page 2 as "Results", jump to it from the list, rename it; deleting asks, Cancel is byte-identical, the last pin deletes the key', async () => {
+  await t.test('FILES pins: pin page 2 as "Results", jump to it from the Outline, rename it; deleting asks, Cancel is byte-identical, the last pin deletes the key', async () => {
     const { page } = await openMarked();
     try {
       assert.equal(await page.evaluate(MARK_AT), 'Page 1 of 2');
@@ -20278,12 +20365,16 @@ test('browser suites', skipUnlessChrome, async t => {
         var f = document.querySelector('[data-files-pdf-page="2"] [data-files-pin-flag]');
         return f && f.textContent === '📌 Results';
       }, { message: 'page 2 flagged' });
-      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-pins]').textContent; }), 'Pins (1)');
+      assert.equal('pageEnd' in pin, false, 'one page: no pageEnd');
+      // the pins are the panel's Outline (▦ Pages), not a list of their own
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pins]'), false, 'the old Pins button is gone');
+      await pagesList(page, 'outline');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="' + pin.id + '"]'], message: 'the pin, in the Outline' });
+      assert.equal(await page.evaluate(PAGES_COUNT), '1 pin');
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-pin-row="' + pin.id + '"] [data-files-pin-range]'), 'p. 2');
 
       await page.evaluate(function () { document.querySelector('[data-files-viewer] [data-files-scroll]').scrollTop = 0; return true; });
       await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 1 of 2'; }, { message: 'back on page 1' });
-      await page.evaluate(CLICK_SEL, '[data-files-pins]');
-      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="' + pin.id + '"]'], message: 'the pin list' });
       await page.evaluate(CLICK_SEL, '[data-files-pin-jump="' + pin.id + '"]');
       await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 of 2'; }, { message: 'the jump' });
       await sleep(200);
@@ -20293,13 +20384,12 @@ test('browser suites', skipUnlessChrome, async t => {
         return document.querySelector('[data-files-pdf-page="2"]').getBoundingClientRect().top - sc.getBoundingClientRect().top;
       });
       assert.ok(gap >= 0 && gap <= 20, 'page 2 is at the top of the pane (' + gap + 'px)');
-      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pin-list]'), false, 'the list closed');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pages="side"] [data-files-pin-list]'), true, 'beside the page, the list stays open');
 
-      await page.evaluate(CLICK_SEL, '[data-files-pins]');
-      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-rename="' + pin.id + '"]'], message: 'the list, to rename' });
       await page.evaluate(CLICK_SEL, '[data-files-pin-rename="' + pin.id + '"]');
       await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="pin-rename"]'], message: 'the rename dialog' });
       assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-dialog-input]').value; }), 'Results');
+      assert.deepEqual([await page.evaluate(VALUE_AT, '[data-files-pin-from]'), await page.evaluate(VALUE_AT, '[data-files-pin-to]')], ['2', '2'], 'and its pages');
       const raw2 = await page.evaluate(FILES_RAW);
       await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', 'Results, final');
       await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
@@ -20309,7 +20399,6 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.ok(pin2.updatedAt >= pin.updatedAt);
       assert.equal(page.dialogs.length, 0, 'pinning and renaming ask nothing');
 
-      await page.evaluate(CLICK_SEL, '[data-files-pins]');
       await page.waitFor(HAS_SEL, { args: ['[data-files-pin-delete="' + pin.id + '"]'], message: 'the list again' });
       const raw3 = await page.evaluate(FILES_RAW);
       page.rejectDialogs = true;
@@ -20325,7 +20414,8 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.equal('pins' in gone, false, 'the last pin DELETES the key');
       assert.deepEqual(gone, before, 'the record is as it was before the pin');
       assert.equal(await page.evaluate(HAS_SEL, '[data-files-pin-flag]'), false, 'the flag is gone');
-      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-pins]').textContent; }), 'Pins (0)');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-empty]'], message: 'the Outline says there are no pins' });
+      assert.equal(await page.evaluate(PAGES_COUNT), '0 pins');
       assert.deepEqual(realErrors(page), []);
     } finally { page.rejectDialogs = false; await page.close(); }
   });
@@ -20403,7 +20493,7 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
-  await t.test('FILES marks (phone): the viewer\'s toolbar wraps rather than scrolling sideways; Pins opens as a bottom sheet', async () => {
+  await t.test('FILES marks (phone): the viewer\'s toolbar wraps rather than scrolling sideways; ▦ Pages opens full-screen, and closes on a jump and on Close', async () => {
     const { page } = await openMarked({ viewport: PHONE,
       files: MARK_RECS({ pdf: { pins: [{ id: 'pn-1', page: 2, name: 'Results', createdAt: 5, updatedAt: 5 }] } }) });
     try {
@@ -20416,21 +20506,626 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.ok(w.doc <= w.vw, 'no sideways scroll (' + w.doc + ' > ' + w.vw + ')');
       assert.ok(w.bar <= w.barW && w.out === 0, 'every tool is on screen (' + JSON.stringify(w) + ')');
       assert.ok(w.swatch >= 24, 'swatches are finger-sized (' + w.swatch + 'px)');
-      await page.evaluate(CLICK_SEL, '[data-files-pins]');
-      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="pn-1"]'], message: 'the pin sheet' });
-      const sheet = await page.evaluate(function () {
-        var s = document.querySelector('[data-files-pin-list]'), r = s.getBoundingClientRect();
-        return { pos: getComputedStyle(s).position, left: r.left, right: r.right, bottom: r.bottom, vw: innerWidth, vh: innerHeight };
+      const rail = await page.evaluate(function () {
+        var r = document.querySelector('[data-files-rail]').getBoundingClientRect(), b = document.querySelector('[data-files-rail-page]').getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: b.width, h: b.height, vw: innerWidth, vh: innerHeight };
       });
-      assert.deepEqual([sheet.pos, sheet.left, sheet.right, sheet.bottom], ['fixed', 0, sheet.vw, sheet.vh], 'a full-width sheet on the bottom edge');
+      assert.ok(rail.left > rail.vw / 2 && rail.right <= rail.vw && rail.top > 0 && rail.bottom < rail.vh, 'the page rail is on the right edge, on screen (' + JSON.stringify(rail) + ')');
+      assert.ok(rail.w >= 28 && rail.h >= 28, 'and its number is finger-sized');
+      await pagesList(page, 'outline');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="pn-1"]'], message: 'the Outline' });
+      const sheet = await page.evaluate(function () {
+        var s = document.querySelector('[data-files-pages]'), r = s.getBoundingClientRect(), c = document.querySelector('[data-files-pages-close]').getBoundingClientRect();
+        return { mode: s.getAttribute('data-files-pages'), pos: getComputedStyle(s).position, left: r.left, right: r.right, top: r.top, bottom: r.bottom,
+          closeRight: c.right, closeTop: c.top, vw: innerWidth, vh: innerHeight };
+      });
+      assert.deepEqual([sheet.mode, sheet.pos, sheet.left, sheet.right, sheet.top], ['full', 'fixed', 0, sheet.vw, 0], 'a phone has no side panel: it covers the screen');
+      assert.ok(sheet.bottom <= sheet.vh && sheet.bottom > sheet.vh * 0.75, 'down to the tab bar (' + sheet.bottom + ' of ' + sheet.vh + ')');
+      assert.ok(sheet.closeRight <= sheet.vw && sheet.closeTop >= 0, 'with Close on screen');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pages-expand]'), false, 'and nothing to expand to');
+      // the page's own handle hangs down the top centre of the screen; Find must sit clear of it
+      assert.equal(await page.evaluate(function () {
+        var box = document.querySelector('.fdir-find-box'), r = box.getBoundingClientRect();
+        var hit = document.elementFromPoint(r.left + r.width / 2, r.top + 3);
+        return !!hit && box.contains(hit);
+      }), true, 'nothing covers the Find box');
       await page.evaluate(CLICK_SEL, '[data-files-pin-jump="pn-1"]');
       await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 of 2'; }, { message: 'the jump' });
-      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pin-list]'), false, 'the sheet closed');
-      await page.evaluate(CLICK_SEL, '[data-files-pins]');
-      await page.evaluate(CLICK_SEL, '[data-files-pin-backdrop]');
-      await page.waitFor(function () { return !document.querySelector('[data-files-pin-list]'); }, { message: 'the backdrop closes it' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pages]'), false, 'the panel closed on the jump');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-toggle]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="full"] [data-files-pin-list]'], message: 'reopened on the list it was left on' });
+      await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-pages]'); }, { message: 'Close closes it' });
       assert.deepEqual(realErrors(page), []);
     } finally { await page.close(); }
+  });
+  // ── FILES: the page rail, the pages panel, bookmarks, pin ranges, the finder, text and pen marks, ink on a note ──
+  const RAIL = function () {
+    var q = function (x) { return document.querySelector('[data-files-rail] ' + x); };
+    return [q('[data-files-rail-page]').textContent, q('[data-files-rail-total]').textContent, q('[data-files-rail-prev]').disabled, q('[data-files-rail-next]').disabled];
+  };
+  const PAGE_GAP = function (n) {
+    var sc = document.querySelector('[data-files-viewer] [data-files-scroll]');
+    return document.querySelector('[data-files-pdf-page="' + n + '"]').getBoundingClientRect().top - sc.getBoundingClientRect().top;
+  };
+
+  await t.test('FILES pages: the rail steps a page at a time; its number opens a pad that goes to the page typed and refuses one the PDF does not have; nothing is written', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_TEXT });
+    try {
+      const raw = await page.evaluate(FILES_RAW);
+      await pdfAt(page, 'Page 1 of 6');
+      assert.deepEqual(await page.evaluate(RAIL), ['1', '6', true, false], 'page 1 of 6: nothing before it');
+      await page.evaluate(CLICK_SEL, '[data-files-rail-next]');
+      await pdfAt(page, 'Page 2 of 6');
+      const gap = await page.evaluate(PAGE_GAP, 2);
+      assert.ok(gap >= 0 && gap <= 20, 'page 2 is at the top of the pane (' + gap + 'px)');
+      assert.deepEqual(await page.evaluate(RAIL), ['2', '6', false, false]);
+
+      await page.evaluate(CLICK_SEL, '[data-files-rail-page]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pad] [data-files-pad-go]'], message: 'the pad' });
+      assert.deepEqual(await page.evaluate(function () { var g = document.querySelector('[data-files-pad-go]'); return [g.disabled, g.textContent]; }), [true, 'Go'], 'nothing typed: nowhere to go');
+      const pad = await page.evaluate(function () {
+        var r = document.querySelector('[data-files-pad]').getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, vw: innerWidth, vh: innerHeight };
+      });
+      assert.ok(pad.left >= 0 && pad.right <= pad.vw && pad.top >= 0 && pad.bottom <= pad.vh, 'the pad is on screen (' + JSON.stringify(pad) + ')');
+      await page.evaluate(CLICK_SEL, '[data-files-pad-key="4"]');
+      await page.waitFor(function () { var g = document.querySelector('[data-files-pad-go]'); return !g.disabled && g.textContent === 'Go to page 4'; }, { message: 'the pad\'s own key typed 4' });
+      await page.evaluate(CLICK_SEL, '[data-files-pad-go]');
+      await pdfAt(page, 'Page 4 of 6');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pad]'), false, 'the pad closed');
+      const gap4 = await page.evaluate(PAGE_GAP, 4);
+      assert.ok(gap4 >= 0 && gap4 <= 20, 'page 4 is at the top of the pane (' + gap4 + 'px)');
+
+      await page.evaluate(CLICK_SEL, '[data-files-rail-page]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pad]'], message: 'the pad again' });
+      await page.evaluate(CLICK_SEL, '[data-files-pad-key="9"]');
+      await page.waitFor(function () { var g = document.querySelector('[data-files-pad-go]'); return g.disabled && g.textContent === 'No page 9'; }, { message: 'page 9 of 6 is refused' });
+      await page.evaluate(CLICK_SEL, '[data-files-pad-key="back"]');
+      await page.waitFor(function () { return document.querySelector('[data-files-pad-input]').value === ''; }, { message: '⌫ takes the digit back' });
+      // a laptop types into it: the field has the focus, letters are dropped, Enter goes
+      assert.equal(await page.evaluate(function () { return document.activeElement === document.querySelector('[data-files-pad-input]'); }), true, 'the field has the focus');
+      await page.session.send('Input.insertText', { text: 'p6' });
+      await page.waitFor(function () { return document.querySelector('[data-files-pad-input]').value === '6'; }, { message: 'only the digit is kept' });
+      await pressKey(page, 'Enter', 13);
+      await pdfAt(page, 'Page 6 of 6');
+      assert.deepEqual(await page.evaluate(RAIL), ['6', '6', false, true], 'the last page: nothing after it');
+      await page.evaluate(CLICK_SEL, '[data-files-rail-page]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pad]'], message: 'the pad a third time' });
+      await pressKey(page, 'Escape', 27);
+      await page.waitFor(function () { return !document.querySelector('[data-files-pad]'); }, { message: 'Escape closes it' });
+      await page.evaluate(CLICK_SEL, '[data-files-rail-prev]');
+      await pdfAt(page, 'Page 5 of 6');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'turning pages writes nothing');
+      assert.equal(page.dialogs.length, 0);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES pages (iPad): the pad\'s own keys type the page — the field never raises the keyboard; a finger on the PDF\'s text scrolls and marks nothing', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_TEXT, viewport: FILES_IPAD });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pdf-page="1"] [data-files-text="ready"]'], timeout: 30000, message: 'page 1\'s text layer' });
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-rail-page]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pad]'], message: 'the pad' });
+      assert.deepEqual(await page.evaluate(function () {
+        var i = document.querySelector('[data-files-pad-input]'), k = document.querySelector('[data-files-pad-key="5"]').getBoundingClientRect();
+        return [i.readOnly, i.getAttribute('inputmode'), document.activeElement === i, k.height >= 36];
+      }), [true, 'none', false, true], 'read-only, unfocused, with finger-sized keys');
+      await page.evaluate(CLICK_SEL, '[data-files-pad-key="5"]');
+      await page.evaluate(CLICK_SEL, '[data-files-pad-go]');
+      await pdfAt(page, 'Page 5 of 6');
+      await page.evaluate(function () { document.querySelector('[data-files-viewer] [data-files-scroll]').scrollTop = 0; return true; });
+      await pdfAt(page, 'Page 1 of 6');
+      const top0 = await page.evaluate(MARK_SCROLL);
+      await markStroke(page, 'touch', PAGE1, [0.3, 0.17], [0.3, 0.05]);
+      await sleep(500);
+      const top1 = await page.evaluate(MARK_SCROLL);
+      assert.ok(top1 > top0, 'a finger that starts on a line of text still scrolls (' + top0 + ' → ' + top1 + ')');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'and nothing was written');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES bookmarks: 🔖 and a thumbnail\'s ribbon write only `bookmarks`; one tap takes one off, asking nothing; the last one gone deletes the key', async () => {
+    const { page, sums } = await openMarked({ bytes: FILES_PDF_TEXT });
+    try {
+      await pdfAt(page, 'Page 1 of 6');
+      const raw = await page.evaluate(FILES_RAW);
+      const other = await page.evaluate(FILES_OTHER);
+      const before = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.equal(await page.evaluate(PRESSED, '[data-files-bookmark-now]'), 'false');
+      await page.evaluate(CLICK_SEL, '[data-files-bookmark-now]');
+      await dirLanded(page, raw, 'the bookmark saved');
+      const rec = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.deepEqual(rec.bookmarks, [1], 'the page being read');
+      const { bookmarks, ...rest } = rec;
+      assert.deepEqual(rest, before, 'only `bookmarks` changed: not updatedAt, not the unknown key');
+      await page.waitFor(function () { return document.querySelector('[data-files-bookmark-now]').getAttribute('aria-pressed') === 'true'; }, { message: '🔖 shows it' });
+
+      await pagesList(page, 'all');
+      await pagesShow(page, [1, 2, 3, 4, 5, 6], '6 pages', 'All pages');
+      assert.deepEqual([await page.evaluate(PRESSED, '[data-files-bookmark="1"]'), await page.evaluate(PRESSED, '[data-files-bookmark="3"]')], ['true', 'false'], 'page 1\'s ribbon is on');
+      const raw2 = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-bookmark="3"]');
+      await dirLanded(page, raw2, 'the ribbon saved');
+      assert.deepEqual((await page.evaluate(FILES_REC, 'm-pdf')).bookmarks, [1, 3]);
+      await pdfAt(page, 'Page 1 of 6');   // a ribbon marks the page; it does not go to it
+
+      await pagesList(page, 'bookmarks');
+      await pagesShow(page, [1, 3], '2 pages', 'the Bookmarks list');
+      const raw3 = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-bookmark="3"]');
+      await dirLanded(page, raw3, 'the bookmark came off');
+      assert.deepEqual((await page.evaluate(FILES_REC, 'm-pdf')).bookmarks, [1]);
+      await pagesShow(page, [1], '1 page', 'and left the list');
+      assert.equal(page.dialogs.length, 0, 'taking a bookmark off asks nothing (a deliberate exclusion: it holds only its page number)');
+
+      const raw4 = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-bookmark-now]');
+      await dirLanded(page, raw4, 'the last bookmark came off');
+      const gone = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.equal('bookmarks' in gone, false, 'the last one gone DELETES the key');
+      assert.deepEqual(gone, before, 'the record is as it was');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages-empty]'], message: 'the empty Bookmarks list says so' });
+      assert.match(await page.evaluate(TEXT_AT, '[data-files-pages-empty]'), /^No bookmarks yet\./);
+      assert.equal(await page.evaluate(FILES_OTHER), other, 'no key but `files` was written');
+      assert.equal(await page.evaluate(MARK_HASH, 'm-pdf', MARK_SHA.toString()), sums.pdf, 'the PDF\'s bytes unchanged');
+      assert.equal(page.dialogs.length, 0);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES pins: a pin covers a RANGE typed as page numbers; a range that cannot be is refused before any write; the Outline lists it and ▤ shows only its pages', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_TEXT });
+    try {
+      await pdfAt(page, 'Page 1 of 6');
+      const raw = await page.evaluate(FILES_RAW);
+      const before = await page.evaluate(FILES_REC, 'm-pdf');
+      await page.evaluate(CLICK_SEL, '[data-files-pin-add]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="pin"]'], message: 'the pin dialog' });
+      const fields = () => page.evaluate(function () {
+        var v = function (x) { return document.querySelector(x).value; }, why = document.querySelector('[data-files-pin-why]');
+        return [v('[data-files-dialog-input]'), v('[data-files-pin-from]'), v('[data-files-pin-to]'), why ? why.textContent : null, document.querySelector('[data-files-dialog-save]').disabled];
+      });
+      assert.deepEqual(await fields(), ['Page 1', '1', '1', null, false], 'the page being read');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pin-from]', '2');
+      assert.deepEqual(await fields(), ['Page 2', '2', '2', null, false], 'the last page and the name follow the first');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pin-to]', '4');
+      assert.deepEqual(await fields(), ['Pages 2–4', '2', '4', null, false], 'a range, named for it');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pin-to]', '1');
+      assert.deepEqual((await fields()).slice(3), ['The last page can\'t come before the first.', true]);
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pin-to]', '9');
+      assert.deepEqual((await fields()).slice(3), ['A page is a number from 1 to 6.', true]);
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pin-to]', 'x4y');
+      assert.deepEqual((await fields()).slice(2), ['4', null, false], 'only digits are kept');
+      await sleep(150);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'nothing was written while the range could not be');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', ' Chapter one ');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await dirLanded(page, raw, 'the pin saved');
+      const rec = await page.evaluate(FILES_REC, 'm-pdf');
+      const pin = rec.pins[0];
+      assert.deepEqual([rec.pins.length, pin.page, pin.pageEnd, pin.name], [1, 2, 4, 'Chapter one']);
+      const { pins, ...rest } = rec;
+      assert.deepEqual(rest, before, 'only `pins` changed on the record');
+      assert.match(await page.evaluate(FILES_TOAST), /^Pinned pages 2–4 as “Chapter one”\./);
+
+      await page.evaluate(MARK_GOTO, 2);
+      await page.waitFor(function () {
+        var f = document.querySelector('[data-files-pdf-page="2"] [data-files-pin-flag]');
+        return f && f.textContent === '📌 Chapter one · p. 2–4';
+      }, { message: 'its first page flagged, with the range' });
+      assert.equal(await page.evaluate(function () { return document.querySelectorAll('[data-files-pin-flag]').length; }), 1, 'one flag: on the page the range starts at');
+
+      await pagesList(page, 'outline');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-open="' + pin.id + '"]'], message: 'the Outline' });
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-pin-row="' + pin.id + '"] [data-files-pin-range]'), 'p. 2–4');
+      await page.evaluate(CLICK_SEL, '[data-files-pin-open="' + pin.id + '"]');
+      await pagesShow(page, [2, 3, 4], '3 pages', 'only the pin\'s pages');
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-scope-label]'), 'Outline › Chapter one');
+      await page.evaluate(CLICK_SEL, '[data-files-outline-back]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-delete="' + pin.id + '"]'], message: 'back to every pin' });
+
+      const raw2 = await page.evaluate(FILES_RAW);
+      page.rejectDialogs = true;
+      await page.evaluate(CLICK_SEL, '[data-files-pin-delete="' + pin.id + '"]');
+      page.rejectDialogs = false;
+      assert.equal(page.dialogs.length, 1, 'deleting a pin asks');
+      assert.match(page.dialogs[0], /^Delete the pin “Chapter one” on pages 2–4\?/);
+      await sleep(200);
+      assert.equal(await page.evaluate(FILES_RAW), raw2, 'Cancel leaves track_db byte-identical');
+
+      // ✎ changes its pages as well as its name; made one page, pageEnd is DELETED
+      await page.evaluate(CLICK_SEL, '[data-files-pin-rename="' + pin.id + '"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="pin-rename"]'], message: 'the edit dialog' });
+      assert.deepEqual((await fields()).slice(0, 3), ['Chapter one', '2', '4']);
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pin-to]', '2');
+      assert.equal((await fields())[0], 'Chapter one', 'a name the user gave does not follow the pages');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await dirLanded(page, raw2, 'the edit saved');
+      const pin2 = (await page.evaluate(FILES_REC, 'm-pdf')).pins[0];
+      assert.deepEqual([pin2.id, pin2.page, 'pageEnd' in pin2, pin2.name, pin2.createdAt], [pin.id, 2, false, 'Chapter one', pin.createdAt]);
+      assert.ok(pin2.updatedAt >= pin.updatedAt);
+      await page.waitFor(function (id) { var e = document.querySelector('[data-files-pin-row="' + id + '"] [data-files-pin-range]'); return e && e.textContent === 'p. 2'; },
+        { args: [pin.id], message: 'the Outline shows one page' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { page.rejectDialogs = false; await page.close(); }
+  });
+
+  await t.test('FILES find: the finder searches only the pages its list covers — all of them, the bookmarks, one pin\'s range — shows where on the page, and writes nothing', async () => {
+    const files = MARK_RECS({ pdf: { bookmarks: [6, 2], pins: [{ id: 'pn-1', page: 2, pageEnd: 4, name: 'Chapter one', createdAt: 5, updatedAt: 5 }] } });
+    const { page } = await openMarked({ files, bytes: FILES_PDF_TEXT });
+    try {
+      await pdfAt(page, 'Page 1 of 6');
+      const raw = await page.evaluate(FILES_RAW);
+      await pagesList(page, 'all');
+      await pagesShow(page, [1, 2, 3, 4, 5, 6], '6 pages', 'All pages, before a search');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'SAFE');
+      await pagesShow(page, [1, 2, 3, 6], '6 results on 4 pages', 'every page with “safe”, whatever its case');
+      assert.deepEqual(await page.evaluate(function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-files-thumb-count]'), function (e) { return e.getAttribute('data-files-thumb-count') + ':' + e.textContent; });
+      }), ['1:2', '2:1', '3:2', '6:1'], 'each thumbnail says how many');
+      // …and on the page itself: two boxes on page 1, on its first two lines, over the word
+      await page.waitFor(function () { var b = document.querySelector('[data-files-pdf-page="1"] [data-files-find-hits="1"]'); return !!b && b.children.length === 2; },
+        { message: 'two hits boxed on page 1' });
+      const boxes = await page.evaluate(function () {
+        var pg = document.querySelector('[data-files-pdf-page="1"]').getBoundingClientRect();
+        return Array.prototype.map.call(document.querySelector('[data-files-find-hits="1"]').children, function (e) {
+          var r = e.getBoundingClientRect();
+          return [(r.left - pg.left) / pg.width, (r.top - pg.top) / pg.height, r.width / pg.width, r.height / pg.height];
+        });
+      });
+      // 14pt Helvetica on a 300×400 page: line 1's baseline is 50pt down, line 2's 72pt; "safe" is ~4 letters wide
+      assert.ok(boxes[0][1] < 0.125 && boxes[0][1] + boxes[0][3] > 0.105, 'the first on line 1 (' + boxes[0] + ')');
+      assert.ok(boxes[1][1] < 0.18 && boxes[1][1] + boxes[1][3] > 0.16, 'the second on line 2 (' + boxes[1] + ')');
+      boxes.forEach(b => assert.ok(b[2] > 0.05 && b[2] < 0.14 && b[0] > 0.08 && b[0] < 0.5, 'as wide as the word, inside the line (' + b + ')'));
+
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'safety    data');
+      await pagesShow(page, [1], '1 result on 1 page', 'a run of spaces matches one');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'safe');
+
+      await pagesList(page, 'bookmarks');
+      await pagesShow(page, [2, 6], '2 results on 2 pages', 'only the bookmarked pages (2 and 6)');
+      await pagesList(page, 'outline');
+      await pagesShow(page, [2, 3], '3 results on 2 pages', 'only the pinned pages (2–4)');
+      // one pin's range: chosen with ▤ from the list, which shows while nothing is searched
+      await page.evaluate(CLICK_SEL, '[data-files-find-clear]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-open="pn-1"]'], message: 'the pins again' });
+      await page.evaluate(CLICK_SEL, '[data-files-pin-open="pn-1"]');
+      await pagesShow(page, [2, 3, 4], '3 pages', 'the pin\'s pages');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'unsafe');
+      await pagesShow(page, [3], '2 results on 1 page', 'found inside the pin\'s range');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'emergency');
+      await page.waitFor(function () { var e = document.querySelector('[data-files-find-count]'); return e.textContent === 'No results' && e.getAttribute('data-done') === 'true'; },
+        { message: '“emergency” is on page 6, outside the pin' });
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-pages-empty]'), 'Nothing in Outline › Chapter one matches.');
+      await pagesList(page, 'all');
+      await pagesShow(page, [6], '1 result on 1 page', 'the same word, in All pages');
+      // a result is a way to the page; beside the page the panel stays
+      await page.evaluate(CLICK_SEL, '[data-files-thumb-jump="6"]');
+      await pdfAt(page, 'Page 6 of 6');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pdf-page="6"] [data-files-find-hits="6"]'], timeout: 30000, message: 'and the word is boxed there' });
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'searching writes nothing');
+      assert.equal(page.dialogs.length, 0);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES find: a PDF with no typed text says it is probably a scan', async () => {
+    const { page } = await openMarked();
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pdf-page="1"] [data-files-text="none"]'], timeout: 30000, message: 'page 1 has no text to select' });
+      await pagesList(page, 'all');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'a');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages-empty]'], message: 'the search ended' });
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-pages-empty]'), 'This PDF has no typed text to search — it is probably a scan.');
+      assert.equal(await page.evaluate(PAGES_COUNT), 'No results');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES text: selecting a PDF\'s typed text offers Copy and Highlight; Highlight stores one `tool: \'text\'` mark of boxes; the eraser removes it and Undo restores it', async () => {
+    const { page, sums } = await openMarked({ bytes: FILES_PDF_TEXT });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pdf-page="1"] [data-files-text="ready"]'], timeout: 30000, message: 'page 1\'s text layer' });
+      await page.evaluate(function () {
+        window.__clip = [];
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: function (t) { window.__clip.push(String(t)); return Promise.resolve(); } } });
+        return true;
+      });
+      const raw = await page.evaluate(FILES_RAW);
+      const before = await page.evaluate(FILES_REC, 'm-pdf');
+      // with no tool on, the mouse SELECTS: across line 2, "Read the Safety Data Sheet"
+      await markStroke(page, 'mouse', PAGE1, [0.21, 0.17], [0.57, 0.172]);
+      await page.waitFor(HAS_SEL, { args: ['[data-files-sel] [data-files-sel-copy]'], message: 'the offer on a selection' });
+      const picked = await page.evaluate(function () { return String(getSelection()); });
+      assert.match(picked, /afety Dat/, 'the words under the drag are selected (' + JSON.stringify(picked) + ')');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'selecting writes nothing');
+      const pop = await page.evaluate(MARK_BOX, '[data-files-sel]');
+      assert.ok(pop.left >= 0 && pop.left + pop.width <= pop.vw && pop.top >= 0 && pop.top + pop.height <= pop.vh, 'the offer is on screen');
+
+      await page.evaluate(CLICK_SEL, '[data-files-sel-copy]');
+      await page.waitFor(function () { return window.__clip.length === 1; }, { message: 'Copy reached the clipboard' });
+      assert.deepEqual(await page.evaluate(function () { return window.__clip; }), [picked], 'exactly the selected text');
+      assert.match(await page.evaluate(FILES_TOAST), /^Copied\./);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'copying writes nothing');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-sel]'), true, 'the offer stays for a highlight');
+
+      await page.evaluate(CLICK_SEL, '[data-files-sel-color="green"]');
+      await dirLanded(page, raw, 'the highlight saved');
+      const rec = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.equal(rec.highlights.length, 1, 'one line selected: one mark');
+      const hl = rec.highlights[0];
+      assert.deepEqual([hl.page, hl.color, hl.tool, 'pts' in hl, 'w' in hl], [1, 'green', 'text', false, false]);
+      assert.equal(hl.rects.length, 4, 'one line: one box (' + hl.rects + ')');
+      assert.ok(hl.rects.every(v => v >= 0 && v <= 1 && String(v).length <= 6), 'fractions of the page, to 4 decimals (' + hl.rects + ')');
+      near(hl.rects[0], 0.21, 0.03, 'it starts where the drag did');
+      near(hl.rects[0] + hl.rects[2], 0.57, 0.03, 'and ends where it ended');
+      assert.ok(hl.rects[1] < 0.17 && hl.rects[1] + hl.rects[3] > 0.172, 'on line 2');
+      const { highlights, ...rest } = rec;
+      assert.deepEqual(rest, before, 'only `highlights` changed on the record');
+      await page.waitFor(function () { return !document.querySelector('[data-files-sel]') && getSelection().isCollapsed; }, { message: 'the offer and the selection are gone' });
+      await page.waitFor(HAS_SEL, { args: [PAGE1 + ' [data-files-mark="' + hl.id + '"][data-files-mark-kind="text"] rect'], message: 'drawn as a box on the page' });
+      assert.equal(await page.evaluate(function (id) { return getComputedStyle(document.querySelector('[data-files-mark="' + id + '"]')).fill; }, hl.id), 'rgb(134, 239, 172)');
+      const place = await page.evaluate(MARK_PLACE, hl.id);
+      [hl.rects[0], hl.rects[1], hl.rects[0] + hl.rects[2], hl.rects[1] + hl.rects[3]].forEach((v, i) => near(place[i], v, 0.004, 'the box is where it was stored, edge ' + i));
+      assert.equal(await page.evaluate(MARK_HASH, 'm-pdf', MARK_SHA.toString()), sums.pdf, 'the PDF\'s bytes unchanged');
+
+      // with a tool on, the same drag selects nothing: the text layer steps aside
+      await markMode(page, 'erase');
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-pdf-page="1"] .fdir-text').getAttribute('data-off'); }), 'true');
+      const raw2 = await page.evaluate(FILES_RAW);
+      const rec2 = await page.evaluate(FILES_REC, 'm-pdf');
+      await markStroke(page, 'mouse', PAGE1, [0.4, 0.14], [0.4, 0.2]);
+      await dirLanded(page, raw2, 'the erase saved');
+      assert.equal('highlights' in (await page.evaluate(FILES_REC, 'm-pdf')), false, 'the eraser took the text highlight, and the key with it');
+      assert.match(await page.evaluate(FILES_TOAST), /Erased a highlight\.\s*Undo$/);
+      assert.equal(await page.evaluate(function () { return getSelection().isCollapsed; }), true, 'and selected nothing');
+      const raw3 = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-toast-action]');
+      await dirLanded(page, raw3, 'the Undo saved');
+      assert.deepEqual(await page.evaluate(FILES_REC, 'm-pdf'), rec2, 'Undo put back the very mark');
+      assert.equal(page.dialogs.length, 0, 'none of it asks');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES pen: ✒ writes a thin stroke in a pen colour and a tap leaves a dot; the eraser takes it; the Notes list is the pages written on', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_TEXT });
+    try {
+      await pdfAt(page, 'Page 1 of 6');
+      await markMode(page, 'pen');
+      assert.equal(await page.evaluate(PRESSED, '[data-files-mark-draw]'), 'false', 'one tool at a time');
+      assert.deepEqual(await page.evaluate(function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-files-mark-color]'), function (e) { return e.getAttribute('data-files-mark-color') + (e.getAttribute('aria-pressed') === 'true' ? '*' : ''); });
+      }), ['black*', 'red', 'blue', 'green'], 'the swatches are the pen\'s');
+      const raw = await page.evaluate(FILES_RAW);
+      const before = await page.evaluate(FILES_REC, 'm-pdf');
+      await markStroke(page, 'mouse', PAGE1, [0.2, 0.4], [0.6, 0.45]);
+      await dirLanded(page, raw, 'the pen stroke saved');
+      const rec = await page.evaluate(FILES_REC, 'm-pdf');
+      const pen = rec.highlights[0];
+      assert.deepEqual([rec.highlights.length, pen.page, pen.color, pen.tool, pen.w], [1, 1, 'black', 'pen', 0.004]);
+      near(pen.pts[0], 0.2, 0.01, 'it starts where the pointer went down');
+      near(pen.pts[pen.pts.length - 2], 0.6, 0.01, 'and ends where it came up');
+      const { highlights, ...rest } = rec;
+      assert.deepEqual(rest, before, 'only `highlights` changed on the record');
+      await page.waitFor(HAS_SEL, { args: [PAGE1 + ' [data-files-mark="' + pen.id + '"][data-files-mark-kind="pen"]'], message: 'drawn' });
+      assert.equal(await page.evaluate(function (id) { return getComputedStyle(document.querySelector('[data-files-mark="' + id + '"]')).stroke; }, pen.id), 'rgb(17, 24, 39)');
+
+      await page.evaluate(CLICK_SEL, '[data-files-mark-color="red"]');
+      const raw2 = await page.evaluate(FILES_RAW);
+      const b = await page.evaluate(MARK_BOX, PAGE1);
+      const tap = { x: b.left + b.width * 0.5, y: b.top + b.height * 0.3 };
+      await dirMouse(page, 'mouseMoved', tap, 0);
+      await dirMouse(page, 'mousePressed', tap, 1);
+      await dirMouse(page, 'mouseReleased', tap, 0);
+      await dirLanded(page, raw2, 'the dot saved');
+      const dot = (await page.evaluate(FILES_REC, 'm-pdf')).highlights[1];
+      assert.deepEqual([dot.tool, dot.color, dot.pts.length], ['pen', 'red', 4], 'a tap of the pen is a dot');
+      near(dot.pts[0], 0.5, 0.01, 'where it was tapped (x)');
+      near(dot.pts[1], 0.3, 0.01, 'where it was tapped (y)');
+
+      // the Notes list: page 1 alone, its marks drawn on the thumbnail
+      await pagesList(page, 'notes');
+      await pagesShow(page, [1], '1 page', 'the pages written on');
+      await page.waitFor(function () { return document.querySelectorAll('[data-files-thumb="1"] [data-files-thumb-mark]').length === 2; }, { message: 'both marks on the thumbnail' });
+      assert.equal(await page.evaluate(function () { return document.querySelectorAll('[data-files-pdf-page="1"] [data-files-mark]').length; }), 2,
+        'and the page\'s own two are still the page\'s');
+
+      await markMode(page, 'erase');
+      const raw3 = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', PAGE1, [0.4, 0.38], [0.4, 0.48]);
+      await dirLanded(page, raw3, 'the erase saved');
+      assert.deepEqual((await page.evaluate(FILES_REC, 'm-pdf')).highlights.map(x => x.id), [dot.id], 'the stroke crossed went; the dot stayed');
+      assert.match(await page.evaluate(FILES_TOAST), /Erased a pen stroke\.\s*Undo$/);
+      assert.equal(page.dialogs.length, 0);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES pages: thumbnails carry each page\'s marks and ribbon; beside the page the panel stays open on a jump; ⤢ makes it a full-screen grid that closes on one', async () => {
+    const files = MARK_RECS({ pdf: { highlights: MARK_HLS(), bookmarks: [2] } });
+    const { page } = await openMarked({ files, bytes: FILES_PDF_TEXT });
+    try {
+      await pdfAt(page, 'Page 1 of 6');
+      const raw = await page.evaluate(FILES_RAW);
+      await pagesList(page, 'all');
+      await pagesShow(page, [1, 2, 3, 4, 5, 6], '6 pages', 'All pages');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-thumb="1"][data-rendered="true"] canvas'], timeout: 30000, message: 'page 1\'s thumbnail drawn' });
+      assert.deepEqual(await page.evaluate(function () {
+        var n = function (k) { return document.querySelectorAll('[data-files-thumb="' + k + '"] [data-files-thumb-mark]').length; };
+        return [n(1), n(2), n(3), document.querySelector('[data-files-thumb="1"]').getAttribute('data-current'), document.querySelector('[data-files-bookmark="2"]').getAttribute('aria-pressed')];
+      }), [2, 1, 0, 'true', 'true'], 'two marks on page 1, one on page 2, the page being read, page 2\'s ribbon');
+      const side = await page.evaluate(MARK_BOX, '[data-files-pages]');
+      assert.ok(side.width > 200 && side.width < 320 && side.left + side.width <= side.vw + 1, 'a column on the right (' + JSON.stringify(side) + ')');
+      await page.evaluate(CLICK_SEL, '[data-files-thumb-jump="3"]');
+      await pdfAt(page, 'Page 3 of 6');
+      await page.waitFor(function () { return document.querySelector('[data-files-thumb="3"]').getAttribute('data-current') === 'true'; }, { message: 'the thumbnail follows the page' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pages="side"]'), true, 'beside the page, the panel stays');
+
+      await pagesList(page, 'notes');
+      await pagesShow(page, [1, 2], '2 pages', 'Notes: the pages with marks');
+
+      await pagesList(page, 'all');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-expand]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="full"] [data-files-thumb="6"]'], message: 'the full-screen grid' });
+      const full = await page.evaluate(function () {
+        var r = document.querySelector('[data-files-pages]').getBoundingClientRect();
+        var a = document.querySelector('[data-files-thumb="1"]').getBoundingClientRect(), b = document.querySelector('[data-files-thumb="2"]').getBoundingClientRect();
+        return { box: [r.left, r.top, r.right, r.bottom], vw: document.documentElement.clientWidth, vh: innerHeight, sameRow: Math.abs(a.top - b.top) < 2 && b.left > a.right - 1 };
+      });
+      assert.deepEqual(full.box, [0, 0, full.vw, full.vh], 'it covers the window (up to the page\'s own scrollbar)');
+      assert.equal(full.sameRow, true, 'pages side by side, as a grid');
+      await page.evaluate(CLICK_SEL, '[data-files-thumb-jump="5"]');
+      await pdfAt(page, 'Page 5 of 6');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pages]'), false, 'full-screen, a jump closes it');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-toggle]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="side"]'], message: '▦ opens it beside the page again' });
+      await page.evaluate(CLICK_SEL, '[data-files-pages-expand]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="full"]'], message: 'full-screen again' });
+      await page.evaluate(CLICK_SEL, '[data-files-pages-expand]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="side"]'], message: '⤡ brings the side panel back' });
+      await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-pages]'); }, { message: '✕ closes it' });
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'looking through the pages writes nothing');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  const NOTE1 = '[data-files-note-page="1"] [data-files-marks="1"]';
+  const NOTE_TEXT = '# Lab notes\n\nA first paragraph.\n\n- one\n- two\n';
+  const noteRecs = () => MARK_RECS().map(r => r.id === 'm-note' ? Object.assign({}, r, { text: NOTE_TEXT, laterKey: 'kept' }) : r);
+
+  await t.test('FILES notes: 🖍 and ✒ draw on a note\'s Preview, a white sheet of one width; only the note\'s `highlights` is written — never its text or updatedAt; ⌫ and Undo work; deleting says the ink goes', async () => {
+    const page = await openFiles({ files: noteRecs() });
+    try {
+      await filesOpen(page, 'm-note', '[data-files-viewer="m-note"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-paper] [data-files-preview="html"]'], timeout: 30000, message: 'the Preview, on its paper' });
+      await page.waitFor(HAS_SEL, { args: [NOTE1], message: 'page 1 of the paper, under its marks layer' });
+      const sheet = await page.evaluate(function () {
+        var e = document.querySelector('[data-files-paper]'), r = e.getBoundingClientRect();
+        return [Math.round(r.width), e.getAttribute('data-files-paper-pages'), getComputedStyle(e).backgroundColor];
+      });
+      assert.deepEqual(sheet, [720, '1', 'rgb(255, 255, 255)'], 'one sheet, 720px wide, white in either appearance');
+      const raw = await page.evaluate(FILES_RAW);
+      const other = await page.evaluate(FILES_OTHER);
+      const before = await page.evaluate(FILES_REC, 'm-note');
+      await markStroke(page, 'mouse', NOTE1, [0.2, 0.1], [0.6, 0.1]);
+      await sleep(300);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'with no tool on, a mouse draws nothing');
+
+      await markMode(page, 'draw');
+      await markStroke(page, 'mouse', NOTE1, [0.2, 0.1], [0.6, 0.1]);
+      await dirLanded(page, raw, 'the highlight saved');
+      const rec = await page.evaluate(FILES_REC, 'm-note');
+      const hl = rec.highlights[0];
+      assert.deepEqual([rec.highlights.length, hl.page, hl.color, hl.w, 'tool' in hl], [1, 1, 'yellow', 0.02, false]);
+      near(hl.pts[0], 0.2, 0.01, 'x, as a fraction of the sheet');
+      near(hl.pts[1], 0.1, 0.01, 'y, as a fraction of its first page');
+      const { highlights, ...rest } = rec;
+      assert.deepEqual(rest, before, 'only `highlights` changed: the text, updatedAt and the unknown key are as they were');
+      await page.waitFor(HAS_SEL, { args: [NOTE1 + ' [data-files-mark="' + hl.id + '"]'], message: 'drawn on the paper' });
+
+      await markMode(page, 'pen');
+      const raw2 = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', NOTE1, [0.2, 0.2], [0.5, 0.24]);
+      await dirLanded(page, raw2, 'the pen stroke saved');
+      const rec2 = await page.evaluate(FILES_REC, 'm-note');
+      assert.deepEqual(rec2.highlights.map(x => x.tool || 'highlighter'), ['highlighter', 'pen']);
+      assert.deepEqual([rec2.text, rec2.updatedAt], [NOTE_TEXT, 1]);
+
+      // Edit has no ink and no tools; back in Preview the ink is where it was
+      const place = await page.evaluate(function (id) {
+        var a = document.querySelector('[data-files-mark="' + id + '"]').getBoundingClientRect(), b = document.querySelector('[data-files-paper]').getBoundingClientRect();
+        return [(a.left - b.left) / b.width, (a.top - b.top) / b.width];
+      }, hl.id);
+      const rawModes = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-mode="edit"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-editor]'], message: 'the editor' });
+      assert.deepEqual([await page.evaluate(HAS_SEL, '[data-files-tools]'), await page.evaluate(HAS_SEL, '[data-files-marks]')], [false, false], 'no tools and no ink while editing');
+      await page.evaluate(CLICK_SEL, '[data-files-mode="preview"]');
+      await page.waitFor(HAS_SEL, { args: [NOTE1 + ' [data-files-mark="' + hl.id + '"]'], message: 'the ink, back in Preview' });
+      const again = await page.evaluate(function (id) {
+        var a = document.querySelector('[data-files-mark="' + id + '"]').getBoundingClientRect(), b = document.querySelector('[data-files-paper]').getBoundingClientRect();
+        return [(a.left - b.left) / b.width, (a.top - b.top) / b.width];
+      }, hl.id);
+      place.forEach((v, i) => near(again[i], v, 0.003, 'where it was, edge ' + i));
+      assert.equal(await page.evaluate(FILES_RAW), rawModes, 'switching modes writes nothing');
+
+      await markMode(page, 'erase');
+      const raw3 = await page.evaluate(FILES_RAW);
+      await markStroke(page, 'mouse', NOTE1, [0.35, 0.18], [0.35, 0.26]);
+      await dirLanded(page, raw3, 'the erase saved');
+      assert.deepEqual((await page.evaluate(FILES_REC, 'm-note')).highlights.map(x => x.id), [hl.id], 'the pen stroke went');
+      assert.match(await page.evaluate(FILES_TOAST), /Erased a pen stroke\.\s*Undo$/);
+      const raw4 = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-toast-action]');
+      await dirLanded(page, raw4, 'the Undo saved');
+      assert.deepEqual(await page.evaluate(FILES_REC, 'm-note'), rec2, 'Undo put back the very record');
+      assert.equal(await page.evaluate(FILES_OTHER), other, 'no key but `files` was written');
+      assert.equal(page.dialogs.length, 0, 'none of it asks');
+
+      const raw5 = await page.evaluate(FILES_RAW);
+      page.rejectDialogs = true;
+      await page.evaluate(CLICK_SEL, '[data-files-delete]');
+      page.rejectDialogs = false;
+      assert.equal(page.dialogs.length, 1, 'deleting the note asks');
+      assert.match(page.dialogs[0], /\nIts 1 highlight and 1 pen stroke go with it\.(\n|$)/);
+      await sleep(200);
+      assert.equal(await page.evaluate(FILES_RAW), raw5, 'Cancel leaves track_db byte-identical');
+      assert.deepEqual(realErrors(page), []);
+    } finally { page.rejectDialogs = false; await page.close(); }
+  });
+
+  await t.test('FILES notes (phone): a note with no ink reads as flowing text; a tool turned on lays it on the sheet, scaled to the screen with no sideways scroll', async () => {
+    const page = await openFiles({ files: noteRecs(), viewport: PHONE });
+    try {
+      await filesOpen(page, 'm-note', '[data-files-viewer="m-note"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-viewer="m-note"] [data-files-preview="html"]'], timeout: 30000, message: 'the Preview' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-paper]'), false, 'no ink, no tool: plain flowing text');
+      const raw = await page.evaluate(FILES_RAW);
+      await markMode(page, 'draw');
+      await page.waitFor(HAS_SEL, { args: [NOTE1], message: 'the sheet, under its marks layer' });
+      const fit = await page.evaluate(function () {
+        var r = document.querySelector('[data-files-paper]').getBoundingClientRect();
+        return { left: r.left, right: r.right, vw: innerWidth, doc: document.documentElement.scrollWidth };
+      });
+      assert.ok(fit.left >= 0 && fit.right <= fit.vw && fit.doc <= fit.vw, 'the 720px sheet is scaled to fit (' + JSON.stringify(fit) + ')');
+      await markStroke(page, 'touch', NOTE1, [0.2, 0.1], [0.6, 0.11]);
+      await dirLanded(page, raw, 'the finger stroke saved');
+      const hl = (await page.evaluate(FILES_REC, 'm-note')).highlights[0];
+      near(hl.pts[0], 0.2, 0.015, 'stored in the sheet\'s own fractions, whatever the scale (x)');
+      near(hl.pts[hl.pts.length - 2], 0.6, 0.015, '(end x)');
+      await markMode(page, 'draw', false);
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-paper] [data-files-mark="' + hl.id + '"]'), true, 'with ink on it, the note stays on its sheet');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES marks: deleting a file counts its pen strokes and bookmarks with its highlights and pins', async () => {
+    const files = MARK_RECS({ pdf: {
+      highlights: [MARK_HLS()[0], { id: 'pen-1', page: 1, color: 'black', tool: 'pen', w: 0.004, pts: [0.2, 0.5, 0.4, 0.5], createdAt: 6 },
+        { id: 'tx-1', page: 2, color: 'green', tool: 'text', rects: [0.1, 0.2, 0.3, 0.03], createdAt: 7 }],
+      pins: [{ id: 'pn-1', page: 1, pageEnd: 2, name: 'Both', createdAt: 5, updatedAt: 5 }], bookmarks: [1, 2] } });
+    const { page } = await openMarked({ files, view: null });
+    try {
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-select]');
+      await page.evaluate(CLICK_SEL, '[data-files-tick="m-pdf"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-sel-delete]'], message: 'one ticked' });
+      page.rejectDialogs = true;
+      await page.evaluate(CLICK_SEL, '[data-files-sel-delete]');
+      page.rejectDialogs = false;
+      assert.match(page.dialogs[0], /\nIts 2 highlights, 1 pen stroke, 1 pin and 2 bookmarks go with it\.(\n|$)/);
+      await sleep(200);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'Cancel leaves track_db byte-identical');
+      assert.deepEqual(realErrors(page), []);
+    } finally { page.rejectDialogs = false; await page.close(); }
   });
   const FILES_SET_ANY = function (setterSrc, sel, value) {
     new Function('return ' + setterSrc)()(document.querySelector(sel), value);
@@ -20657,5 +21352,528 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.deepEqual(realErrors(stale), []);
     } finally { await stale.close(); }
   });
+
+  /* ── The Schedule page: its tabs, ★ CALENDAR, PROGRESSION and MIND MAPS ───
+     The page that was "Progress" is "Schedule" since 2026-11-15: the Schedule,
+     then the four kinds of work a day holds in the order of its four add
+     buttons — ★ CALENDAR, ● LEARN (MIND MAPS · MG), ▲ PROJECT (PROGRESSION ·
+     MILESTONES · QUEST), ■ ACTIONS. ONE table, TABS, draws the header, the
+     sub-tab strip and the phone bar. The goal tree is on none of them: it is a
+     hidden view, opened by `#progress` and by a goal's page in Documentations.
+
+     `[data-view]` on the page's root names the view showing. Every case also
+     waits on something that view DRAWS: an attribute that says "milestones"
+     over an empty body is the white-screen bug with a label on it. */
+  const TAB_VIEW = function () {
+    var root = document.querySelector('#root > div');
+    var current = function (sel, attr) {
+      return Array.prototype.filter.call(document.querySelectorAll(sel),
+        function (b) { return b.getAttribute('aria-current') === 'page'; })
+        .map(function (b) { return b.getAttribute(attr); });
+    };
+    return {
+      view: root ? root.getAttribute('data-view') : null,
+      tab: current('header [data-tab]', 'data-tab'),
+      bar: current('.track-tabbar [data-tabbar-tab]', 'data-tabbar-tab'),
+      subs: Array.prototype.map.call(document.querySelectorAll('[data-subtab]'),
+        function (b) { return b.getAttribute('data-subtab'); }),
+      sub: current('[data-subtab]', 'data-subtab')
+    };
+  };
+  // Progress writes its owned keys once at mount; a "wrote nothing" claim
+  // starts after that has settled.
+  const settledBytes = async page => { await sleep(700); return page.evaluate(READ_RAW); };
+
+  await t.test('TABS: the page is "Schedule" — the header and the phone bar list the same five tabs, and it opens on the timeline', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: seedDb() });
+    // Wait on the mount, not on the Schedule: which view opens is the claim.
+    await page.waitFor(HAS_SEL, { args: ['#root > div[data-view] header [data-tab]'], message: 'the page and its header' });
+    const v = await page.evaluate(TAB_VIEW);
+    // the claim this case is named for, first
+    assert.deepEqual([v.view, v.tab, v.bar, v.subs], ['schedule', ['schedule'], ['schedule'], []],
+      'no address at all opens the Schedule, which has no sub-tabs');
+    await mountSchedule(page);
+    const st = await page.evaluate(function () {
+      var list = function (sel, attr) {
+        return Array.prototype.map.call(document.querySelectorAll(sel),
+          function (b) { return b.getAttribute(attr) + ' ' + b.textContent.trim(); });
+      };
+      return { title: document.title, header: list('header [data-tab]', 'data-tab'),
+        bar: list('.track-tabbar [data-tabbar-tab]', 'data-tabbar-tab') };
+    });
+    assert.deepEqual(st.header,
+      ['schedule SCHEDULE', 'calendar ★ CALENDAR', 'learn ● LEARN', 'project ▲ PROJECT', 'actions ■ ACTIONS'],
+      'the Schedule, then the four add kinds in the order of its ★ ● ▲ ■ buttons');
+    assert.deepEqual(st.bar,
+      ['schedule SCHED', 'calendar ★ CAL', 'learn ● LEARN', 'project ▲ PROJ', 'actions ■ ACTS', 'home ⌂'],
+      'the phone bar maps the same table, with its short labels');
+    assert.equal(st.title, 'Schedule', 'and the browser tab says Schedule');
+
+    await page.evaluate(CLICK_SEL, 'header [data-tab="learn"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-learn-mm-list]'], message: '● LEARN opening on MIND MAPS' });
+    const learn = await page.evaluate(TAB_VIEW);
+    assert.deepEqual([learn.view, learn.tab, learn.subs, learn.sub], ['mindmaps', ['learn'], ['mindmaps', 'mg'], ['mindmaps']],
+      '● LEARN holds MIND MAPS and MG, and opens on the first');
+    await page.evaluate(CLICK_SEL, 'header [data-tab="project"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-progression-goal]'], message: '▲ PROJECT opening on PROGRESSION' });
+    const project = await page.evaluate(TAB_VIEW);
+    assert.deepEqual([project.view, project.tab, project.subs, project.sub],
+      ['progression', ['project'], ['progression', 'milestones', 'quest'], ['progression']],
+      '▲ PROJECT holds PROGRESSION, MILESTONES and QUEST');
+    assert.equal(await page.evaluate(HAS_SEL, '[data-goal-tab]'), false, 'and no tab draws the goal tree');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  /* Every address another page, a bookmark or a hand links to. The seven view
+     keys that existed before the tabs were grouped keep their meaning; a tab's
+     own key opens its first sub-tab; `#goals` — which Documentations linked for
+     weeks while NO view had that name, so the body was blank — is the goal
+     tree; and anything unknown is the Schedule. One subtest per address: a
+     shared case would report the first and hide the rest. */
+  for (const [hash, view, tab, sub, drawn] of [
+    ['#schedule',     'schedule',    'schedule', null,          '[data-sched-nav]'],
+    ['#calendar',     'calendar',    'calendar', null,          '[data-sched-month-day]'],
+    ['#mindmaps',     'mindmaps',    'learn',    'mindmaps',    '[data-learn-mm-list]'],
+    ['#mg',           'mg',          'learn',    'mg',          '[data-mg-card]'],
+    ['#progression',  'progression', 'project',  'progression', '[data-progression-goal]'],
+    ['#milestones',   'milestones',  'project',  'milestones',  '[data-ms-split]'],
+    ['#quest',        'quest',       'project',  'quest',       '[data-quest-tab]'],
+    ['#actions',      'actions',     'actions',  null,          '[data-actions-tab]'],
+    ['#progress',     'progress',    'project',  null,          '[data-goal-tab]'],
+    ['#goals',        'progress',    'project',  null,          '[data-goal-tab]'],
+    ['#learn',        'mindmaps',    'learn',    'mindmaps',    '[data-learn-mm-list]'],
+    ['#project',      'progression', 'project',  'progression', '[data-progression-goal]'],
+    ['#no-such-view', 'schedule',    'schedule', null,          '[data-sched-nav]']
+  ]) {
+    await t.test('TABS: `' + hash + '` opens ' + view + ' under ' + tab, async tc => {
+      const page = await openHere(tc, 'progress.html', { db: seedDb(), hash });
+      await renderedOrError(page, drawn, 'what ' + view + ' draws');
+      const v = await page.evaluate(TAB_VIEW);
+      assert.deepEqual([v.view, v.tab, v.bar, v.sub], [view, [tab], [tab], sub ? [sub] : []],
+        hash + ' shows ' + view + ', with ' + tab + ' current on both bars');
+      assert.deepEqual(realErrors(page), []);
+    });
+  }
+
+  await t.test('TABS: a tab reopens on the sub-tab it was left on — also when the page was opened straight onto it', async tc => {
+    /* `lastSub` is filled by a press. A page opened at `#quest` was never
+       pressed onto QUEST, so it has to start out remembering it — or leaving
+       ▲ PROJECT and coming back lands on PROGRESSION instead. */
+    const page = await openHere(tc, 'progress.html', { db: seedDb(), hash: '#quest' });
+    await page.waitFor(HAS_SEL, { args: ['[data-quest-tab]'], message: 'QUEST, opened by its address' });
+    await page.evaluate(CLICK_SEL, 'header [data-tab="learn"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-learn-mm-list]'], message: '● LEARN' });
+    await page.evaluate(CLICK_SEL, 'header [data-tab="project"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-subtabs="project"]'], message: '▲ PROJECT again' });
+    assert.equal((await page.evaluate(TAB_VIEW)).view, 'quest', 'back on QUEST, where ▲ PROJECT was left');
+
+    // and the ordinary half: a sub-tab reached by a press is remembered too
+    await page.evaluate(CLICK_SEL, '[data-subtab="milestones"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-ms-split]'], message: 'MILESTONES' });
+    await page.evaluate(CLICK_SEL, 'header [data-tab="schedule"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-sched-nav]'], message: 'the Schedule' });
+    await page.evaluate(CLICK_SEL, 'header [data-tab="project"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-subtabs="project"]'], message: '▲ PROJECT a third time' });
+    assert.equal((await page.evaluate(TAB_VIEW)).view, 'milestones', 'and on MILESTONES after that');
+    // pressing the tab that is already showing changes nothing
+    await page.evaluate(CLICK_SEL, 'header [data-tab="project"]');
+    await sleep(200);
+    assert.equal((await page.evaluate(TAB_VIEW)).view, 'milestones', 'pressing ▲ PROJECT while it shows stays put');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── ★ CALENDAR and the timeline it shares a panel with ────────────────────
+  /* ★ CALENDAR is the Schedule's panel with the timeline HIDDEN. The scroll
+     container binds two useEffect(…, []) — the scroll to 08:00 and the
+     non-passive Shift+wheel listener — and an unmounted node takes its
+     listener with it for the rest of the session. The old TIMELINE | CALENDAR
+     switch did unmount it: Shift+wheel was dead after one look at the month. */
+  const WHEEL_A_DAY = function () {
+    document.querySelector('[data-sched-timeline]').dispatchEvent(
+      new WheelEvent('wheel', { deltaY: 120, shiftKey: true, bubbles: true, cancelable: true }));
+    return true;
+  };
+  const SCHED_DATE = function () {
+    var e = document.querySelector('[data-sched-nav] [data-sched-date]');
+    return e ? e.textContent.trim() : null;
+  };
+  const TIMELINE_SCROLL = function () { return Math.round(document.querySelector('[data-sched-timeline]').scrollTop); };
+  const toCalendarAndBack = async page => {
+    await page.evaluate(CLICK_SEL, 'header [data-tab="calendar"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-sched-month-day]'], message: 'the month view' });
+    const during = await page.evaluate(function () {
+      var tl = document.querySelector('[data-sched-timeline]');
+      return { inDom: !!tl, drawn: !!tl && tl.getClientRects().length > 0, nav: !!document.querySelector('[data-sched-nav]') };
+    });
+    await page.evaluate(CLICK_SEL, 'header [data-tab="schedule"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-sched-nav]'], message: 'the timeline again' });
+    return during;
+  };
+
+  await t.test('★ CALENDAR: Shift+wheel still moves the Schedule a day after a look at the calendar', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: seedDb(), hash: '#schedule', viewport: [1280, 900] });
+    await mountSchedule(page);
+    // the control: the gesture works at all, before any tab is pressed
+    const d0 = await page.evaluate(SCHED_DATE);
+    await page.evaluate(WHEEL_A_DAY);
+    await sleep(300);
+    const d1 = await page.evaluate(SCHED_DATE);
+    assert.notEqual(d1, d0, 'the control: Shift+wheel moves the week a day (from ' + d0 + ')');
+    await page.evaluate(function () { window.__timeline = document.querySelector('[data-sched-timeline]'); return true; });
+
+    const during = await toCalendarAndBack(page);
+    await page.evaluate(WHEEL_A_DAY);
+    await sleep(300);
+    const d2 = await page.evaluate(SCHED_DATE);
+    assert.notEqual(d2, d1,
+      'Shift+wheel still moves the week after the calendar — a listener left on an unmounted node moves nothing (' + d1 + ')');
+    assert.equal(await page.evaluate(function () { return window.__timeline === document.querySelector('[data-sched-timeline]'); }), true,
+      'because the timeline is the SAME node it was before');
+    assert.deepEqual(during, { inDom: true, drawn: false, nav: false },
+      'on ★ CALENDAR it is in the DOM and not drawn, and its WEEK|DAY row is gone');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('★ CALENDAR: the hour in view on the Schedule survives a look at the calendar', async tc => {
+    /* Nothing in the page puts the hour back: headless Chrome keeps a hidden
+       node's scrollTop itself (measured — a hand-written restore was built,
+       and the case passed without it). What it cannot keep is the scrollTop
+       of a node that was REPLACED. So this is the rule of the case above, seen
+       where a user sees it: the timeline comes back on the hour it was left
+       on, not at the top of the day. */
+    const page = await openHere(tc, 'progress.html', { db: seedDb(), hash: '#schedule', viewport: [1280, 900] });
+    await mountSchedule(page);
+    assert.equal(await page.evaluate(function () {
+      var el = document.querySelector('[data-sched-timeline]'); el.scrollTop = 333; return Math.round(el.scrollTop);
+    }), 333, 'the control: the timeline scrolls to where it is put');
+    await sleep(250);   // the scroll event is what records the position
+    await toCalendarAndBack(page);
+    assert.equal(await page.evaluate(TIMELINE_SCROLL), 333, 'the same hour is in view, not the top of the day');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('★ CALENDAR: a page opened on the calendar shows the Schedule at 08:00 the first time it is pressed', async tc => {
+    /* Mounted on ★ CALENDAR, the scroll-to-08:00 effect ran against a hidden
+       node, which takes no scrollTop — so the first showing has to do it. */
+    const ref = await open('progress.html', { db: seedDb(), hash: '#schedule', viewport: [1280, 900] });
+    let want;
+    try {
+      await mountSchedule(ref);
+      await sleep(250);
+      want = await ref.evaluate(TIMELINE_SCROLL);
+    } finally { await ref.close(); }
+    assert.ok(want > 0, 'the control: a page opened on the Schedule is scrolled to 08:00 (' + want + 'px)');
+
+    const page = await openHere(tc, 'progress.html', { db: seedDb(), hash: '#calendar', viewport: [1280, 900] });
+    await page.waitFor(HAS_SEL, { args: ['[data-sched-month-day]'], message: 'the month view' });
+    await page.evaluate(CLICK_SEL, 'header [data-tab="schedule"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-dln-open]'], message: 'the timeline day headers' });
+    await sleep(250);
+    assert.equal(await page.evaluate(TIMELINE_SCROLL), want, 'the same 08:00 a page opened on the Schedule shows');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── ▲ PROJECT → PROGRESSION ───────────────────────────────────────────────
+  /* The user's request: "DON'T show the full goal and sub goal and details …
+     just laid every ULT goal in vertical and show ONLY SUBGOALS under them
+     (with progression chart) — clicking them would lead to project in DOC".
+
+     PROJ_SEED, with one task done, a sub-goal INSIDE a sub-goal, and a mind
+     map with a target on Practice, so every number has something to count:
+       Pass the exam  ▸ Theory (▸ Deeper) · Practice · a LINK to Get fit
+       Get fit        — no sub-goals of its own */
+  const PROG_SEED = () => {
+    const db = PROJ_SEED();
+    const [exam] = db.slots[0].goals;
+    const [theory, practice] = exam.children;
+    theory.children[0].completed = true;                       // Read ch1
+    theory.children.push(F.task('ps-a1', { title: 'Deeper', isSubGoal: true,
+      children: [F.task('pt-deep', { title: 'Deep task', completed: true })] }));
+    practice.toLearn = [10];
+    practice.mmTargets = { '10': { stage: '4' } };
+    return db;
+  };
+  const openProgression = async (tc, db, opts) => {
+    const page = await openHere(tc, 'progress.html',
+      Object.assign({ db: db || PROG_SEED(), hash: '#progression', viewport: [1280, 900] }, opts || {}));
+    await renderedOrError(page, '[data-progression-goal]', 'the PROGRESSION overview');
+    return page;
+  };
+  // { subGoalId: [percent, tasks, learned] } inside `scope`
+  const SUBGOAL_NUMBERS = function (scope) {
+    var out = {};
+    Array.prototype.forEach.call(document.querySelectorAll(scope + ' [data-subgoal-pct]'), function (e) {
+      var id = e.getAttribute('data-subgoal-pct');
+      var tasks = document.querySelector(scope + ' [data-subgoal-tasks="' + id + '"]');
+      var learn = document.querySelector(scope + ' [data-subgoal-learn="' + id + '"]');
+      out[id] = [e.textContent.trim(), tasks ? tasks.textContent.trim() : null, learn ? learn.textContent.trim() : null];
+    });
+    return out;
+  };
+
+  await t.test('PROGRESSION: every ultimate goal top to bottom, and under each ONLY its sub-goals', async tc => {
+    const page = await openProgression(tc);
+    const st = await page.evaluate(function () {
+      var ids = function (sel, attr) {
+        return Array.prototype.map.call(document.querySelectorAll(sel), function (e) { return e.getAttribute(attr); });
+      };
+      var tops = Array.prototype.map.call(document.querySelectorAll('[data-progression-goal]'),
+        function (e) { return Math.round(e.getBoundingClientRect().top); });
+      var lefts = Array.prototype.map.call(document.querySelectorAll('[data-progression-goal]'),
+        function (e) { return Math.round(e.getBoundingClientRect().left); });
+      return {
+        goals: ids('[data-progression-goal]', 'data-progression-goal'),
+        subs: ids('[data-progression-goal="pg-1"] [data-progression-sub]', 'data-progression-sub'),
+        subs2: ids('[data-progression-goal="pg-2"] [data-progression-sub]', 'data-progression-sub'),
+        nosubs: ids('[data-progression-nosubs]', 'data-progression-nosubs'),
+        stacked: tops[1] > tops[0] && lefts[0] === lefts[1],
+        text: document.querySelector('[data-progression]').textContent,
+        tree: !!document.querySelector('[data-goal-tab], [data-goal-node], [data-learn-row]')
+      };
+    });
+    // the claim this case is named for, first
+    assert.deepEqual(st.subs, ['ps-a', 'ps-b', 'pg-2'],
+      'Theory, Practice and the linked Get fit — the first level only: Deeper is inside Theory\'s number, and no task is a row');
+    assert.deepEqual(st.goals, ['pg-1', 'pg-2'], 'both ultimate goals, in their stored order');
+    assert.equal(st.stacked, true, 'one under the other, not side by side');
+    assert.deepEqual([st.subs2, st.nosubs], [[], ['pg-2']], 'a goal with no sub-goals says so');
+    for (const hiddenDetail of ['Read ch1', 'Mock test', 'Inside milestone', 'Deep task', 'Run', 'Mind Map A']) {
+      assert.equal(st.text.indexOf(hiddenDetail), -1, 'no task and no mind map is listed: "' + hiddenDetail + '"');
+    }
+    assert.equal(st.tree, false, 'and the goal tree is not drawn at all');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('PROGRESSION: a sub-goal\'s chart reads the numbers the goal tree\'s BY SUBGOAL view reads', async tc => {
+    const page = await openProgression(tc);
+    const here = await page.evaluate(SUBGOAL_NUMBERS, '[data-progression-goal="pg-1"]');
+    const tree = await openHere(tc, 'progress.html', { db: PROG_SEED(), hash: '#progress', viewport: [1280, 900] });
+    await renderedOrError(tree, '[data-subgoal-pct="ps-a"]', 'the goal tree\'s BY SUBGOAL view');
+    const there = await tree.evaluate(SUBGOAL_NUMBERS, '#root');
+    assert.deepEqual(here, there, 'one drawing, two surfaces: the same percent, tasks and learned for every sub-goal');
+    assert.deepEqual(here['ps-a'], ['67%', '2/3 tasks', null],
+      'Theory: Read ch1 and Deep task done, Inside milestone open — and no mind map of its own');
+    assert.deepEqual(here['ps-b'], ['50%', '1/2 tasks', '0/1 learned'],
+      'Practice: Mock test open, its LINK to Read ch1 done through the original — and Mind Map A short of its target');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-progression-pct="pg-1"]').textContent.trim();
+    }), await tree.evaluate(function () {
+      return document.querySelector('[data-goal-tab="pg-1"]').textContent.replace(/[^0-9%]/g, '');
+    }), 'and the goal\'s own percent is the one on its tab in the tree');
+    assert.deepEqual(realErrors(page), []);
+    assert.deepEqual(realErrors(tree), []);
+  });
+
+  await t.test('PROGRESSION: a goal and a sub-goal are links to their pages in Documentations → Projects, and nothing else can be pressed', async tc => {
+    const page = await openProgression(tc);
+    const before = await settledBytes(page);
+    const st = await page.evaluate(function () {
+      var hrefs = function (sel, attr) {
+        return Array.prototype.map.call(document.querySelectorAll(sel),
+          function (a) { return a.tagName + ' ' + a.getAttribute(attr) + ' ' + a.getAttribute('href'); });
+      };
+      return {
+        goals: hrefs('[data-progression-link]', 'data-progression-link'),
+        subs: hrefs('[data-progression-sub]', 'data-progression-sub'),
+        controls: document.querySelectorAll('[data-progression] button, [data-progression] input, [data-progression] select, [data-progression] textarea').length
+      };
+    });
+    // the claim this case is named for, first
+    assert.deepEqual(st.subs, ['A ps-a documentations.html?goal=ps-a', 'A ps-b documentations.html?goal=ps-b',
+      'A pg-2 documentations.html?goal=pg-2'], 'each sub-goal is a link to ITS page — a linked one to its original\'s');
+    assert.deepEqual(st.goals, ['A pg-1 documentations.html?goal=pg-1', 'A pg-2 documentations.html?goal=pg-2']);
+    assert.equal(st.controls, 0, 'a READER: no button, input, select or textarea in it');
+    assert.equal(await settledBytes(page), before, 'and it writes nothing');
+
+    // the link lands on that sub-goal's page in Projects
+    const docs = await openHere(tc, 'documentations.html', { fresh: false, hash: '?goal=ps-a' });
+    await docs.waitFor(function () {
+      return !!document.querySelector('[data-proj-goal="ps-a"]') && !!document.querySelector('[data-doc-projects]');
+    }, { message: 'the sub-goal\'s page in Projects' });
+    assert.deepEqual(realErrors(page), []);
+    assert.deepEqual(realErrors(docs), []);
+  });
+
+  await t.test('PROGRESSION: with no goals it says where one is added', async tc => {
+    const page = await openHere(tc, 'progress.html', { db: seedDb({ goals: [] }), hash: '#progression' });
+    await renderedOrError(page, '[data-progression-empty]', 'the empty overview');
+    assert.equal(await page.evaluate(function () {
+      return document.querySelector('[data-progression-empty] a').getAttribute('href');
+    }), 'documentations.html', 'goals are added in Documentations → Projects');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── ● LEARN → MIND MAPS ───────────────────────────────────────────────────
+  /* The user's request: "keep the KS03 stage but rearrange it to fit the one in
+     circle learn add button in schedule … put all MM in one list and order by
+     KS03 and highlight by SIR or milestone day".
+
+     So it is the ● Learn panel's list, for TODAY, read through the same
+     learnLists — learnDb above is that panel's fixture, and the same seven
+     mind maps land here as:
+       21 Guitar   below Chapter one's level        → owed (its level gap)
+       31 Theory   S1, Chapter one wants S3         → owed (its phase gap)
+       40 Cell bio a review due today               → SIR
+       41 Swim     Procedural, STORED session today → no SIR at all; S4, so first of the rest
+       22 Singing  reached, but Chapter one asks    → covered
+       23 Piano, 24 Running                         → plain */
+  const MIND_LIST = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-learn-mm-list] [data-learn-mm]'), function (a) {
+      return a.getAttribute('data-learn-mm') + ':' + a.getAttribute('data-learn-mm-state');
+    });
+  };
+  const openMindMaps = async (tc, db, opts) => {
+    const page = await openHere(tc, 'progress.html', Object.assign({ db: db || learnDb(), hash: '#mindmaps' }, opts || {}));
+    await renderedOrError(page, '[data-learn-mm-list] [data-learn-mm]', 'the MIND MAPS list');
+    return page;
+  };
+
+  await t.test('MIND MAPS: one list in ● Learn\'s order — what a milestone still asks for, SIR due today, then the rest by phase', async tc => {
+    const page = await openMindMaps(tc);
+    const list = await page.evaluate(MIND_LIST);
+    // the claim this case is named for, first
+    assert.deepEqual(list, ['21:owed', '31:owed', '40:sir', '41:plain', '22:covered', '23:plain', '24:plain'],
+      'owed to Chapter one, then the review due today, then S4 before S2 before S1');
+    assert.deepEqual(await page.evaluate(ATTRS, '[data-learn-mm-group]', 'data-learn-mm-group'), ['milestone', 'sir', 'rest'],
+      'under three captions, in that order');
+
+    // and it IS the panel's order: open ● Learn for today and read its lists
+    const sched = await openHere(tc, 'progress.html', { db: learnDb(), hash: '#schedule' });
+    await openLearn(sched, TODAY);
+    const st = await sched.evaluate(LEARN_STATE);
+    const ids = state => list.filter(r => state.indexOf(r.split(':')[1]) >= 0).map(r => r.split(':')[0]);
+    assert.deepEqual(ids(['owed', 'late']).slice().sort(), st.mgPins.concat(st.mmPins).sort(),
+      'the same mind maps the panel pins for a milestone');
+    assert.deepEqual(ids(['sir']), st.sirPins, 'the same SIR pins');
+    assert.deepEqual(ids(['covered', 'plain']), st.mmTab.filter(id => st.mgPins.indexOf(id) < 0),
+      'and the rest in the order of the panel\'s Mind maps tab — less Guitar, which is drawn once, on top');
+    assert.deepEqual(realErrors(page), []);
+    assert.deepEqual(realErrors(sched), []);
+  });
+
+  await t.test('MIND MAPS: a Procedural mind map\'s stored session is no SIR highlight', async tc => {
+    /* 41 Swimming is Procedural and STORED in SIR with a session today; every
+       other surface hides that session (liveSessions), and so must this one. */
+    const page = await openMindMaps(tc);
+    const list = await page.evaluate(MIND_LIST);
+    assert.equal(list.filter(r => r.split(':')[0] === '41')[0], '41:plain', 'Swimming is not under SIR DUE TODAY');
+    assert.equal(list.filter(r => r.split(':')[0] === '40')[0], '40:sir', 'the guard: Cell biology, Declarative, is');
+    assert.deepEqual(await page.evaluate(ATTRS, '[data-mm-tree-sir]', 'data-mm-tree-sir'), ['40'],
+      'and only the Declarative one draws its five-review strip');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('MIND MAPS: each row keeps its phase badge, and says what today asks of it', async tc => {
+    const page = await openMindMaps(tc);
+    const st = await page.evaluate(function () {
+      var txt = function (sel) { var e = document.querySelector(sel); return e ? e.textContent.trim() : null; };
+      return {
+        badge: { 31: txt('[data-mm-badge-stage="31"]'), 40: txt('[data-mm-badge-stage="40"]'), 41: txt('[data-mm-badge-stage="41"]') },
+        gap: { 21: txt('[data-learn-mm-gap="21"]'), 31: txt('[data-learn-mm-gap="31"]') },
+        covering: Array.prototype.map.call(document.querySelectorAll('[data-learn-mm-milestone]'),
+          function (e) { return e.getAttribute('data-learn-mm-milestone') + ' ' + e.textContent.trim(); }),
+        once: document.querySelectorAll('[data-learn-mm]').length
+      };
+    });
+    assert.deepEqual(st.badge, { 31: 'S1', 40: 'SIR T1', 41: 'S4' }, 'the phase badge the tree had');
+    assert.deepEqual(st.gap, { 21: 'Lv 3 → 5', 31: 'S1 → S3' }, 'a Procedural one by its level, a Declarative one by its phase');
+    assert.deepEqual(st.covering, ['22 Chapter one'], 'Singing has reached it, and still says which milestone asks');
+    assert.equal(st.once, 7, 'seven mind maps, seven rows: none is drawn twice');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('MIND MAPS: a mind map an OVERDUE milestone still asks for heads the list, in the danger colour', async tc => {
+    const page = await openMindMaps(tc, lateLearnDb());
+    const list = await page.evaluate(MIND_LIST);
+    assert.deepEqual(list, ['10:late', '11:plain'], 'Mind Map A is owed to the late Chapter one; B is asked for by nothing');
+    const tone = await page.evaluate(function () {
+      return getComputedStyle(document.querySelector('[data-learn-mm-gap="10"]')).color;
+    });
+    assert.equal(tone, await page.evaluate(DANGER_RGB), 'its gap is drawn in var(--color-danger), not amber');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  await t.test('MIND MAPS: a READER — every row is a link into the Knowledge Record, and nothing is written', async tc => {
+    const page = await openMindMaps(tc);
+    const before = await settledBytes(page);
+    const st = await page.evaluate(function () {
+      return {
+        hrefs: Array.prototype.map.call(document.querySelectorAll('[data-learn-mm]'),
+          function (a) { return a.tagName + ' ' + a.getAttribute('href'); }).slice(0, 2),
+        controls: document.querySelectorAll('[data-learn-mm-list] button, [data-learn-mm-list] input, [data-learn-mm-list] select, [data-learn-mm-list] textarea').length
+      };
+    });
+    assert.deepEqual(st.hrefs, ['A sir-ks02.html?mm=21', 'A sir-ks02.html?mm=31'], 'a mind map is opened where it is edited');
+    assert.equal(st.controls, 0, 'no button, input, select or textarea in the list');
+    assert.equal(await settledBytes(page), before, 'and showing it writes nothing');
+    assert.deepEqual(realErrors(page), []);
+  });
+
+  // ── the way back to the hidden goal tree ──────────────────────────────────
+  await t.test('PROJECTS: a goal\'s page links to the goal tree, and the tree opens on the goal that holds it', async tc => {
+    /* Four edits exist only in the tree (NOTES): a goal's mind maps, their
+       targets, a linked task or sub-goal, the order of its milestone types.
+       The tree is on no bar, so this link is the way to them. Get fit is put
+       FIRST here so "opens on Pass the exam" cannot pass by being the default. */
+    const seed = () => { const db = PROJ_SEED(); db.slots[0].goals.reverse(); return db; };
+    const docs = await openHere(tc, 'documentations.html', { db: seed(), hash: '?goal=ps-b' });
+    await docs.waitFor(HAS_SEL, { args: ['[data-proj-goal="ps-b"]'], message: 'Practice\'s page in Projects' });
+    const links = await docs.evaluate(function () {
+      var href = function (sel) { var a = document.querySelector(sel); return a ? a.getAttribute('href') : null; };
+      return { tree: href('[data-proj-tree-link]'), learn: href('[data-proj-learn-edit]'),
+        inList: document.querySelectorAll('[data-proj-learn] [data-proj-learn-edit]').length };
+    });
+    assert.deepEqual([links.tree, links.learn], ['progress.html?goal=ps-b#progress', 'progress.html?goal=ps-b#progress'],
+      '↗ Goal tree, and To learn\'s edit ↗, both name this goal');
+    assert.equal(links.inList, 0, 'the edit link sits beside the heading, outside the read-only list');
+
+    const tree = await openHere(tc, 'progress.html', { fresh: false, hash: '?goal=ps-b#progress' });
+    await renderedOrError(tree, '[data-goal-projects-link]', 'the goal tree');
+    assert.equal(await tree.evaluate(function () {
+      return document.querySelector('[data-goal-projects-link]').getAttribute('data-goal-projects-link');
+    }), 'pg-1', 'the tree opens on Pass the exam, which holds Practice — not on the first goal');
+    const v = await tree.evaluate(TAB_VIEW);
+    assert.deepEqual([v.view, v.tab, v.sub], ['progress', ['project'], []],
+      'under ▲ PROJECT, with none of its three sub-tabs current');
+    assert.equal(await tree.evaluate(HAS_SEL, '[data-subtab-hidden="progress"]'), true, 'and the strip says GOAL TREE');
+    assert.deepEqual(realErrors(docs), []);
+    assert.deepEqual(realErrors(tree), []);
+  });
+
+  // ── a phone ───────────────────────────────────────────────────────────────
+  /* The bar case above measures the default tab. A tab with sub-tabs draws a
+     second strip, and the two new views are layouts no earlier case measured —
+     so each is measured on its own, where the most is drawn. */
+  for (const [barTab, drawn, db] of [
+    ['learn', '[data-learn-mm-list] [data-learn-mm]', () => learnDb()],
+    ['project', '[data-progression-sub]', () => PROG_SEED()]
+  ]) {
+    await t.test('PHONE/PROGRESS: ' + barTab + '\'s sub-tabs are finger targets, and its first view is not cropped', async tc => {
+      const page = await openHere(tc, 'progress.html', { db: db(), viewport: PHONE });
+      await page.waitFor(HAS_SEL, { args: ['.track-tabbar [data-tabbar-tab="' + barTab + '"]'], message: 'the phone bar' });
+      await page.evaluate(CLICK_SEL, '.track-tabbar [data-tabbar-tab="' + barTab + '"]');
+      await renderedOrError(page, drawn, 'the first view of ' + barTab);
+      const subs = await page.evaluate(function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-subtab]'), function (b) {
+          var r = b.getBoundingClientRect();
+          var hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+          return { sub: b.getAttribute('data-subtab'), h: Math.round(r.height),
+            right: Math.round(r.right), hit: hit === b ? 'self' : (hit ? hit.tagName.toLowerCase() : 'null') };
+        });
+      });
+      assert.ok(subs.length >= 2, 'the sub-tab strip is drawn');
+      for (const s of subs) {
+        assert.ok(s.h >= 44, 'sub-tab "' + s.sub + '" is ' + s.h + 'px tall, under the 44px target');
+        assert.equal(s.hit, 'self', 'sub-tab "' + s.sub + '" takes its own tap (got ' + s.hit + ')');
+        assert.ok(s.right <= 391, 'and is inside the 390px screen (right edge ' + s.right + ')');
+      }
+      const m = await page.evaluate(NOT_CROPPED);
+      assert.equal(m.scrollWidth, m.clientWidth,
+        barTab + ' overflows to the RIGHT at ' + m.vw + 'px (scrollWidth ' + m.scrollWidth + ')');
+      assert.deepEqual(m.escaped, [],
+        m.escapedCount + ' element(s) sit outside the viewport with nothing to scroll them');
+      assert.deepEqual(realErrors(page), []);
+    });
+  }
 
 });

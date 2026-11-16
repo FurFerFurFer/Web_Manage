@@ -35,7 +35,7 @@ three that deletes no text: choosing `unclear` deletes the `tag` key, but pressi
 the previous tag restores it exactly. Locking a day with `cleared` or `Eternal` is
 covered by the same exclusion: it freezes the text and deletes nothing, and
 `unclear` unfreezes it. A "clear all quests" button would NOT be
-exempt. The last three are on the Storages page's FILES tab (`scripts/files-view.js`, rules in
+exempt. The last four are on the Storages page's FILES tab (`scripts/files-view.js`, rules in
 `docs/contracts/files.md`): every FILES drag — a nest, a reorder, a move to Top level, one
 tile or a ticked group — which deletes nothing, is undone by moving back, and writes nothing
 when refused; **Free up**, which removes only this device's copies of files already in
@@ -44,7 +44,11 @@ opening the file; and the highlighter's **eraser `⌫`** (2026-11-13), where a p
 touch would make the tool unusable — instead the message after each erase offers **Undo**,
 which writes back the very strokes at their stored places, leaving `track_db`
 byte-identical. This is the one exclusion that DOES delete; Undo is what stands in for the
-prompt, and an eraser without a working Undo would have no guard at all. Do not "make it
+prompt, and an eraser without a working Undo would have no guard at all. Since 2026-11-15
+the same eraser also takes pen strokes and text highlights, on a note's Preview as on a
+file, under the same Undo; and a PDF page's **bookmark** — the ribbon on its thumbnail, or
+`🔖` in the toolbar — comes off with the tap that put it on, unprompted, because a bookmark
+holds nothing but its page number and the same tap restores it exactly. Do not "make it
 uniform" without re-deciding those on purpose.
 
 FILES's own prompts for records all live in ONE handler, `remove(ids)` in `files-view.js`,
@@ -53,8 +57,8 @@ Every path through it deletes, so the prompt is in the handler, after the "nothi
 delete" guard and before the write. It names what goes: a folder's contents move up (to its
 parent, or the top level) and are not deleted; a note's text cannot be restored; a file in
 Drive goes to Drive's trash for 30 days; a file not yet uploaded cannot be restored; a file's
-highlights and pins go with it. A **pin's** `🗑` asks in its own handler, `deletePin` in
-`FileView` (every path deletes), after the "no such pin" guard and before the write.
+or a note's highlights, pen strokes, pins and bookmarks go with it. A **pin's** `🗑` asks in
+its own handler, `deletePin` in `useMarks` (every path deletes), after the "no such pin" guard and before the write.
 
 A text block's file link (2026-11-14) is unlinked by the chip's `×`, and asks in the handler
 on both pages — `unlinkBlockFile` in `sir-ks02.html` and in `true-storage.html` — because every

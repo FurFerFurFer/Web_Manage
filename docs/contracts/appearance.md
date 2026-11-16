@@ -64,6 +64,46 @@ rules follow:
   changed nothing on screen. When a control's visibility moves behind a new condition, grep
   every rule that sets its `display` before believing the change landed.
 
+**`progress.html` — the Schedule page since 2026-11-15 — draws its tabs from ONE table, `TABS`.**
+A row is `[key, label, phone label, accent, subs]`; a tab with `subs` shows a sub-tab strip under
+the header. What `tab` state holds is a VIEW key, and a view key is what the URL hash names. Six
+rules follow, and the first three are the load-bearing ones:
+
+- **The header, the sub-tab strip and the phone bar all map `TABS`.** Never add a tab or a
+  sub-tab to one of them by hand. `resolveView(hash)` is the one reader of the address and
+  `tabOfView(view)` the one answer to "which tab is lit"; `DEFAULT_VIEW`, `VIEW_ALIASES` and
+  `HIDDEN_VIEWS` are the only places a default, an old address or an unlisted view is named.
+- **Never rename a view key** — `schedule`, `calendar`, `mindmaps`, `mg`, `progression`,
+  `milestones`, `quest`, `actions`, and the hidden `progress`. They are link targets in the
+  other four pages, in `note-to-self-core.js`, and in bookmarks, and the seven that predate the
+  grouping kept their keys for that reason. A new name for an old place is a `VIEW_ALIASES` row
+  (`#goals` → `progress`), never a rename. A tab's own key (`#learn`, `#project`) opens its
+  first sub-tab; an unknown or missing hash opens `DEFAULT_VIEW`.
+- **SCHEDULE and ★ CALENDAR are ONE `SchedulePanel`, and the timeline is HIDDEN on the
+  calendar, never unmounted** — the rule above about mount-only effects, on a desktop. The
+  wrapper `[data-sched-timeline-wrap]` toggles `display`; until 2026-11-15 the
+  `TIMELINE | CALENDAR` switch replaced the node, and the Shift+wheel listener stayed on the dead
+  one, so the gesture did nothing for the rest of the visit after one look at the calendar. A
+  doctored baseline that keys the wrapper on the view fails both the Shift+wheel case and the
+  hour-in-view case. Two consequences: a panel MOUNTED on ★ CALENDAR ran the mount-only 08:00
+  scroll against a node with no layout box, so a layout effect does it the first time the
+  timeline is SHOWN, once (`morningScrolledRef`); and **nothing restores the hour after a look
+  at the calendar** — measured in headless Chrome on 2026-11-15, a hidden node keeps its
+  `scrollTop`, and a hand-written restore that no baseline could fail was deleted. No other
+  engine was measured (NOTES, Proposal 23).
+- **A tab remembers its sub-tab for the visit, in React state only** (`lastSub`, initialised
+  from the address so a page opened straight onto `#quest` returns to QUEST). It is stored
+  nowhere: no key, no hash rewrite. The hash is read ONCE, at mount — there is no `hashchange`
+  listener, which is why `note-to-self.js` reloads for a same-page link.
+- **The goal tree is in `HIDDEN_VIEWS`: on neither bar, reachable by address only.** It is lit
+  under ▲ PROJECT with no sub-tab current, and the strip says `GOAL TREE`
+  (`[data-subtab-hidden]`). Do not delete it, and do not put it back on a bar, without
+  re-deciding that on purpose — four edits exist only there (NOTES, Proposal 23).
+- **A sub-tab is a 44px target on a phone** (`min-h-[2.75rem]` under `isPhone`), and the bar
+  carries the five tabs plus `⌂`, never the sub-tabs. The test hooks are `[data-view]` on
+  `#root > div`, `aria-current="page"` on `header [data-tab]` and on `[data-subtab]`, and
+  `.track-tabbar [data-tabbar-tab]`; a case asserts the view, never a label's text.
+
 A rule in `styles.css` that has to **beat a Tailwind utility on the same element** needs more
 than one class in its selector. The Tailwind CDN injects its `<style>` into `<head>` at runtime,
 which is *after* every page's `<link rel="stylesheet" href="styles/styles.css">`, so a one-class

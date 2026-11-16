@@ -5725,17 +5725,23 @@ button.cal-doc-origin:hover {
     border-right: 0;
   }
 
-  /* The Schedule's control row. In day mode its children come to ~546px in a
-     390px box — `‹ › today`, the date, WEEK|DAY, the GRID|TASKS switcher and
-     TIMELINE|CALENDAR — so CALENDAR, being last, fell off the right edge and
-     was clipped away entirely. Wrapping rather than scrolling on purpose: the
-     complaint was that the control could not be CLICKED, and a row that
-     scrolls leaves it reachable but still invisible.
+  /* The Schedule's control row. In day mode its children — `‹ › today`, the
+     date, WEEK|DAY and the GRID|TASKS switcher — are wider than a 390px box,
+     and whatever came last fell off the right edge and was clipped away
+     entirely. Wrapping rather than scrolling on purpose: the complaint was
+     that the control could not be CLICKED, and a row that scrolls leaves it
+     reachable but still invisible. (The control that was lost was CALENDAR,
+     the end of a TIMELINE|CALENDAR group; since 2026-11-15 it is the page's
+     ★ CALENDAR tab, and this row is not drawn there.)
 
      The long date goes on its own line first, so the controls below it wrap
      into a predictable second row instead of leaving a ragged gap. Reached
-     through its own hook, not `> span`: the calendar sub-view renders a bare
-     `<span className="flex-1" />` spacer that would otherwise match too. */
+     through its own hook, not `> span`.
+
+     Never give a child of this row `margin-left: auto`: on a wrapped row it
+     eats every pixel of free space on whatever line the item lands on, so
+     nothing packs beside it and each group takes a line of its own — the old
+     group's `ml-auto` wrapped this row to FIVE lines and 107px, measured. */
   .progress-page [data-sched-nav] {
     flex-wrap: wrap;
     row-gap: 0.375rem;
@@ -5744,16 +5750,6 @@ button.cal-doc-origin:hover {
   .progress-page [data-sched-nav] [data-sched-date] {
     flex-basis: 100%;
     order: -1;
-  }
-
-  /* `ml-auto` on the TIMELINE|CALENDAR group is what pushes it right on a
-     desktop, and on a wrapped row it is actively harmful: `margin-left: auto`
-     eats every pixel of free space on whatever line the item lands on, so
-     nothing can pack beside it and each group takes a line of its own. Left
-     in, this row wrapped to FIVE lines and 107px — measured, not guessed.
-     Neutralised, the groups pack and it settles at three. */
-  .progress-page [data-sched-nav] > .ml-auto {
-    margin-left: 0;
   }
 
   /* The Eisenhower matrix. BOTH axes have to be overridden: grid-rows-2 is

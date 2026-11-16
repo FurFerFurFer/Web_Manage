@@ -57,7 +57,7 @@ When a proposed change is implemented:
 
 `index.html` is the project hub. It currently provides:
 
-- Navigation to Knowledge Record, Progress, Documentations, and True Storage.
+- Navigation to Knowledge Record, Schedule, Documentations, and True Storage.
 - Creation of named workspace slots.
 - Active-slot selection.
 - Slot renaming and deletion.
@@ -179,11 +179,14 @@ result is unchanged by arithmetic rather than by a second set of rules.
   Schedule's day-mode GRID / TASKS. The goal and Milestones panes are
   unmounted; the schedule panes are *hidden*, because the timeline binds two
   mount-only effects to a ref and unmounting it would strand them.
-- **The Schedule's control row wraps** into two or three lines. Unwrapped, its
-  children came to ~546px in a 390px box and `CALENDAR`, being last, was drawn
-  past the right edge and clipped away entirely. Wrapping rather than
-  scrolling, because a control you must swipe to find is still not one you can
-  see.
+- **The Schedule's control row wraps** into two lines. Unwrapped, its children
+  are wider than a 390px box and the last control was drawn past the right edge
+  and clipped away entirely. Wrapping rather than scrolling, because a control
+  you must swipe to find is still not one you can see. `★ CALENDAR`, which was
+  the last control of that row, is a tab on the bar since 2026-11-15.
+- **A tab's sub-tabs are a strip under the header** — `MIND MAPS · MG` under
+  ● LEARN, `PROGRESSION · MILESTONES · QUEST` under ▲ PROJECT — and each is a
+  44px target on a phone. The bar carries the five tabs, never the sub-tabs.
 - **The Documentations sidebar becomes a drawer.** Its 240px column was 62% of a
   390px screen and `shrink-0` forbade it giving any back, leaving the editor
   about 70px of text. It is now hidden, opened full-screen from the bar's
@@ -413,8 +416,8 @@ phase row in the KS03 panel has no SIR pill, and copying it never creates sessio
 
 A Procedural mind map that is **stored** in SIR or FINISHED — one that entered SIR before
 this rule, or a Declarative one switched to Procedural — **reads as S4** everywhere a phase is
-drawn: the KS02 wheel and its lists, the KS03 panel, `+LIN`, the canvas ring, and Progress's
-Mind Maps tab, Schedule and pickers. Its sessions are **not drawn** on any calendar: the
+drawn: the KS02 wheel and its lists, the KS03 panel, `+LIN`, the canvas ring, and the Schedule page's
+MIND MAPS list, timeline and pickers. Its sessions are **not drawn** on any calendar: the
 Knowledge Record's own, the Progress Schedule (timeline strip, month view, day panel), the
 Home calendar, and a Documentations calendar block. **Nothing stored changes**: switch it back
 to Declarative and it is in SIR again, with every session where it was.
@@ -445,22 +448,94 @@ Current MG behavior includes:
 - MG records connected to mind maps.
 - Timelines and level views.
 - Day-specific MG scheduling.
-- MG visibility inside Progress and Schedule.
+- MG visibility on the Schedule page: the ● LEARN → MG tab and the timeline.
 - Current-MG updates based on Kolb entries.
 
 **An MG below its milestone's level comes first.** A Procedural mind map's progress is its MG
 level, and a goal's milestones carry a level for it (the `MG` bar's waypoints). While its level is
 still below the level the milestone asks for, its MG is the one to practise, so two surfaces put it
 on top: the Schedule's ● Learn panel pins it in its strip for the day it was opened on, and the
-Progress → MG tab lists its card first — outlined amber, reading `Below Chapter one's level ·
+● LEARN → MG tab lists its card first — outlined amber, reading `Below Chapter one's level ·
 Lv 3 → 5`, or red with `OVERDUE` when that milestone has ended. The milestone is the one whose dates
 cover the day (the MG tab's chosen date), or one already overdue; only today and later count, so a
 past date highlights nothing. A level equal to the waypoint is reached. Both read
 `TrackMilestone.unreachedOn`; see "Schedule and supporting actions".
 
+### The Schedule page and its tabs
+
+`progress.html` is shown to the user as **Schedule** (it was "Progress" until 2026-11-15; a section
+of this file that still says "Progress" means this page). The Schedule is the page's main
+character: the page opens on it, and its other tabs are the four kinds of work a day holds, in the
+order of the Schedule's four add buttons ([docs/CONCEPTS.md](docs/CONCEPTS.md), "The Schedule's
+four kinds of work").
+
+| Tab | Sub-tabs | Shows |
+| --- | --- | --- |
+| **SCHEDULE** | — | the hour timeline, by `WEEK` or `DAY` — see "Schedule and supporting actions" |
+| **★ CALENDAR** | — | the month view and its day panel, where day notes and deadlines are written. It was a `TIMELINE \| CALENDAR` switch inside the Schedule tab |
+| **● LEARN** | MIND MAPS · MG | every mind map, in ● Learn's order; the MG cards — see "Marginal Gains" |
+| **▲ PROJECT** | PROGRESSION · MILESTONES · QUEST | every goal and its sub-goals; milestones; quests |
+| **■ ACTIONS** | — | the supporting actions |
+
+- **One table draws the header, the sub-tab strip and the phone bar** (`TABS`), so the three cannot
+  list different sections. A tab with sub-tabs opens on the one it was last left on — the first, the
+  first time; where a reader was is remembered for the visit and stored nowhere.
+- **Every view has an address**, `progress.html#<view>`: `#schedule`, `#calendar`, `#mindmaps`,
+  `#mg`, `#progression`, `#milestones`, `#quest`, `#actions`. The seven that existed before the tabs
+  were grouped mean what they meant, so links from the other pages and old bookmarks still land. A
+  tab's own key (`#learn`, `#project`) opens its first sub-tab, and no address, or one that names
+  nothing, opens the Schedule — it used to open the goal tree. The address is read once, at load;
+  pressing a tab does not change it.
+- **★ CALENDAR and SCHEDULE are one panel.** While the calendar shows, the timeline is hidden, not
+  removed — so the week or day you were on and the hour in view are still there when you come
+  back, and `Shift` + wheel (one day per notch) keeps working. Until
+  2026-11-15 the switch removed the timeline, and `Shift` + wheel did nothing for the rest of the
+  visit after one look at the calendar. A page opened straight on ★ CALENDAR scrolls the timeline
+  to 08:00 the first time SCHEDULE is pressed.
+
+**▲ PROJECT → PROGRESSION is an overview, not the goal tree.** Every ultimate goal, one under the
+other, each with its ring, its `done/total tasks` and its bar; under it **only its sub-goals** —
+the first level, each with its own ring, tasks, `learned` count and bar — or `No sub-goals.` No
+task, no to-learn row and no detail is listed. A goal and a sub-goal are **links**: each opens its
+page in Documentations → Projects (`documentations.html?goal=<id>`), where it is read in full and
+edited; a linked sub-goal opens its original's page. The overview writes nothing and has no
+control in it. Its numbers are the ones a goal's own PROGRESSION panel shows under `BY SUBGOAL`,
+drawn by the same component (`SubGoalProgress`), and a goal's colour is its place in the palette,
+as on the goal tree's tabs. With no goals it says so and links to Documentations.
+
+**● LEARN → MIND MAPS is ● Learn's list, for today.** One flat list — it was a parent/child tree —
+in which every mind map is drawn once, with its kind, phase badge and level, and for a mind map in
+SIR its five-review strip:
+
+| Group | Holds | Drawn |
+| --- | --- | --- |
+| `MILESTONE NOT REACHED YET` | a mind map still short of the milestone whose dates cover today, or of one already overdue | amber, with its gap (`S1 → S3`, `Lv 3 → 5`) and the milestone's name and end day; **red**, with the milestone's own `OVERDUE · …` wording, when the milestone is late |
+| `SIR DUE TODAY` | a mind map with an SIR review due today that no milestone already listed | green |
+| `EVERY OTHER MIND MAP` (captioned only when a group stands above it) | the rest, furthest along first: SIR by reviews done, then S4 down to S1, a mind map with no phase, and finished last | cyan, with the milestone's name, when a milestone covering today asks for it; otherwise plain |
+
+The order and the groups have one definition, `learnLists` in `progress.html`, which the
+Schedule's ● Learn panel reads too — so the list and the panel cannot disagree. The one difference:
+the panel pins a Procedural mind map that is below its milestone's level by its **MG**, and this
+list, being a list of mind maps, shows it as the mind map with its level gap; its MG is the next
+sub-tab. A Procedural mind map's stored SIR sessions are due nowhere, here as everywhere. Every row
+is a link to that mind map in the Knowledge Record (`sir-ks02.html?mm=<id>`); the list writes
+nothing.
+
+**The goal tree is hidden, not removed.** Goals are added and edited in Documentations → Projects.
+The tree the page used to open on — goal tabs, the task tree, a goal's PROGRESSION panel — is on
+neither tab bar, and is kept because four edits exist nowhere else yet (NOTES, Proposal 23): which
+mind maps a goal needs, a mind map's target and milestone waypoints, a linked task or linked
+sub-goal, and the order of a goal's milestone types. It opens at `progress.html#progress` (and at
+`#goals`, which Documentations linked while no view had that name), under ▲ PROJECT with none of
+its sub-tabs current and `GOAL TREE` written at the end of the strip. `?goal=<id>` opens it on the
+ultimate goal that holds that node. A goal's page in Projects links there twice: `↗ Goal tree` in
+its header, and `edit ↗` beside its To learn heading. Everything "Goals, tasks, and milestones"
+below describes still works there.
+
 ### Goals, tasks, and milestones
 
-`progress.html` currently supports:
+The goal tree is `progress.html`'s hidden view (`#progress` — see "The Schedule page and its tabs");
+MILESTONES and QUEST are sub-tabs of ▲ PROJECT. `progress.html` currently supports:
 
 - Hierarchical goals.
 - Subgoals and tasks.
@@ -514,7 +589,7 @@ loop already stored — older data, another device, a hand-edited file — is dr
 the goal tree or the Milestones tab would follow the link round again, it shows
 `↻ "<title>" is already above — this link loops back`, and in the goal tree that row's `×`
 unlinks it, asking first. Every walk over the goal tree ends a branch at a node already on it,
-so a loop no longer freezes the Goals tab or blanks the Goals, Milestones or Schedule views.
+so a loop no longer freezes the goal tree or blanks the goal tree, Milestones or Schedule views.
 
 ### Milestone accountability
 
@@ -538,11 +613,11 @@ which is why `sir-ks02.html` loads it too.
 
 | Surface | What a late milestone looks like |
 | --- | --- |
-| Progress → MILESTONES, the row | outlined red, reading `OVERDUE · 5 days · 3 tasks, 1 to-learn left`. A `◎ met/total to-learn` count names the unreached mind maps on hover; a finished milestone reads `✓ done` |
-| Progress → MILESTONES, the calendar | its chip runs on past the end day to today, dashed red, with `!` on today |
+| ▲ PROJECT → MILESTONES, the row | outlined red, reading `OVERDUE · 5 days · 3 tasks, 1 to-learn left`. A `◎ met/total to-learn` count names the unreached mind maps on hover; a finished milestone reads `✓ done` |
+| ▲ PROJECT → MILESTONES, the calendar | its chip runs on past the end day to today, dashed red, with `!` on today |
 | Home Universal calendar, Documentations calendar blocks | its bar runs on past the end day as a dashed red tail to today, with one `!` on today's cell. The hover says how late it is and what is left; a late lane pushed past the third shows a red `+N` |
-| Progress → Schedule | today's day column and today's month cell carry a `⚑` per late milestone, which opens it in the MILESTONES tab |
-| Progress → Schedule add panels | for today and later, ▲ Chosen pins the leftover tasks in an OVERDUE block above the Directory tree and lists late milestones first in its Milestone tab; ● Learn pins the unreached to-learn at the top of its strip, drawn late — a Declarative mind map to study, a Procedural one by its MG |
+| SCHEDULE and ★ CALENDAR | today's day column and today's month cell carry a `⚑` per late milestone, which opens it in the MILESTONES tab |
+| The Schedule's add panels | for today and later, ▲ Chosen pins the leftover tasks in an OVERDUE block above the Directory tree and lists late milestones first in its Milestone tab; ● Learn pins the unreached to-learn at the top of its strip, drawn late — a Declarative mind map to study, a Procedural one by its MG |
 
 **A subgoal linked under a second goal** is listed in the MILESTONES tab under each goal it
 appears in, the later listing marked `↗ linked from <goal>`. It is the same subgoal, not a copy,
@@ -584,7 +659,7 @@ What can be ticked, and what cannot, is a rule rather than an omission:
 
 | Row | Tick |
 | --- | --- |
-| Leaf task | writes `completed`, through the same `toggleLeaf` the Goals tab uses |
+| Leaf task | writes `completed`, through the same `toggleLeaf` the goal tree uses |
 | Leaf **routine** | quest-only; see below |
 | A node with children | no checkbox — `toggleLeaf` refuses a non-leaf, so one would render, click and do nothing |
 | A to-learn mind map | no checkbox — MM completion is computed, never stored |
@@ -592,7 +667,7 @@ What can be ticked, and what cannot, is a rule rather than an omission:
 
 A **routine** quest ticks in the tab only. The tick never writes `routineDates`, so it does not affect the real routine completion, and it **resets at the end of the day**. It lives in its own browser key, `track_quest_routine_ticks`, holding `{slotId, day, ids}` — one stored day covers the whole set, so a day that is not today reads as empty. Expiry is structural: there is no timer and no cleanup job.
 
-Quests can be **dragged to arrange** within their own goal, through the `⇅` handle that appears once a group has more than one. The order is a per-node `questOrder`, written across the whole group; a group nobody has dragged carries no key at all and simply follows the goal tree, and an unarranged sibling sorts after the arranged ones rather than jumping to the front. Dragging is the Quest tab's own view and **never restructures the goal tree** — the Goals tab keeps whatever order it had. A drag from another goal is inert. Home mirrors the chosen order without re-deriving it.
+Quests can be **dragged to arrange** within their own goal, through the `⇅` handle that appears once a group has more than one. The order is a per-node `questOrder`, written across the whole group; a group nobody has dragged carries no key at all and simply follows the goal tree, and an unarranged sibling sorts after the arranged ones rather than jumping to the front. Dragging is the Quest tab's own view and **never restructures the goal tree** — the tree keeps whatever order it had. A drag from another goal is inert. Home mirrors the chosen order without re-deriving it.
 
 Milestone nodes are omitted from Quest entirely. Their children are promoted one level, exactly as the schedule picker already flattens them, so a real task nested under a milestone stays reachable.
 
@@ -604,7 +679,7 @@ A quest whose mind map was later deleted in KS02 reads as *mind map removed* and
 
 ### Note to self
 
-Every page — Home, Progress, the Knowledge Record, Documentations and True Storage — carries a thin line across the very top of the screen with a small `v` tab in the middle (the user's 2026-11-08 request). Clicking the `v` drops the **Note to self** panel down over the page; the tab turns into `^`, and the `^`, Escape or a click anywhere else closes it. It is the user's reference board: they put every idea and essential task into Quest themselves, and the panel gathers it with whatever ★ Forced work is pressing.
+Every page — Home, Schedule, the Knowledge Record, Documentations and True Storage — carries a thin line across the very top of the screen with a small `v` tab in the middle (the user's 2026-11-08 request). Clicking the `v` drops the **Note to self** panel down over the page; the tab turns into `^`, and the `^`, Escape or a click anywhere else closes it. It is the user's reference board: they put every idea and essential task into Quest themselves, and the panel gathers it with whatever ★ Forced work is pressing.
 
 The panel holds, under today's date:
 
@@ -616,17 +691,17 @@ The panel holds, under today's date:
   - today's **day notes**, with their time when they have one.
 - **Quest** — everything the Quest tab holds: ★ Starred with its collapsed counts, then the pruned quest tree, including to-learn mind maps and today's routine ticks.
 
-**Every row is a link.** An IN PRO row opens its mind map in the Knowledge Record (`sir-ks02.html?mm=<id>`, its S&C tab); the switch itself is flipped there, never from the pop-up. Every other row goes into Progress: a deadline opens its own popup in the Schedule, always on its **due** day (so a caution `!` opens the deadline it warns about), a day note opens its day in the Schedule, and a quest row opens the Quest tab. A link from Progress to Progress differing only in its `#tab` reloads the page at that address, because Progress reads its tab and `?date=` / `&dl=` once, at mount.
+**Every row is a link.** An IN PRO row opens its mind map in the Knowledge Record (`sir-ks02.html?mm=<id>`, its S&C tab); the switch itself is flipped there, never from the pop-up. Every other row goes into the Schedule page: a deadline opens its own popup in the Schedule, always on its **due** day (so a caution `!` opens the deadline it warns about), a day note opens its day in the Schedule, and a quest row opens the Quest tab. A link from that page to itself differing only in its `#view` reloads the page at that address, because the page reads its view and `?date=` / `&dl=` once, at mount.
 
 It is **read-only**: it writes nothing, not `track_db` and no browser key of its own, and every page load starts with it shut — whether the IN PRO list is open is stored nowhere either. It reads through `TrackStorage.loadDB()` each time it opens, and an open panel redraws when another tab writes (the `storage` event, which the notes widget also raises in its own tab after a Kolb write) and when the tab comes back into view. A closed panel keeps no DOM, and a shut IN PRO block keeps no rows. With no workspace, an empty workspace, or a database that cannot be read, it says so in a line.
 
-It **floats** over the page and moves nothing, sitting above every header and below every modal. The tab is 56×14px with a mouse and 72×24px under a finger (`(pointer: coarse)`), short on purpose: on Progress, and on the Knowledge Record and True Storage on a phone, a header tab button sits right under the top centre, and most of that button stays clickable. On a phone the panel spans the screen less a 12px margin each side and stops above the bottom tab bar; its rows are 44px targets under a finger. It is never printed.
+It **floats** over the page and moves nothing, sitting above every header and below every modal. The tab is 56×14px with a mouse and 72×24px under a finger (`(pointer: coarse)`), short on purpose: on the Schedule page, and on the Knowledge Record and True Storage on a phone, a header tab button sits right under the top centre, and most of that button stays clickable. On a phone the panel spans the screen less a 12px margin each side and stops above the bottom tab bar; its rows are 44px targets under a finger. It is never printed.
 
 What the panel holds has one definition, `scripts/note-to-self-core.js` (`window.TrackNoteToSelf`): the due, caution and day-note lists are the ones `TrackCalendar.buildDaySchedule` already returns for Home's day strip, so no caution or due rule is spelled twice; `overdueDeadlines` is the only definition of an overdue deadline; `questHtml` is the Quest row renderer Home's panel also uses; and `inProMms` reads which mind maps are in progress (the stored `unclear` flag) for `inProHtml` to draw. `scripts/note-to-self.js` draws it. To carry it, `progress.html`, `sir-ks02.html` and `true-storage.html` now also load `calendar-core.js`, and the last two `quest-core.js`; the pages' own code does not call either.
 
 ### Progress and streaks
 
-The Progress page currently calculates:
+The Schedule page currently calculates:
 
 - Completed and total actionable work.
 - Mind-map learning progress.
@@ -770,8 +845,9 @@ sessions; the `◎` picker read storage raw, so a Procedural mind map stored in 
 there although it has no SIR.
 
 The rule has one definition, `TrackMilestone.unreachedOn` in `scripts/milestone-core.js`, built on the
-same milestone report as the overdue warnings, and it is read in two places: this strip and the
-Progress → MG tab (see "Marginal Gains").
+same milestone report as the overdue warnings, and it is read in three places: this strip, the
+● LEARN → MG tab (see "Marginal Gains") and, through the same `learnLists` this strip uses,
+● LEARN → MIND MAPS (see "The Schedule page and its tabs").
 
 **A study block's STRAT button.** In day view a ◎ study block carries `comment`, `⊕` (sources) and
 `✎` (notes) in its top-right corner, and a violet `STRAT` in front of them whenever its mind map has
@@ -835,7 +911,7 @@ loss.
 deadline is still outstanding. It matches `deadlinesCaution` in `calendar-core.js`. Every surface reads
 them through one of those two helpers rather than filtering at each call site.
 
-Deadlines are created in Schedule → CALENDAR, next to date notes: a `⏰` hover button in each month
+Deadlines are created in ★ CALENDAR, next to date notes: a `⏰` hover button in each month
 day cell, and a `+` on the DEADLINES header of the selected-day panel. Both open an inline composer
 carrying a `Due date` row of its own, seeded to the cell it was opened on, so a deadline can be filed
 for any day without navigating there first. Save is blocked until the title, the due time and a
@@ -848,7 +924,7 @@ chosen caution day shows an amber `! Title` line. The selected-day panel lists d
 as editable rows (double-click to edit, `×` to delete) and caution-day deadlines as read-only amber
 rows.
 
-In Schedule → TIMELINE, a deadline draws a **red line across its day column at its due time**, on its
+On the SCHEDULE tab's timeline, a deadline draws a **red line across its day column at its due time**, on its
 own date only, with a clickable diamond and a `HH:MM Title` label. The line paints above every block
 state — normal, selected, and picked-up — so a task block can never cover it; its full-width hairline
 is click-through, so only the diamond and the label take pointer events and a block underneath stays
@@ -1298,10 +1374,10 @@ The **Projects** tab shows the slot's goals as a sidebar tree. Every goal and su
 - **Every row of the directory moves, by mouse and by finger.** `⠿` dropped onto a row puts the dragged one **inside** it; `⇅` dropped on a row puts it **before or after** it, by which half of the row it lands on. Tasks and milestone areas nest into a task (a milestone also takes tasks) and reorder among their siblings, through the same `goal-core.js` writers Progress uses; a sub-goal nests into another sub-goal and reorders by the sidebar's rules. A drop that would move nothing — into the row's own parent, into its own subtree, `⇅` beside a row under a different parent — is refused while dragging: the row does not light up, and nothing is written. Nothing drops onto a page link. A task drawn through a link is the original's, elsewhere, and does not drag. On a touch-first device the handles are always shown.
 - **A page's link goes anywhere on its goal's page** — the user's main ask. `⇅` puts it before or after any row: between two tasks, between sub-goal rows, under a task's sub-tasks, inside a milestone. `⠿` onto a task or a milestone puts it at the end of that list; onto a sub-goal row it **moves the page to that sub-goal** (it is then that sub-goal's page); onto another page link it makes the page that page's sub-page; onto a goal or page row in the sidebar it does what the sidebar's own `⠿` does there. `⇅` also puts it **in the To learn list**, above or below any mind map's row, and back out again the same way; the To learn section is drawn whenever it holds a link, even with no mind maps. A mind map's row takes nothing else. A drop that leaves the page looking as it did writes nothing. Clicking a link opens the page, and a `+N` says how many pages are inside it.
 - **Everything in the goal tree can be edited** except mind maps: titles, ticks, adding and deleting tasks and sub-goals, and deleting the goal itself. Clicking a task opens the **task window** in the middle of the screen over a dimmed page: title, done, and — once the task is on a day — its time and length; there is no date field, because a task's day is set on the Schedule, which the window links to (as it does for a routine, whose days are set there too); notes, sub-tasks, moving it up, down or under another task, unlinking a linked task, and deleting it. A move under a task that another tab has deleted since it was picked is refused, says so, and changes nothing. Each field saves as it is left, and every way out — `✕`, Escape, a click outside, `done` — saves what was typed first. A task opened from a link edits the one original and says so.
-- **Mind maps are read-only.** To-learn lists each mind map with its phase and target, linking to it in the Knowledge Record. Linking mind maps and setting targets stays in Progress.
-- **Milestones are named on the area itself** and removed with its `✕` (asks; its tasks are kept, and the area becomes an ordinary task holding them). `＋ milestone` creates a definition and its area in one step. **Their dates are set in Progress → Milestones, not here**: the area shows its period as a tooltip on its name and its `⚑`, and has no date field. A defined milestone no block uses yet is drawn empty under the directory with `＋ place`.
+- **Mind maps are read-only.** To-learn lists each mind map with its phase and target, linking to it in the Knowledge Record. Linking mind maps and setting targets stays in the goal tree: `edit ↗` beside the heading opens it there, on this goal (see "The Schedule page and its tabs").
+- **Milestones are named on the area itself** and removed with its `✕` (asks; its tasks are kept, and the area becomes an ordinary task holding them). `＋ milestone` creates a definition and its area in one step. **Their dates are set in Schedule → ▲ Project → Milestones, not here**: the area shows its period as a tooltip on its name and its `⚑`, and has no date field. A defined milestone no block uses yet is drawn empty under the directory with `＋ place`.
 - **The sidebar has the Events gestures, by mouse and by finger.** `⠿` dropped on another goal makes it a sub-goal there. A goal holding work of its own gets an automatic `original`/`default` sub-goal first, exactly as Progress does, with its quest flags travelling with its to-learn. `⇅` reorders among siblings. `⠿` dropped on the **Goals** header makes a sub-goal a goal. A drop that would move nothing is refused rather than half-done: onto the goal's own parent, into its own sub-goal, or `⇅` beside a goal under a different parent. On a touch-first device a goal row arms on the first tap and opens on the second, like a page row. `＋` beside **Goals** adds a goal.
-- **Pages under a goal.** `＋ page` on a goal (on its page, or `+` on its sidebar row) adds a documentation page under it, with its link at the top of the directory. A page can be attached to any goal or sub-goal from its toolbar (`🎯 Attach to goal…`), by dropping its `⠿` on a goal row in the sidebar, or by dropping its link's `⠿` on a sub-goal row, and sent back with `→ Events`. A page's sub-pages always go with it. A sub-goal with pages shows them in the sidebar and as links on its page, and in Progress its row carries a **`📄` link**: one page opens that page, several open the goal in Projects. `documentations.html?goal=<id>` opens a goal's page, and Progress links there: **`↗ Projects`** in the active goal's header on the Goals tab, and a `↗` on every sub-goal row while it is hovered.
+- **Pages under a goal.** `＋ page` on a goal (on its page, or `+` on its sidebar row) adds a documentation page under it, with its link at the top of the directory. A page can be attached to any goal or sub-goal from its toolbar (`🎯 Attach to goal…`), by dropping its `⠿` on a goal row in the sidebar, or by dropping its link's `⠿` on a sub-goal row, and sent back with `→ Events`. A page's sub-pages always go with it. A sub-goal with pages shows them in the sidebar and as links on its page, and in Progress its row carries a **`📄` link**: one page opens that page, several open the goal in Projects. `documentations.html?goal=<id>` opens a goal's page, and the Schedule page links there: every goal and sub-goal in ▲ PROJECT → PROGRESSION, and in the goal tree **`↗ Projects`** in the active goal's header and a `↗` on every sub-goal row while it is hovered. The other way, a goal's page carries **`↗ Goal tree`** in its header (`progress.html?goal=<id>#progress`), which opens the tree on the ultimate goal that holds it.
 - **Deleting a goal never deletes its pages.** The prompt counts them. They stay, listed under **Detached — goal deleted**, until they are attached to another goal or sent to Events.
 
 A page's goal is stored as an optional `goalId` on the **top** page of a subtree only. A sub-page belongs to whatever its top page belongs to, and Events is the absence of the key. Nothing was migrated: every page stored before this existed is an Events page.
@@ -1489,7 +1565,7 @@ The format is four cells per row — day, time, title, detail:
 **The title is the topic alone; everything else is the detail.** The block drawn on an hour
 grid is one line tall, so a title carrying `· Dr Ada · Room 305-306` loses the topic to
 truncation — the part actually being scanned for. Split, the title stays readable on the grid
-and the detail is reachable in the Timetable list's own column, on the class's card in Progress →
+and the detail is reachable in the Timetable list's own column, on the class's card in the Schedule's
 ★ Forced → Timetable, and in the hover tooltip on all three grids. The block body itself stays
 title + time, so a dense day does not become a wall of text.
 
@@ -1685,26 +1761,60 @@ library and laid out like SRCH → DIRECTORY. Reached from the header, the phone
   text; anything else shows its name and size. Every file has **⬇ Download**, and where the
   browser can, **Share / Open in…** (the iPad share sheet: send a PDF to Notability, save to
   Files).
-- **Highlight** a PDF or an image while reading, like a highlighter pen in Notability. The
-  viewer's toolbar has `🖍`, four colours (yellow first, then green, blue and pink) and `⌫`.
-  - **An Apple Pencil always draws**, with no mode; a finger still scrolls, and a palm resting
-    on the screen during a Pencil stroke neither scrolls nor draws.
-  - **A finger or a mouse draws only while `🖍` is on.** Turn it off to scroll with a finger.
-  - Strokes are see-through (they multiply into the page, so the text under them stays
-    readable) and are drawn in page coordinates: they keep their place at any zoom, after a
-    reload, and on the other device.
-  - **`⌫` Eraser:** touch or rub across strokes to remove them. It asks nothing; the message
-    that appears has **Undo**, which brings back exactly what was erased.
-  - A file holds up to 256 KB of highlights and pins (thousands of strokes); past that the
-    viewer says "This file's highlights are full".
-- **Pin a PDF page under a name:** `📌 Pin page` asks for a name ("Page 12" filled in) and
-  pins the page you are on. `Pins (n)` lists them by page (a bottom sheet on a phone): tap a
-  row to jump there, `✎` to rename, `🗑` to delete (this asks). A pinned page shows a small
-  `📌 name` flag at its top.
-- **Highlights and pins exist only in the viewer.** The file itself is never changed: the copy
-  in Drive and on the device stays byte-identical, and Download and Share give the original.
-  They are kept in Track, on the file's record, so they sync to both devices and travel with an
-  export; they never show on tiles or in the tree.
+- **Highlight and write** on a PDF, an image, or a note's Preview while reading, as in
+  Notability. The viewer's toolbar has `🖍` (highlighter), `✒` (pen), the colours of whichever
+  is chosen (highlighter: yellow, green, blue, pink; pen: black, red, blue, green) and `⌫`.
+  - **An Apple Pencil always draws**, with no mode, using the tool that is underlined; a finger
+    still scrolls, and a palm resting on the screen during a Pencil stroke neither scrolls nor
+    draws.
+  - **A finger or a mouse draws only while `🖍` or `✒` is on.** Tap the tool again to scroll
+    with a finger. A tap of the pen leaves a dot; a tap of the highlighter leaves nothing.
+  - Highlighter strokes are see-through (they multiply into the page, so the text under them
+    stays readable); pen strokes are thin and solid. Both are drawn in page coordinates: they
+    keep their place at any zoom, after a reload, and on the other device.
+  - **`⌫` Eraser:** touch or rub across highlights, pen strokes or text highlights to remove
+    them. It asks nothing; the message that appears has **Undo**, which brings back exactly
+    what was erased.
+  - A file or a note holds up to 256 KB of marks, pins and bookmarks (thousands of strokes);
+    past that the viewer says its highlights are full.
+- **Select a PDF's typed text** by dragging over it with no tool on (press and hold on an
+  iPad). A small bar appears at the selection: **Copy**, or one of the four highlighter colours
+  to **highlight exactly those words** — stored as boxes over the lines, erased like any mark.
+  A scanned PDF has no typed text, so there is nothing to select or find in it.
+- **On a note:** Preview shows the note on a white sheet of one fixed width (scaled down on a
+  narrow screen), so `🖍` / `✒` / `⌫` work on it as they do on a PDF page. The ink is kept
+  with the note but is **not tied to the words**: edit the text above a stroke and the stroke
+  stays where it was drawn. Edit mode shows no ink. On a phone a note with no ink reads as
+  ordinary flowing text until a tool is turned on.
+- **Turning pages in a PDF:** a rail on the right edge shows `▲`, the page you are on, the
+  number of pages and `▼`. Tap the page number for a pad, type a page, and **Go to page N**
+  (a page the PDF does not have is refused). An iPad uses the pad's own keys, so the keyboard
+  does not cover the page; a laptop can type and press Enter.
+- **`▦ Pages`** opens a panel of page thumbnails beside the PDF (full-screen on a phone), with
+  each page's marks drawn on it. Tap a thumbnail to go there. The menu at its top chooses the
+  list:
+  - **All pages** — every page.
+  - **Bookmarks** — pages you bookmarked. Bookmark a page with the ribbon on its thumbnail or
+    `🔖` in the toolbar (the page you are on); the same tap takes it off, without asking.
+  - **Notes** — pages you highlighted or wrote on.
+  - **Outline** — your pins, by page.
+  - `⤢ Full screen` shows the same list as a grid over the whole window; choosing a page there
+    closes it. `⤡ Side panel` goes back.
+- **Find** (the box at the top of the panel) searches the PDF's typed text and **only the
+  pages the list shows**: all of them, the bookmarked ones, the pinned ones, or one pin's
+  range. The list narrows to the pages that match, each with its count ("6 results on 4
+  pages"), and every match is boxed in orange on the page. Case and repeated spaces do not
+  matter.
+- **Pin pages under a name:** `📌 Pin` asks for a name and **pages From … To** (the page you
+  are on is filled in; "Pages 3–9" is suggested as the name). One page or a range, typed as
+  page numbers; a range that ends before it starts, or a page the PDF does not have, cannot
+  be saved. Pins are the panel's **Outline**: tap a row to jump to its first page, `▤` to show
+  only that pin's pages (Find then searches only them), `✎` to change its name or pages, `🗑`
+  to delete (this asks). The pin's first page shows a small `📌 name · p. 3–9` flag at its top.
+- **Marks, pins and bookmarks exist only in the viewer.** The file itself is never changed: the
+  copy in Drive and on the device stays byte-identical, and Download and Share give the
+  original. They are kept in Track, on the file's or note's record, so they sync to both devices
+  and travel with an export; they never show on tiles or in the tree.
 - **Rename** (`✎` on an open item, or on one ticked tile in **Select**) keeps the extension;
   an empty name cannot be saved. A file in Drive is renamed there too.
 - **Move** the way DIRECTORY does: hold a tile about 0.4s until it rises, then drag it
@@ -1717,11 +1827,11 @@ library and laid out like SRCH → DIRECTORY. Reached from the header, the phone
 - **Delete** (`🗑`, or `🗑 Delete N` in Select) always asks, and says what happens: a folder's
   contents move up to its parent (or the top level) and are not deleted; a note's text cannot
   be restored; a file in Drive goes to **Drive's trash** for 30 days; a file not yet uploaded
-  cannot be restored; a file's highlights and pins go with it ("Its 14 highlights and 3 pins
-  go with it").
+  cannot be restored; a file's or a note's marks go with it ("Its 14 highlights, 2 pen
+  strokes, 3 pins and 1 bookmark go with it").
 
 **Where it lives.** The folder tree, names, order, sizes and Drive ids — each note's text, and
-each file's highlights and pins — are the slot field `files`, so they sync, export and import
+each file's or note's highlights, pen strokes, pins and bookmarks — are the slot field `files`, so they sync, export and import
 with the workspace. A file's
 **bytes never enter `track_db`**: they go to Google Drive, into a "Track Files" folder, and
 each device keeps a copy in IndexedDB (`track_files_v1`) so a file opens again instantly and
@@ -1771,9 +1881,11 @@ cannot separate exactly coincident nodes — identical coordinates give the push
 This is deliberately tolerance, not prevention. The picker still allows a cycle; the code survives
 one. Prevention alone would not help the cycles that already exist in stored data.
 
-Progress reads mind-map parents in two places, a goal's TO LEARN tree and the Mind Maps tab, and
-both follow the same contract. A cycle with no root above it would be reached from no root at all,
-so its first member is drawn as a root instead: no linked mind map can drop out of either list.
+The Schedule page reads mind-map parents in one place, a goal's TO LEARN tree
+(`TrackGoals.buildToLearnTree`), which follows the same contract. A cycle with no root above it
+would be reached from no root at all, so its first member is drawn as a root instead: no linked
+mind map can drop out of the list. ● LEARN → MIND MAPS was a second such tree until 2026-11-15; it
+is now a flat list that reads no parent, so a loop cannot hide a mind map from it.
 (Goal-tree *links* are a different graph and are prevented as well as tolerated — see "Goals,
 tasks, and milestones".)
 
@@ -1887,7 +1999,7 @@ re-decide it on purpose rather than ship friction:
 - The four detach `⊗` chips. They sever one graph edge, and the connections picker puts it back in
   seconds.
 - The two Marginal Gain schedule `✓` toggle-offs — in the Schedule's ● Learn panel and on the
-  Progress → MG tab — which are ordinary scheduling toggles.
+  ● LEARN → MG tab — which are ordinary scheduling toggles.
 - The emoji icon `Clear` in Documentations, which only resets a picker.
 - Every drag in FILES (Storages) — a reorder, a nest, a move to Top level — for the same reason,
   and FILES's **Free up**, which removes only device copies of files already in Google Drive and
@@ -2006,7 +2118,7 @@ Known limitation: on a quota failure the in-memory React state still shows the u
 | File | Current responsibility |
 | --- | --- |
 | `index.html` | Home page, slot management, slot import/export, navigation, Universal calendar |
-| `progress.html` | Goals, milestones, progress, supporting actions, schedule, calendar notes |
+| `progress.html` | The Schedule page: the timeline, the month calendar, mind maps and MG, the goal overview, milestones, quests, supporting actions — and the hidden goal tree |
 | `sir-ks02.html` | The Knowledge Record: mind maps, Kolb, SIR, MG, LIN records, source dumps |
 | `tests/run.js` | The one test command — offline suite under five timezones, then the browser suite |
 | `documentations.html` | Notion-style nested documentation pages, source-dump references, calendar blocks, timetable blocks, PDF export |
@@ -2558,7 +2670,7 @@ It runs three layers:
 | Offline Drive client tests | `tests/file-store.test.js` | `file-store.js` against a stubbed Drive `fetch`, run once: loading it touches nothing; the chunk size a multiple of 256 KiB; a 20 MiB upload in three byte-exact chunks into the folder with its `trackId`; retry with backoff after a network failure and a 503; a cancel then a resume re-sending nothing already confirmed; an expired session restarting once; a 308 without `Range`; a 401 never retried; no token, no request; an empty file; trash (never delete), rename, and an already-gone file; the folder query's quoting; download progress |
 | Offline viewport tests | `tests/viewport.test.js` | What counts as a phone, in `viewport.js`: the exported surface, `PHONE_QUERY` being built from `PHONE_PX` so the number is spelled once, the disposer detaching and the Safari `addListener` fallback, the no-`matchMedia` path a plain Node run actually exercises — and **the twin**, which pins the whole set of `max-width` breakpoints in `styles.css` so a phone rule moving off 720 fails here instead of silently making `isPhone()` lie |
 | Offline harness tests | `tests/cdp-cleanup.test.js` | What `tests/lib/cdp.js` does *after* the last assertion: `close()` never throwing however badly the profile directory resists removal, the SIGTERM→SIGKILL escalation, the process-**group** kill and its fallback, and the stale-profile sweep — tested for what it must **not** delete as much as for what it must |
-| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For the Kolbs tab: the slot's Kolbs latest first with drafts grey above them, and opening one writing nothing; `+ New Kolb` stored only once written, writing `kolbDrafts` alone; `Done` saving as SAVE does — the MG change, the level, the reset to S1, a numeric id, the local day — and removing the draft, in one write; `Done` for a mind map stored in SIR asking, Cancel byte-identical; discarding asking, with Cancel byte-identical and a never-written draft asking nothing; an edit's MG and level following into the mind map; a move asking first where SIR sessions would go, Cancel putting the choice back; a Knowledge Record in the same tab adopting a Kolb finished in the widget and its next save keeping it; Send into the marked field of a draft pane and `Done` inside a pane; the picker's Kolbs tab, its filter and `+ New Kolb`; a draft finished elsewhere never brought back; and the three tabs fitting a phone and a 320px screen. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone. For day-note and deadline blocks: an item nobody added draws no block, asserted on each of the three grids separately; a ★ Forced pick adding exactly one untitled, untimed block on the opened day and closing the panel, a second pick a second block, and a pick on a day a deadline does not occupy making it a caution day in the same write; a deadline with no real due day listed but refused; a block's `✕` asking, with Cancel writing nothing; its tick writing only its own `done`; a ★ Forced `✂` adding a named sub-task off the schedule, its row putting it on that day with its date always written and moving it from another day — one block, never two — the caution day arriving in the same write, a deadline with no real due day refusing it, the original's block untickable and done only when every sub-task is, a sub-task's `✕` unscheduling it and its row `×` deleting it, both asking, and Home and Documentations each drawing a scheduled sub-task beside its original and none for one off the schedule; a legacy `blockOff` hiding blocks until a pick; a deadline with no blocks never refusing an un-pick, on Progress and in Documentations; and a block dragged by mouse and by touch onto a caution day added since the page mounted. For the timetable: a class drawn on its own day on all three grids and not on a day it was removed from, each surface asserted separately; moved, resized and armed like a task block by mouse and by touch, with a weekly class taking a new weekday only inside its range; removed from one day behind a confirmation whose Cancel writes nothing; given notes of its own; listed, edited, restored and added on ★ Forced → Timetable; deleted for good in Documentations; and a class deleted there not written back by Progress's next edit. For Journey: the Journal tab opening the book full screen on its title page, with the user's title verbatim and nothing written — `track_db` byte-identical and no key added; only Eternal days, oldest first, each starting a fresh page under its heading; a long day rejoining to its words with no page overflowing; no field and nothing that scrolls, with a key, a wheel gesture and a drag each turning one sheet and a short drag falling back; a phone showing one page that fills the screen, turned by a real swipe and a tap; Escape and `✕` returning focus to the button; a day made Eternal in another tab bound into the open book; the empty book's how-to page; a desktop-to-phone switch keeping the reader's passage, and its words their ink, with no page overflowing; a Thai day cut only between words and changing ink only between them; and the writing inked into the paper — both filters inside the book, the hand's on the lettering and the line's on the rules and the title's frame, every stretch drawn in its day's own quill dip, lighter where the quill runs dry, the day beginning fresh, and a turning sheet's shades on layers of their own. For STRAT: `+` storing exactly `{text, createdAt, updatedAt}` and the add box giving way to the one original; every ancestor's STRAT drawn read-only above it, farthest first, with nothing from outside the lineage; `✎` keeping `createdAt`, an unchanged SAVE writing nothing and a blank one impossible; `×` asking, Cancel byte-identical, OK removing the key; a parent cycle drawn once on both pages; an anchor's INFO tab; on the Schedule, the button on a block whose STRATs are all inherited and on none whose lineage has none, a read-only panel in the same order, the panels closing each other, a STRAT added in another tab arriving without a reload, and a tap on the button leaving an armed block armed. For a STRAT spreading from above: `↑ spread from…` listing every mind map above, nearest first, with one that has a STRAT greyed by `aria-disabled` and never `disabled`; choosing one writing `originId` alone and asking nothing; a greyed row writing nothing; the origin showing it FROM its writer, read-only, with no add box; a mind map on another branch under the origin showing it and one outside not; `unlink` asking, with Cancel byte-identical and OK deleting the key; the delete prompt naming the origin; a moved writer and a deleted origin each saying so; every name opening its mind map, an anchor on INFO, in a panel and in DIRECTORY; and the Schedule's panel naming the writer and the origin with a link to each, writing nothing. For Projects: the goal tree in the sidebar and only goal-less pages under Events; a link loop drawn as one `↻` row; a milestone drawn as an area around its tasks, red with Progress's wording while late; to-learn read-only; every goal edit a fresh read that keeps a task another tab added; the task window saving a typed title on Escape; Cancel on deleting a goal, a task and a note leaving `track_db` byte-identical; a deleted goal's pages kept under Detached; a nest creating the `default` sub-goal with the quest flags travelling; a nest onto the goal's own parent and into its own sub-goal refused; reorder and promote from the header; attaching a page, sending it back to Events and its toolbar; a milestone area carrying no date field, its period a tooltip; the task window carrying none either, with its time and length kept; a page link moved before and after rows, between sub-goals and into a task by mouse and by finger, kept through a reload, and landing exactly where `⇅` drew its line when other links already sit there; tasks nested and reordered with `⠿` and `⇅`, a link beside a moved task staying where it was, and a nest into the row's own parent refused byte-identical; a task dropped on a link refused; a link's `⠿` onto a sub-goal moving the page there, and onto a sidebar goal row by finger; the task window's move refusing a destination another tab deleted, the task kept; a heal after a move made from what is stored, so pages another tab just wrote survive; a link placed in a task whose id another task shares drawn once; a link moved into the To learn list after and above a mind map, by mouse and by finger, refused by `⠿` there, and moved back out; Progress's `↗ Projects` links; `＋ milestone` and a milestone's `✕` keeping its tasks; `?goal=` and `?page=` opening the right page; Progress's `📄` link shown only on a goal with pages; two tabs; and a phone tap arming a goal row before opening it, with the task window fitting the screen. For SRCH → DIRECTORY, every gesture as real mouse or touch input: the tree holding a two-parent mind map under both parents and a parentless loop from one member, folding and filtering, and LIST unchanged with neither slot drawn there; a page's trail, children, crumbs and `← back`; a block greying when pressed and rising only after the hold, a mouse or finger that moves first lifting nothing, a held block let go writing nothing, and a click or tap still opening; a nest keeping the child's other parent and never reordering the stored list; Top level appearing in the filter's place; a drop into the dragged mind map's own branch or itself lit red, refused byte-identical and explained; a reorder line only where the drawn list would change, with a release over the block's own place opening nothing; ticked blocks lifting as one counted stack, reordering and nesting together in their own order, and a slide down the ticks choosing several; a folded row unfolding under a held drag; the phone drawer, a tap opening a page from it and a held drag at the left edge springing it open for the drop; no drag ever prompting; and a nest landing on a rename another tab wrote mid-drag. For Storages → FILES, every gesture as real mouse or touch input: nothing of FILES fetched on the other three tabs but its pure index (`files-core.js`, which of the other pages only the Knowledge Record also loads), then exactly two scripts on first open with no PDF.js, Markdown renderer or Google sign-in yet; the tree and a folder's page in stored order, `← back`, and a filter keeping a match's folders; `+` New note writing only `files` — every other record byte-identical, an unknown key kept, no `parentIds` at the top — its typing autosaved and its Preview stripping a script and an `onerror`, with links opening in a new tab; rename keeping the extension and refusing a blank name, and a folder renamed from its page; a PNG, JPEG, PDF and `.md` uploaded through the real file input, kept in IndexedDB and never in `track_db`, the `.md` becoming a note, each opening in its viewer (PDF.js drawing page 1 of 2) before and after a reload; every delete prompt's Cancel byte-identical, a folder's contents moving up, a local file's device copy removed and a Drive file's prompt naming Drive's trash; a tile nested by a folder tile's middle and by a tree row, reordered by an edge, moved to Top level, and a tree row moved, each by mouse and on an 820×1180 touch iPad; a folder into its own branch and a note onto a file refused red, explained and byte-identical, and a tap still opening; the phone drawer, its backdrop, and a tile held at the left edge springing it open for the drop; another tab's write adopted and an open note deleted there closing; and Drive behind a stub: Connect inside a tap, the upload into the Track Files folder with every byte sent, the Drive id written back, Free up asking nothing and writing nothing, opening downloading it again, a rename and a delete following in Drive as `PATCH` — never `DELETE` — and the token in no key; and the viewer's highlights and pins: a mouse stroke on PDF page 1 only with `🖍` on (a tap is no stroke), stored as page fractions in the data colour, writing only that record's `highlights` key, the device copy's SHA-256 unchanged and no request made; a pen (`pointerType: 'pen'`) drawing with no tool on and a finger on the iPad scrolling with it off (its touchmoves left to the browser) and drawing without scrolling with it on; a stroke's place on the page the same at 100%, 200% and after a reload; the eraser asking nothing, Undo leaving `track_db` byte-identical, and the last erase deleting the key; page 2 pinned as "Results", jumped to from the list, renamed, and its delete asking with Cancel byte-identical and the last pin deleting the key; a stroke on a PNG whose frame is the picture's own box; the file's delete prompt naming its highlights and pins; another tab's stroke and pin appearing without redrawing the page; and the phone toolbar wrapping with the pins in a bottom sheet. For a text block's file: `+ file` on S&C listing every file and note but no folder, the link stored as the block's `fileId` with `files` and `trueStorages` byte-identical, the chip linking to `?file=`, BLOCKS drawing it alone, and one file per block; the unlink prompt's Cancel byte-identical and OK deleting the key; a deleted file reading *file removed*; True Storage's link a fresh read-modify-write, its picker searching folder names; the chip opening a note in place, **Used in** listing both blocks and a row returning to the title with the card ringed, a tab tap opening FILES on its folders, and nothing written; `?file=` opening a file and a stale id opening FILES at the top; the SOURCE DUMP parity case with a linked, an unlinked and a dangling block; and True Storage opening on SOURCE DUMP with two tabs while `#multiverse` and `#tree` still open theirs |
+| Browser tests | `tests/browser.test.js` | Page mounting and persistence regressions, per-key ownership, cross-tab active-slot identity in Progress and KS02, calendar/documentation behavior, True Storage records and per-pair source-dump tagging from both sides, True Storage's SOURCE DUMP tab (parity of its controls with KS02's page, every edit a fresh read-modify-write, writing no other key, live updates in both directions between open tabs, string and numeric ids on one record, a tag following its sections into a new sub-title, an MM name opening KS02's S&C tab and Back returning to the same title, KS02's `?mm=` link and its precedence under `?dump=`, Cancel on all three prompts, and a leaf at a phone width), import/export and legacy normalization, malformed-database write freezes across all five reader surfaces, refused-save handling for import, legacy notes, and Documentation bootstrap, and destructive-control confirmation including the Cancel path, the single-prompt guard, and a control deliberately left unconfirmed. The phone section runs at 390x844 with touch, set **before** `goto` so a mount-time viewport read sees a phone: per page, that nothing is cropped in either direction and every tab is tappable at 44px; that the Schedule opens in DAY mode and an explicit WEEK survives a viewport change; that day mode shows one full-width pane at a time while keeping the other in the DOM; and that the Documentations sidebar is a drawer. The notes section covers the three save-ordering bugs against their old failure, the Journal tab writing nothing until typed into, the local-day key and its deletion when emptied, both side-open defaults, the four-pane cap, send to one and to a chosen note, per-pane workspace identity, a deleted note never recreated, the full-screen geometry and scroll lock, a divider drag that writes nothing, token painting in both appearances, the stacked phone layout, and a long Journal list whose rows keep their height. For the Kolbs tab: the slot's Kolbs latest first with drafts grey above them, and opening one writing nothing; `+ New Kolb` stored only once written, writing `kolbDrafts` alone; `Done` saving as SAVE does — the MG change, the level, the reset to S1, a numeric id, the local day — and removing the draft, in one write; `Done` for a mind map stored in SIR asking, Cancel byte-identical; discarding asking, with Cancel byte-identical and a never-written draft asking nothing; an edit's MG and level following into the mind map; a move asking first where SIR sessions would go, Cancel putting the choice back; a Knowledge Record in the same tab adopting a Kolb finished in the widget and its next save keeping it; Send into the marked field of a draft pane and `Done` inside a pane; the picker's Kolbs tab, its filter and `+ New Kolb`; a draft finished elsewhere never brought back; and the three tabs fitting a phone and a 320px screen. For tags and the calendar pop-up: unclear by default with nothing migrated; the tag buttons disabled until written, unclear deleting the key, and no press asking; a tag pressed within the debounce of a day's first words; a pane writing only its own day; a locked day refusing a real keystroke and `🗑` while it still highlights and opens beside; unclear unlocking it and a plain `🗑` prompt whose Cancel keeps it; a locked pane sent from but never into, and Send explaining itself when every other pane is locked; a lock from another tab freezing an open editor, and words typed before it arrived refused and kept on screen; every written day filled with its tag colour in both appearances; an open day refused from the picker with Escape closing only the pop-up; the arrow keys and PageUp/PageDown crossing months, and Escape, `✕` and a click outside each closing it; 4.5:1 contrast for every tag colour; and the pop-up and a locked day's note fitting a phone. For day-note and deadline blocks: an item nobody added draws no block, asserted on each of the three grids separately; a ★ Forced pick adding exactly one untitled, untimed block on the opened day and closing the panel, a second pick a second block, and a pick on a day a deadline does not occupy making it a caution day in the same write; a deadline with no real due day listed but refused; a block's `✕` asking, with Cancel writing nothing; its tick writing only its own `done`; a ★ Forced `✂` adding a named sub-task off the schedule, its row putting it on that day with its date always written and moving it from another day — one block, never two — the caution day arriving in the same write, a deadline with no real due day refusing it, the original's block untickable and done only when every sub-task is, a sub-task's `✕` unscheduling it and its row `×` deleting it, both asking, and Home and Documentations each drawing a scheduled sub-task beside its original and none for one off the schedule; a legacy `blockOff` hiding blocks until a pick; a deadline with no blocks never refusing an un-pick, on Progress and in Documentations; and a block dragged by mouse and by touch onto a caution day added since the page mounted. For the timetable: a class drawn on its own day on all three grids and not on a day it was removed from, each surface asserted separately; moved, resized and armed like a task block by mouse and by touch, with a weekly class taking a new weekday only inside its range; removed from one day behind a confirmation whose Cancel writes nothing; given notes of its own; listed, edited, restored and added on ★ Forced → Timetable; deleted for good in Documentations; and a class deleted there not written back by Progress's next edit. For Journey: the Journal tab opening the book full screen on its title page, with the user's title verbatim and nothing written — `track_db` byte-identical and no key added; only Eternal days, oldest first, each starting a fresh page under its heading; a long day rejoining to its words with no page overflowing; no field and nothing that scrolls, with a key, a wheel gesture and a drag each turning one sheet and a short drag falling back; a phone showing one page that fills the screen, turned by a real swipe and a tap; Escape and `✕` returning focus to the button; a day made Eternal in another tab bound into the open book; the empty book's how-to page; a desktop-to-phone switch keeping the reader's passage, and its words their ink, with no page overflowing; a Thai day cut only between words and changing ink only between them; and the writing inked into the paper — both filters inside the book, the hand's on the lettering and the line's on the rules and the title's frame, every stretch drawn in its day's own quill dip, lighter where the quill runs dry, the day beginning fresh, and a turning sheet's shades on layers of their own. For STRAT: `+` storing exactly `{text, createdAt, updatedAt}` and the add box giving way to the one original; every ancestor's STRAT drawn read-only above it, farthest first, with nothing from outside the lineage; `✎` keeping `createdAt`, an unchanged SAVE writing nothing and a blank one impossible; `×` asking, Cancel byte-identical, OK removing the key; a parent cycle drawn once on both pages; an anchor's INFO tab; on the Schedule, the button on a block whose STRATs are all inherited and on none whose lineage has none, a read-only panel in the same order, the panels closing each other, a STRAT added in another tab arriving without a reload, and a tap on the button leaving an armed block armed. For a STRAT spreading from above: `↑ spread from…` listing every mind map above, nearest first, with one that has a STRAT greyed by `aria-disabled` and never `disabled`; choosing one writing `originId` alone and asking nothing; a greyed row writing nothing; the origin showing it FROM its writer, read-only, with no add box; a mind map on another branch under the origin showing it and one outside not; `unlink` asking, with Cancel byte-identical and OK deleting the key; the delete prompt naming the origin; a moved writer and a deleted origin each saying so; every name opening its mind map, an anchor on INFO, in a panel and in DIRECTORY; and the Schedule's panel naming the writer and the origin with a link to each, writing nothing. For Projects: the goal tree in the sidebar and only goal-less pages under Events; a link loop drawn as one `↻` row; a milestone drawn as an area around its tasks, red with Progress's wording while late; to-learn read-only; every goal edit a fresh read that keeps a task another tab added; the task window saving a typed title on Escape; Cancel on deleting a goal, a task and a note leaving `track_db` byte-identical; a deleted goal's pages kept under Detached; a nest creating the `default` sub-goal with the quest flags travelling; a nest onto the goal's own parent and into its own sub-goal refused; reorder and promote from the header; attaching a page, sending it back to Events and its toolbar; a milestone area carrying no date field, its period a tooltip; the task window carrying none either, with its time and length kept; a page link moved before and after rows, between sub-goals and into a task by mouse and by finger, kept through a reload, and landing exactly where `⇅` drew its line when other links already sit there; tasks nested and reordered with `⠿` and `⇅`, a link beside a moved task staying where it was, and a nest into the row's own parent refused byte-identical; a task dropped on a link refused; a link's `⠿` onto a sub-goal moving the page there, and onto a sidebar goal row by finger; the task window's move refusing a destination another tab deleted, the task kept; a heal after a move made from what is stored, so pages another tab just wrote survive; a link placed in a task whose id another task shares drawn once; a link moved into the To learn list after and above a mind map, by mouse and by finger, refused by `⠿` there, and moved back out; Progress's `↗ Projects` links; `＋ milestone` and a milestone's `✕` keeping its tasks; `?goal=` and `?page=` opening the right page; Progress's `📄` link shown only on a goal with pages; two tabs; and a phone tap arming a goal row before opening it, with the task window fitting the screen. For SRCH → DIRECTORY, every gesture as real mouse or touch input: the tree holding a two-parent mind map under both parents and a parentless loop from one member, folding and filtering, and LIST unchanged with neither slot drawn there; a page's trail, children, crumbs and `← back`; a block greying when pressed and rising only after the hold, a mouse or finger that moves first lifting nothing, a held block let go writing nothing, and a click or tap still opening; a nest keeping the child's other parent and never reordering the stored list; Top level appearing in the filter's place; a drop into the dragged mind map's own branch or itself lit red, refused byte-identical and explained; a reorder line only where the drawn list would change, with a release over the block's own place opening nothing; ticked blocks lifting as one counted stack, reordering and nesting together in their own order, and a slide down the ticks choosing several; a folded row unfolding under a held drag; the phone drawer, a tap opening a page from it and a held drag at the left edge springing it open for the drop; no drag ever prompting; and a nest landing on a rename another tab wrote mid-drag. For Storages → FILES, every gesture as real mouse or touch input: nothing of FILES fetched on the other three tabs but its pure index (`files-core.js`, which of the other pages only the Knowledge Record also loads), then exactly two scripts on first open with no PDF.js, Markdown renderer or Google sign-in yet; the tree and a folder's page in stored order, `← back`, and a filter keeping a match's folders; `+` New note writing only `files` — every other record byte-identical, an unknown key kept, no `parentIds` at the top — its typing autosaved and its Preview stripping a script and an `onerror`, with links opening in a new tab; rename keeping the extension and refusing a blank name, and a folder renamed from its page; a PNG, JPEG, PDF and `.md` uploaded through the real file input, kept in IndexedDB and never in `track_db`, the `.md` becoming a note, each opening in its viewer (PDF.js drawing page 1 of 2) before and after a reload; every delete prompt's Cancel byte-identical, a folder's contents moving up, a local file's device copy removed and a Drive file's prompt naming Drive's trash; a tile nested by a folder tile's middle and by a tree row, reordered by an edge, moved to Top level, and a tree row moved, each by mouse and on an 820×1180 touch iPad; a folder into its own branch and a note onto a file refused red, explained and byte-identical, and a tap still opening; the phone drawer, its backdrop, and a tile held at the left edge springing it open for the drop; another tab's write adopted and an open note deleted there closing; and Drive behind a stub: Connect inside a tap, the upload into the Track Files folder with every byte sent, the Drive id written back, Free up asking nothing and writing nothing, opening downloading it again, a rename and a delete following in Drive as `PATCH` — never `DELETE` — and the token in no key; and the viewer's highlights and pins: a mouse stroke on PDF page 1 only with `🖍` on (a tap is no stroke), stored as page fractions in the data colour, writing only that record's `highlights` key, the device copy's SHA-256 unchanged and no request made; a pen (`pointerType: 'pen'`) drawing with no tool on and a finger on the iPad scrolling with it off (its touchmoves left to the browser) and drawing without scrolling with it on; a stroke's place on the page the same at 100%, 200% and after a reload; the eraser asking nothing, Undo leaving `track_db` byte-identical, and the last erase deleting the key; page 2 pinned as "Results", jumped to from the list, renamed, and its delete asking with Cancel byte-identical and the last pin deleting the key; a stroke on a PNG whose frame is the picture's own box; the file's delete prompt naming its highlights and pins; another tab's stroke and pin appearing without redrawing the page; and the phone toolbar wrapping with the pins in a bottom sheet. For a text block's file: `+ file` on S&C listing every file and note but no folder, the link stored as the block's `fileId` with `files` and `trueStorages` byte-identical, the chip linking to `?file=`, BLOCKS drawing it alone, and one file per block; the unlink prompt's Cancel byte-identical and OK deleting the key; a deleted file reading *file removed*; True Storage's link a fresh read-modify-write, its picker searching folder names; the chip opening a note in place, **Used in** listing both blocks and a row returning to the title with the card ringed, a tab tap opening FILES on its folders, and nothing written; `?file=` opening a file and a stale id opening FILES at the top; the SOURCE DUMP parity case with a linked, an unlinked and a dangling block; and True Storage opening on SOURCE DUMP with two tabs while `#multiverse` and `#tree` still open theirs. For the Schedule page: its title, the same five tabs on the header and the phone bar, and that it opens on the timeline; every address — the eight views, the hidden goal tree by `#progress` and `#goals`, a tab's own key, and an unknown hash; a tab reopening on the sub-tab it was left on, also when the page was opened straight onto it; `Shift` + wheel and the hour in view surviving a look at ★ CALENDAR, and 08:00 on a page opened on the calendar; PROGRESSION listing only sub-goals, with the goal tree's own numbers, every row a link to Projects and nothing else pressable; MIND MAPS in ● Learn's order with its groups, a Procedural mind map's stored session no highlight, an overdue milestone in the danger colour, and nothing written; a goal's page linking to the tree, which opens on the goal that holds it; and both sub-tab strips as 44px targets on a phone |
 
 The first four offline files run **once per timezone** — `UTC`, `Pacific/Kiritimati`
 (UTC+14), `Pacific/Midway` (UTC-11), `America/Los_Angeles` and `Asia/Kathmandu`.
@@ -3106,6 +3218,9 @@ The latest commits before this documentation update show current work concentrat
 - The Knowledge Record's SRCH → DIRECTORY: the mind-map tree beside a page per mind map, whose
   children move by a held drag — one block or a ticked group, by mouse or finger — through one
   pure tree module (`mm-tree-core.js`).
+- The Schedule page: `progress.html` renamed for the user and regrouped around the Schedule — five
+  tabs in the order of the four add buttons, a goal overview and a flat mind-map list in place of
+  the goal tree and the mind-map tree, and the goal tree kept as a hidden view.
 
 These are implemented areas, not roadmap items. Possible follow-up work belongs in `NOTES.md`.
 

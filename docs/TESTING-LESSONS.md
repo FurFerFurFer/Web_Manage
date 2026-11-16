@@ -41,6 +41,11 @@ to a past one. Each cost this project real time at least once.
   **guard** case passes on both sides *by design* — that is its job, not a weak result.
 - **When a refusal has grown a second path, reversing only the first proves nothing** — and
   it reads as all-green, indistinguishable from the case being wrong.
+- **Reverse the code you ADDED, not only the rule you were asked for.** A hand-written scroll
+  restore for the Schedule's timeline read as obviously needed; the baseline that deleted it
+  failed nothing, because headless Chrome keeps a hidden node's `scrollTop` by itself. Code no
+  baseline can fail is a claim, not a fix — delete it, or name the environment where it would
+  fail. And say which engine was measured: one browser's behaviour is not "the browser's".
 
 ### Reading a result
 
@@ -139,6 +144,9 @@ to a past one. Each cost this project real time at least once.
   tests a different path than its name says. Dispatch `new FocusEvent('focusin', {bubbles:
   true})` (and `focusout`) explicitly, as the Projects helpers do — and prefer a close path
   that does not depend on blur at all.
+- **`tests/browser.test.js` is ONE scope.** A new top-level helper can collide with one
+  thousands of lines up — `VIEW` did — and nothing runs until it is renamed. `rg` the name
+  first; `node --check tests/browser.test.js` says so in a second.
 - **Never write `\uXXXX` escapes through the editing tools.** They arrive in the file as the
   literal character: U+2028 or U+2029 inside a regex literal then ends the line (a syntax error
   `node --check` does catch), and a combining mark silently fuses with its neighbour (which
@@ -280,4 +288,4 @@ each timing out on its class layer while its Progress twin passes. That is the 2
 load ~1.5–3 the whole run took 21–27 minutes, 29.5–30 at load ~2–4.5, 36 at load ~5.5–6.5, 39 at
 load ~3.3–4 with 417, 35 with 424, 37 with 428 at load ~1.3, 38 with 442 at load ~3.2, 39 with
 443 at load ~1.7–3, 37 with 448 at load ~1–1.8, 38.5 with 463 at load ~1.4–2.1, 45 with 492 at load ~2.4–3.4, 44 with 482
-at load ~2.4–3.2, 42.5 with 505 at load ~1.7–1.8, 42 with 517 at load ~1.3–1.7, 45 with 529 at load ~2.3–2.6, 51.5 with 569 at load ~3.8–4.2, and 47 with 572 at load ~1.4–2.3 (2026-11-11, when `note-to-self-core` became 21), and 48 with 602 at a 15-minute load of ~2.1 at its end (2026-11-13, 38 suites: FILES added `files-core` (27) and `file-store` (13), and `schema` became 71), and 50 with 602 at load ~2.5 the same evening, after `open()` gained `NO_DRIVE`, and 50 with 607 at load ~2.2–2.6 (2026-11-14, a text block's file: `source-dump-core` became 41 and `files-core` 30). Treat that range as a load measurement, not a property of the suite.
+at load ~2.4–3.2, 42.5 with 505 at load ~1.7–1.8, 42 with 517 at load ~1.3–1.7, 45 with 529 at load ~2.3–2.6, 51.5 with 569 at load ~3.8–4.2, and 47 with 572 at load ~1.4–2.3 (2026-11-11, when `note-to-self-core` became 21), and 48 with 602 at a 15-minute load of ~2.1 at its end (2026-11-13, 38 suites: FILES added `files-core` (27) and `file-store` (13), and `schema` became 71), and 50 with 602 at load ~2.5 the same evening, after `open()` gained `NO_DRIVE`, and 50 with 607 at load ~2.2–2.6 (2026-11-14, a text block's file: `source-dump-core` became 41 and `files-core` 30), and 61 with 637 at load ~2.9 rising to ~6.8 while another session worked beside it (2026-11-16, the Schedule page: 30 browser cases, no offline suite changed; run from a frozen copy of HEAD plus the change — see the log), and 61 with 649 at load ~3.7 falling to ~1.7 (2026-11-16, the FILES viewer on top of it, overlapping the end of that session's own 63-minute run). Treat that range as a load measurement, not a property of the suite.

@@ -22,6 +22,15 @@
      Undo) and a PDF takes named page PINS. Both are keys on the file's
      record in `files` (files-core.js), never a change to the file's bytes,
      so they sync with the rest of Track and Download gives the original.
+   - Since 2026-11-15, copied from two Notability screen recordings the user
+     sent: a PEN (✒) beside the highlighter, on a PDF, an image and a note's
+     Preview; a PDF's typed text can be SELECTED, then copied or highlighted;
+     a PAGE RAIL on the PDF's right edge (▲, the page, the total, ▼ — the
+     page number opens a number pad); and a PAGES PANEL (▦): thumbnails of
+     All pages, Bookmarks (a ribbon on a page), Notes (pages written or
+     highlighted on) or the Outline (pins, which now cover a RANGE of pages),
+     with a finder that searches only the pages the list is showing, and a
+     full-screen grid.
 
    Plain JS (React.createElement, no Babel) on purpose: it is loaded only when
    FILES is first opened, so the page's other tabs and the other four pages
@@ -125,16 +134,75 @@
     '.fdir .fdir-img-frame{position:relative;flex:none}',
     '.fdir .fdir-img-frame img{display:block;width:100%;height:100%}',
     // the highlighter layer: multiply, so the ink under a stroke stays readable
-    '.fdir .fdir-marks{position:absolute;left:0;top:0;width:100%;height:100%;mix-blend-mode:multiply;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}',
-    '.fdir .fdir-marks[data-mode="draw"],.fdir .fdir-marks[data-mode="erase"]{touch-action:none}',
+    // With no tool on it lets every pointer through, so the text under it can
+    // be selected; its input is heard on the page, not on the layer (MarkLayer).
+    '.fdir .fdir-marks{position:absolute;left:0;top:0;width:100%;height:100%;mix-blend-mode:multiply;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;pointer-events:none}',
+    '.fdir .fdir-marks[data-mode="draw"],.fdir .fdir-marks[data-mode="erase"]{touch-action:none;pointer-events:auto}',
+    // pdf.js's text layer: invisible text laid exactly over the drawn page
+    '.fdir .fdir-text{position:absolute;left:0;top:0;overflow:hidden;line-height:1;transform-origin:0 0;text-align:initial;-webkit-text-size-adjust:none;text-size-adjust:none;forced-color-adjust:none;-webkit-user-select:text;user-select:text}',
+    '.fdir .fdir-text span,.fdir .fdir-text br{color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0% 0%}',
+    '.fdir .fdir-text span.markedContent{top:0;height:0}',
+    '.fdir .fdir-text ::selection{background:rgba(37,99,235,.3);color:transparent}',
+    '.fdir .fdir-text[data-main-rotation="90"]{transform:rotate(90deg) translateY(-100%)}',
+    '.fdir .fdir-text[data-main-rotation="180"]{transform:rotate(180deg) translate(-100%,-100%)}',
+    '.fdir .fdir-text[data-main-rotation="270"]{transform:rotate(270deg) translateX(-100%)}',
+    '.fdir .fdir-text[data-off="true"]{-webkit-user-select:none;user-select:none;pointer-events:none}',
+    '.fdir .fdir-find{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;mix-blend-mode:multiply}',
+    '.fdir .fdir-find i{position:absolute;border-radius:2px}',
     '.fdir .fdir-marks[data-mode="draw"]{cursor:crosshair}.fdir .fdir-marks[data-mode="erase"]{cursor:cell}',
     '.fdir .fdir-pin-flags{position:absolute;left:6px;right:6px;top:6px;display:flex;flex-wrap:wrap;gap:4px;pointer-events:none;z-index:1}',
     '.fdir .fdir-pin-flag{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:999px;padding:1px 8px;font-size:11px;',
     'background-color:var(--color-surface);color:var(--color-text);border:1px solid var(--color-border);box-shadow:var(--shadow-float)}',
     // a pressed tool: specific enough to beat the Grit remap of btn()'s classes
     '.fdir [data-files-tools] .fdir-tool[aria-pressed="true"]{background-color:var(--color-primary-soft);border-color:var(--color-primary-border);color:var(--color-text)}',
-    '.fdir [data-files-tools] .fdir-swatch{width:26px;height:26px;border-radius:999px;border:2px solid var(--color-border);flex:none}',
+    '.fdir [data-files-tools] .fdir-tool[data-armed="true"]{box-shadow:inset 0 -2px 0 var(--color-primary-border)}',
+    '.fdir [data-files-tools] .fdir-swatch,.fdir .fdir-selpop .fdir-swatch{width:26px;height:26px;border-radius:999px;border:2px solid var(--color-border);flex:none}',
     '.fdir [data-files-tools] .fdir-swatch[aria-pressed="true"]{border-color:var(--color-text);box-shadow:0 0 0 2px var(--color-surface) inset}',
+    // the page rail and its number pad
+    '.fdir .fdir-rail{position:absolute;right:10px;top:50%;transform:translateY(-50%);z-index:5;display:flex;flex-direction:column;align-items:center;gap:1px;padding:4px 3px;border-radius:999px;',
+    'background-color:var(--color-surface);border:1px solid var(--color-border);box-shadow:var(--shadow-float);color:var(--color-text);font-size:11px;line-height:1.2}',
+    '.fdir .fdir-rail>button{min-width:30px;min-height:28px;border-radius:999px;color:var(--color-text)}',
+    '.fdir .fdir-rail>button:disabled{opacity:.35}',
+    '.fdir .fdir-rail>[data-files-rail-page]{font-weight:700;border-radius:6px;border-bottom:1px solid var(--color-border-strong)}',
+    '.fdir .fdir-rail>[data-files-rail-total]{color:var(--color-text-muted);padding:2px 0}',
+    '.fdir .fdir-pad{position:absolute;right:calc(100% + 8px);top:50%;transform:translateY(-50%);width:184px;padding:8px;border-radius:14px;background-color:var(--color-surface);border:1px solid var(--color-border);box-shadow:var(--shadow-float)}',
+    '.fdir .fdir-pad input{width:100%;border-radius:8px;border:1px solid var(--color-border);background-color:var(--color-surface-strong);color:var(--color-text);padding:6px 8px;font-size:15px;text-align:center;outline:none}',
+    '.fdir .fdir-pad-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}',
+    '.fdir .fdir-pad-keys button{height:38px;border-radius:10px;background-color:var(--color-surface-strong);font-size:15px;color:var(--color-text)}',
+    '.fdir .fdir-pad-go{width:100%;height:34px;border-radius:10px;background-color:var(--color-primary-solid);color:#fff;font-weight:700;font-size:13px}',
+    '.fdir .fdir-pad-go:disabled{opacity:.4}',
+    // the pages panel: thumbnails, ribbons, the finder
+    '.fdir .fdir-pages{background-color:var(--color-surface);color:var(--color-text);display:flex;flex-direction:column;min-height:0}',
+    '.fdir .fdir-pages[data-files-pages="side"]{width:15.5rem;flex:none;border-left:1px solid var(--color-border)}',
+    '.fdir .fdir-pages[data-files-pages="full"]{position:fixed;left:0;right:0;top:0;bottom:var(--phone-tabbar-h,0px);z-index:40}',
+    '.fdir .fdir-pages-grid{display:grid;gap:14px;padding:12px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));align-content:start}',
+    '.fdir .fdir-pages[data-files-pages="side"] .fdir-pages-grid{grid-template-columns:1fr;padding:12px 22px}',
+    '.fdir .fdir-thumb{position:relative}',
+    '.fdir .fdir-thumb-page{display:block;position:relative;width:100%;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.25);outline:2px solid transparent;outline-offset:1px}',
+    '.fdir .fdir-thumb[data-current="true"] .fdir-thumb-page{outline-color:var(--color-primary-solid)}',
+    '.fdir .fdir-thumb-page canvas{display:block;width:100%;height:100%}',
+    '.fdir .fdir-thumb-marks{position:absolute;left:0;top:0;width:100%;height:100%;mix-blend-mode:multiply;pointer-events:none}',
+    '.fdir .fdir-thumb-n{text-align:center;font-size:11px;color:var(--color-text-muted);padding-top:3px}',
+    '.fdir .fdir-thumb-count{position:absolute;left:6px;bottom:6px;border-radius:999px;padding:0 7px;font-size:11px;font-weight:700;line-height:18px;background:#fb923c;color:#1f2937}',
+    '.fdir .fdir-ribbon{position:absolute;right:4px;top:0;width:30px;height:34px;display:flex;align-items:flex-start;justify-content:center;color:#6b7280}',
+    '.fdir .fdir-ribbon svg{width:16px;height:22px;overflow:visible}',
+    '.fdir .fdir-ribbon path{fill:rgba(255,255,255,.85);stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}',
+    '.fdir .fdir-ribbon[aria-pressed="true"]{color:#dc2626}',
+    '.fdir .fdir-ribbon[aria-pressed="true"] path{fill:currentColor}',
+    '.fdir .fdir-scope-menu{position:absolute;left:0;top:100%;margin-top:4px;z-index:6;min-width:11rem;border-radius:12px;padding:4px;background-color:var(--color-surface);border:1px solid var(--color-border);box-shadow:var(--shadow-float)}',
+    '.fdir .fdir-scope-menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 8px;border-radius:8px;font-size:13px;color:var(--color-text)}',
+    '.fdir .fdir-scope-menu button:hover{background-color:var(--color-surface-strong)}',
+    '.fdir .fdir-find-box{display:flex;align-items:center;gap:6px;border-radius:999px;border:1px solid var(--color-border);background-color:var(--color-surface-strong);padding:5px 10px}',
+    '.fdir .fdir-find-box input{flex:1;min-width:0;background:transparent;outline:none;color:var(--color-text);font-size:13px;-webkit-user-select:text;user-select:text}',
+    // what a text selection offers
+    '.fdir .fdir-selpop{position:fixed;z-index:45;display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;background-color:var(--color-surface);border:1px solid var(--color-border);box-shadow:var(--shadow-float)}',
+    // a note's Preview as PAPER: white in both appearances, as a PDF page is,
+    // because ink is drawn with multiply and would vanish on a dark sheet
+    '.fdir .fdir-paper{position:relative;transform-origin:0 0;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.25);border-radius:4px;',
+    '--color-text:#111827;--color-text-muted:#4b5563;--color-surface-strong:#f3f4f6;--color-border:#d1d5db;--color-border-strong:#9ca3af;--color-primary-text:#2563eb}',
+    '.fdir .fdir-paper-body{padding:28px 36px}',
+    '.fdir .fdir-paper-page{position:absolute;left:0;width:100%;pointer-events:none}',
+    '.fdir .fdir-paper-page+.fdir-paper-page{border-top:1px dashed #d1d5db}',
     '.fdir .fdir-sheet{position:fixed;left:0;right:0;bottom:0;z-index:45;max-height:70vh;overflow-y:auto;border-radius:12px 12px 0 0;padding-bottom:calc(8px + var(--phone-tabbar-h, 0px))}'
   ].join('\n');
   function injectStyles() {
@@ -376,14 +444,21 @@
       if (fileN.some(function (r) { return !r.driveId; })) lines.push('A file not yet uploaded to Drive cannot be restored.');
       // highlights and pins live on the record, so they go with it (Drive's
       // trash holds the file, never them)
-      var hlN = 0, pinN = 0;
-      fileN.forEach(function (r) { hlN += TF.highlightsOf(r).length; pinN += TF.pinsOf(r).length; });
-      if (hlN || pinN) {
+      var hlN = 0, penN = 0, pinN = 0, bmN = 0;
+      var marked = fileN.concat(noteN.filter(function (r) { return TF.highlightsOf(r).length; }));
+      marked.forEach(function (r) {
+        TF.highlightsOf(r).forEach(function (m) { if (TF.markKind(m) === 'pen') penN++; else hlN++; });
+        pinN += TF.pinsOf(r).length; bmN += TF.bookmarksOf(r).length;
+      });
+      if (hlN || penN || pinN || bmN) {
         var marks = [];
         if (hlN) marks.push(hlN + (hlN === 1 ? ' highlight' : ' highlights'));
+        if (penN) marks.push(penN + (penN === 1 ? ' pen stroke' : ' pen strokes'));
         if (pinN) marks.push(pinN + (pinN === 1 ? ' pin' : ' pins'));
-        lines.push((fileN.length === 1 ? 'Its ' : 'Their ') + marks.join(' and ') + (hlN + pinN === 1 ? ' goes' : ' go') +
-          ' with ' + (fileN.length === 1 ? 'it.' : 'them.'));
+        if (bmN) marks.push(bmN + (bmN === 1 ? ' bookmark' : ' bookmarks'));
+        var said = marks.length > 2 ? marks.slice(0, -1).join(', ') + ' and ' + marks[marks.length - 1] : marks.join(' and ');
+        lines.push((marked.length === 1 ? 'Its ' : 'Their ') + said + (hlN + penN + pinN + bmN === 1 ? ' goes' : ' go') +
+          ' with ' + (marked.length === 1 ? 'it.' : 'them.'));
       }
       if (!global.confirm(head + (lines.length ? '\n\n' + lines.join('\n') : ''))) return;
       var r = write(function (l) { return TF.withRemoved(l, ids); });
@@ -526,7 +601,7 @@
     if (open && !TF.isFolder(open)) {
       page = TF.kindOf(open) === 'note'
         ? h(NoteView, {
-          key: open.id, rec: open, fresh: freshNote === open.id, onText: saveText, uses: uses, onUse: props.onOpenUse,
+          key: open.id, rec: open, fresh: freshNote === open.id, onText: saveText, say: say, write: write, uses: uses, onUse: props.onOpenUse,
           onBack: goUp, onRename: function () { startRename(open.id); }, onDelete: function () { remove([open.id]); },
           trail: trail, nameOf: nameOf, onCrumb: openRec, phone: phone, onDrawer: function () { setDrawer(true); }
         })
@@ -997,6 +1072,12 @@
       timer.current = setTimeout(flush, 500);
     }
     var stateText = { saved: 'Saved', saving: 'Saving…', refused: 'Not saved — the browser refused it', 'too-big': 'Too long to save: a note holds up to 256 KB' }[saveState];
+    // Ink on the Preview: the same marks a PDF page takes, on the note's record.
+    var m = useMarks(rec, p);
+    var inked = TF.highlightsOf(rec).length > 0;
+    // A phone reads a note as flowing text; it becomes the fixed-width paper
+    // (scaled to fit) only once there is ink to keep in place, or a tool is on.
+    var paper = !p.phone || inked || !!m.mode;
 
     return h('div', { className: 'flex-1 min-h-0 flex flex-col', 'data-files-viewer': String(rec.id), 'data-files-viewer-type': 'md' },
       h(PageHead, { phone: p.phone, onDrawer: p.onDrawer, onBack: p.onBack, trail: p.trail, nameOf: p.nameOf, onCrumb: p.onCrumb,
@@ -1010,6 +1091,8 @@
         btn('🗑', { 'data-files-delete': true, onClick: p.onDelete, title: 'Delete this note' }),
         h('span', { 'data-files-save': saveState, className: cls('text-[11px]', saveState === 'saved' || saveState === 'saving' ? 'text-gray-500' : 'text-red-400') }, stateText)),
       h(UsedIn, { uses: p.uses, onUse: p.onUse }),
+      mode === 'preview' ? h('div', { className: 'px-3 py-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 border-b border-gray-800', 'data-files-tools': true },
+        markTools(m)) : null,
       mode === 'edit'
         ? h('textarea', {
           'data-files-editor': true, value: draft, autoFocus: !!p.fresh, spellCheck: true,
@@ -1017,8 +1100,57 @@
           placeholder: '# Title\n\nWrite in Markdown…',
           className: 'fdir-editor flex-1 min-h-0 w-full resize-none bg-gray-950 p-4 text-gray-100 outline-none'
         })
-        : h('div', { className: 'flex-1 min-h-0 overflow-y-auto p-4', 'data-files-scroll': true },
-          h(MarkdownPreview, { text: draft })));
+        : paper ? h(NotePaper, { text: draft, rec: rec, marks: m })
+          : h('div', { className: 'flex-1 min-h-0 overflow-y-auto p-4', 'data-files-scroll': true },
+            h(MarkdownPreview, { text: draft })));
+  }
+
+  // A note's Preview as a sheet of PAPER the marks layer can lie on. The text
+  // is laid out at one fixed width (PAPER_W) on every screen and SCALED to
+  // fit a narrower pane, so a line breaks where it broke when the ink was
+  // drawn. The sheet is cut into virtual pages of TF.NOTE_PAGE_RATIO, each
+  // with its own MarkLayer, so a mark is stored exactly as a PDF's is: a page
+  // and fractions of it. Ink does not follow the text: edit a line above a
+  // stroke and the stroke stays where it was drawn.
+  var PAPER_W = 720;
+  function NotePaper(p) {
+    var paneRef = useRef(null), paperRef = useRef(null), bodyRef = useRef(null);
+    var s1 = useState(0), paneW = s1[0], setPaneW = s1[1];
+    var s2 = useState(0), bodyH = s2[0], setBodyH = s2[1];
+    var m = p.marks;
+    useEffect(function () {
+      var pane = paneRef.current, body = bodyRef.current;
+      if (!pane || !body) return;
+      function measure() { setPaneW(pane.clientWidth); setBodyH(body.offsetHeight); }
+      measure();
+      if (global.ResizeObserver) {
+        var ro = new ResizeObserver(measure); ro.observe(pane); ro.observe(body);
+        return function () { ro.disconnect(); };
+      }
+      global.addEventListener('resize', measure);
+      return function () { global.removeEventListener('resize', measure); };
+    }, []);
+    var R = TF.NOTE_PAGE_RATIO, pageH = Math.round(PAPER_W * R);
+    var by = useMemo(function () {
+      var o = {};
+      TF.highlightsOf(p.rec).forEach(function (hl) { (o[hl.page] = o[hl.page] || []).push(hl); });
+      return o;
+    }, [p.rec.highlights]);
+    var last = Object.keys(by).reduce(function (a, k) { return Math.max(a, Number(k)); }, 0);
+    var pages = Math.max(1, Math.ceil(bodyH / pageH), last);
+    var scale = paneW ? Math.min(1, Math.max(0.2, (paneW - 24) / PAPER_W)) : 1;
+    var H = pages * pageH, tool = { mode: m.mode, kind: m.kind, color: m.color };
+    var layers = [];
+    for (var k = 1; k <= pages; k++) {
+      layers.push(h('div', { key: k, className: 'fdir-paper-page', 'data-files-note-page': k, style: { top: (k - 1) * pageH + 'px', height: pageH + 'px' } },
+        h(MarkLayer, { hls: by[k] || NONE, page: k, ratio: pageH / PAPER_W, tool: tool, onStroke: m.addStroke, onErase: m.erase, surface: paperRef })));
+    }
+    return h('div', { ref: paneRef, className: 'flex-1 min-h-0 overflow-auto p-3', 'data-files-scroll': true },
+      h('div', { style: { width: Math.round(PAPER_W * scale) + 'px', height: Math.round(H * scale) + 'px', margin: '0 auto' } },
+        h('div', { ref: paperRef, className: 'fdir-paper', 'data-files-paper': true, 'data-files-paper-pages': pages,
+          style: { width: PAPER_W + 'px', height: H + 'px', transform: scale < 1 ? 'scale(' + scale + ')' : undefined } },
+          h('div', { ref: bodyRef, className: 'fdir-paper-body' }, h(MarkdownPreview, { text: p.text })),
+          layers)));
   }
 
   function MarkdownPreview(p) {
@@ -1045,62 +1177,7 @@
     var type = TF.typeOfRecord(rec);
     var s1 = useState({ phase: 'loading' }), st = s1[0], setSt = s1[1];
     var s2 = useState(0), attempt = s2[0], setAttempt = s2[1];
-    // the highlighter: null (a Pencil draws, a finger scrolls), 'draw' (every
-    // pointer draws) or 'erase'
-    var s3 = useState(null), mode = s3[0], setMode = s3[1];
-    var s4 = useState(lastColor), color = s4[0], setColorNow = s4[1];
-    var recRef = useRef(rec); recRef.current = rec;
-
-    // ── highlights and pins: keys on this record, never the file's bytes ──
-    function recIn(list, id) { return TF.records(list).filter(function (r) { return r.id === id; })[0] || null; }
-    var marks = {
-      mode: mode, color: color,
-      setMode: setMode,
-      setColor: function (c) { lastColor = c; setColorNow(c); if (mode === 'erase') setMode(null); },
-      addStroke: function (page, pts, ratio) {
-        var cur = recRef.current;
-        var simple = TF.simplifyStroke(pts, MARK_EPS, ratio);
-        if (simple.length < 4) return;
-        var hl = { id: newId(), page: page, color: color, w: MARK_W, pts: simple, createdAt: Date.now() };
-        if (!TF.marksFit(cur, hl)) { p.say('This file\'s highlights are full (256 KB a file). Erase some to add more.'); return; }
-        p.write(function (l) { return TF.withHighlight(l, cur.id, hl); });
-      },
-      // One gesture, one write, no prompt: Undo puts back the very records,
-      // at their stored places (docs/contracts/destructive-controls.md).
-      erase: function (ids) {
-        var id = recRef.current.id, entries = [];
-        var r = p.write(function (l) { entries = TF.highlightEntries(recIn(l, id), ids); return TF.withoutHighlights(l, id, ids); });
-        if (!Array.isArray(r) || !entries.length) return;
-        var n = entries.length;
-        p.say(n === 1 ? 'Erased a highlight.' : 'Erased ' + n + ' highlights.', { label: 'Undo', run: function () {
-          var back = p.write(function (l) { return TF.withHighlightsRestored(l, id, entries); });
-          if (Array.isArray(back)) p.say(n === 1 ? 'The highlight is back.' : 'The ' + n + ' highlights are back.');
-        } });
-      },
-      // true when the dialog may close
-      addPin: function (page, text) {
-        var cur = recRef.current, now = Date.now(), name = TF.cleanName(text);
-        if (!name) return false;
-        var pin = { id: newId(), page: page, name: name, createdAt: now, updatedAt: now };
-        if (!TF.marksFit(cur, pin)) { p.say('This file\'s highlights and pins are full (256 KB a file).'); return false; }
-        var r = p.write(function (l) { return TF.withPin(l, cur.id, pin); });
-        if (Array.isArray(r)) p.say('Pinned page ' + page + ' as ' + q(name) + '.');
-        return r !== false;
-      },
-      renamePin: function (pinId, text) {
-        if (!TF.cleanName(text)) return false;
-        return p.write(function (l) { return TF.withPinRenamed(l, recRef.current.id, pinId, text, Date.now()); }) !== false;
-      },
-      // the prompt is here, after the no-op guard and before the write
-      deletePin: function (pinId) {
-        var cur = recRef.current;
-        var pin = TF.pinsOf(cur).filter(function (x) { return x.id === pinId; })[0];
-        if (!pin) return;
-        if (!global.confirm('Delete the pin ' + q(pin.name) + ' on page ' + pin.page + '?\n\nOnly the pin goes: the page and its highlights stay.')) return;
-        var r = p.write(function (l) { return TF.withoutPin(l, cur.id, pinId); });
-        if (Array.isArray(r)) p.say('Deleted the pin ' + q(pin.name) + '.');
-      }
-    };
+    var marks = useMarks(rec, p);
 
     useEffect(function () {
       var alive = true, url = null;
@@ -1145,7 +1222,7 @@
     else if (st.phase === 'setup') body = h('div', { className: 'p-6 text-sm text-gray-400' }, 'This file is on another device. Google Drive is not set up yet, so it cannot come here.');
     else if (st.phase === 'error') body = h('div', { className: 'p-6 text-sm text-red-400 space-y-3' }, h('div', null, st.message),
       btn('Try again', { onClick: function () { setAttempt(function (a) { return a + 1; }); } }));
-    else if (type === 'pdf') body = h(PdfView, { url: st.url, key: st.url, rec: rec, marks: marks, phone: p.phone });
+    else if (type === 'pdf') body = h(PdfView, { url: st.url, key: st.url, rec: rec, marks: marks, phone: p.phone, say: p.say });
     else if (type === 'png' || type === 'jpeg' || type === 'image') body = h(ImageView, { url: st.url, name: rec.name, rec: rec, marks: marks });
     else if (type === 'md' || type === 'text') body = h(TextView, { blob: st.blob, md: type === 'md' });
     else body = h('div', { className: 'p-10 text-center space-y-2', 'data-files-other': true },
@@ -1175,50 +1252,193 @@
   // at any zoom and on either device.
   var MARK_COLORS = { yellow: '#fde047', green: '#86efac', blue: '#93c5fd', pink: '#f9a8d4' };
   var MARK_NAMES = { yellow: 'Yellow', green: 'Green', blue: 'Blue', pink: 'Pink' };
-  var MARK_W = 0.02;       // a stroke's width, in page widths
+  // The pen's inks: data colours too, dark enough to read as writing.
+  var PEN_INK = { black: '#111827', red: '#dc2626', blue: '#2563eb', green: '#15803d' };
+  var PEN_NAMES = { black: 'Black', red: 'Red', blue: 'Blue', green: 'Green' };
+  var FIND_COLOR = '#fdba74'; // a finder hit on the page
+  var MARK_W = 0.02;       // a highlighter stroke's width, in page widths
+  var PEN_W = 0.004;       // a pen stroke's
   var MARK_EPS = 0.0015;   // how far simplification may move a point, in page widths
-  var TAP_LEN = 0.004;     // a stroke shorter than this is a tap, and is not kept
-  var lastColor = 'yellow';
+  var PEN_EPS = 0.0006;    // …of a pen stroke, which is handwriting
+  var TAP_LEN = 0.004;     // a stroke shorter than this is a tap: nothing for the highlighter, a dot for the pen
+  var lastColor = 'yellow', lastPenColor = 'black', lastKind = 'hl';
 
   function ptsAttr(pts, H) {
     var out = [];
     for (var i = 0; i + 1 < pts.length; i += 2) out.push(Math.round(pts[i] * 10000) / 10 + ',' + Math.round(pts[i + 1] * H * 10) / 10);
     return out.join(' ');
   }
-  function strokeStyle(color, w) {
-    return { stroke: MARK_COLORS[color] || MARK_COLORS.yellow, strokeWidth: w * 1000, fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' };
+  function strokeStyle(ink, w) {
+    return { stroke: ink, strokeWidth: w * 1000, fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' };
+  }
+  function inkOf(hl) {
+    return hl.tool === 'pen' ? (PEN_INK[hl.color] || PEN_INK.black) : (MARK_COLORS[hl.color] || MARK_COLORS.yellow);
+  }
+  // The stored marks as SVG, in a 1000-wide box H tall: a stroke is a
+  // polyline, a text highlight a group of boxes. `attr` names each one — the
+  // page's layer and a thumbnail's must not answer to the same selector.
+  function markShapes(hls, H, hidden, attr) {
+    return hls.map(function (hl, i) {
+      if (hidden && hidden.has(hl.id)) return null;
+      var props = { key: i + ':' + String(hl.id) };
+      props[attr] = String(hl.id);
+      if (hl.tool === 'text') {
+        var kids = [];
+        for (var k = 0; k + 3 < hl.rects.length; k += 4) {
+          kids.push(h('rect', { key: k, x: hl.rects[k] * 1000, y: hl.rects[k + 1] * H, width: hl.rects[k + 2] * 1000, height: hl.rects[k + 3] * H }));
+        }
+        props['data-files-mark-kind'] = 'text';
+        props.style = { fill: inkOf(hl), stroke: 'none' };
+        return h('g', props, kids);
+      }
+      if (hl.tool === 'pen') props['data-files-mark-kind'] = 'pen';
+      props.points = ptsAttr(hl.pts, H);
+      props.style = strokeStyle(inkOf(hl), hl.w);
+      return h('polyline', props);
+    });
   }
 
-  // The toolbar's highlighter controls, as children for a toolbar row.
+  // What a viewer's marks can do, and the tool that is on. One per open file
+  // or note; every write is a files-core.js writer through the page's `write`.
+  //   mode: null (a Pencil draws, a finger scrolls and selects), 'draw'
+  //         (every pointer draws) or 'erase'
+  //   kind: 'hl' (the highlighter) or 'pen' — what draws, Pencil included
+  function useMarks(rec, p) {
+    var s1 = useState(null), mode = s1[0], setMode = s1[1];
+    var s2 = useState(lastKind), kind = s2[0], setKindNow = s2[1];
+    var s3 = useState(lastColor), hlColor = s3[0], setHlColor = s3[1];
+    var s4 = useState(lastPenColor), penColor = s4[0], setPenColor = s4[1];
+    var recRef = useRef(rec); recRef.current = rec;
+    function recIn(list, id) { return TF.records(list).filter(function (r) { return r.id === id; })[0] || null; }
+    function what() { return TF.kindOf(recRef.current) === 'note' ? 'note' : 'file'; }
+    return {
+      mode: mode, kind: kind, color: kind === 'pen' ? penColor : hlColor,
+      setMode: setMode,
+      // 🖍 / ✒: the tool that is on turns drawing off; the other one takes over
+      pick: function (k) {
+        if (mode === 'draw' && kind === k) { setMode(null); return; }
+        lastKind = k; setKindNow(k); setMode('draw');
+      },
+      setColor: function (c) {
+        if (kind === 'pen') { lastPenColor = c; setPenColor(c); } else { lastColor = c; setHlColor(c); }
+        if (mode === 'erase') setMode(null);
+      },
+      addStroke: function (page, pts, ratio) {
+        var cur = recRef.current, pen = kind === 'pen';
+        var simple = TF.simplifyStroke(pts, pen ? PEN_EPS : MARK_EPS, ratio);
+        if (simple.length < 4) return;
+        var hl = { id: newId(), page: page, color: pen ? penColor : hlColor, w: pen ? PEN_W : MARK_W, pts: simple, createdAt: Date.now() };
+        if (pen) hl.tool = 'pen';
+        if (!TF.marksFit(cur, hl)) { p.say('This ' + what() + '\'s highlights are full (256 KB a ' + what() + '). Erase some to add more.'); return; }
+        p.write(function (l) { return TF.withHighlight(l, cur.id, hl); });
+      },
+      // A text selection highlighted: `pages` is {page: [x, y, w, h, …]} in
+      // fractions of each page, as the browser gave them. One write.
+      addTextMarks: function (pages, color) {
+        var cur = recRef.current, now = Date.now(), items = [];
+        Object.keys(pages).forEach(function (k) {
+          var rects = TF.lineRects(pages[k]);
+          if (rects.length) items.push({ id: newId(), page: Number(k), color: color, tool: 'text', rects: rects, createdAt: now });
+        });
+        if (!items.length) return false;
+        if (!TF.marksFit(cur, items)) { p.say('This file\'s highlights are full (256 KB a file). Erase some to add more.'); return false; }
+        var r = p.write(function (l) { return items.reduce(function (acc, it) { return TF.withHighlight(acc, cur.id, it); }, l); });
+        return Array.isArray(r);
+      },
+      // One gesture, one write, no prompt: Undo puts back the very records,
+      // at their stored places (docs/contracts/destructive-controls.md).
+      erase: function (ids) {
+        var id = recRef.current.id, entries = [];
+        var r = p.write(function (l) { entries = TF.highlightEntries(recIn(l, id), ids); return TF.withoutHighlights(l, id, ids); });
+        if (!Array.isArray(r) || !entries.length) return;
+        var n = entries.length;
+        var pens = entries.filter(function (e) { return TF.markKind(e.item) === 'pen'; }).length;
+        var one = pens === n ? 'pen stroke' : pens ? 'mark' : 'highlight';
+        p.say(n === 1 ? 'Erased a ' + one + '.' : 'Erased ' + n + ' ' + one + 's.', { label: 'Undo', run: function () {
+          var back = p.write(function (l) { return TF.withHighlightsRestored(l, id, entries); });
+          if (Array.isArray(back)) p.say(n === 1 ? 'The ' + one + ' is back.' : 'The ' + n + ' ' + one + 's are back.');
+        } });
+      },
+      // true when the dialog may close
+      addPin: function (page, pageEnd, text) {
+        var cur = recRef.current, now = Date.now(), name = TF.cleanName(text);
+        if (!name) return false;
+        var pin = { id: newId(), page: page, name: name, createdAt: now, updatedAt: now };
+        if (pageEnd > page) pin.pageEnd = pageEnd;
+        if (!TF.marksFit(cur, pin)) { p.say('This file\'s highlights and pins are full (256 KB a file).'); return false; }
+        var r = p.write(function (l) { return TF.withPin(l, cur.id, pin); });
+        if (Array.isArray(r)) p.say('Pinned ' + (pageEnd > page ? 'pages ' + page + '–' + pageEnd : 'page ' + page) + ' as ' + q(name) + '.');
+        return r !== false;
+      },
+      // the Edit pin dialog: its name and its pages together
+      editPin: function (pinId, change) {
+        if (!TF.cleanName(change.name)) return false;
+        return p.write(function (l) { return TF.withPinEdited(l, recRef.current.id, pinId, change, Date.now()); }) !== false;
+      },
+      // the prompt is here, after the no-op guard and before the write
+      deletePin: function (pinId) {
+        var cur = recRef.current;
+        var pin = TF.pinsOf(cur).filter(function (x) { return x.id === pinId; })[0];
+        if (!pin) return;
+        var end = TF.pinEnd(pin);
+        if (!global.confirm('Delete the pin ' + q(pin.name) + ' on ' + (end > pin.page ? 'pages ' + pin.page + '–' + end : 'page ' + pin.page) +
+          '?\n\nOnly the pin goes: the page and its highlights stay.')) return;
+        var r = p.write(function (l) { return TF.withoutPin(l, cur.id, pinId); });
+        if (Array.isArray(r)) p.say('Deleted the pin ' + q(pin.name) + '.');
+      },
+      // A ribbon: one tap on, one tap off, no prompt — a bookmark holds
+      // nothing but its page (docs/contracts/destructive-controls.md).
+      toggleBookmark: function (page) {
+        var cur = recRef.current;
+        if (TF.bookmarksOf(cur).indexOf(page) >= 0) { p.write(function (l) { return TF.withoutBookmark(l, cur.id, page); }); return; }
+        if (!TF.marksFit(cur, page)) { p.say('This file\'s highlights and pins are full (256 KB a file).'); return; }
+        p.write(function (l) { return TF.withBookmark(l, cur.id, page); });
+      }
+    };
+  }
+
+  // The toolbar's drawing controls, as children for a toolbar row.
   function markTools(m) {
-    var out = [];
-    out.push(btn('🖍', { key: 'draw', 'data-files-mark-draw': true, 'aria-pressed': m.mode === 'draw' ? 'true' : 'false',
-      'aria-label': 'Highlighter',
-      title: m.mode === 'draw' ? 'Highlighter on: a finger or the mouse draws. Tap again to scroll with a finger.'
+    var out = [], pen = m.kind === 'pen';
+    out.push(btn('🖍', { key: 'draw', 'data-files-mark-draw': true, 'aria-pressed': m.mode === 'draw' && !pen ? 'true' : 'false',
+      'data-armed': !pen ? 'true' : undefined, 'aria-label': 'Highlighter',
+      title: m.mode === 'draw' && !pen ? 'Highlighter on: a finger or the mouse draws. Tap again to scroll with a finger.'
         : 'Highlighter: turn on to draw with a finger or the mouse (Apple Pencil always draws)',
-      onClick: function () { m.setMode(m.mode === 'draw' ? null : 'draw'); } }, 'fdir-tool'));
-    out.push(h('span', { key: 'sw', className: 'flex items-center gap-1', role: 'group', 'aria-label': 'Highlighter colour' },
-      TF.COLORS.map(function (c) {
+      onClick: function () { m.pick('hl'); } }, 'fdir-tool'));
+    out.push(btn('✒', { key: 'pen', 'data-files-mark-pen': true, 'aria-pressed': m.mode === 'draw' && pen ? 'true' : 'false',
+      'data-armed': pen ? 'true' : undefined, 'aria-label': 'Pen',
+      title: m.mode === 'draw' && pen ? 'Pen on: a finger or the mouse writes. Tap again to scroll with a finger.'
+        : 'Pen: turn on to write with a finger or the mouse (Apple Pencil always writes with the tool underlined)',
+      onClick: function () { m.pick('pen'); } }, 'fdir-tool'));
+    out.push(h('span', { key: 'sw', className: 'flex items-center gap-1', role: 'group', 'aria-label': pen ? 'Pen colour' : 'Highlighter colour' },
+      (pen ? TF.PEN_COLORS : TF.COLORS).map(function (c) {
+        var name = pen ? PEN_NAMES[c] : MARK_NAMES[c];
         return h('button', { key: c, type: 'button', 'data-files-mark-color': c, 'aria-pressed': m.color === c ? 'true' : 'false',
-          'aria-label': MARK_NAMES[c], title: MARK_NAMES[c], onClick: function () { m.setColor(c); },
-          className: 'fdir-swatch', style: { backgroundColor: MARK_COLORS[c] } });
+          'aria-label': name, title: name, onClick: function () { m.setColor(c); },
+          className: 'fdir-swatch', style: { backgroundColor: pen ? PEN_INK[c] : MARK_COLORS[c] } });
       })));
     out.push(btn('⌫', { key: 'erase', 'data-files-mark-erase': true, 'aria-pressed': m.mode === 'erase' ? 'true' : 'false',
-      'aria-label': 'Eraser', title: 'Eraser: touch a highlight to remove it (Undo brings it back)',
+      'aria-label': 'Eraser', title: 'Eraser: touch a highlight or a pen stroke to remove it (Undo brings it back)',
       onClick: function () { m.setMode(m.mode === 'erase' ? null : 'erase'); } }, 'fdir-tool'));
     return out;
   }
 
-  // One page's strokes, and the input that makes and erases them.
+  // One page's marks, and the input that makes and erases them.
   //   - An Apple Pencil (pointerType 'pen') always draws; a finger or a mouse
-  //     only while 🖍 is on. With ⌫ on, every pointer erases.
+  //     only while 🖍 or ✒ is on. With ⌫ on, every pointer erases.
+  //   - The layer itself takes no pointer while no tool is on (CSS), so the
+  //     text under it can be selected. Its listeners are therefore on the
+  //     SURFACE it lies on — its parent (a PDF page, an image's frame) or
+  //     `p.surface` (a note's paper, which several layers share) — and a
+  //     press counts only when it lands inside this layer's own box.
   //   - iPad Safari scrolls under a Pencil unless its touch is cancelled, so
   //     the touch listeners are non-passive and cancel a stylus touch (or every
   //     touch while a tool is on, or a palm during a Pencil stroke). React's
   //     own touch handlers are passive, so these are native.
   //   - Coalesced events keep a fast Pencil line smooth; pointer capture keeps
   //     a stroke on the page it started on, clamped to its edges.
-  // p: hls, page, ratio (height / width), tool {mode, color}, onStroke, onErase.
+  // p: hls, page, ratio (height / width), tool {mode, kind, color}, onStroke,
+  //    onErase, surface (a ref, optional).
   function MarkLayer(p) {
     var ref = useRef(null), liveRef = useRef(null), propsRef = useRef(p);
     propsRef.current = p;
@@ -1226,11 +1446,15 @@
 
     useEffect(function () {
       var el = ref.current;
-      if (!el) return;
+      var root = el && ((p.surface && p.surface.current) || el.parentNode);
+      if (!el || !root) return;
       var g = null;
       function at(e, rect) {
         var x = (e.clientX - rect.left) / rect.width, y = (e.clientY - rect.top) / rect.height;
         return [x < 0 ? 0 : x > 1 ? 1 : x, y < 0 ? 0 : y > 1 ? 1 : y];
+      }
+      function inside(e, rect) {
+        return e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
       }
       function acting(type) {
         var mode = propsRef.current.tool.mode;
@@ -1255,9 +1479,9 @@
         var what = acting(e.pointerType);
         if (!what) return;
         var rect = el.getBoundingClientRect();
-        if (!rect.width || !rect.height) return;
+        if (!rect.width || !rect.height || !inside(e, rect)) return;
         e.preventDefault();
-        try { el.setPointerCapture(e.pointerId); } catch (x) { /* a synthetic pointer */ }
+        try { root.setPointerCapture(e.pointerId); } catch (x) { /* a synthetic pointer */ }
         var pt = at(e, rect);
         g = { id: e.pointerId, type: e.pointerType, erase: what === 'erase', pts: pt.slice(), len: 0, hit: new Set() };
         if (g.erase) eraseAt(pt); else drawLive();
@@ -1283,14 +1507,21 @@
         if (!g || e.pointerId !== g.id) return;
         var done = g, P = propsRef.current;
         g = null;
-        try { el.releasePointerCapture(e.pointerId); } catch (x) { /* already released */ }
+        try { root.releasePointerCapture(e.pointerId); } catch (x) { /* already released */ }
         if (done.erase) {
           setHidden(null);
           if (e.type !== 'pointercancel' && done.hit.size) P.onErase(Array.from(done.hit));
           return;
         }
         clearLive();
-        if (e.type === 'pointercancel' || done.len < TAP_LEN) return;
+        if (e.type === 'pointercancel') return;
+        if (done.len < TAP_LEN) {
+          // a tap: nothing for the highlighter, the dot of an i for the pen
+          if (P.tool.kind !== 'pen') return;
+          var x = done.pts[0], y = done.pts[1];
+          P.onStroke(P.page, [x, y, x > 0.999 ? x - 0.0006 : x + 0.0006, y], P.ratio);
+          return;
+        }
         P.onStroke(P.page, done.pts, P.ratio);
       }
       function touch(e) {
@@ -1303,32 +1534,30 @@
           }
         }
       }
-      el.addEventListener('pointerdown', down);
-      el.addEventListener('pointermove', move);
-      el.addEventListener('pointerup', end);
-      el.addEventListener('pointercancel', end);
-      el.addEventListener('touchstart', touch, { passive: false });
-      el.addEventListener('touchmove', touch, { passive: false });
+      root.addEventListener('pointerdown', down);
+      root.addEventListener('pointermove', move);
+      root.addEventListener('pointerup', end);
+      root.addEventListener('pointercancel', end);
+      root.addEventListener('touchstart', touch, { passive: false });
+      root.addEventListener('touchmove', touch, { passive: false });
       return function () {
-        el.removeEventListener('pointerdown', down);
-        el.removeEventListener('pointermove', move);
-        el.removeEventListener('pointerup', end);
-        el.removeEventListener('pointercancel', end);
-        el.removeEventListener('touchstart', touch, { passive: false });
-        el.removeEventListener('touchmove', touch, { passive: false });
+        root.removeEventListener('pointerdown', down);
+        root.removeEventListener('pointermove', move);
+        root.removeEventListener('pointerup', end);
+        root.removeEventListener('pointercancel', end);
+        root.removeEventListener('touchstart', touch, { passive: false });
+        root.removeEventListener('touchmove', touch, { passive: false });
       };
     }, []);
 
-    var H = 1000 * p.ratio;
+    var H = 1000 * p.ratio, pen = p.tool.kind === 'pen';
     return h('svg', {
       ref: ref, className: 'fdir-marks', 'data-files-marks': p.page, 'data-mode': p.tool.mode || 'off',
       viewBox: '0 0 1000 ' + H, preserveAspectRatio: 'none', 'aria-hidden': 'true'
     },
-      p.hls.map(function (hl, i) {
-        if (hidden && hidden.has(hl.id)) return null;
-        return h('polyline', { key: i + ':' + String(hl.id), 'data-files-mark': String(hl.id), points: ptsAttr(hl.pts, H), style: strokeStyle(hl.color, hl.w) });
-      }),
-      h('polyline', { ref: liveRef, 'data-files-mark-live': true, style: strokeStyle(p.tool.color, MARK_W) }));
+      markShapes(p.hls, H, hidden, 'data-files-mark'),
+      h('polyline', { ref: liveRef, 'data-files-mark-live': true,
+        style: strokeStyle(pen ? (PEN_INK[p.tool.color] || PEN_INK.black) : (MARK_COLORS[p.tool.color] || MARK_COLORS.yellow), pen ? PEN_W : MARK_W) }));
   }
 
   function ImageView(p) {
@@ -1366,7 +1595,7 @@
             onLoad: function (e) { var im = e.currentTarget; if (im.naturalWidth && im.naturalHeight) setNat({ w: im.naturalWidth, h: im.naturalHeight }); },
             style: size ? undefined : { maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto' } }),
           size ? h(MarkLayer, { hls: TF.highlightsOf(p.rec, 1), page: 1, ratio: nat.h / nat.w,
-            tool: { mode: m.mode, color: m.color }, onStroke: m.addStroke, onErase: m.erase }) : null)));
+            tool: { mode: m.mode, kind: m.kind, color: m.color }, onStroke: m.addStroke, onErase: m.erase }) : null)));
   }
 
   function TextView(p) {
@@ -1397,6 +1626,96 @@
   }
 
   var ZOOMS = [0.75, 1, 1.25, 1.5, 2, 3];
+  var THUMB_PX = 360;   // a thumbnail's drawn width, whatever size its cell is
+  // The pages panel's lists: key, label, icon.
+  var SCOPES = [['all', 'All pages', '▢'], ['bookmarks', 'Bookmarks', '🔖'], ['notes', 'Notes', '✍'], ['outline', 'Outline', '☰']];
+
+  // A page's typed text, made comparable (TF.searchNorm) and remembered in
+  // `cache` for as long as the document is open. A line end reads as a space.
+  function pageText(doc, n, cache) {
+    if (cache[n] !== undefined) return Promise.resolve(cache[n]);
+    return doc.getPage(n).then(function (pg) { return pg.getTextContent(); }).then(function (tc) {
+      var s = '';
+      (tc.items || []).forEach(function (it) { if (typeof it.str === 'string') s += it.str + (it.hasEOL ? ' ' : ''); });
+      return (cache[n] = TF.searchNorm(s));
+    });
+  }
+
+  // Where `needle` (already TF.searchNorm'd) shows on a drawn page: a flat
+  // [x, y, w, h, …] in fractions of `pageEl`, one box per line of each hit.
+  // The text layer `box` is read one character at a time, each normalised as
+  // the query was, so a hit maps back to the very characters it covers.
+  function findRects(box, pageEl, needle) {
+    var hay = '', at = [];
+    var walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, null), node;
+    while ((node = walk.nextNode())) {
+      if (node.nodeType === 1) {
+        if (node.tagName === 'BR' && hay && hay.charAt(hay.length - 1) !== ' ') { hay += ' '; at.push(null); }
+        continue;
+      }
+      var text = node.nodeValue || '';
+      for (var i = 0; i < text.length; i++) {
+        var norm = TF.searchNorm(text.charAt(i));
+        for (var k = 0; k < norm.length; k++) {
+          var c = norm.charAt(k);
+          if (c === ' ' && (!hay || hay.charAt(hay.length - 1) === ' ')) continue;
+          hay += c; at.push([node, i]);
+        }
+      }
+    }
+    var pb = pageEl.getBoundingClientRect(), flat = [];
+    if (!pb.width || !pb.height) return NONE;
+    TF.searchHits(hay, needle).forEach(function (start) {
+      var a = start, b = start + needle.length - 1;
+      while (a <= b && !at[a]) a++;
+      while (b >= a && !at[b]) b--;
+      if (a > b) return;
+      var range = document.createRange();
+      range.setStart(at[a][0], at[a][1]);
+      range.setEnd(at[b][0], at[b][1] + 1);
+      var rects = range.getClientRects();
+      for (var r = 0; r < rects.length; r++) {
+        if (rects[r].width && rects[r].height) {
+          flat.push((rects[r].left - pb.left) / pb.width, (rects[r].top - pb.top) / pb.height, rects[r].width / pb.width, rects[r].height / pb.height);
+        }
+      }
+    });
+    return flat.length ? TF.lineRects(flat) : NONE;
+  }
+
+  // What a selection covers of the PDF's typed text: {any, pages: {page:
+  // [x, y, w, h, …]}, x, y}, the boxes in fractions of each page and (x, y)
+  // the screen point its last box ends at. Read text node by text node, so
+  // nothing but text inside a page's text layer counts — a range that runs
+  // across two pages also "contains" their canvases and layers.
+  function selectionMarks(range) {
+    var out = { any: false, pages: {}, x: 0, y: 0 };
+    var top = range.commonAncestorContainer;
+    if (top.nodeType !== 1) top = top.parentNode;
+    if (!top) return out;
+    var walk = document.createTreeWalker(top, NodeFilter.SHOW_TEXT, null), node;
+    while ((node = walk.nextNode())) {
+      if (!range.intersectsNode(node)) continue;
+      var layer = node.parentNode && node.parentNode.closest ? node.parentNode.closest('.fdir-text') : null;
+      var pageEl = layer && layer.parentNode;
+      if (!pageEl || !pageEl.getAttribute) continue;
+      var n = Number(pageEl.getAttribute('data-files-pdf-page'));
+      if (!n) continue;
+      var r = document.createRange();
+      r.setStart(node, node === range.startContainer ? range.startOffset : 0);
+      r.setEnd(node, node === range.endContainer ? range.endOffset : (node.nodeValue || '').length);
+      if (r.collapsed) continue;
+      var pb = pageEl.getBoundingClientRect(), rects = r.getClientRects();
+      if (!pb.width || !pb.height) continue;
+      for (var i = 0; i < rects.length; i++) {
+        var b = rects[i];
+        if (!b.width || !b.height) continue;
+        (out.pages[n] = out.pages[n] || []).push((b.left - pb.left) / pb.width, (b.top - pb.top) / pb.height, b.width / pb.width, b.height / pb.height);
+        out.any = true; out.x = b.right; out.y = b.bottom;
+      }
+    }
+    return out;
+  }
 
   function PdfView(p) {
     var s1 = useState({ phase: 'loading' }), st = s1[0], setSt = s1[1];
@@ -1436,11 +1755,13 @@
       return function () { global.removeEventListener('resize', measure); };
     }, [st.phase]);
 
+    var selPoke = useRef(null);
     // The page under the top third of the pane; scrolled to the very end,
     // the last page (which may never reach the top third).
     function onScroll() {
       var el = scrollRef.current;
       if (!el || st.phase !== 'ready') return;
+      if (selPoke.current) selPoke.current();
       var pagesEl = el.querySelectorAll('[data-files-pdf-page]');
       if (el.scrollTop > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 2) { setPageNow(pagesEl.length); return; }
       var mid = el.getBoundingClientRect().top + el.clientHeight / 3;
@@ -1465,42 +1786,119 @@
       return by;
     }, [p.rec.highlights]);
     var pins = useMemo(function () { return TF.pinsOf(p.rec); }, [p.rec.pins]);
-    var s5 = useState(false), pinsOpen = s5[0], setPinsOpen = s5[1];
+    var booked = useMemo(function () { return TF.bookmarksOf(p.rec); }, [p.rec.bookmarks]);
+    var s5 = useState(null), panel = s5[0], setPanel = s5[1];        // the pages panel: null, 'side' or 'full'
     var s6 = useState(null), dlg = s6[0], setDlg = s6[1];
+    var s7 = useState({ kind: 'all' }), scope = s7[0], setScope = s7[1];
+    var s8 = useState(''), query = s8[0], setQuery = s8[1];
+    var s9 = useState(''), needle = s9[0], setNeedle = s9[1];
+    var s10 = useState(null), found = s10[0], setFound = s10[1];
+    var s11 = useState(null), sel = s11[0], setSel = s11[1];
+    var textCache = useRef({});
+    var total = st.phase === 'ready' ? st.pages : 0;
+    // the pages the panel's list — and so the finder — covers
+    var scopeList = useMemo(function () { return TF.scopePages(p.rec, scope, total); },
+      [p.rec.highlights, p.rec.pins, p.rec.bookmarks, scope.kind, scope.pinId, total]);
+    var scopeKey = scope.kind === 'all' ? 'all:' + total : scopeList.join(',');
+
+    // the query, settled and made comparable
+    useEffect(function () {
+      var t = setTimeout(function () { setNeedle(TF.searchNorm(query).trim()); }, 250);
+      return function () { clearTimeout(t); };
+    }, [query]);
+
+    // The finder: each page the list covers is read once (and remembered),
+    // one after another, so a long PDF answers as it goes and a new query or
+    // a new list abandons the old scan.
+    useEffect(function () {
+      var doc = docRef.current;
+      if (st.phase !== 'ready' || !doc || !needle) { setFound(null); return; }
+      var alive = true, counts = {}, chars = 0, i = 0, list = scopeList;
+      function report(done) { setFound({ needle: needle, counts: Object.assign({}, counts), scanned: i, done: done, chars: chars }); }
+      function step() {
+        if (!alive) return;
+        if (i >= list.length) { report(true); return; }
+        var n = list[i];
+        pageText(doc, n, textCache.current).then(function (text) {
+          var c = TF.searchHits(text, needle).length;
+          if (c) counts[n] = c;
+          chars += text.length;
+        }, function () { /* a page that cannot be read has no hits */ }).then(function () {
+          i++;
+          if (alive && i % 8 === 0 && i < list.length) report(false);
+          step();
+        });
+      }
+      report(false);
+      step();
+      return function () { alive = false; };
+    }, [st.phase, needle, scopeKey]);
+
+    // a pin deleted (here or on the other device) while its range is the list
+    useEffect(function () {
+      if (scope.kind === 'outline' && scope.pinId !== undefined && scope.pinId !== null &&
+        !pins.some(function (x) { return x.id === scope.pinId; })) setScope({ kind: 'outline' });
+    }, [pins, scope]);
+
+    // A selection of the PDF's typed text offers Copy and Highlight. It is
+    // read a moment after it settles; what it covered is kept, so the offer
+    // still works if tapping it clears the selection (iPad Safari does).
+    useEffect(function () {
+      if (st.phase !== 'ready') return;
+      var timer = null;
+      function read() {
+        var root = scrollRef.current, s = global.getSelection ? global.getSelection() : null;
+        if (!root || !s || s.isCollapsed || !s.rangeCount) { setSel(null); return; }
+        var range = s.getRangeAt(0);
+        if (!root.contains(range.commonAncestorContainer)) { setSel(null); return; }
+        var got = selectionMarks(range), text = String(s);
+        if (!got.any || !text.trim()) { setSel(null); return; }
+        setSel({ text: text, pages: got.pages, x: got.x, y: got.y });
+      }
+      function changed() { clearTimeout(timer); timer = setTimeout(read, 220); }
+      selPoke.current = changed;
+      document.addEventListener('selectionchange', changed);
+      return function () { clearTimeout(timer); selPoke.current = null; document.removeEventListener('selectionchange', changed); };
+    }, [st.phase]);
 
     if (st.phase === 'loading') return h('div', { className: 'p-6 text-xs text-gray-500', 'data-files-pdf-loading': true }, 'Opening the PDF…');
     if (st.phase === 'error') return h('div', { className: 'p-6 text-sm text-red-400', 'data-files-pdf-error': true }, st.message);
     var w = Math.round(width * zoom);
-    var tool = { mode: m.mode, color: m.color };
+    var tool = { mode: m.mode, kind: m.kind, color: m.color };
     var pageEls = [];
     for (var n = 1; n <= st.pages; n++) {
       pageEls.push(h(PdfPage, { key: n, n: n, doc: docRef.current, width: w, ratio: st.ratio, root: scrollRef,
-        hls: hlBy[n] || NONE, pins: pins.filter(function (x) { return x.page === n; }), tool: tool, onStroke: m.addStroke, onErase: m.erase }));
+        hls: hlBy[n] || NONE, pins: pins.filter(function (x) { return x.page === n; }), tool: tool, onStroke: m.addStroke, onErase: m.erase,
+        find: needle }));
     }
     var zi = ZOOMS.indexOf(zoom);
+    var mode = panel ? (p.phone ? 'full' : panel) : null;   // a phone has no room for a side panel
 
-    function saveDlg(text) {
+    function jump(n) {
+      var to = n < 1 ? 1 : n > st.pages ? st.pages : n;
+      scrollToPage(to);
+    }
+    function saveDlg(v) {
       if (!dlg) return;
-      var ok = dlg.kind === 'pin' ? m.addPin(dlg.page, text) : m.renamePin(dlg.pinId, text);
+      var ok = dlg.kind === 'pin' ? m.addPin(v.page, v.pageEnd, v.name) : m.editPin(dlg.pinId, v);
       if (ok) setDlg(null);
     }
-    var pinRows = pins.map(function (pin, i) {
-      return h('div', { key: i + ':' + String(pin.id), 'data-files-pin-row': String(pin.id), className: 'flex items-center gap-1 rounded hover:bg-gray-800' },
-        h('button', { type: 'button', 'data-files-pin-jump': String(pin.id), className: 'flex-1 min-w-0 flex items-center gap-2 px-2 py-2 text-left text-xs text-gray-200',
-          onClick: function () { setPinsOpen(false); scrollToPage(pin.page); } },
-          h('span', { 'aria-hidden': 'true' }, '📌'),
-          h('span', { className: 'flex-1 min-w-0 truncate', 'data-files-pin-name': true }, pin.name),
-          h('span', { className: 'text-[10px] text-gray-500 shrink-0' }, 'p. ' + pin.page)),
-        h('button', { type: 'button', 'data-files-pin-rename': String(pin.id), 'aria-label': 'Rename ' + pin.name, className: 'px-2 py-2 text-xs text-gray-400',
-          onClick: function () { setPinsOpen(false); setDlg({ kind: 'pin-rename', pinId: pin.id, initial: pin.name, title: 'Rename pin' }); } }, '✎'),
-        h('button', { type: 'button', 'data-files-pin-delete': String(pin.id), 'aria-label': 'Delete ' + pin.name, className: 'px-2 py-2 text-xs text-gray-400',
-          onClick: function () { m.deletePin(pin.id); } }, '🗑'));
-    });
-    var pinList = h('div', { 'data-files-pin-list': true, className: cls('border border-gray-700 bg-gray-900 p-1 shadow-xl',
-      p.phone ? 'fdir-sheet' : 'absolute right-0 top-full mt-1 z-20 w-72 max-h-80 overflow-y-auto rounded-lg') },
-      p.phone ? h('div', { className: 'px-2 pt-2 pb-1 text-xs font-bold text-gray-300' }, 'Pins') : null,
-      pinRows.length ? pinRows : h('div', { className: 'px-2 py-3 text-[11px] text-gray-500', 'data-files-pin-empty': true },
-        'No pins yet. 📌 Pin page pins the page you are on, under a name.'));
+    function dropSel() {
+      var s = global.getSelection ? global.getSelection() : null;
+      if (s && s.removeAllRanges) s.removeAllRanges();
+      setSel(null);
+    }
+    function copySel() {
+      var text = sel.text;
+      function ok() { p.say('Copied.'); }
+      function old() {
+        var done = false;
+        try { done = document.execCommand('copy'); } catch (e) { done = false; }
+        p.say(done ? 'Copied.' : 'This browser did not allow the copy — use its own Copy.');
+      }
+      if (global.navigator && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, old); else old();
+    }
+    var marked = booked.indexOf(pageNow) >= 0;
 
     return h('div', { className: 'flex-1 min-h-0 flex flex-col', 'data-files-pdf': true, 'data-files-pdf-pages': st.pages },
       h('div', { className: 'px-3 py-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 border-b border-gray-800', 'data-files-tools': true },
@@ -1509,28 +1907,258 @@
         btn('+', { 'data-files-zoom-in': true, disabled: zi >= ZOOMS.length - 1, onClick: function () { setZoom(ZOOMS[Math.min(ZOOMS.length - 1, zi + 1)]); } }),
         btn('Fit', { onClick: function () { setZoom(1); } }),
         markTools(m),
-        btn('📌 Pin page', { 'data-files-pin-add': true,
-          onClick: function () { setPinsOpen(false); setDlg({ kind: 'pin', page: pageNow, initial: 'Page ' + pageNow, title: 'Pin page ' + pageNow, action: 'Pin' }); } }),
-        h('div', { className: 'relative' },
-          btn('Pins (' + pins.length + ')', { 'data-files-pins': true, 'aria-expanded': pinsOpen ? 'true' : 'false',
-            onClick: function () { setPinsOpen(!pinsOpen); } }),
-          pinsOpen && !p.phone ? pinList : null),
+        btn('🔖', { 'data-files-bookmark-now': true, 'aria-pressed': marked ? 'true' : 'false',
+          'aria-label': (marked ? 'Remove the bookmark from page ' : 'Bookmark page ') + pageNow,
+          title: marked ? 'Page ' + pageNow + ' is bookmarked. Tap to remove the bookmark.' : 'Bookmark page ' + pageNow,
+          onClick: function () { m.toggleBookmark(pageNow); } }, 'fdir-tool'),
+        btn('📌 Pin', { 'data-files-pin-add': true, title: 'Pin this page, or a range of pages, under a name',
+          onClick: function () { setDlg({ kind: 'pin', from: pageNow, to: pageNow, total: st.pages, title: 'Pin pages', action: 'Pin' }); } }),
+        btn('▦ Pages', { 'data-files-pages-toggle': true, 'aria-expanded': panel ? 'true' : 'false',
+          title: 'Thumbnails of every page, your bookmarks, the pages you wrote on, your pins, and Find',
+          onClick: function () { setPanel(panel ? null : 'side'); } }, 'fdir-tool'),
         h('span', { className: 'ml-auto', 'data-files-pdf-at': true }, 'Page ' + pageNow + ' of ' + st.pages)),
-      h('div', { ref: scrollRef, onScroll: onScroll, className: 'flex-1 min-h-0 overflow-auto py-3', 'data-files-scroll': true },
-        width ? pageEls : null),
-      pinsOpen && p.phone ? h('div', { className: 'fixed inset-0 z-40 bg-black/50', 'data-files-pin-backdrop': true, onClick: function () { setPinsOpen(false); } }) : null,
-      pinsOpen && p.phone ? pinList : null,
-      dlg ? h(NameDialog, { dialog: dlg, onCancel: function () { setDlg(null); }, onSave: saveDlg }) : null);
+      h('div', { className: 'flex-1 min-h-0 flex' },
+        h('div', { className: 'flex-1 min-w-0 min-h-0 relative flex flex-col' },
+          h('div', { ref: scrollRef, onScroll: onScroll, className: 'flex-1 min-h-0 overflow-auto py-3', 'data-files-scroll': true },
+            width ? pageEls : null),
+          h(PageRail, { page: pageNow, total: st.pages, onJump: jump })),
+        mode ? h(PagesPanel, { mode: mode, phone: p.phone, rec: p.rec, doc: docRef.current, total: st.pages, ratio: st.ratio, pageNow: pageNow,
+          scope: scope, setScope: setScope, scopeList: scopeList, query: query, setQuery: setQuery, needle: needle, found: found,
+          pins: pins, hlBy: hlBy, booked: booked, marks: m,
+          onJump: function (n2) { jump(n2); if (mode === 'full') setPanel(null); },
+          onEditPin: function (pin) { setDlg({ kind: 'pin-rename', pinId: pin.id, from: pin.page, to: TF.pinEnd(pin), total: st.pages, initial: pin.name, title: 'Edit pin' }); },
+          onAddPin: function () { setDlg({ kind: 'pin', from: pageNow, to: pageNow, total: st.pages, title: 'Pin pages', action: 'Pin' }); },
+          onExpand: function () { setPanel(mode === 'full' ? 'side' : 'full'); },
+          onClose: function () { setPanel(null); } }) : null),
+      sel ? h('div', { className: 'fdir-selpop', 'data-files-sel': true, role: 'toolbar', 'aria-label': 'Selected text',
+        style: { left: Math.max(8, Math.min(sel.x - 110, (global.innerWidth || 800) - 230)) + 'px', top: Math.min(sel.y + 10, (global.innerHeight || 600) - 52) + 'px' },
+        // pressing an offer must not clear the selection it acts on
+        onMouseDown: function (e) { e.preventDefault(); } },
+        btn('Copy', { 'data-files-sel-copy': true, onClick: copySel }),
+        TF.COLORS.map(function (c) {
+          return h('button', { key: c, type: 'button', 'data-files-sel-color': c, className: 'fdir-swatch',
+            'aria-label': 'Highlight in ' + MARK_NAMES[c].toLowerCase(), title: 'Highlight in ' + MARK_NAMES[c].toLowerCase(),
+            style: { backgroundColor: MARK_COLORS[c] },
+            onClick: function () { if (m.addTextMarks(sel.pages, c)) dropSel(); } });
+        }),
+        btn('✕', { 'data-files-sel-close': true, 'aria-label': 'Dismiss', onClick: dropSel })) : null,
+      dlg ? h(PinDialog, { dialog: dlg, onCancel: function () { setDlg(null); }, onSave: saveDlg }) : null);
   }
   var NONE = [];
 
-  // One page: a placeholder of the right size until it is near the view,
-  // then a canvas; let go again when it is far away, so a 300-page PDF holds
-  // only the pages around the reader in memory.
-  function PdfPage(p) {
+  // The rail on a PDF's right edge, after Notability's: ▲, the page you are
+  // on, the total, ▼. The page number opens a pad to type one into — its own
+  // keys on a touch screen (the system keyboard would cover half an iPad),
+  // the keyboard on a laptop.
+  function PageRail(p) {
+    var s1 = useState(false), open = s1[0], setOpen = s1[1];
+    var s2 = useState(''), text = s2[0], setText = s2[1];
+    var inputRef = useRef(null);
+    var touch = !!(global.TrackViewport && global.TrackViewport.isTouchPrimary && global.TrackViewport.isTouchPrimary());
+    var target = TF.pageFromText(text, p.total);
+    useEffect(function () { if (open && !touch && inputRef.current) inputRef.current.focus(); }, [open]);
+    function close() { setOpen(false); setText(''); }
+    function go() { if (target === null) return; p.onJump(target); close(); }
+    function key(d) { setText(function (t) { return d === 'back' ? t.slice(0, -1) : (t + d).slice(0, 7); }); }
+    var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'back', '0'];
+    return h('div', { className: 'fdir-rail', 'data-files-rail': true },
+      open ? h('div', { className: 'fdir-pad', 'data-files-pad': true, role: 'dialog', 'aria-label': 'Go to a page' },
+        h('input', { ref: inputRef, value: text, readOnly: touch, inputMode: touch ? 'none' : 'numeric', 'data-files-pad-input': true,
+          placeholder: '1–' + p.total, 'aria-label': 'Page number',
+          onChange: function (e) { setText(String(e.target.value).replace(/[^0-9]/g, '').slice(0, 7)); },
+          onKeyDown: function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } else if (e.key === 'Escape') { e.preventDefault(); close(); } } }),
+        h('div', { className: 'fdir-pad-keys' }, keys.map(function (d) {
+          return h('button', { key: d, type: 'button', 'data-files-pad-key': d, 'aria-label': d === 'back' ? 'Delete' : d,
+            style: d === '0' ? { gridColumn: '2' } : (d === 'back' ? { gridColumn: '3', gridRow: '4' } : undefined),
+            onClick: function () { key(d); } }, d === 'back' ? '⌫' : d);
+        })),
+        h('button', { type: 'button', className: 'fdir-pad-go', 'data-files-pad-go': true, disabled: target === null, onClick: go },
+          target === null ? (text ? 'No page ' + text : 'Go') : 'Go to page ' + target)) : null,
+      h('button', { type: 'button', 'data-files-rail-prev': true, 'aria-label': 'Previous page', disabled: p.page <= 1,
+        onClick: function () { p.onJump(p.page - 1); } }, '▲'),
+      h('button', { type: 'button', 'data-files-rail-page': true, 'aria-expanded': open ? 'true' : 'false',
+        'aria-label': 'Page ' + p.page + ' of ' + p.total + '. Go to a page', title: 'Go to a page',
+        onClick: function () { if (open) close(); else setOpen(true); } }, String(p.page)),
+      h('span', { 'data-files-rail-total': true }, String(p.total)),
+      h('button', { type: 'button', 'data-files-rail-next': true, 'aria-label': 'Next page', disabled: p.page >= p.total,
+        onClick: function () { p.onJump(p.page + 1); } }, '▼'));
+  }
+
+  // The pages panel (▦), after Notability's: a finder, one of four lists —
+  // All pages, Bookmarks, Notes (pages with marks), Outline (pins) — as
+  // thumbnails, and ⤢ for the same thing as a full-screen grid. The finder
+  // searches only the pages the list covers. State lives in PdfView, so a
+  // query and its hits on the pages outlast the panel being closed.
+  function PagesPanel(p) {
+    var full = p.mode === 'full', scope = p.scope, m = p.marks;
+    var s1 = useState(false), menu = s1[0], setMenu = s1[1];
+    var listRef = useRef(null);
+    var onePin = scope.kind === 'outline' && scope.pinId !== undefined && scope.pinId !== null
+      ? (p.pins.filter(function (x) { return x.id === scope.pinId; })[0] || null) : null;
+    var searching = !!p.needle;
+    var showPins = scope.kind === 'outline' && !onePin && !searching;
+    var f = p.found && p.found.needle === p.needle ? p.found : null;
+    var counts = (f && f.counts) || {};
+    var shown = searching ? p.scopeList.filter(function (n) { return counts[n]; }) : p.scopeList;
+    var hits = 0;
+    shown.forEach(function (n) { hits += counts[n] || 0; });
+    var label = SCOPES.filter(function (sc) { return sc[0] === scope.kind; })[0][1] + (onePin ? ' › ' + onePin.name : '');
+
+    // on opening, and when the list changes, the page being read comes into view
+    useEffect(function () {
+      var list = listRef.current, el = list && list.querySelector('[data-files-thumb="' + p.pageNow + '"]');
+      if (!el) return;
+      var a = el.getBoundingClientRect(), b = list.getBoundingClientRect();
+      list.scrollTop += a.top - b.top - Math.max(0, (b.height - a.height) / 2);
+    }, [scope.kind, scope.pinId, p.mode]);
+
+    var countText;
+    if (searching) {
+      countText = !f || !f.done ? 'Searching… ' + (f ? f.scanned : 0) + ' / ' + p.scopeList.length
+        : hits ? hits + (hits === 1 ? ' result' : ' results') + ' on ' + shown.length + (shown.length === 1 ? ' page' : ' pages') : 'No results';
+    } else if (showPins) countText = p.pins.length + (p.pins.length === 1 ? ' pin' : ' pins');
+    else countText = shown.length + (shown.length === 1 ? ' page' : ' pages');
+
+    var empty = null;
+    if (searching && f && f.done && !shown.length) {
+      empty = scope.kind === 'all' && !f.chars ? 'This PDF has no typed text to search — it is probably a scan.'
+        : 'Nothing in ' + label + ' matches.';
+    } else if (!searching && !showPins && !shown.length) {
+      empty = scope.kind === 'bookmarks' ? 'No bookmarks yet. Tap the ribbon on a page here, or 🔖 above the page, to bookmark it.'
+        : scope.kind === 'notes' ? 'No pages written or highlighted on yet.'
+          : scope.kind === 'outline' ? 'This pin\'s pages are not in this PDF.' : 'No pages.';
+    }
+
+    var findBox = h('label', { className: cls('fdir-find-box', full ? 'flex-1 max-w-xl mx-auto' : '') },
+      h('span', { 'aria-hidden': 'true' }, '🔍'),
+      h('input', { type: 'text', value: p.query, 'data-files-find': true, placeholder: 'Find', 'aria-label': 'Find text in ' + label,
+        autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false, enterKeyHint: 'search',
+        onChange: function (e) { p.setQuery(e.target.value); } }),
+      p.query ? h('button', { type: 'button', 'data-files-find-clear': true, 'aria-label': 'Clear the search',
+        onClick: function () { p.setQuery(''); } }, '✕') : null);
+    var scopeBtn = h('div', { className: 'relative flex-none' },
+      h('button', { type: 'button', 'data-files-scope': scope.kind, 'aria-expanded': menu ? 'true' : 'false', 'aria-haspopup': 'true',
+        className: 'flex items-center gap-1 text-sm font-bold max-w-[13rem]', onClick: function () { setMenu(!menu); } },
+        h('span', { className: 'truncate', 'data-files-scope-label': true }, label), h('span', { 'aria-hidden': 'true' }, '▾')),
+      menu ? h('div', { className: 'fdir-scope-menu', 'data-files-scope-menu': true, role: 'menu' },
+        SCOPES.map(function (sc) {
+          return h('button', { key: sc[0], type: 'button', role: 'menuitemradio', 'aria-checked': scope.kind === sc[0] && !onePin ? 'true' : 'false',
+            'data-files-scope-item': sc[0], onClick: function () { setMenu(false); p.setScope({ kind: sc[0] }); } },
+            h('span', { className: 'w-4 text-center', 'aria-hidden': 'true' }, scope.kind === sc[0] && !onePin ? '✓' : ''),
+            h('span', { className: 'w-5 text-center', 'aria-hidden': 'true' }, sc[2]),
+            h('span', null, sc[1]));
+        })) : null);
+    var closeBtn = h('button', { type: 'button', 'data-files-pages-close': true, className: 'text-sm font-bold flex-none', onClick: p.onClose },
+      full ? 'Close' : '✕');
+
+    var body;
+    if (showPins) {
+      body = h('div', { 'data-files-pin-list': true, className: cls('p-1', full ? 'max-w-xl mx-auto' : '') },
+        p.pins.length ? p.pins.map(function (pin, i) {
+          var end = TF.pinEnd(pin);
+          return h('div', { key: i + ':' + String(pin.id), 'data-files-pin-row': String(pin.id), className: 'flex items-center gap-1 rounded hover:bg-gray-800' },
+            h('button', { type: 'button', 'data-files-pin-jump': String(pin.id), className: 'flex-1 min-w-0 flex items-center gap-2 px-2 py-2 text-left text-xs text-gray-200',
+              onClick: function () { p.onJump(pin.page); } },
+              h('span', { 'aria-hidden': 'true' }, '📌'),
+              h('span', { className: 'flex-1 min-w-0 truncate', 'data-files-pin-name': true }, pin.name),
+              h('span', { className: 'text-[10px] text-gray-500 shrink-0', 'data-files-pin-range': true }, 'p. ' + pin.page + (end > pin.page ? '–' + end : ''))),
+            h('button', { type: 'button', 'data-files-pin-open': String(pin.id), 'aria-label': 'Show the pages of ' + pin.name,
+              title: 'Show only these pages — Find then searches only them', className: 'px-2 py-2 text-xs text-gray-400',
+              onClick: function () { p.setScope({ kind: 'outline', pinId: pin.id }); } }, '▤'),
+            h('button', { type: 'button', 'data-files-pin-rename': String(pin.id), 'aria-label': 'Edit ' + pin.name, className: 'px-2 py-2 text-xs text-gray-400',
+              onClick: function () { p.onEditPin(pin); } }, '✎'),
+            h('button', { type: 'button', 'data-files-pin-delete': String(pin.id), 'aria-label': 'Delete ' + pin.name, className: 'px-2 py-2 text-xs text-gray-400',
+              onClick: function () { m.deletePin(pin.id); } }, '🗑'));
+        }) : h('div', { className: 'px-2 py-3 text-[11px] text-gray-500', 'data-files-pin-empty': true },
+          'No pins yet. 📌 Pin names the page you are on, or a range of pages, and lists it here.'));
+    } else if (empty) {
+      body = h('div', { className: 'p-4 text-xs text-gray-500', 'data-files-pages-empty': true }, empty);
+    } else {
+      body = h('div', { className: 'fdir-pages-grid', 'data-files-pages-grid': true },
+        shown.map(function (n) {
+          return h(PdfThumb, { key: n, n: n, doc: p.doc, ratio: p.ratio, root: listRef, current: n === p.pageNow,
+            booked: p.booked.indexOf(n) >= 0, count: counts[n] || 0, hls: p.hlBy[n] || NONE,
+            onJump: p.onJump, onBookmark: m.toggleBookmark });
+        }));
+    }
+
+    return h('aside', { className: 'fdir-pages', 'data-files-pages': p.mode, 'aria-label': 'Pages' },
+      full
+        // pt-8: the page's own handle (Note to self) hangs 24px down the top centre, over this row
+        ? h('div', { className: 'flex items-center gap-3 px-4 pt-8 pb-3 border-b border-gray-800' }, scopeBtn, findBox, closeBtn)
+        : h('div', { className: 'p-2 space-y-2 border-b border-gray-800' }, findBox,
+          h('div', { className: 'flex items-center justify-between gap-2' }, scopeBtn, closeBtn)),
+      h('div', { className: 'flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-500' },
+        onePin ? h('button', { type: 'button', 'data-files-outline-back': true, className: 'underline',
+          onClick: function () { p.setScope({ kind: 'outline' }); } }, '‹ All pins') : null,
+        h('span', { 'data-files-find-count': true, 'data-done': !searching || (f && f.done) ? 'true' : 'false' }, countText)),
+      h('div', { ref: listRef, className: 'flex-1 min-h-0 overflow-y-auto', 'data-files-pages-scroll': true }, body),
+      // both on the LEFT: the floating notes button sits over the right corner
+      h('div', { className: 'flex items-center gap-2 px-3 py-2 border-t border-gray-800' },
+        p.phone ? null : h('button', { type: 'button', 'data-files-pages-expand': true,
+          className: 'rounded border border-gray-700 px-2 py-1 text-xs text-gray-300',
+          'aria-label': full ? 'Back to the side panel' : 'Full screen', title: full ? 'Back to the side panel' : 'Full screen',
+          onClick: p.onExpand }, full ? '⤡ Side panel' : '⤢ Full screen'),
+        scope.kind === 'outline' ? btn('📌 Pin pages', { 'data-files-pages-pin': true, onClick: p.onAddPin }) : null));
+  }
+
+  // One thumbnail: drawn only while it is near the panel's view, with the
+  // page's marks over it, a ribbon to bookmark it, and its number.
+  function PdfThumb(p) {
     var ref = useRef(null), s1 = useState(false), near = s1[0], setNear = s1[1];
     var s2 = useState(p.ratio), ratio = s2[0], setRatio = s2[1];
     var s3 = useState(false), drawn = s3[0], setDrawn = s3[1];
+    useEffect(function () {
+      var el = ref.current;
+      if (!el || !global.IntersectionObserver) { setNear(true); return; }
+      var io = new IntersectionObserver(function (es) { es.forEach(function (e) { setNear(e.isIntersecting); }); },
+        { root: p.root.current, rootMargin: '100% 0px' });
+      io.observe(el);
+      return function () { io.disconnect(); };
+    }, []);
+    useEffect(function () {
+      if (!near || !p.doc) { setDrawn(false); return; }
+      var alive = true, task = null;
+      p.doc.getPage(p.n).then(function (pg) {
+        if (!alive) return;
+        var base = pg.getViewport({ scale: 1 });
+        var r = base.height / base.width;
+        if (Math.abs(r - ratio) > 0.001) setRatio(r);
+        var vp = pg.getViewport({ scale: THUMB_PX / base.width });
+        var canvas = ref.current && ref.current.querySelector('canvas');
+        if (!canvas) return;
+        canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
+        task = pg.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+        return task.promise.then(function () { if (alive) setDrawn(true); });
+      }).then(null, function () {});
+      return function () { alive = false; if (task) try { task.cancel(); } catch (e) { /* already done */ } };
+    }, [near, p.doc, p.n]);
+    return h('div', { ref: ref, className: 'fdir-thumb', 'data-files-thumb': p.n, 'data-current': p.current ? 'true' : undefined,
+      'data-rendered': drawn ? 'true' : undefined },
+      h('button', { type: 'button', className: 'fdir-thumb-page', 'data-files-thumb-jump': p.n, 'aria-label': 'Go to page ' + p.n,
+        'aria-current': p.current ? 'page' : undefined, style: { aspectRatio: '1 / ' + ratio }, onClick: function () { p.onJump(p.n); } },
+        near ? h('canvas', null) : null,
+        near && p.hls.length ? h('svg', { className: 'fdir-thumb-marks', viewBox: '0 0 1000 ' + 1000 * ratio, preserveAspectRatio: 'none', 'aria-hidden': 'true' },
+          markShapes(p.hls, 1000 * ratio, null, 'data-files-thumb-mark')) : null,
+        p.count ? h('span', { className: 'fdir-thumb-count', 'data-files-thumb-count': p.n }, String(p.count)) : null),
+      h('button', { type: 'button', className: 'fdir-ribbon', 'data-files-bookmark': p.n, 'aria-pressed': p.booked ? 'true' : 'false',
+        'aria-label': (p.booked ? 'Remove the bookmark from page ' : 'Bookmark page ') + p.n,
+        onClick: function () { p.onBookmark(p.n); } },
+        h('svg', { viewBox: '0 0 16 22', 'aria-hidden': 'true' }, h('path', { d: 'M2 0h12v20l-6-4.5L2 20z' }))),
+      h('div', { className: 'fdir-thumb-n' }, String(p.n)));
+  }
+
+  // One page: a placeholder of the right size until it is near the view,
+  // then a canvas with pdf.js's TEXT LAYER over it (invisible text, so the
+  // typed words can be selected and the finder can show where it hit); let
+  // go again when it is far away, so a 300-page PDF holds only the pages
+  // around the reader in memory.
+  function PdfPage(p) {
+    var ref = useRef(null), textRef = useRef(null), s1 = useState(false), near = s1[0], setNear = s1[1];
+    var s2 = useState(p.ratio), ratio = s2[0], setRatio = s2[1];
+    var s3 = useState(false), drawn = s3[0], setDrawn = s3[1];
+    var s4 = useState(0), textV = s4[0], setTextV = s4[1];
+    var s5 = useState(NONE), hits = s5[0], setHits = s5[1];
     useEffect(function () {
       var el = ref.current;
       if (!el || !global.IntersectionObserver) { setNear(true); return; }
@@ -1562,15 +2190,108 @@
       }).then(null, function () {});
       return function () { alive = false; if (task) try { task.cancel(); } catch (e) { /* already done */ } };
     }, [near, p.doc, p.width, p.n]);
+    // The text layer, rebuilt at each width. pdf.js sizes it and its glyphs
+    // from --scale-factor: CSS pixels per PDF unit.
+    useEffect(function () {
+      var box = textRef.current, lib = global.pdfjsLib;
+      if (!near || !p.doc || !p.width || !box || !lib || !lib.renderTextLayer) return;
+      var alive = true, task = null;
+      p.doc.getPage(p.n).then(function (pg) {
+        if (!alive) return;
+        var base = pg.getViewport({ scale: 1 }), scale = p.width / base.width;
+        return pg.getTextContent().then(function (tc) {
+          if (!alive) return;
+          box.textContent = '';
+          box.style.setProperty('--scale-factor', String(scale));
+          task = lib.renderTextLayer({ textContentSource: tc, container: box, viewport: pg.getViewport({ scale: scale }), textDivs: [] });
+          return task.promise.then(function () {
+            if (!alive) return;
+            box.setAttribute('data-files-text', tc.items && tc.items.length ? 'ready' : 'none');
+            setTextV(function (v) { return v + 1; });
+          });
+        });
+      }).then(null, function () {});
+      return function () { alive = false; if (task && task.cancel) try { task.cancel(); } catch (e) { /* already done */ } };
+    }, [near, p.doc, p.width, p.n]);
+    // where the finder's query shows on this page
+    useEffect(function () {
+      var box = textRef.current, el = ref.current;
+      if (!near || !box || !el || !p.find || !textV) { setHits(NONE); return; }
+      setHits(findRects(box, el, p.find));
+    }, [near, textV, p.find, p.width]);
+    var boxes = [];
+    for (var k = 0; k + 3 < hits.length; k += 4) {
+      boxes.push(h('i', { key: k, style: { left: hits[k] * 100 + '%', top: hits[k + 1] * 100 + '%', width: hits[k + 2] * 100 + '%', height: hits[k + 3] * 100 + '%', backgroundColor: FIND_COLOR } }));
+    }
     return h('div', { ref: ref, className: 'fdir-pdf-page', 'data-files-pdf-page': p.n, 'data-rendered': drawn ? 'true' : undefined,
       style: { width: p.width + 'px', height: Math.round(p.width * ratio) + 'px' } },
       near ? h('canvas', null) : null,
-      !drawn ? h('div', { className: 'absolute inset-0 flex items-center justify-center text-xs text-gray-400' }, String(p.n)) : null,
+      near ? h('div', { ref: textRef, className: 'fdir-text', 'data-off': p.tool.mode ? 'true' : undefined }) : null,
+      boxes.length ? h('div', { className: 'fdir-find', 'data-files-find-hits': p.n }, boxes) : null,
+      !drawn ? h('div', { className: 'absolute inset-0 flex items-center justify-center text-xs text-gray-400 pointer-events-none' }, String(p.n)) : null,
       near ? h(MarkLayer, { hls: p.hls, page: p.n, ratio: ratio, tool: p.tool, onStroke: p.onStroke, onErase: p.onErase }) : null,
       p.pins.length ? h('div', { className: 'fdir-pin-flags', 'data-files-pin-flags': p.n },
         p.pins.map(function (pin, i) {
-          return h('span', { key: i + ':' + String(pin.id), className: 'fdir-pin-flag', 'data-files-pin-flag': String(pin.id), title: pin.name }, '📌 ' + pin.name);
+          var end = TF.pinEnd(pin);
+          return h('span', { key: i + ':' + String(pin.id), className: 'fdir-pin-flag', 'data-files-pin-flag': String(pin.id), title: pin.name },
+            '📌 ' + pin.name + (end > pin.page ? ' · p. ' + pin.page + '–' + end : ''));
         })) : null);
+  }
+
+  // Naming a pin and choosing its pages: one page, or From … To.
+  function PinDialog(p) {
+    var dlg = p.dialog, total = dlg.total;
+    function auto(a, b) { return a === null ? '' : (b !== null && b > a ? 'Pages ' + a + '–' + b : 'Page ' + a); }
+    var s1 = useState(dlg.initial || auto(dlg.from, dlg.to)), name = s1[0], setName = s1[1];
+    var s2 = useState(String(dlg.from)), from = s2[0], setFrom = s2[1];
+    var s3 = useState(String(dlg.to)), to = s3[0], setTo = s3[1];
+    // until the user types a name or a last page, both follow the first page
+    var own = useRef({ name: !!dlg.initial, to: dlg.to !== dlg.from });
+    var inputRef = useRef(null);
+    useEffect(function () {
+      var el = inputRef.current;
+      if (el) { el.focus(); try { el.select(); } catch (e) { /* not every input selects */ } }
+    }, []);
+    var a = TF.pageFromText(from, total), b = TF.pageFromText(to, total);
+    var why = !TF.cleanName(name) ? 'A name can\'t be empty.'
+      : a === null || b === null ? 'A page is a number from 1 to ' + total + '.'
+        : b < a ? 'The last page can\'t come before the first.' : null;
+    function digits(v) { return String(v).replace(/[^0-9]/g, '').slice(0, 7); }
+    function typedFrom(v) {
+      var t = digits(v), nextTo = own.current.to ? to : t;
+      setFrom(t);
+      if (!own.current.to) setTo(t);
+      if (!own.current.name) setName(auto(TF.pageFromText(t, total), TF.pageFromText(nextTo, total)));
+    }
+    function typedTo(v) {
+      var t = digits(v);
+      own.current.to = true; setTo(t);
+      if (!own.current.name) setName(auto(a, TF.pageFromText(t, total)));
+    }
+    function save() { if (!why) p.onSave({ name: name, page: a, pageEnd: b }); }
+    function keys(e) { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') { e.preventDefault(); p.onCancel(); } }
+    var box = 'w-16 rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-100 outline-none text-center';
+    return h('div', { className: 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4', 'data-files-dialog': dlg.kind,
+      onMouseDown: function (e) { if (e.target === e.currentTarget) p.onCancel(); } },
+      h('div', { className: 'w-full max-w-sm rounded-xl border border-gray-700 bg-gray-900 p-4 space-y-3 shadow-2xl' },
+        h('div', { className: 'text-sm font-bold text-gray-100' }, dlg.title),
+        h('input', { ref: inputRef, value: name, 'data-files-dialog-input': true, 'aria-label': 'Pin name',
+          onChange: function (e) { own.current.name = true; setName(e.target.value); }, onKeyDown: keys,
+          className: 'w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-100 outline-none' }),
+        h('div', { className: 'flex items-center gap-2 text-xs text-gray-400' },
+          h('span', null, 'Pages'),
+          h('input', { value: from, inputMode: 'numeric', 'data-files-pin-from': true, 'aria-label': 'First page', className: box,
+            onChange: function (e) { typedFrom(e.target.value); }, onKeyDown: keys }),
+          h('span', null, 'to'),
+          h('input', { value: to, inputMode: 'numeric', 'data-files-pin-to': true, 'aria-label': 'Last page', className: box,
+            onChange: function (e) { typedTo(e.target.value); }, onKeyDown: keys }),
+          h('span', null, 'of ' + total)),
+        why ? h('div', { className: 'text-[11px] text-gray-500', 'data-files-pin-why': true }, why) : null,
+        h('div', { className: 'flex justify-end gap-2' },
+          btn('Cancel', { 'data-files-dialog-cancel': true, onClick: p.onCancel }),
+          h('button', { type: 'button', 'data-files-dialog-save': true, disabled: !!why, onClick: save,
+            className: cls('rounded px-3 py-1 text-xs font-bold text-white', why ? 'bg-gray-700' : 'bg-indigo-700') },
+            dlg.action || 'Save'))));
   }
 
   // ── naming a folder, renaming anything ───────────────────────────────────

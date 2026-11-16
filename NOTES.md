@@ -1213,19 +1213,30 @@ these is authorized.
   the shared IndexedDB queue, so both can upload the same file at once. The second copy is sent
   to Drive's trash (`onFilesUploaded` never overwrites a Drive id), so nothing is lost, but the
   bytes go up twice. `navigator.locks` around `pump()` would make it one uploader.
-- **Ink beyond the highlighter.** The viewer has one tool, a see-through highlighter of one
-  width (README, "The FILES tab"). A pen, shapes, text boxes, more widths and Pencil-only
-  palm rejection settings are not built; each is another kind of mark on the file record,
-  inside the same 256 KB budget. A real Apple Pencil, palm rejection and iPad Safari have
-  never been driven here: CDP cannot send `touchType: 'stylus'`, so only the pen pointer
-  path is tested.
+- **Ink beyond the highlighter and the pen.** The viewer has a see-through highlighter and a
+  thin pen, each of one width (README, "The FILES tab"). Shapes, text boxes, more widths, a
+  lasso to move ink, and Pencil-only palm rejection settings are not built; each is another
+  kind of mark on the record (a new `tool`), inside the same 256 KB budget. A real Apple
+  Pencil, palm rejection and iPad Safari have never been driven here: CDP cannot send
+  `touchType: 'stylus'`, so only the pen pointer path is tested.
+- **The PDF pages panel has not been used on a real iPad or a real long PDF** (built
+  2026-11-15 after two Notability recordings). Tested only in headless Chrome with a
+  six-page synthetic PDF: Safari's own selection handles and callout beside the Copy /
+  Highlight bar, press-and-hold selection, the number pad under a thumb, thumbnails and
+  Find on a 300-page file, and **Thai text in Find and in selection** (pdf.js's text layer
+  and `searchNorm`'s NFKD on combining marks) are all unverified.
+- **Ink on a note does not follow its text.** A stroke is a place on a 720px sheet; editing
+  the lines above it leaves it where it was drawn, and a font that differs between devices
+  can break lines differently under it. Anchoring ink to a block of Markdown would need a
+  stable id per block, which notes do not have.
+- **Notability's `Select` in the pages panel** (tick thumbnails, then act on them) is not
+  built, and neither is ink on a plain-text file.
 - **Export a copy with the highlights burned in.** The marks live only in Track; Download and
   Share give the original. A burned-in PDF would need a PDF writer (a new dependency) and must
   never replace the stored bytes.
-- **Highlight by selecting text**, and highlights on notes or plain text. The highlighter draws
-  freehand over a rendered page; pdf.js's text layer is not loaded, and a note has no pages.
-- **A list of every highlight** (by page, with a jump), like the Pins list. Only pins are
-  listed today.
+- **A list of every highlight as text.** The panel's Notes list shows the pages with marks as
+  thumbnails; a text highlight stores its boxes, not its words, so there is no list of what
+  was highlighted to read or copy.
 - **Marks on a re-uploaded file.** Strokes are fractions of each page; if a file's bytes were
   ever replaced by a different version, its marks would stay where they were. No writer
   replaces bytes today.
@@ -1254,6 +1265,45 @@ these is authorized.
   altogether — the `STORAGE` chips and `+ storage` on every Source & Cite card still work, and
   `+Storage` in the header still creates one. Removing the views would delete code only, never
   `trueStorages` or `trueStoragePos`.
+
+## Proposal 23: Schedule Page Follow-ups
+
+Built on 2026-11-15 (README, "The Schedule page and its tabs"; rules in
+`docs/contracts/appearance.md` and `docs/contracts/milestones-mindmaps.md`). None of these is
+authorized.
+
+- **The goal tree is hidden, not gone, because four edits exist only there.** Goals are edited in
+  Documentations → Projects, which cannot yet do these. Teach Projects each one, then delete the
+  tree — code only, `goals` untouched:
+  1. choosing which mind maps a goal needs: linking and unlinking `toLearn` (Projects lists them
+     read-only);
+  2. a mind map's target and its milestone waypoints (`mmTargets`);
+  3. linking an existing task, or a goal as a sub-goal (`^ link`), and unlinking one;
+  4. the order of a goal's milestone types.
+
+  Until then the tree opens at `progress.html#progress` and from a goal page's `↗ Goal tree` and
+  `edit ↗`. Whether anything else lives only there was checked for those four and not proven
+  exhaustive: before deleting the tree, walk every control `GoalTabsPanel` draws against Projects.
+- **The hour in view after ★ CALENDAR was measured in headless Chrome only.** Chrome keeps a hidden
+  node's `scrollTop`, so nothing in the page restores it. If another engine — Firefox, an iPad's
+  Safari — shows the top of the day after a look at the calendar, the fix is the phone pane's
+  pattern (`phoneScrollRef`: save on the way out, restore in a layout effect). That pane's own
+  comment says Chrome DROPS `scrollTop` when a node loses its layout box, which the 2026-11-15
+  measurement contradicts; re-measure before trusting either, and that restore may be dead code.
+- **Two effects scroll the timeline to 08:00**: the old mount-only one and the layout effect that
+  runs the first time the timeline is shown. On a page opened on the Schedule both run and agree;
+  the mount-only one could go.
+- **The address does not follow the tab.** The hash is read once, at mount, and never written, so
+  a reload returns to the view the page was opened on and Back does not step through tabs.
+  `history.replaceState` per view would fix the reload; whether Back should walk tabs is a choice.
+- **PROGRESSION draws one level.** A sub-goal's own sub-goals are not shown (the user: "show ONLY
+  SUBGOALS under them"). A deeper level, or a fold, only if asked.
+- **MIND MAPS is today's list only**: no date picker (the MG tab has one), no filter, and a
+  Procedural mind map's MG is on the next sub-tab rather than beside its row.
+- **"Progress" survives in names and older prose.** `progress.html`, `.progress-page`,
+  `data-tabbar="progress"`, the hidden view key `progress`, and sections of README and the
+  contracts written before 2026-11-15. Rewording prose is safe; renaming a file, key or view is a
+  migration of every link to it.
 
 ## Track World: Computer Feasibility
 
@@ -1494,7 +1544,7 @@ supporting actions") and **not** changed there:
 - **`activePickerDs` still includes ● Learn's day.** It recomputes `activeMilestoneSchedules`, which
   only Chosen reads, when Learn opens. Harmless; inherited from the `◎` picker.
 - **Chosen by the user on 2026-10-14, not forgotten:** the below-milestone-level highlight is in ●
-  Learn and the Progress → MG tab only, **not** in the MG lines under each day's buttons. Offer
+  Learn and the ● LEARN → MG tab only, **not** in the MG lines under each day's buttons. Offer
   that surface again only if asked. It is also not the "behind pace" warning declined on
   2026-10-08: it orders and highlights MGs where they are chosen, and raises no alarm.
 

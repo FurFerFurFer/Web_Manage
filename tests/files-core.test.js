@@ -311,7 +311,7 @@ test('marks: the module surface', () => {
   assert.equal(TF.STROKE_MAX_POINTS, 200);
 });
 
-test('withHighlight appends a spread copy to a file only, never touching updatedAt', () => {
+test('withHighlight appends a spread copy to a file or a note, never touching updatedAt', () => {
   const lib = deepFreeze(MARKED());
   const one = TF.withHighlight(lib, 'f', stroke('h1', 2, { laterKey: 'x' }));
   const rec = byId(one, 'f');
@@ -322,7 +322,10 @@ test('withHighlight appends a spread copy to a file only, never touching updated
   const two = TF.withHighlight(one, 'f', stroke('h2'));
   assert.deepEqual(byId(two, 'f').highlights.map(h => h.id), ['h1', 'h2'], 'appended, so later strokes draw on top');
   assert.equal(TF.withHighlight(two, 'f', stroke('h2')), two, 'a repeated id is refused');
-  assert.equal(TF.withHighlight(lib, 'n', stroke('h')), lib, 'not on a note');
+  // since 2026-11-15 a note's Preview takes ink too: the same key, the text untouched
+  const noted = byId(TF.withHighlight(lib, 'n', stroke('h')), 'n');
+  assert.deepEqual(noted.highlights, [stroke('h')], 'a note takes a mark');
+  assert.deepEqual([noted.text, noted.updatedAt], [lib[1].text, NOW], 'its text and updatedAt untouched');
   assert.equal(TF.withHighlight(lib, 'd', stroke('h')), lib, 'not on a folder');
   assert.equal(TF.withHighlight(lib, 'missing', stroke('h')), lib);
 });
@@ -456,6 +459,193 @@ test('hitStroke: within half the width plus the tolerance, in page widths', () =
   assert.equal(TF.hitStroke(h, 0.55, 0.5, 0, 1), false, 'past the end');
   assert.equal(TF.hitStroke(null, 0.3, 0.5, 0, 1), false, 'total');
   assert.equal(TF.hitStroke(h, 'x', 0.5, 0, 1), false);
+});
+
+/* ── 2026-11-15: pen and text marks, bookmarks, pin ranges, the panel's lists,
+   the finder (the user's request to copy Notability's page panel) ───────── */
+const pen = (id, page = 1, over = {}) =>
+  Object.assign({ id, page, color: 'black', tool: 'pen', w: 0.004, pts: [0.1, 0.2, 0.3, 0.25], createdAt: NOW }, over);
+const textMark = (id, page = 1, over = {}) =>
+  Object.assign({ id, page, color: 'green', tool: 'text', rects: [0.1, 0.2, 0.3, 0.02], createdAt: NOW }, over);
+
+test('the 2026-11-15 surface', () => {
+  for (const k of ['markKind', 'pinEnd', 'bookmarksOf', 'markedPages', 'scopePages', 'pageFromText', 'searchNorm', 'searchHits',
+    'lineRects', 'withPinEdited', 'withBookmark', 'withoutBookmark']) assert.equal(typeof TF[k], 'function', k);
+  assert.deepEqual(TF.PEN_COLORS, ['black', 'red', 'blue', 'green']);
+  assert.equal(TF.RECTS_MAX, 400);
+  assert.ok(TF.NOTE_PAGE_RATIO > 1 && TF.NOTE_PAGE_RATIO < 2);
+});
+
+test('three kinds of mark share `highlights`: a stroke, a pen stroke, a text highlight', () => {
+  const lib = deepFreeze(MARKED());
+  let l = TF.withHighlight(lib, 'f', stroke('a'));
+  l = TF.withHighlight(l, 'f', pen('b', 1, { laterKey: 'x' }));
+  l = TF.withHighlight(l, 'f', textMark('c', 2));
+  const rec = byId(l, 'f');
+  assert.deepEqual(rec.highlights, [stroke('a'), pen('b', 1, { laterKey: 'x' }), textMark('c', 2)], 'each stored whole, in drawing order');
+  assert.deepEqual(TF.highlightsOf(rec).map(TF.markKind), ['highlight', 'pen', 'text']);
+  assert.equal(rec.updatedAt, NOW);
+  assert.notEqual(rec.highlights[2].rects, textMark('c', 2).rects, 'the boxes are copied, not shared');
+  for (const [why, bad] of [
+    ['a pen in a highlighter colour', pen('p', 1, { color: 'yellow' })], ['a highlighter in a pen colour', stroke('p', 1, { color: 'black' })],
+    ['a tool this version does not know', stroke('p', 1, { tool: 'shape' })],
+    ['text with no boxes', textMark('p', 1, { rects: [] })], ['boxes not in fours', textMark('p', 1, { rects: [0.1, 0.2, 0.3] })],
+    ['a box off the page', textMark('p', 1, { rects: [0.1, 0.2, 1.3, 0.02] })], ['an empty box', textMark('p', 1, { rects: [0.1, 0.2, 0, 0.02] })],
+    ['text in a pen colour', textMark('p', 1, { color: 'black' })],
+    ['too many boxes', textMark('p', 1, { rects: new Array((TF.RECTS_MAX + 1) * 4).fill(0.1) })]
+  ]) {
+    assert.equal(TF.withHighlight(lib, 'f', bad), lib, why);
+    assert.equal(TF.markKind(bad), why === 'too many boxes' ? 'text' : null, why + ': kind');
+  }
+  // …and what this version cannot draw is still kept by its writers
+  const later = [file('f', 'a.pdf', null, { highlights: [stroke('a'), stroke('z', 1, { tool: 'shape' })] })];
+  assert.deepEqual(TF.highlightsOf(later[0]).map(h => h.id), ['a'], 'skipped by the reader');
+  assert.deepEqual(byId(TF.withoutHighlights(later, 'f', ['a']), 'f').highlights.map(h => h.id), ['z'], 'kept by the eraser');
+});
+
+test('hitStroke on a text highlight: inside a box, grown by the tolerance', () => {
+  const t = textMark('t', 1, { rects: [0.1, 0.2, 0.3, 0.02, 0.1, 0.3, 0.2, 0.02] });
+  assert.equal(TF.hitStroke(t, 0.2, 0.21, 0, 1.4), true, 'in the first box');
+  assert.equal(TF.hitStroke(t, 0.25, 0.31, 0, 1.4), true, 'in the second');
+  assert.equal(TF.hitStroke(t, 0.35, 0.31, 0, 1.4), false, 'past the second box\'s end');
+  assert.equal(TF.hitStroke(t, 0.2, 0.25, 0, 1.4), false, 'between the lines');
+  assert.equal(TF.hitStroke(t, 0.405, 0.21, 0.01, 1.4), true, 'a finger just off the end');
+  assert.equal(TF.hitStroke(pen('p'), 0.2, 0.225, 0.001, 1), true, 'a pen stroke is hit like any stroke');
+});
+
+test('Undo restores a text highlight and a pen stroke at their places', () => {
+  const lib = deepFreeze([file('f', 'a.pdf', null, { highlights: [stroke('a'), textMark('t'), pen('p')] })]);
+  const entries = TF.highlightEntries(lib[0], ['t', 'p']);
+  const erased = TF.withoutHighlights(lib, 'f', ['t', 'p']);
+  assert.deepEqual(byId(erased, 'f').highlights.map(h => h.id), ['a']);
+  assert.deepEqual(TF.withHighlightsRestored(erased, 'f', entries), lib);
+});
+
+test('lineRects joins the boxes of one line, keeps lines apart, clamps, rounds and drops slivers', () => {
+  assert.deepEqual(TF.lineRects([0.1, 0.1, 0.1, 0.02, 0.2, 0.101, 0.1, 0.02, 0.1, 0.2, 0.3, 0.02]),
+    [0.1, 0.1, 0.2, 0.021, 0.1, 0.2, 0.3, 0.02], 'two runs on a line become one box; the next line stays');
+  assert.deepEqual(TF.lineRects([0.1, 0.1, 0.2, 0.02, 0.15, 0.1, 0.1, 0.02]), [0.1, 0.1, 0.2, 0.02], 'an overlapping duplicate is absorbed');
+  assert.deepEqual(TF.lineRects([0.1, 0.1, 0.1, 0.02, 0.6, 0.1, 0.1, 0.02]), [0.1, 0.1, 0.1, 0.02, 0.6, 0.1, 0.1, 0.02], 'a gap in the line is kept');
+  assert.deepEqual(TF.lineRects([-0.05, 0.98, 0.2, 0.05]), [0, 0.98, 0.15, 0.02], 'clamped to the page');
+  assert.deepEqual(TF.lineRects([0.1, 0.1, 0.0001, 0.02]), [], 'a sliver is nothing');
+  for (const junk of [null, [0.1, 0.2, 0.3], [0.1, 'x', 0.3, 0.4], 'no']) assert.deepEqual(TF.lineRects(junk), [], 'total');
+  const many = [];
+  for (let i = 0; i < TF.RECTS_MAX + 50; i++) many.push(0.1, i / 1000, 0.5, 0.0008);
+  assert.ok(TF.lineRects(many).length <= TF.RECTS_MAX * 4, 'never more than a mark may hold');
+  for (const out of [TF.lineRects([0.1, 0.1, 0.1, 0.02, 0.2, 0.101, 0.1, 0.02]), TF.lineRects([0.9, 0.97, 0.3, 0.2])]) {
+    assert.notEqual(TF.withHighlight(MARKED(), 'f', textMark('t', 1, { rects: out })), null);
+    assert.equal(TF.markKind(textMark('t', 1, { rects: out })), 'text', 'what it returns is always storable: ' + out);
+  }
+});
+
+test('bookmarks: a page number, once; only on a file; the last one gone deletes the key', () => {
+  const lib = deepFreeze(MARKED());
+  const one = TF.withBookmark(lib, 'f', 5);
+  assert.deepEqual(byId(one, 'f').bookmarks, [5]);
+  assert.equal(byId(one, 'f').updatedAt, NOW, 'the file did not change');
+  assert.equal(byId(one, 'f').laterKey, 'kept');
+  const two = TF.withBookmark(one, 'f', 2);
+  assert.deepEqual(byId(two, 'f').bookmarks, [5, 2], 'stored as made');
+  assert.deepEqual(TF.bookmarksOf(byId(two, 'f')), [2, 5], 'read in page order');
+  assert.equal(TF.withBookmark(two, 'f', 5), two, 'already bookmarked');
+  for (const bad of [0, 1.5, '3', null, -2]) assert.equal(TF.withBookmark(lib, 'f', bad), lib, 'not a page: ' + bad);
+  assert.equal(TF.withBookmark(lib, 'n', 1), lib, 'not on a note');
+  assert.equal(TF.withBookmark(lib, 'd', 1), lib, 'not on a folder');
+  assert.deepEqual(byId(TF.withoutBookmark(two, 'f', 5), 'f').bookmarks, [2]);
+  assert.equal('bookmarks' in byId(TF.withoutBookmark(one, 'f', 5), 'f'), false, 'the last one gone deletes the key');
+  assert.equal(TF.withoutBookmark(one, 'f', 9), one, 'not bookmarked: nothing to do');
+  const junky = [file('f', 'a.pdf', null, { bookmarks: [3, 'x', 3, null, 1] })];
+  assert.deepEqual(TF.bookmarksOf(junky[0]), [1, 3], 'total, each page once');
+  assert.deepEqual(byId(TF.withoutBookmark(junky, 'f', 3), 'f').bookmarks, ['x', null, 1], 'every copy goes; junk is kept');
+  assert.deepEqual(TF.bookmarksOf(null), []);
+  // a record with no bookmarks weighs what it always did; with some, they count
+  assert.equal(TF.marksBytes(lib[0]), TF.textBytes('[[],[]]'));
+  assert.ok(TF.marksBytes(byId(two, 'f')) > TF.marksBytes(lib[0]));
+});
+
+test('a pin may cover a range: pageEnd at or after page, absent for one page', () => {
+  const lib = deepFreeze(MARKED());
+  const one = TF.withPin(lib, 'f', pin('p1', 3, 'Chapter 1', { pageEnd: 9 }));
+  assert.deepEqual(byId(one, 'f').pins, [pin('p1', 3, 'Chapter 1', { pageEnd: 9 })]);
+  assert.equal(TF.pinEnd(byId(one, 'f').pins[0]), 9);
+  const single = TF.withPin(lib, 'f', pin('p1', 3, 'One', { pageEnd: 3 }));
+  assert.equal('pageEnd' in byId(single, 'f').pins[0], false, 'a range of one page is a page: the key is not stored');
+  for (const [why, end] of [['before the first', 2], ['not a page', 4.5], ['text', '9'], ['zero', 0]]) {
+    assert.equal(TF.withPin(lib, 'f', pin('p1', 3, 'x', { pageEnd: end })), lib, why);
+  }
+  // total: a stored pageEnd this version cannot read is one page
+  assert.equal(TF.pinEnd(pin('p', 4, 'x', { pageEnd: 2 })), 4);
+  assert.equal(TF.pinEnd(pin('p', 4, 'x', { pageEnd: 'nine' })), 4);
+  assert.equal(TF.pinEnd(pin('p', 4, 'x')), 4);
+  assert.equal(TF.pinEnd(null), 0);
+  // a pin written before ranges existed renames exactly as it did
+  assert.deepEqual(byId(TF.withPinRenamed(one, 'f', 'p1', 'Ch. 1', LATER), 'f').pins, [pin('p1', 3, 'Ch. 1', { pageEnd: 9, updatedAt: LATER })]);
+});
+
+test('withPinEdited changes a pin\'s name and pages together, and only stamps a real change', () => {
+  const lib = deepFreeze(TF.withPin(MARKED(), 'f', pin('p1', 3, 'Chapter 1', { pageEnd: 9, laterKey: 'x' })));
+  const moved = TF.withPinEdited(lib, 'f', 'p1', { name: ' Chapter one ', page: 4, pageEnd: 12 }, LATER);
+  assert.deepEqual(byId(moved, 'f').pins, [pin('p1', 4, 'Chapter one', { pageEnd: 12, laterKey: 'x', updatedAt: LATER })]);
+  assert.equal(byId(moved, 'f').updatedAt, NOW, 'not the file\'s');
+  const one = TF.withPinEdited(lib, 'f', 'p1', { page: 5, pageEnd: 5 }, LATER);
+  assert.deepEqual(byId(one, 'f').pins, [pin('p1', 5, 'Chapter 1', { laterKey: 'x', updatedAt: LATER })], 'made one page: pageEnd is DELETED');
+  assert.deepEqual(byId(TF.withPinEdited(lib, 'f', 'p1', { page: 5 }, LATER), 'f').pins[0].pageEnd, undefined, 'a page with no last page is one page');
+  assert.deepEqual(byId(TF.withPinEdited(lib, 'f', 'p1', { name: 'Renamed' }, LATER), 'f').pins,
+    [pin('p1', 3, 'Renamed', { pageEnd: 9, laterKey: 'x', updatedAt: LATER })], 'a name alone keeps the pages');
+  assert.equal(TF.withPinEdited(lib, 'f', 'p1', { name: 'Chapter 1', page: 3, pageEnd: 9 }, LATER), lib, 'nothing changed: the very list');
+  for (const [why, change] of [['a blank name', { name: '  ' }], ['last before first', { page: 6, pageEnd: 2 }], ['page 0', { page: 0, pageEnd: 3 }],
+    ['not a page', { page: 2, pageEnd: 2.5 }]]) assert.equal(TF.withPinEdited(lib, 'f', 'p1', change, LATER), lib, why);
+  assert.equal(TF.withPinEdited(lib, 'f', 'nope', { name: 'x' }, LATER), lib);
+  assert.equal(TF.withPinEdited(lib, 'n', 'p1', { name: 'x' }, LATER), lib, 'not on a note');
+  assert.equal(TF.withPinEdited(lib, 'f', 'p1', null, LATER), lib, 'total');
+});
+
+test('markedPages and scopePages: what each of the panel\'s lists — and so the finder — covers', () => {
+  const rec = file('f', 'a.pdf', null, {
+    highlights: [stroke('a', 7), pen('b', 2), textMark('c', 7), null, stroke('d', 40)],
+    pins: [pin('p1', 3, 'One', { pageEnd: 5 }), pin('p2', 9, 'Two'), pin('p3', 18, 'Past the end', { pageEnd: 30 })],
+    bookmarks: [8, 2, 99]
+  });
+  assert.deepEqual(TF.markedPages(rec), [2, 7, 40], 'each page once, ascending');
+  assert.deepEqual(TF.scopePages(rec, { kind: 'all' }, 4), [1, 2, 3, 4]);
+  assert.deepEqual(TF.scopePages(rec, 'all', 3), [1, 2, 3], 'a bare kind works too');
+  assert.deepEqual(TF.scopePages(rec, { kind: 'bookmarks' }, 20), [2, 8], 'a bookmark past the last page is not a page of this PDF');
+  assert.deepEqual(TF.scopePages(rec, { kind: 'notes' }, 20), [2, 7]);
+  assert.deepEqual(TF.scopePages(rec, { kind: 'outline' }, 20), [3, 4, 5, 9, 18, 19, 20], 'every pin\'s range, cut at the last page');
+  assert.deepEqual(TF.scopePages(rec, { kind: 'outline', pinId: 'p1' }, 20), [3, 4, 5], 'one pin\'s range');
+  assert.deepEqual(TF.scopePages(rec, { kind: 'outline', pinId: 'nope' }, 20), []);
+  const overlap = file('f', 'a.pdf', null, { pins: [pin('a', 2, 'A', { pageEnd: 4 }), pin('b', 3, 'B', { pageEnd: 6 })] });
+  assert.deepEqual(TF.scopePages(overlap, { kind: 'outline' }, 10), [2, 3, 4, 5, 6], 'overlapping ranges count a page once');
+  for (const junk of [null, {}, 3]) {
+    assert.deepEqual(TF.scopePages(junk, { kind: 'bookmarks' }, 5), []);
+    assert.deepEqual(TF.markedPages(junk), []);
+  }
+  assert.deepEqual(TF.scopePages(rec, { kind: 'all' }, 0), [], 'no pages yet');
+  assert.deepEqual(TF.scopePages(rec, { kind: 'all' }, 'x'), []);
+});
+
+test('pageFromText: digits naming a page of this PDF, or null', () => {
+  assert.equal(TF.pageFromText('12', 20), 12);
+  assert.equal(TF.pageFromText(' 7 ', 20), 7);
+  assert.equal(TF.pageFromText('20', 20), 20);
+  assert.equal(TF.pageFromText(4, 20), 4, 'a number is read as its digits');
+  for (const bad of ['21', '0', '', '1e1', '12.5', '-3', 'x', null, undefined, '00000000012']) assert.equal(TF.pageFromText(bad, 20), null, String(bad));
+  assert.equal(TF.pageFromText('500'), 500, 'no total: any page');
+});
+
+test('the finder: text made comparable, and every place it is found', () => {
+  assert.equal(TF.searchNorm('  Safety\n\tDATA  Sheet '), ' safety data sheet ');
+  const cafe = 'caf' + String.fromCharCode(233), cafe2 = 'cafe' + String.fromCharCode(769);
+  assert.equal(TF.searchNorm(cafe), TF.searchNorm(cafe2), 'composed and decomposed read alike');
+  // one character at a time gives what the whole text gives — the viewer depends on it to map a hit back
+  const sample = 'Safe' + String.fromCharCode(64257) + 'x ' + cafe + ' ' + String.fromCharCode(3626, 3634, 3619, 3648, 3588, 3617, 3637);
+  assert.equal(Array.from(sample).map(TF.searchNorm).join(''), TF.searchNorm(sample));
+  const hay = TF.searchNorm('Safe SAFETY unsafe  act');
+  assert.deepEqual(TF.searchHits(hay, 'safe'), [0, 5, 14], 'case does not matter; inside a word counts');
+  assert.deepEqual(TF.searchHits(TF.searchNorm('aaaa'), 'aa'), [0, 2], 'not overlapping');
+  assert.deepEqual(TF.searchHits(hay, TF.searchNorm('unsafe   act')), [12], 'whitespace runs match one space');
+  for (const none of ['', '   ', null]) assert.deepEqual(TF.searchHits(hay, none), [], 'a blank query finds nothing');
+  assert.deepEqual(TF.searchHits(null, 'a'), []);
 });
 
 // ── what a Source Dump text block may link to ───────────────────────────────

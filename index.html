@@ -14,7 +14,7 @@
   <script src="scripts/calendar-core.js?v=14"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/note-to-self-core.js?v=2"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=26">
+  <link rel="stylesheet" href="styles/styles.css?v=27">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -43,8 +43,8 @@
       </a>
       <a class="nav-btn" href="progress.html">
         <span>
-          <span class="nav-btn-title">Progress &amp; Schedule</span>
-          <span class="nav-btn-meta">Goals, milestones, supporting actions and calendar</span>
+          <span class="nav-btn-title">Schedule</span>
+          <span class="nav-btn-meta">The timeline, calendar, mind maps and MGs, projects and actions</span>
         </span>
       </a>
       <a class="nav-btn" href="documentations.html">
@@ -115,7 +115,7 @@
           <span id="quest-panel-title" class="slot-panel-label">Quest</span>
           <span class="slot-panel-hint">The side list you keep for yourself — read-only here.</span>
         </div>
-        <a class="quest-open" href="progress.html#quest">Edit in Progress →</a>
+        <a class="quest-open" href="progress.html#quest">Edit in Schedule →</a>
       </div>
       <div id="quest-starred" class="quest-starred"></div>
       <div id="quest-list" class="quest-list"></div>
@@ -304,7 +304,7 @@
         const q = TrackNoteToSelf.questHtml(slot, ticks);
         starred.innerHTML = q.starred;
         list.innerHTML = q.list
-          || '<p class="quest-empty">No quests yet — pick some in <a href="progress.html#quest">Progress</a>.</p>';
+          || '<p class="quest-empty">No quests yet — pick some in <a href="progress.html#quest">Schedule</a>.</p>';
       } catch (e) {
         hide();
       }
@@ -1216,6 +1216,6 @@
   <script src="scripts/journey-core.js?v=2"></script>
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
-  <script src="scripts/note-to-self.js?v=2"></script>
+  <script src="scripts/note-to-self.js?v=3"></script>
 </body>
 </html>

@@ -78,7 +78,7 @@ and why — is `docs/ARCHITECTURE.md`; read a file's row there before editing it
 | File | Responsibility |
 | --- | --- |
 | `index.html` | Home, workspace slots, import/export, navigation, universal calendar, Quest |
-| `progress.html` | Goals, milestones, progress, supporting actions, the Schedule |
+| `progress.html` | The **Schedule** page (displayed name only; "Progress" still means this page): timeline, month calendar, mind maps and MG, goal overview, milestones, quests, supporting actions. Never rename the file, a view key (`#schedule`, `#quest`, …), `.progress-page` or `data-tabbar="progress"` |
 | `sir-ks02.html` | The **Knowledge Record** (displayed name only; "KS02" still means this page): mind maps, Kolb, SIR, MG, LIN, source dumps. Never rename the file, the `ks02` / `ks02_slots` / `ks02_activeSlotId` keys, `.ks02-page`, `data-tabbar="ks02"` or the `ks02` view key |
 | `documentations.html` | Documentation pages (Events and Projects tabs), tables, timetable paste, print/PDF |
 | `true-storage.html` | Storages: the SOURCE DUMP tab (a twin of KS02's page) and FILES; canvas and tree hidden |
@@ -713,13 +713,13 @@ it describes. **Read it when you need it**: to audit what was verified and when,
 work in an area whose entry records a defect or a known gap, or to check whether something
 is covered by a test or only by code reading. A new entry is appended there, not here.
 
-What a passing run looks like, as of 2026-11-14: `node tests/run.js`, **38 suites** —
+What a passing run looks like, as of 2026-11-16: `node tests/run.js`, **38 suites** —
 `calendar-core`, `schema`, `notes-core` and `note-to-self-core` swept under five timezones
-with identical results, seventeen more offline suites once each, then **607 browser
+with identical results, seventeen more offline suites once each, then **649 browser
 subtests** in headless Chrome. **In the last one to six days of a month, six timetable
 cases fail on a date bug in the suite itself** (NOTES, Proposal 7): the Home and
 Documentations twins of three cases, each timing out on its class layer while its Progress
-twin passes. Any OTHER red case is not that bug. The whole run takes 21 to 52 minutes
+twin passes. Any OTHER red case is not that bug. The whole run takes 21 to 61 minutes
 depending on machine load; per-suite counts and the measured timings are in
 `docs/TESTING-LESSONS.md` ("Baseline and run-time history").
 
