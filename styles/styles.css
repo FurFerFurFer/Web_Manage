@@ -4468,6 +4468,48 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
 #nts-panel .nts-inpro-caret { flex-shrink: 0; color: var(--color-text-muted); }
 #nts-panel .nts-inpro-list { padding: 0.15rem 0.7rem 0; }
 
+/* Milestones active today (the user's 2026-11-16 request): ONE block each,
+   always shown, a link to the goal's page in Documentations → Projects. A
+   link, so its underline and colour are set here. The primary pair, because
+   an active milestone is neither a warning nor late; a finished one takes
+   the success mark and a struck title, as a ticked deadline does. */
+#nts-panel .nts-ms-list { display: grid; gap: 0.4rem; }
+
+#nts-panel .nts-ms {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.15rem;
+  box-sizing: border-box;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+#nts-panel .nts-ms:hover { border-color: var(--color-primary); }
+
+#nts-panel .nts-ms:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+#nts-panel .nts-ms-title { font-weight: 600; overflow-wrap: anywhere; }
+
+#nts-panel .nts-ms-goal,
+#nts-panel .nts-ms-meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+#nts-panel .nts-ms.is-done .nts-ms-title {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+}
+
 @media (pointer: coarse) {
   #nts-panel .nts-inpro-toggle { min-height: 44px; }
   #nts-panel .nts-row,

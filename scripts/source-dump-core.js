@@ -394,21 +394,28 @@
     });
   }
 
-  // Every text block naming `fileId`, in stored order, as {dump, section,
-  // block}. A flat scan of the list, not a walk, so there is no cycle to meet.
-  function blocksForFile(dumps, fileId) {
+  // Actual textBlocks only: the synthesised legacy block is in no list and
+  // cannot take a link. A flat scan, so parent cycles need no traversal.
+  function linkTargets(dumps) {
     var out = [];
-    if (!isList(dumps) || !isFileId(fileId)) return out;
+    if (!isList(dumps)) return out;
     dumps.forEach(function (d) {
       if (!isMap(d)) return;
       sectionsOf(d).forEach(function (s) {
         if (!isMap(s)) return;
         blocksOf(s).forEach(function (b) {
-          if (isMap(b) && b.fileId === fileId) out.push({ dump: d, section: s, block: b });
+          if (isMap(b)) out.push({ dump: d, section: s, block: b, fileId: fileIdOf(b) });
         });
       });
     });
     return out;
+  }
+
+  // Preserve the existing reverse reader's three-key shape.
+  function blocksForFile(dumps, fileId) {
+    if (!isFileId(fileId)) return [];
+    return linkTargets(dumps).filter(function (u) { return u.fileId === fileId; })
+      .map(function (u) { return { dump: u.dump, section: u.section, block: u.block }; });
   }
 
   global.TrackSourceDump = {
@@ -416,6 +423,7 @@
     withBlockFile: withBlockFile,
     withoutBlockFile: withoutBlockFile,
     blocksForFile: blocksForFile,
+    linkTargets: linkTargets,
     pathTo: pathTo,
     textBlocksOf: textBlocksOf,
     isLegacyBlock: isLegacyBlock,

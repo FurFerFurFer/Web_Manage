@@ -227,10 +227,10 @@ const status = (o, opts = {}) => {
 
 test('exports exactly the documented surface', () => {
   assert.deepEqual(Object.keys(M).sort(), [
-    'STAGE_ORDER', 'baselineOf', 'blocksOf', 'countLeaves', 'dayDiff', 'isProcedural', 'keyOf',
+    'STAGE_ORDER', 'baselineOf', 'blocksOf', 'countLeaves', 'coveringOn', 'dayDiff', 'isProcedural', 'keyOf',
     'label', 'lateById', 'lateList', 'liveSessions', 'ownersOf', 'report', 'sirDoneMap',
     'slipLabel', 'slipNotice', 'slipsOf', 'stageOf', 'statusOf', 'targetFor', 'targetMet',
-    'unreachedOn', 'withSlip'
+    'unreachedOn', 'withSlip', 'workLabel'
   ]);
 });
 
@@ -793,6 +793,68 @@ test('TARGET: a Procedural MM\'s phase-only waypoint is not work, so it cannot m
   assert.equal(decl.state, 'overdue', 'the same waypoint on a Declarative MM is late, as before');
   const lvl = status(learn(PROC({ ksStage: '1', rating: 2 }), { stage: '1', level: 3 }), { mms: [PROC({ ksStage: '1', rating: 2 })] });
   assert.equal(lvl.state, 'overdue', 'a Procedural waypoint with a level is still work, judged by the level');
+});
+
+// ── date membership, independent of progress ───────────────────────────────
+
+test('COVERING: includes unfinished, finished and empty milestones, never late or upcoming periods', () => {
+  const goals = ['active', 'done', 'empty', 'late', 'next'].map((id, i) => node(id, {
+    milestones: [def(id, i === 4 ? '2026-10-09' : '2026-10-01', i === 3 ? '2026-10-07' : '2026-10-10')],
+    children: i === 2 ? [] : [block('b' + id, id, [node('t' + id, { completed: i === 1 })])]
+  }));
+  const rep = M.report(goals, [], {}, TODAY);
+  const before = JSON.stringify(rep);
+  const out = M.coveringOn(rep, TODAY);
+  assert.deepEqual(out.map(st => st.state), ['active', 'done', 'empty']);
+  assert.equal(out[0], rep['active|active'], 'the status record itself');
+  assert.equal(JSON.stringify(rep), before, 'reading never changes the report or stored records');
+});
+
+test('COVERING: both ends are included, including a single-day period', () => {
+  const o = oneOwner({ start: TODAY, end: TODAY });
+  const rep = M.report(o.goals, [], {}, TODAY);
+  assert.equal(M.coveringOn(rep, TODAY).length, 1, 'end day is covered');
+  assert.deepEqual(M.coveringOn(rep, '2026-10-07'), []);
+  assert.deepEqual(M.coveringOn(rep, '2026-10-09'), []);
+});
+
+test('COVERING: soonest end first, then report order, without sorting the report itself', () => {
+  const goals = [node('owner', { milestones: [
+    def('last', '2026-10-01', '2026-10-31'), def('tie1', '2026-10-01', '2026-10-10'),
+    def('first', TODAY, TODAY), def('tie2', '2026-10-01', '2026-10-10')
+  ] })];
+  const rep = M.report(goals, [], {}, TODAY);
+  // Enumeration differs from order: order, not the map's insertion order, breaks the tie.
+  const scrambled = Object.fromEntries(Object.entries(rep).reverse());
+  assert.deepEqual(M.coveringOn(scrambled, TODAY).map(st => st.milestoneId), ['first', 'tie1', 'tie2', 'last']);
+  assert.deepEqual(Object.keys(rep), ['owner|last', 'owner|tie1', 'owner|first', 'owner|tie2']);
+});
+
+test('COVERING: total on junk reports and non-days; undated periods never cover', () => {
+  const valid = M.report(oneOwner({ start: '2026-10-01', end: '2026-10-31' }).goals, [], {}, TODAY);
+  for (const day of [null, undefined, '', 42, [], {}, '2026-02-30', '2026-10-8', '2026-10-08T00:00:00']) {
+    assert.deepEqual(M.coveringOn(valid, day), [], String(day));
+  }
+  for (const rep of [null, undefined, [], 42, 'x', { a: null, b: [], c: 7 }]) {
+    assert.deepEqual(M.coveringOn(rep, TODAY), []);
+  }
+  for (const [start, end] of [[undefined, TODAY], [TODAY, undefined], ['2026-02-30', TODAY], ['2026-10-10', TODAY]]) {
+    const rep = M.report(oneOwner({ start, end }).goals, [], {}, TODAY);
+    assert.deepEqual(M.coveringOn(rep, TODAY), []);
+  }
+});
+
+test('WORK LABEL: every unfinished state uses the overdue wording, omitting zero parts', () => {
+  for (const state of ['active', 'upcoming', 'undated', 'overdue']) {
+    const st = { state, tasks: { total: 5, done: 2 }, learn: { total: 2, met: 1 }, daysLate: 5 };
+    assert.equal(M.workLabel(st), '3 tasks, 1 to-learn left', state);
+    assert.equal(M.workLabel({ ...st, tasks: { total: 1, done: 0 }, learn: { total: 0, met: 0 } }), '1 task left');
+    assert.equal(M.workLabel({ ...st, tasks: { total: 0, done: 0 } }), '1 to-learn left');
+    assert.equal(M.label(st), state === 'overdue' ? 'OVERDUE · 5 days · ' + M.workLabel(st) : '');
+  }
+  assert.equal(M.workLabel({ state: 'done' }), 'done');
+  assert.equal(M.workLabel({ state: 'empty' }), 'no work attached');
+  for (const st of [null, undefined, [], 42, {}, { tasks: null, learn: 'x' }]) assert.equal(M.workLabel(st), '');
 });
 
 // ── the to-learn a day still owes (unreachedOn) ─────────────────────────────

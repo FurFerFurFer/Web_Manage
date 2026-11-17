@@ -91,6 +91,16 @@ linked more than 1"; open "just the file", not a page.
   blocks naming a file; True Storage turns that into the FILES viewer's "Used in" rows
   (`usesOf`). Storing it on the file record too would be a second copy of one fact, and the
   two would drift the first time a tab missed a write.
+- **A link may be STARTED from the file, and it is the same link** (the user's 2026-11-16
+  request: "make the link of source also starts from the file side"). The FILES viewer's
+  `+ link to a text block` lists `TrackSourceDump.linkTargets(dumps)` — every block that is
+  in a `textBlocks` list, in stored order, with the file it already names — worded by the one
+  `blockWords` both lists on True Storage share. A pick calls `linkFileToBlock`, which is
+  `withBlockFile` through `editDumps`: a fresh read-modify-write of `sourceDumps`, never the
+  page's React copy, and never a write to `files`. A row for a block that already has a file
+  is grey (`aria-disabled`, never `disabled`) and STILL calls the writer, which refuses; the
+  viewer holds no second "is it taken?" test. `blocksForFile` is now a filter over
+  `linkTargets`, so the two lists cannot disagree about which blocks exist.
 - **One file per block, and a second is REFUSED**, not swapped: `withBlockFile` returns its
   input when the block already names a valid file. Another tab's link is never overwritten
   from a stale picker; the user unlinks first.
@@ -100,7 +110,8 @@ linked more than 1"; open "just the file", not a page.
   `×`, the same rule as a storage tag whose pair no longer resolves. Deleting the block takes
   its link with it; a transfer (`->`) moves the block whole, link included.
 - **The legacy block** (a section's `text`, drawn as one block) is in no list, so it cannot
-  carry a file: neither page offers `+ file` on it, and the writer cannot find it.
+  carry a file: neither page offers `+ file` on it, the writer cannot find it, and
+  `linkTargets` does not offer it to the file-side picker.
 - **The chip is drawn under every text block**: KS02's SOURCE DUMP leaf card and S&C → SOURCE
   (with `+ file` and `×`), KS02's S&C → BLOCKS cards (the chip alone), and True Storage's
   SOURCE DUMP leaf card. It is one component per page, `BlockFile`, a documented twin. On

@@ -5931,3 +5931,119 @@ six pages). Thai text in Find and in selection. PDFs with rotated pages under th
 (the CSS for pdf.js's rotation attribute is in place and unexercised). `execCommand('copy')`
 as the fallback when the Clipboard API refuses. The live Firebase project and Google Drive
 (nothing here reaches either; the suite stubs Drive).
+
+## 2026-11-17 — Note to self: milestone blocks; a text ↔ file link started from the file; Drive connecting by itself
+
+**What was asked** (2026-11-16): "In files make the link of source also starts from the file
+side, make the drive autoconnect when loading in, Extra feature I want is the hidden tab above
+the screen: also show all active milestone each as one block to click to and it'll link to the
+DOC PAGE". Then, to the plan: "no also late milestones" — read as *no late ones*, and said so;
+the opposite reading is one line (NOTES, Proposal 20).
+
+**Who built what.** GPT-6 Astra (Codex, no network in its sandbox) built the four core
+modules and their offline cases from a written hand-off; Claude reviewed them, built the page
+side, the browser cases, one further store rule (the expiry notice, below) and the documents.
+
+- `scripts/milestone-core.js` (`?v=4`): `coversDay` (now the one date test, shared with
+  `unreachedOn`), `coveringOn`, `workLabel`; `label` builds on `workLabel`.
+- `scripts/note-to-self-core.js` (`?v=3`): `activeMilestones`, `milestonesHtml`,
+  `milestoneHref`. `scripts/note-to-self.js` (`?v=4`): the Milestones section, between IN PRO
+  and ★ Forced. `styles/styles.css` (`?v=28`): `.nts-ms`.
+- `scripts/source-dump-core.js` (`?v=3`): `linkTargets`; `blocksForFile` derived from it.
+  `true-storage.html`: `blockWords`, `linkTargets`, `linkFileToBlock`.
+  `scripts/files-view.js` (`?v=5`): `UsedIn` gains `+ link to a text block` and its picker.
+- `scripts/file-store.js` (`?v=3`): the token kept in `sessionStorage`
+  (`track_drive_token_v1`), `autoConnect`, `overview().autoTap`, `disconnect`, per-request
+  callbacks, `watchExpiry`. `files-view.js`: the mount-time `autoConnect`, the first-tap
+  fallback, the sign-in fetched when not connected, Disconnect.
+
+**Stored data.** No slot field added or changed and no migration. The link is the existing
+`fileId` on a text block, written by the existing `withBlockFile` through `editDumps`. One
+new browser key, `sessionStorage.track_drive_token_v1` — the first time the Drive token is
+kept anywhere, a reversal of "the access token is never stored" that the request made
+necessary; `docs/contracts/files.md` says how far it goes. Firebase's `setItem` patch acts
+only on `track_db` in `localStorage`, so this key marks nothing pending and arms no upload.
+
+**What Google's documentation says** (read 2026-11-16, token model of Google Identity
+Services): the token flow is a popup; a user gesture is expected; there is no silent renewal;
+`error_callback` reports `popup_failed_to_open`, `popup_closed` and `unknown`; nothing says
+a blocked no-gesture popup always reports, and the callback may never come. Hence one
+load-time attempt nobody waits on, a one-tap fallback, and no loop.
+
+**Changed cases** (`tests/browser.test.js`). The two Note to self section-order assertions
+expect `inpro, milestones, forced, quest`; the empty-workspace case also expects the *No
+active milestone* line; the markup case adds a milestone whose title is the payload. The
+loader case expects `file-store.js?v=3` and `files-view.js?v=5`.
+
+**New cases.** Thirteen browser cases (662 in the suite): the milestone blocks on each of the
+five pages (which four of six are drawn and in what order, the links, the wording, no button,
+the stored bytes untouched); a block followed into Documentations → Projects from each page;
+the blocks on a phone; `+ link` from a file (the list, the write over a fresh read with a
+title another writer added surviving, `files` never written); the two refusals (a grey block,
+and a block another writer linked meanwhile); and, against a stubbed Google sign-in that no
+request leaves the machine for, Drive connecting on open with a reload asking nothing, the
+blocked window and the one tap, Disconnect, and a kept pass running out with FILES open.
+Offline: `milestone-core` 68 (+5), `note-to-self-core` 26 (+5), `source-dump-core` 44 (+3),
+`file-store` 31 (+18).
+
+**A defect the last case found.** Written to show that Google's sign-in is fetched when a kept
+pass runs out, it timed out one step earlier: with FILES open and nobody tapping, the Drive
+line went on reading *connected* after the pass had expired, because nothing redraws at that
+moment. `watchExpiry` (one timer, cancelled when the pass is forgotten) now tells the store's
+listeners; the case asserts the line changes with no tap.
+
+**Fail-first.** All in scratch trees outside the repository (`TRACK_TEST_ROOT`, `tests/`
+copied for real, and — new this time — the doctored file's own folder copied for real, since
+a write through a symlinked `scripts/` would have doctored the repository). A control tree
+with nothing reversed passed all 15 narrowed cases. Then, one rule each, 08:06 → 08:14:
+
+| Reversed | Failed, and on what |
+| --- | --- |
+| late milestones listed too | the five per-page cases (the list of keys) and the phone case (six blocks, not four) |
+| the link without its goal | the five per-page cases (the hrefs) and the follow case (Projects never opens the goal) |
+| the empty line dropped | the empty-workspace case alone (`/No active milestone/`) |
+| the link written from React's copy | both from-the-file cases (the other writer's title lost; the second link overwritten) |
+| a taken block drawn as free | both (the list; the grey row) |
+| the bar only when already used | both (no `+ link` on an unused file; no picker) |
+| a new link not shown in Used in | the first alone |
+| no `autoConnect` at mount | connect-on-open, the blocked window, Disconnect; the kept-pass case still passes |
+| the first tap ignored | the blocked-window case alone |
+| no Connect Drive exclusion | the blocked-window case alone (two requests for one tap) |
+| no sign-in fetched after expiry | the kept-pass case alone |
+| the pass not kept | connect-on-open and Disconnect |
+| Disconnect leaving the kept copy | the Disconnect case alone |
+| no expiry notice | the kept-pass case alone |
+
+No baseline failed everything, and each message was the assertion that names the rule. The
+offline expiry case failed four ways against four reversals (no watch on a new pass, none on
+a kept one, no cancel on forget, no notice) behind a 31-of-31 control. Astra reported 38
+doctored copies of its four modules failing as intended behind passing controls; those were
+run in its sandbox and not repeated here. One rule was withdrawn for want of a baseline: a
+`min-height: 44px` on a milestone block under `(pointer: coarse)` could not be made to fail,
+since a block is three lines and 76px tall, so the rule was deleted rather than left unproven.
+
+**Full suite.** `node tests/run.js` in the repository, 08:19:59 → 09:15:41 on 2026-11-17
+(55 min 42 s): **all 38 suites passed, 662 of 662 browser subtests** (plan `1..662`, no
+`not ok` line in the log). One MD5 over every page, script, stylesheet and test file was
+identical before and after; HEAD `40233b3` at both ends; `suspend_stats/success` 18 at both
+ends and no suspend or lid line in the journal for the window. It began on battery (59%) —
+the user said to go ahead and charge later — and the charger went in near 08:30. Load 0.9 at
+the start, 2.6 at the end. `node --check` passes on every script and `git diff --check` is
+clean. Documents (this log, `AGENTS.md`, `docs/TESTING-LESSONS.md`) were written during and
+after the run; no test reads them.
+
+**Looked at, not asserted, and one change after the full run.** Headless Chrome screenshots
+taken as the new cases closed their pages: the panel on Home at 390×844 with four milestone
+blocks (the finished one struck through), the picker with its two grey rows and the refusal
+message, and FILES connected. The last showed the ✓ of *connected ✓* wrapped onto a line of its
+own beside the Disconnect link in the narrow sidebar; Disconnect now sits under the line
+(`files-view.js`, markup only). That edit came after the full run above, so on the final tree
+a narrowed run (a task-owned preload matching `^FILES|TEXT ↔ FILE|^smoke|^NOTE TO SELF`)
+passed **81 of 81**, 13:31 → 13:36, plan `ran 81, skipped 581`. The machine slept 11:38 →
+13:26, between the two runs and inside neither.
+
+**Not covered.** The real Google window, on any device: whether Chrome on the laptop lets the
+load-time window open, whether Safari on the iPad reports the blocked one, how it looks. A
+real hour's expiry (the case uses a four-second pass). Two Google accounts. Real touch
+hardware for the picker and the first-tap path. The live Firebase project. NOTES, Proposals
+20 and 22, list what was left out on purpose.

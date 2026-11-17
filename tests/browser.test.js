@@ -19037,7 +19037,7 @@ test('browser suites', skipUnlessChrome, async t => {
           homeRows, 'the panel adds nothing a [data-quest-row] selector can find');
         const inpro = await page.evaluate(NTS_INPRO);
         assert.deepEqual([inpro.sections, inpro.count, inpro.expanded, inpro.rows],
-          [['inpro', 'forced', 'quest'], '2', 'false', []],
+          [['inpro', 'milestones', 'forced', 'quest'], '2', 'false', []],
           'IN PRO is the block on top, counting the mind maps in progress and listing none until clicked');
 
         await page.evaluate(function () { document.getElementById('nts-toggle').click(); });
@@ -19167,7 +19167,7 @@ test('browser suites', skipUnlessChrome, async t => {
         return document.activeElement && document.activeElement.hasAttribute('data-nts-inpro-toggle');
       }), true, 'focus stays on the block through the redraw');
       assert.equal(await page.evaluate(NTS_SHUT), false, 'and the panel stays open');
-      assert.deepEqual((await page.evaluate(NTS_INPRO)).sections, ['inpro', 'forced', 'quest'], 'the rest is still under it');
+      assert.deepEqual((await page.evaluate(NTS_INPRO)).sections, ['inpro', 'milestones', 'forced', 'quest'], 'the rest is still under it');
 
       await page.evaluate(NTS_INPRO_CLICK);
       b = await page.evaluate(NTS_INPRO);
@@ -19325,6 +19325,11 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.match(text, /Nothing in caution or due today/);
       assert.match(text, /No quests yet/);
       assert.match(text, /No mind map in progress/);
+      assert.match(text, /No active milestone/);
+      assert.deepEqual(await page.evaluate(function () {
+        return [document.querySelectorAll('#nts-panel [data-nts-ms-empty]').length,
+          document.querySelectorAll('#nts-panel [data-nts-ms]').length];
+      }), [1, 0], 'with no milestone covering today: one muted line and no block');
       assert.deepEqual(await page.evaluate(function () {
         return [document.querySelectorAll('#nts-panel [data-nts-inpro-empty]').length,
           document.querySelectorAll('#nts-panel [data-nts-inpro-toggle]').length];
@@ -19346,7 +19351,10 @@ test('browser suites', skipUnlessChrome, async t => {
   await t.test('NOTE TO SELF: a title is TEXT, never markup', async () => {
     const payload = '<img src=x onerror="window.__ntsPwned=1">';
     const page = await open('sir-ks02.html', { db: NTS_DB({
-      goals: [questNode('root', { title: payload, quest: true, star: true })],
+      goals: [questNode('root', { title: payload, quest: true, star: true }),
+        F.task('ms-x', { title: 'Goal <b>bold</b> & "q"',
+          milestones: [F.milestone('m-x', ntsDay(-1), ntsDay(1), { title: payload })],
+          children: [msBlock('b-x', 'm-x', [F.task('kx')])] })],
       deadlines: [F.deadline('nts-x', TODAY, { title: payload, detail: '</a><b>bold</b>' })],
       calendarNotes: [F.calNote('nts-y', TODAY, { title: 'A & "B" <i>c</i>' })],
       mms: [F.mm(10, 'Mind Map A'), F.mm(11, 'In <u>progress</u> & "on"', { unclear: true })]
@@ -19369,6 +19377,143 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.ok(r.titles.indexOf(payload) >= 0, 'it is shown verbatim');
       assert.ok(r.titles.indexOf('A & "B" <i>c</i>') >= 0);
       assert.ok(r.titles.indexOf('In <u>progress</u> & "on"') >= 0, 'an IN PRO mind map\'s name too');
+      assert.deepEqual(await page.evaluate(function () {
+        var e = document.querySelector('#nts-panel [data-nts-ms="ms-x|m-x"]');
+        return e ? [e.querySelector('.nts-ms-title').textContent, e.querySelector('.nts-ms-goal').textContent] : null;
+      }), [payload, 'Goal <b>bold</b> & "q"'], 'a milestone block\'s title and its goal\'s, verbatim');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  /* Milestones active today (the user's 2026-11-16 request): under IN PRO,
+     every milestone whose dates COVER today is ONE block, always shown, a
+     link to its goal's page in Documentations → Projects. Which ones is
+     TrackMilestone.coveringOn's and how a block reads is
+     TrackNoteToSelf.milestonesHtml's, both pinned offline; these cases are
+     about the surface, on each page separately. Every date is relative to
+     TODAY and none is asserted as a day of a month.
+
+     One owner (a sub-goal) holds five milestones — covering with work left,
+     ending TODAY and finished, late, starting tomorrow, covering with no work
+     — and a top-level goal holds a sixth, covering. Late and upcoming are the
+     two that must NOT be drawn (the user's answer: no late ones). */
+  const NTS_MS_GOALS = () => [
+    F.task('ms-root', { title: 'Thesis', children: [
+      F.task('ms-own', { title: 'Chapter 2', isSubGoal: true,
+        milestones: [
+          F.milestone('m-now', ntsDay(-3), ntsDay(4), { title: 'Draft' }),
+          F.milestone('m-end', ntsDay(-6), TODAY, { title: 'Outline' }),
+          F.milestone('m-late', ntsDay(-9), ntsDay(-1), { title: 'Sources' }),
+          F.milestone('m-soon', ntsDay(1), ntsDay(8), { title: 'Review' }),
+          F.milestone('m-empty', ntsDay(-1), ntsDay(2), { title: 'Buffer' })
+        ],
+        children: [
+          msBlock('b-now', 'm-now', [F.task('k1'), F.task('k2', { completed: true }), F.task('k3')]),
+          msBlock('b-end', 'm-end', [F.task('k4', { completed: true })]),
+          msBlock('b-late', 'm-late', [F.task('k5')]),
+          msBlock('b-soon', 'm-soon', [F.task('k6')])
+        ] })
+    ] }),
+    F.task('ms-solo', { title: 'Guitar',
+      milestones: [F.milestone('m-solo', ntsDay(-2), ntsDay(2), { title: 'Scales' })],
+      children: [msBlock('b-solo', 'm-solo', [F.task('k7')])] })
+  ];
+  const NTS_MS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('#nts-panel [data-nts-ms]'), function (e) {
+      var g = e.querySelector('.nts-ms-goal'), tt = e.querySelector('.nts-ms-title'), m = e.querySelector('.nts-ms-meta');
+      return { key: e.getAttribute('data-nts-ms'), href: e.getAttribute('href'), tag: e.tagName,
+        title: tt ? tt.textContent : null, goal: g ? g.textContent : null, meta: m ? m.textContent : null,
+        done: e.classList.contains('is-done') };
+    });
+  };
+
+  for (const file of PAGES) {
+    await t.test('NOTE TO SELF: ' + file + ' — every milestone whose dates cover today is one block; a late or an upcoming one is not', async () => {
+      const page = await open(file, { db: NTS_DB({ goals: NTS_MS_GOALS() }) });
+      try {
+        await ntsReady(page);
+        const before = await page.evaluate(NTS_STORE);
+        await page.evaluate(NTS_OPEN); await ntsOpened(page);
+
+        const ms = await page.evaluate(NTS_MS);
+        assert.deepEqual(ms.map(m => m.key), ['ms-own|m-end', 'ms-own|m-empty', 'ms-solo|m-solo', 'ms-own|m-now'],
+          'the ones whose dates cover today — the END day counts, a finished and an empty one too — soonest end ' +
+          'first; the late one and the one starting tomorrow are not drawn');
+        assert.deepEqual(ms.map(m => m.href), ['documentations.html?goal=ms-own', 'documentations.html?goal=ms-own',
+          'documentations.html?goal=ms-solo', 'documentations.html?goal=ms-own'],
+          'each a link to ITS goal\'s page in Documentations');
+        assert.deepEqual(ms.map(m => [m.tag, m.title, m.goal]),
+          [['A', 'Outline', 'Chapter 2'], ['A', 'Buffer', 'Chapter 2'], ['A', 'Scales', 'Guitar'], ['A', 'Draft', 'Chapter 2']],
+          'one link each, named, with the goal it belongs to');
+        assert.deepEqual([ms[0].meta, ms[0].done], ['ends today · done', true], 'a finished one says so');
+        assert.match(ms[1].meta, /^ends \d\d\/\d\d(\/\d{4})? · no work attached$/);
+        assert.match(ms[2].meta, /^ends \d\d\/\d\d(\/\d{4})? · 1 task left$/);
+        assert.match(ms[3].meta, /^ends \d\d\/\d\d(\/\d{4})? · 2 tasks left$/, 'what is left: two of three tasks');
+        assert.deepEqual(ms.slice(1).map(m => m.done), [false, false, false]);
+
+        const shape = await page.evaluate(function () {
+          var sec = document.querySelector('#nts-panel [data-nts-section="milestones"]');
+          return {
+            sections: Array.prototype.map.call(document.querySelectorAll('#nts-panel [data-nts-section]'),
+              function (e) { return e.getAttribute('data-nts-section'); }),
+            buttons: sec ? sec.querySelectorAll('button').length : -1,
+            empty: document.querySelectorAll('#nts-panel [data-nts-ms-empty]').length,
+            shown: Array.prototype.every.call(document.querySelectorAll('#nts-panel [data-nts-ms]'),
+              function (e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+          };
+        });
+        assert.deepEqual(shape, { sections: ['inpro', 'milestones', 'forced', 'quest'], buttons: 0, empty: 0, shown: true },
+          'under IN PRO, and always shown: there is nothing to click open');
+
+        await page.evaluate(function () { document.getElementById('nts-toggle').click(); });
+        assert.equal(await page.evaluate(NTS_SHUT), true, 'shut, the blocks\' DOM goes with the panel');
+        assert.deepEqual(await page.evaluate(NTS_STORE), before,
+          'a READER: track_db byte-identical and no browser key added');
+        assert.deepEqual(realErrors(page), []);
+      } finally { await page.close(); }
+    });
+  }
+
+  await t.test('NOTE TO SELF: a milestone block opens its goal\'s page in Documentations → Projects, from that page too', async () => {
+    for (const file of ['index.html', 'documentations.html']) {
+      const page = await open(file, { db: NTS_DB({ goals: NTS_MS_GOALS() }) });
+      try {
+        await ntsReady(page);
+        assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-proj-goal]'); }), false,
+          file + ': no goal page is open to begin with');
+        await page.evaluate(NTS_OPEN); await ntsOpened(page);
+        // Clicked on the next task, so this evaluate returns before the
+        // navigation the click starts can tear its context down.
+        assert.equal(await page.evaluate(function () {
+          var row = document.querySelector('#nts-panel [data-nts-ms="ms-own|m-now"]');
+          if (row) setTimeout(function () { row.click(); }, 0);
+          return !!row;
+        }), true, 'the block for the milestone Draft');
+        await page.waitFor(function () {
+          return /documentations\.html$/.test(location.pathname) && location.search === '?goal=ms-own' &&
+            !!document.querySelector('[data-proj-goal="ms-own"]');
+        }, { timeout: 30000, message: file + ': the goal Chapter 2 open in Projects after following its milestone block' });
+        assert.equal(await page.evaluate(NTS_SHUT), true, 'and the page it lands on starts with the panel shut');
+        assert.deepEqual(realErrors(page), []);
+      } finally { await page.close(); }
+    }
+  });
+
+  await t.test('NOTE TO SELF: on a phone a milestone block is a finger target inside the panel', async () => {
+    const page = await open('index.html', { db: NTS_DB({ goals: NTS_MS_GOALS() }), viewport: PHONE });
+    try {
+      await ntsReady(page);
+      await page.evaluate(NTS_OPEN); await ntsOpened(page);
+      const fit = await page.evaluate(function () {
+        var p = document.getElementById('nts-panel').getBoundingClientRect();
+        var rows = Array.prototype.map.call(document.querySelectorAll('#nts-panel [data-nts-ms]'),
+          function (e) { var r = e.getBoundingClientRect(); return { h: r.height, left: r.left, right: r.right }; });
+        return { left: p.left, right: p.right, rows: rows,
+          sideways: document.documentElement.scrollWidth > window.innerWidth };
+      });
+      assert.ok(fit.rows.length === 4 && fit.rows.every(r => r.h >= 43.5 && r.left >= fit.left && r.right <= fit.right),
+        'four 44px blocks inside the panel: ' + JSON.stringify(fit.rows));
+      assert.equal(fit.sideways, false, 'and the page does not scroll sideways');
       assert.deepEqual(realErrors(page), []);
     } finally { await page.close(); }
   });
@@ -19492,7 +19637,7 @@ test('browser suites', skipUnlessChrome, async t => {
       await page.evaluate(function () { location.hash = 'files'; return true; });
       await page.waitFor(HAS_SEL, { args: ['[data-files-view]'], message: 'FILES mounted' });
       const got = (await page.evaluate(LOADED)).map(n => n.split('/').pop()).sort();
-      assert.deepEqual(got, ['file-store.js?v=2', 'files-view.js?v=4'],
+      assert.deepEqual(got, ['file-store.js?v=3', 'files-view.js?v=5'],
         'exactly the two scripts, and no PDF.js, Markdown renderer or Google sign-in until one is needed');
       // FILES preloads Google's sign-in when Drive is set up, and the shipped
       // client id is real; open() blanks it, so nothing here may reach Google
@@ -21132,6 +21277,250 @@ test('browser suites', skipUnlessChrome, async t => {
     return true;
   };
 
+  /* ── FILES: Drive connects by itself (the user's 2026-11-16 request) ──────
+     Google's browser sign-in is a window, allowed without a tap only where
+     pop-ups are allowed for the site, and its pass lasts about an hour. So:
+     opening FILES asks once; a pass is kept for THIS TAB (sessionStorage,
+     never localStorage or track_db) and used on a reload with no request at
+     all; where the window is blocked — the request simply never answers —
+     the first tap anywhere in FILES connects, once; and Disconnect forgets
+     it. The token and the attempt are file-store.js's, pinned offline; these
+     cases are the surface.
+
+     SYN_DRIVE is registered AFTER open()'s NO_DRIVE, so its setter replaces
+     that one: the instant file-store.js assigns TrackFileStore it is given a
+     synthetic client id instead of a blank one — before FILES mounts, which
+     is when it asks. The shipped id is never used and nothing reaches
+     Google: the sign-in is this stub and googleapis is answered here.
+     `modes` says what the sign-in does with each request of a page load, in
+     order: 'blocked' never answers, 'closed' reports popup_closed, anything
+     else (and every request past the list) answers with a token. */
+  const SYN_DRIVE = function (modes) {
+    window.__gis = { requests: 0, prompts: [] };
+    window.google = { accounts: { oauth2: { initTokenClient: function (o) {
+      return { requestAccessToken: function (over) {
+        var n = window.__gis.requests++, mode = modes[n] || 'ok';
+        window.__gis.prompts.push(over ? over.prompt : undefined);
+        if (mode === 'ok') setTimeout(function () { o.callback({ access_token: 'tok-synthetic-' + n, expires_in: 3600 }); }, 10);
+        else if (mode === 'closed') setTimeout(function () { o.error_callback({ type: 'popup_closed' }); }, 10);
+      } };
+    } } } };
+    var realFetch = window.fetch;
+    window.fetch = function (url) {
+      if (String(url).indexOf('googleapis.com') < 0) return realFetch.apply(this, arguments);
+      return Promise.resolve(new Response(JSON.stringify({ files: [] }), { status: 200 }));
+    };
+    var held;
+    Object.defineProperty(window, 'TrackFileStore', {
+      configurable: true,
+      get: function () { return held; },
+      set: function (v) {
+        if (v && typeof v.configure === 'function') v.configure({ clientId: 'synthetic-client.apps.googleusercontent.com' });
+        held = v;
+      }
+    });
+  };
+  const filesTabOpen = async page => {
+    await page.waitFor(HAS_SEL, { args: ['[data-tabbar="true-storage"]'], message: 'the Storages page' });
+    await page.evaluate(function () { location.hash = 'files'; return true; });
+    await page.waitFor(HAS_SEL, { args: ['[data-files-view] [data-files-bar]'], message: 'the FILES tab' });
+  };
+  const openFilesDrive = async modes => {
+    const page = await open('true-storage.html', { db: seedDb({ files: FILES_RECS() }), viewport: FILES_DESK });
+    await page.waitFor(HAS_SEL, { args: ['[data-tabbar="true-storage"]'], message: 'the Storages page' });
+    await page.evaluate(function () {
+      return new Promise(function (res) {
+        var r = indexedDB.deleteDatabase('track_files_v1');
+        r.onsuccess = r.onerror = r.onblocked = function () { res(true); };
+      });
+    });
+    await page.addInitScript('(' + SYN_DRIVE + ')(' + JSON.stringify(modes) + ');');
+    await page.reload(); await page.skipFirebase();
+    await filesTabOpen(page);
+    return page;
+  };
+  const DRIVE_STATE = function () {
+    var p = document.querySelector('[data-files-drive]');
+    var ov = window.TrackFileStore.overview();
+    return { text: p ? p.textContent : '', connected: ov.connected, autoTap: !!ov.autoTap,
+      requests: window.__gis.requests, kept: sessionStorage.getItem('track_drive_token_v1'),
+      connectBtn: !!document.querySelector('[data-files-connect]') };
+  };
+  // The Drive state once `pred` (an expression over `s`) holds.
+  const driveWhen = (page, pred, message) => page.waitFor(function (f, p) {
+    var s = new Function('return ' + f)()();
+    return new Function('s', 'return ' + p)(s) ? s : false;
+  }, { args: [DRIVE_STATE.toString(), pred], message });
+
+  await t.test('FILES + Drive (stubbed): opening FILES connects by itself; the pass is kept for this tab only, and a reload asks Google nothing', async () => {
+    const page = await openFilesDrive([]);
+    let other = null;
+    try {
+      const st = await driveWhen(page, 's.connected', 'connected with no tap');
+      assert.equal(st.requests, 1, 'ONE request to Google\'s sign-in, made by opening the tab — nobody tapped Connect Drive');
+      assert.deepEqual(await page.evaluate(function () { return window.__gis.prompts; }), [''],
+        'asking for no screen Google does not need to show');
+      await driveWhen(page, '/Google Drive: connected/.test(s.text) && !s.connectBtn', 'the Drive line saying connected');
+      assert.ok(st.kept, 'the pass is kept in this tab\'s sessionStorage');
+      const kept = JSON.parse(st.kept);
+      assert.equal(kept.token, 'tok-synthetic-0', 'the pass is kept for this tab');
+      assert.ok(typeof kept.expiresAt === 'number' && kept.expiresAt > Date.now() && kept.expiresAt <= Date.now() + 3600 * 1000,
+        'with its own expiry, about an hour away');
+      assert.equal(await page.evaluate(function () {
+        var all = '';
+        for (var i = 0; i < localStorage.length; i++) all += localStorage.key(i) + '=' + localStorage.getItem(localStorage.key(i)) + '\n';
+        return all.indexOf('tok-synthetic') >= 0 || all.indexOf('track_drive_token') >= 0;
+      }), false, 'and nowhere else: not in track_db, not in any localStorage key');
+
+      await page.reload(); await page.skipFirebase();
+      await page.waitFor(HAS_SEL, { args: ['[data-files-view] [data-files-bar]'], message: 'the FILES tab after a reload' });
+      const again = await driveWhen(page, 's.connected', 'connected again after the reload');
+      await sleep(400);
+      assert.equal((await page.evaluate(DRIVE_STATE)).requests, 0, 'a reload inside the hour asks Google nothing: no window at all');
+      assert.equal(JSON.parse(again.kept).token, 'tok-synthetic-0', 'it is the same pass');
+
+      // sessionStorage is this tab's alone: a second tab starts without it.
+      other = await openFilesDrive(['blocked']);
+      const cold = await driveWhen(other, 's.autoTap', 'the second tab asking for itself');
+      assert.deepEqual([cold.connected, cold.kept], [false, null], 'a second tab has no pass of the first one\'s');
+      assert.deepEqual(realErrors(page), []);
+    } finally {
+      await page.close();
+      if (other) await other.close();
+    }
+  });
+
+  await t.test('FILES + Drive (stubbed): where the browser blocks the window, the first tap in FILES connects — once; a closed window ends it, never a loop', async () => {
+    // The window is blocked (the request never answers); the tap's is answered.
+    let page = await openFilesDrive(['blocked']);
+    try {
+      const st = await driveWhen(page, 's.autoTap', 'the blocked attempt');
+      assert.deepEqual([st.connected, st.requests, st.connectBtn], [false, 1, true], 'asked once, not connected, Connect Drive still there');
+      await driveWhen(page, '/connects on your next tap/.test(s.text)', 'the Drive line saying a tap will connect');
+      await sleep(500);
+      assert.equal((await page.evaluate(DRIVE_STATE)).requests, 1, 'no second request by itself: one attempt a page load');
+
+      await page.evaluate(CLICK_SEL, '[data-files-home]');
+      const on = await driveWhen(page, 's.connected', 'connected by the first tap in FILES');
+      assert.deepEqual([on.requests, on.autoTap], [2, false], 'the tap made the one request that could open a window');
+      await page.waitFor(function () { return /Connected to Google Drive/.test((document.querySelector('[data-files-toast]') || {}).textContent || ''); },
+        { message: 'saying so' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+
+    // Blocked, then the user closes the window the tap opened. That ends it.
+    page = await openFilesDrive(['blocked', 'closed']);
+    try {
+      await driveWhen(page, 's.autoTap', 'the blocked attempt');
+      await page.evaluate(CLICK_SEL, '[data-files-home]');
+      const shut = await driveWhen(page, 's.requests === 2 && !s.autoTap && /The Google window was closed/.test(s.text)', 'the closed window');
+      assert.equal(shut.connected, false);
+      await page.evaluate(CLICK_SEL, '[data-files-home]');
+      await page.evaluate(CLICK_SEL, '[data-files-filter]');
+      await sleep(500);
+      assert.equal((await page.evaluate(DRIVE_STATE)).requests, 2, 'later taps open nothing: never a loop of windows');
+      await page.evaluate(CLICK_SEL, '[data-files-connect]');
+      const on = await driveWhen(page, 's.connected', 'Connect Drive still connecting');
+      assert.equal(on.requests, 3);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+
+    // The first tap being ON Connect Drive is one request, not two windows.
+    page = await openFilesDrive(['blocked']);
+    try {
+      await driveWhen(page, 's.autoTap', 'the blocked attempt');
+      await page.evaluate(CLICK_SEL, '[data-files-connect]');
+      await driveWhen(page, 's.connected', 'connected by the button');
+      await sleep(300);
+      assert.equal((await page.evaluate(DRIVE_STATE)).requests, 2, 'the button\'s own request, and no second one from the tap');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES + Drive (stubbed): Disconnect forgets the pass and its kept copy, asks nothing and writes nothing; the tab does not reconnect by itself', async () => {
+    const page = await openFilesDrive([]);
+    try {
+      await driveWhen(page, 's.connected && !!s.kept', 'connected, with the pass kept');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-disconnect]'], message: 'Disconnect' });
+      const raw = await page.evaluate(FILES_RAW), dialogs = page.dialogs.length;
+      await page.evaluate(CLICK_SEL, '[data-files-disconnect]');
+      const off = await driveWhen(page, '!s.connected', 'disconnected');
+      assert.equal(off.kept, null, 'the kept copy is removed, not left to expire');
+      await driveWhen(page, '/Google Drive: not connected/.test(s.text) && s.connectBtn', 'the Drive line and Connect Drive back');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'track_db is byte-identical: it deletes no data');
+      assert.equal(page.dialogs.length, dialogs, 'and so it asks nothing');
+
+      // Leaving FILES and coming back does not ask Google again.
+      await page.evaluate(function () { location.hash = 'sourcedump'; return true; });
+      await page.waitFor(function () { return !document.querySelector('[data-files-view]'); }, { message: 'FILES left' });
+      await filesTabOpen(page);
+      await sleep(500);
+      const back = await page.evaluate(DRIVE_STATE);
+      assert.deepEqual([back.connected, back.requests, back.autoTap, back.kept], [false, 1, false, null],
+        'still disconnected: no new request, and no tap that would make one');
+
+      await page.evaluate(CLICK_SEL, '[data-files-connect]');
+      const on = await driveWhen(page, 's.connected', 'Connect Drive bringing it back');
+      assert.deepEqual([on.requests, !!on.kept], [2, true]);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  /* A kept pass needs nothing from Google, so its sign-in is not fetched while
+     one holds. When the pass runs out with FILES still open, the viewer
+     fetches it then — otherwise the Connect Drive tap could only answer
+     "still loading". The sign-in here is a data: URL, so its fetch is seen
+     without reaching Google; there is no `window.google` in this case. */
+  const SYN_DRIVE_NO_GIS = function () {
+    var realFetch = window.fetch;
+    window.fetch = function (url) {
+      if (String(url).indexOf('googleapis.com') < 0) return realFetch.apply(this, arguments);
+      return Promise.resolve(new Response(JSON.stringify({ files: [] }), { status: 200 }));
+    };
+    var held;
+    Object.defineProperty(window, 'TrackFileStore', {
+      configurable: true,
+      get: function () { return held; },
+      set: function (v) {
+        if (v && typeof v.configure === 'function') v.configure({
+          clientId: 'synthetic-client.apps.googleusercontent.com',
+          gisSrc: 'data:text/javascript,window.__gisFetched=(window.__gisFetched||0)+1'
+        });
+        held = v;
+      }
+    });
+  };
+
+  await t.test('FILES + Drive (stubbed): a kept pass fetches no sign-in; when it runs out with FILES open the Drive line says so by itself, and the sign-in is fetched then', async () => {
+    const page = await open('true-storage.html', { db: seedDb({ files: FILES_RECS() }), viewport: FILES_DESK });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-tabbar="true-storage"]'], message: 'the Storages page' });
+      await page.addInitScript('(' + SYN_DRIVE_NO_GIS + ')();');
+      await page.reload(); await page.skipFirebase();
+      await page.waitFor(HAS_SEL, { args: ['[data-tabbar="true-storage"]'], message: 'the Storages page again' });
+      // A pass with a few seconds left, kept by an earlier load of this tab.
+      await page.evaluate(function () {
+        sessionStorage.setItem('track_drive_token_v1', JSON.stringify({ token: 'tok-kept', expiresAt: Date.now() + 4000 }));
+        return true;
+      });
+      await filesTabOpen(page);
+      await page.waitFor(function () { return /Google Drive: connected/.test(document.querySelector('[data-files-drive]').textContent); },
+        { message: 'connected from the kept pass' });
+      await sleep(600);
+      assert.equal(await page.evaluate(function () { return window.__gisFetched || 0; }), 0,
+        'a kept pass asks Google for nothing, not even its sign-in script');
+
+      // Nobody taps anything: the store says when the pass runs out.
+      await page.waitFor(function () { return /Google Drive: not connected/.test(document.querySelector('[data-files-drive]').textContent); },
+        { message: 'the Drive line saying, by itself, that the pass ran out' });
+      assert.equal(await page.evaluate(function () { return sessionStorage.getItem('track_drive_token_v1'); }), null,
+        'and the kept copy is gone with it');
+      await page.waitFor(function () { return window.__gisFetched === 1; },
+        { message: 'the sign-in fetched once the pass ran out, ready for Connect Drive' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
   // ── TEXT ↔ FILE: a Source Dump text block linked to a file in FILES ───────
   /* One file per text block, stored on the block as `fileId` inside
      sourceDumps; a file may serve many blocks, and which blocks name it is a
@@ -21351,6 +21740,123 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.equal(await stale.evaluate(HAS_SEL, '[data-files-viewer]'), false);
       assert.deepEqual(realErrors(stale), []);
     } finally { await stale.close(); }
+  });
+
+  /* The same link, STARTED FROM THE FILE (the user's 2026-11-16 request). The
+     FILES viewer's bar carries "+ link to a text block": a picker of every
+     text block (TrackSourceDump.linkTargets, pinned offline), worded as a
+     "Used in" row. A pick is the one link writer over a fresh read — the
+     block's fileId, in sourceDumps, and nothing in `files`. A block that
+     already has a file is grey and says which; the writer refuses it. */
+  const TF_LINK_OPTIONS = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-files-link-picker] [data-files-link-option]'), function (e) {
+      var t = e.querySelector('[data-files-link-taken]');
+      return [e.getAttribute('data-files-link-option'), e.querySelector('div').textContent,
+        e.getAttribute('aria-disabled'), t ? t.textContent : null];
+    });
+  };
+  // d-1 › MM 10: 500 free, 501 has a file, 503 names a file that is gone.
+  // d-1 › MM 11: prose written before text blocks existed — the legacy block,
+  // which is in no list and can take no file. d-2 › MM 10: 502, untitled.
+  const TF_LINK_DB = () => {
+    const db = TF_DB([{ id: 500, title: 'Why', explanation: 'Because.' },
+      { id: 501, title: 'How', explanation: 'So.', fileId: 'f-pdf' },
+      { id: 503, title: 'Lost', explanation: 'Gone.', fileId: 'f-gone' }],
+      [{ id: 502, title: '', explanation: '\n  First line\nsecond' }]);
+    db.slots[0].sourceDumps[0].mmLinks[1].text = 'Older prose, written before blocks';
+    return db;
+  };
+
+  await t.test('TEXT ↔ FILE (from the file): + link lists every text block, and a pick writes that block\'s fileId over a fresh read — files is never written', async () => {
+    const page = await open('true-storage.html', { db: TF_LINK_DB(), hash: withQuery('?file=f-png', '#files') });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-files-viewer="f-png"]'], message: 'the image open on FILES' });
+      assert.deepEqual([await page.evaluate(HAS_SEL, '[data-files-used-in]'), await page.evaluate(HAS_SEL, '[data-files-link-add]')],
+        [false, true], 'no block names it yet — and the link can be started here');
+      const filesBefore = await page.evaluate(TF_KEY, 'files');
+      const storagesBefore = await page.evaluate(TF_KEY, 'trueStorages');
+      // Another writer lands a title this page has never seen, in this same
+      // tab, so no storage event: the page's copy is stale on purpose.
+      const seeded = (await page.evaluate(STORED_DUMPS)).concat([
+        { id: 'd-x', title: 'Written elsewhere', createdAt: '2026-03-11', parentId: null, mmLinks: [] }]);
+      assert.notEqual(await page.evaluate(WRITE_SLOT_KEY, 'sourceDumps', seeded), false);
+
+      await page.evaluate(CLICK_SEL, '[data-files-link-add]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-link-picker] [data-files-link-search]'], message: 'the picker' });
+      assert.deepEqual(await page.evaluate(TF_LINK_OPTIONS), [
+        ['d-1:90:500', 'Dump d-1 › Mind Map A · Why', null, null],
+        ['d-1:90:501', 'Dump d-1 › Mind Map A · How', 'true', 'already has Slides.pdf'],
+        ['d-1:90:503', 'Dump d-1 › Mind Map A · Lost', 'true', 'already has a removed file'],
+        ['d-2:92:502', 'Dump d-2 › Mind Map A · First line', null, null]
+      ], 'every text block in stored order, worded as a Used in row; one that has a file is grey and says which; ' +
+        'the prose written before blocks existed is not offered');
+
+      await page.evaluate(FILES_SET_ANY, SET_REACT_INPUT, '[data-files-link-search]', 'first');
+      await page.waitFor(function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-files-link-option]'),
+          function (e) { return e.getAttribute('data-files-link-option'); }).join() === 'd-2:92:502';
+      }, { message: 'a search matching the block\'s first line' });
+      await page.evaluate(CLICK_SEL, '[data-files-link-option="d-2:92:502"]');
+      const after = await page.waitFor(function (f) {
+        var b = new Function('return ' + f)()('d-2', 10, 502);
+        return b && b.fileId ? JSON.parse(localStorage.getItem('track_db')).slots[0].sourceDumps : false;
+      }, { args: [TF_BLOCK.toString()], message: 'the link being saved' });
+      assert.deepEqual(after[1].mmLinks[0].textBlocks[0], { id: 502, title: '', explanation: '\n  First line\nsecond', fileId: 'f-png' },
+        'the block names the open file, spread: nothing else on it changed');
+      assert.ok(after.some(d => d.id === 'd-x'), 'the title written elsewhere survived: the write read the stored list');
+      assert.equal(after[0].mmLinks[1].text, 'Older prose, written before blocks');
+      await sleep(400);
+      assert.equal(await page.evaluate(TF_KEY, 'files'), filesBefore, 'files is byte-identical: the link lives on the block alone');
+      assert.equal(await page.evaluate(TF_KEY, 'trueStorages'), storagesBefore, 'trueStorages is byte-identical');
+
+      // Both ways at once: the viewer lists it, and the text shows the chip.
+      const rows = await page.waitFor(function () {
+        var r = Array.prototype.map.call(document.querySelectorAll('[data-files-use]'), function (e) { return e.textContent; });
+        return r.length ? r : false;
+      }, { message: 'the new link in the Used in list' });
+      assert.deepEqual(rows, ['Dump d-2 › Mind Map A · First line']);
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-link-picker]'), false, 'and the picker shut');
+      await page.evaluate(CLICK_SEL, '[data-files-use="d-2:92:502"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-source-dump-view] [data-block-file="502"] [data-block-file-chip="f-png"]'],
+        message: 'the same link as a chip under the text block' });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('TEXT ↔ FILE (from the file): a block that already has a file is refused and says why — a grey one, and one another writer linked meanwhile; nothing is written', async () => {
+    const page = await open('true-storage.html', { db: TF_LINK_DB(), hash: withQuery('?file=f-note', '#files') });
+    try {
+      await page.waitFor(HAS_SEL, { args: ['[data-files-viewer="f-note"]'], message: 'the note open on FILES' });
+      await page.evaluate(CLICK_SEL, '[data-files-link-add]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-link-option="d-1:90:501"]'], message: 'the picker' });
+
+      const before = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+      await page.evaluate(CLICK_SEL, '[data-files-link-option="d-1:90:501"]');
+      await page.waitFor(FILES_TOAST, { message: 'the reason' });
+      assert.equal(await page.evaluate(FILES_TOAST), 'That text block already has a file. Unlink it there first.');
+      await sleep(400);
+      assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), before,
+        'a grey row answers a tap and writes nothing: track_db byte-identical');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-link-picker]'), true, 'the picker stays, to pick another');
+
+      // Block 500 is drawn free. Another writer links it to the PDF in this
+      // same tab — no storage event, so the picker is stale on purpose.
+      const linked = (await page.evaluate(STORED_DUMPS)).map(d => d.id !== 'd-1' ? d : Object.assign({}, d, {
+        mmLinks: d.mmLinks.map(l => l.id !== 90 ? l : Object.assign({}, l, {
+          textBlocks: l.textBlocks.map(b => b.id !== 500 ? b : Object.assign({}, b, { fileId: 'f-pdf' })) })) }));
+      assert.notEqual(await page.evaluate(WRITE_SLOT_KEY, 'sourceDumps', linked), false);
+      const mid = await page.evaluate(function () { return localStorage.getItem('track_db'); });
+      assert.equal((await page.evaluate(TF_LINK_OPTIONS))[0][2], null, 'still drawn free here');
+      await page.evaluate(CLICK_SEL, '[data-files-link-option="d-1:90:500"]');
+      await page.waitFor(function () {
+        return /^Not linked/.test((document.querySelector('[data-files-toast]') || {}).textContent || '');
+      }, { message: 'the refusal' });
+      await sleep(400);
+      assert.equal(await page.evaluate(function () { return localStorage.getItem('track_db'); }), mid,
+        'the other writer\'s link is never overwritten from a stale picker: track_db byte-identical');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-used-in]'), false, 'and this note is still used nowhere');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
   });
 
   /* ── The Schedule page: its tabs, ★ CALENDAR, PROGRESSION and MIND MAPS ───

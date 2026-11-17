@@ -297,6 +297,34 @@
       FS.preloadGis().then(null, function () {});
       FS.localUsage().then(setUsage);
     }, [slotId]);
+    // Drive connects by itself (the user's 2026-11-16 request), as far as a
+    // browser lets it. Opening FILES asks the store to connect: a token kept
+    // for this tab is used with no window at all; otherwise Google's window
+    // is asked for once, which a browser allows without a tap only where
+    // pop-ups are allowed for the site. Where it is blocked, the store says
+    // so through `overview().autoTap`, and the FIRST tap anywhere in FILES
+    // connects — a tap is what lets the window open. One attempt each, never
+    // a loop: the store drops `autoTap` after it. Once a page load.
+    useEffect(function () {
+      try {
+        var r = typeof FS.autoConnect === 'function' ? FS.autoConnect() : null;
+        if (r && typeof r.then === 'function') r.then(null, function () {});
+      } catch (e) {}
+    }, []);
+    // A kept pass needs nothing from Google, so the store fetches Google's
+    // sign-in only without one. When the pass runs out with FILES still open,
+    // fetch it then — or the Connect Drive tap would only say "still loading".
+    var ovSetUp = FS.overview().setUp, ovConnected = FS.overview().connected;
+    useEffect(function () {
+      if (ovSetUp && !ovConnected) FS.preloadGis().then(null, function () {});
+    }, [ovSetUp, ovConnected]);
+    function onFirstTap(e) {
+      var ovNow = FS.overview();
+      if (!ovNow.autoTap || ovNow.connected) return;
+      // The Connect button connects by itself; two requests would be two windows.
+      if (e.target && e.target.closest && e.target.closest('[data-files-connect]')) return;
+      FS.connect().then(function () { say('Connected to Google Drive.'); }, function () {});
+    }
 
     var ov = FS.overview();
 
@@ -316,6 +344,12 @@
     // sourceDumps: this script never sees that key), and where a tap on one
     // goes. Absent props: no list.
     var uses = open && !TF.isFolder(open) && props.usesOf ? props.usesOf(open.id) : [];
+    // The same link, started from this side: the page links the open record
+    // to the text block picked (its one writer, over a fresh read) and
+    // answers whether it landed. Absent props: no button.
+    var openRecId = open ? open.id : null;
+    var linkUse = props.onLinkUse && props.linkTargets
+      ? function (t) { return openRecId != null && !!props.onLinkUse(openRecId, t); } : null;
 
     var folderId = open ? (TF.isFolder(open) ? open.id : TF.folderOf(files, open.id)) : null;
     var folder = folderId != null ? byId.get(folderId) : null;
@@ -601,12 +635,12 @@
     if (open && !TF.isFolder(open)) {
       page = TF.kindOf(open) === 'note'
         ? h(NoteView, {
-          key: open.id, rec: open, fresh: freshNote === open.id, onText: saveText, say: say, write: write, uses: uses, onUse: props.onOpenUse,
+          key: open.id, rec: open, fresh: freshNote === open.id, onText: saveText, say: say, write: write, uses: uses, onUse: props.onOpenUse, linkTargets: props.linkTargets, onLink: linkUse,
           onBack: goUp, onRename: function () { startRename(open.id); }, onDelete: function () { remove([open.id]); },
           trail: trail, nameOf: nameOf, onCrumb: openRec, phone: phone, onDrawer: function () { setDrawer(true); }
         })
         : h(FileView, {
-          key: open.id, rec: open, ov: ov, say: say, write: write, uses: uses, onUse: props.onOpenUse,
+          key: open.id, rec: open, ov: ov, say: say, write: write, uses: uses, onUse: props.onOpenUse, linkTargets: props.linkTargets, onLink: linkUse,
           onBack: goUp, onRename: function () { startRename(open.id); }, onDelete: function () { remove([open.id]); },
           trail: trail, nameOf: nameOf, onCrumb: openRec, phone: phone, onDrawer: function () { setDrawer(true); }
         });
@@ -637,7 +671,7 @@
     }
 
     var label = drag && drag.label;
-    return h('div', { className: 'fdir flex flex-1 min-h-0 h-full relative', 'data-files-view': true },
+    return h('div', { className: 'fdir flex flex-1 min-h-0 h-full relative', 'data-files-view': true, onClickCapture: onFirstTap },
       phone && drawer ? h('div', { className: 'fixed inset-0 z-30 bg-black/50', 'data-files-backdrop': true, onClick: function () { setDrawer(false); } }) : null,
       bar,
       h('main', { className: 'flex-1 min-w-0 flex flex-col min-h-0' }, page),
@@ -877,11 +911,16 @@
         FS.localUsage().then(p.setUsage);
       });
     }
-    var line, act = null;
+    function disconnect() {
+      FS.disconnect();
+      p.say('Disconnected from Google Drive on this tab. Files stay where they are.');
+    }
+    var line, act = null, disc = null;
     if (ov.deviceStorage) line = h('span', { className: 'text-red-400' }, 'This browser can\'t keep files: ' + ov.deviceStorage);
     else if (!ov.setUp) line = 'Google Drive isn\'t set up yet — files stay on this device.';
     else if (!ov.connected) {
-      line = 'Google Drive: not connected' + (ov.pending ? ' · ' + ov.pending + ' waiting to upload' : '');
+      line = (ov.autoTap ? 'Google Drive: connects on your next tap' : 'Google Drive: not connected') +
+        (ov.pending ? ' · ' + ov.pending + ' waiting to upload' : '');
       act = h('button', { type: 'button', 'data-files-connect': true, onClick: connect,
         className: 'mt-1 w-full rounded bg-indigo-700 px-2 py-1 text-[11px] font-bold text-white' }, 'Connect Drive');
     } else {
@@ -889,9 +928,15 @@
       if (ov.error && ov.pending) act = h('button', { type: 'button', 'data-files-retry': true,
         onClick: function () { FS.startQueue(); },
         className: 'mt-1 w-full rounded border border-gray-700 px-2 py-1 text-[11px] text-gray-300' }, 'Retry upload');
+      // Forgets the pass kept for this tab. It deletes nothing: files, the
+      // queue and track_db stay as they are, and Connect Drive brings it back.
+      disc = typeof FS.disconnect === 'function' ? h('button', { type: 'button', 'data-files-disconnect': true, onClick: disconnect,
+        title: 'Forget the Google Drive pass kept for this tab', className: 'text-gray-500 underline' }, 'Disconnect') : null;
     }
     return h('div', { 'data-files-drive': true, className: 'border-t border-gray-800 p-2 text-[11px] text-gray-500 space-y-1' },
+      // Disconnect sits under the line: beside it, the narrow sidebar wrapped the ✓.
       h('div', null, line),
+      disc ? h('div', null, disc) : null,
       ov.error && ov.setUp ? h('div', { className: 'text-amber-400', 'data-files-drive-error': true }, ov.error) : null,
       act,
       p.usage != null ? h('div', { 'data-files-usage': true, className: 'flex items-center justify-between gap-2 pt-1' },
@@ -1015,26 +1060,86 @@
 
   // ── a note ───────────────────────────────────────────────────────────────
 
-  // "Used in N text blocks", under a file's or a note's head: the Source Dump
-  // text blocks whose `fileId` names it. Closed until tapped; a row opens
-  // SOURCE DUMP on that title with the MM's card ringed. Drawn only when at
-  // least one block names the record.
+  // The links bar under a file's or a note's head. Two things, side by side:
+  //
+  // - "Used in N text blocks": the Source Dump text blocks whose `fileId`
+  //   names the record. Closed until tapped; a row opens SOURCE DUMP on that
+  //   title with the MM's card ringed. Drawn only when a block names it.
+  // - "+ link to a text block" (the user's 2026-11-16 request: a link can
+  //   start from the file too). It opens a picker of every text block, read
+  //   from the page's `targets` prop only while it is open: this script never
+  //   sees `sourceDumps`. A row calls `onLink`, which is the page's ONE writer
+  //   for a link (TrackSourceDump.withBlockFile) — so a block that already has
+  //   a file, drawn grey, is refused by that writer and not by a second test
+  //   here. Nothing is stored on the file.
+  //
+  // With neither a use nor a way to link, nothing is drawn.
   function UsedIn(p) {
     var s1 = useState(false), shown = s1[0], setShown = s1[1];
+    var s2 = useState(false), picking = s2[0], setPicking = s2[1];
+    var s3 = useState(''), q = s3[0], setQ = s3[1];
     var uses = p.uses || [];
-    if (!uses.length) return null;
     var n = uses.length;
-    return h('div', { className: 'px-3 py-1.5 border-b border-gray-800 text-xs', 'data-files-used-in': String(n) },
-      h('button', { type: 'button', 'data-files-used-in-toggle': true, 'aria-expanded': shown ? 'true' : 'false',
-        onClick: function () { setShown(!shown); }, className: 'text-gray-400' },
-        (shown ? '▾ ' : '▸ ') + 'Used in ' + n + ' text block' + (n === 1 ? '' : 's')),
-      shown ? h('div', { className: 'mt-1 space-y-0.5' }, uses.map(function (u) {
+    var canLink = typeof p.onLink === 'function' && typeof p.targets === 'function';
+    if (!n && !canLink) return null;
+
+    var all = picking && canLink ? (p.targets() || []) : [];
+    var needle = q.trim().toLowerCase();
+    var options = all.filter(function (t) {
+      return !needle || (String(t.where || '') + ' ' + String(t.label || '')).toLowerCase().indexOf(needle) >= 0;
+    });
+    function pick(t) {
+      var ok = p.onLink(t);
+      if (ok) {
+        setPicking(false); setQ(''); setShown(true);
+        if (p.say) p.say('Linked to "' + t.label + '".');
+      } else if (p.say) {
+        p.say(t.taken ? 'That text block already has a file. Unlink it there first.'
+          : 'Not linked: that text block already has a file, or the link could not be saved.');
+      }
+    }
+
+    return h('div', { className: 'px-3 py-1.5 border-b border-gray-800 text-xs', 'data-files-links': true },
+      h('div', { className: 'flex flex-wrap items-center gap-x-3 gap-y-1' },
+        n ? h('span', { 'data-files-used-in': String(n) },
+          h('button', { type: 'button', 'data-files-used-in-toggle': true, 'aria-expanded': shown ? 'true' : 'false',
+            onClick: function () { setShown(!shown); }, className: 'text-gray-400' },
+            (shown ? '▾ ' : '▸ ') + 'Used in ' + n + ' text block' + (n === 1 ? '' : 's'))) : null,
+        canLink ? h('button', { type: 'button', 'data-files-link-add': true, 'aria-expanded': picking ? 'true' : 'false',
+          onClick: function () { setPicking(!picking); setQ(''); },
+          className: 'text-gray-500 hover:text-gray-300' }, '+ link to a text block') : null),
+      shown && n ? h('div', { className: 'mt-1 space-y-0.5' }, uses.map(function (u) {
         return h('button', { key: u.key, type: 'button', 'data-files-use': u.key,
           onClick: function () { if (p.onUse) p.onUse(u); },
           className: 'block w-full text-left rounded px-2 py-1 hover:bg-gray-800 truncate' },
           h('span', { className: 'text-gray-500' }, u.where + ' · '),
           h('span', { className: 'text-gray-200' }, u.label));
-      })) : null);
+      })) : null,
+      picking && canLink ? h('div', { className: 'mt-1 rounded border border-gray-700 bg-gray-900 p-2', 'data-files-link-picker': true },
+        !all.length
+          ? h('div', { className: 'py-2 text-center text-gray-600', 'data-files-link-none': true },
+            'No text blocks yet. Write one in SOURCE DUMP, under a mind map.')
+          : h(React.Fragment, null,
+            h('input', { autoFocus: true, value: q, placeholder: 'search text blocks...', 'data-files-link-search': true,
+              onChange: function (e) { setQ(e.target.value); },
+              className: 'mb-1 w-full rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-200 outline-none' }),
+            h('div', { className: 'max-h-56 overflow-y-auto space-y-0.5' },
+              !options.length ? h('div', { className: 'py-2 text-center text-gray-600' }, 'No matches.') : null,
+              options.map(function (t) {
+                // aria-disabled, never `disabled`: a grey row still answers a
+                // tap — with the reason — and still reaches the writer.
+                return h('button', { key: t.key, type: 'button', 'data-files-link-option': t.key,
+                  'aria-disabled': t.taken ? 'true' : undefined,
+                  onClick: function () { pick(t); },
+                  className: cls('block w-full text-left rounded px-2 py-1 min-h-[2rem]', t.taken ? 'opacity-50' : 'hover:bg-gray-800') },
+                  h('div', { className: 'truncate' },
+                    h('span', { className: 'text-gray-500' }, t.where + ' · '),
+                    h('span', { className: 'text-gray-200' }, t.label)),
+                  t.taken ? h('div', { className: 'truncate text-[10px] text-gray-500', 'data-files-link-taken': true },
+                    'already has ' + t.taken) : null);
+              }))),
+        h('button', { type: 'button', 'data-files-link-cancel': true, onClick: function () { setPicking(false); },
+          className: 'mt-1 text-gray-500 hover:text-gray-300' }, 'cancel')) : null);
   }
 
   function NoteView(p) {
@@ -1090,7 +1195,7 @@
         btn('✎ Rename', { 'data-files-rename': true, onClick: p.onRename }),
         btn('🗑', { 'data-files-delete': true, onClick: p.onDelete, title: 'Delete this note' }),
         h('span', { 'data-files-save': saveState, className: cls('text-[11px]', saveState === 'saved' || saveState === 'saving' ? 'text-gray-500' : 'text-red-400') }, stateText)),
-      h(UsedIn, { uses: p.uses, onUse: p.onUse }),
+      h(UsedIn, { uses: p.uses, onUse: p.onUse, targets: p.linkTargets, onLink: p.onLink, say: p.say }),
       mode === 'preview' ? h('div', { className: 'px-3 py-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 border-b border-gray-800', 'data-files-tools': true },
         markTools(m)) : null,
       mode === 'edit'
@@ -1240,7 +1345,7 @@
         btn('✎ Rename', { 'data-files-rename': true, onClick: p.onRename }),
         btn('🗑', { 'data-files-delete': true, onClick: p.onDelete, title: 'Delete this file' }),
         h('span', { className: 'text-[11px] text-gray-500' }, statusLine(rec, dl, p.ov, 0))),
-      h(UsedIn, { uses: p.uses, onUse: p.onUse }),
+      h(UsedIn, { uses: p.uses, onUse: p.onUse, targets: p.linkTargets, onLink: p.onLink, say: p.say }),
       h('div', { className: 'flex-1 min-h-0 flex flex-col' }, body));
   }
 

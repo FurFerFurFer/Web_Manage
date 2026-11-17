@@ -10,16 +10,16 @@
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
   <script src="scripts/schema.js?v=11"></script>
-  <script src="scripts/milestone-core.js?v=3"></script>
+  <script src="scripts/milestone-core.js?v=4"></script>
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
-  <script src="scripts/source-dump-core.js?v=2"></script>
+  <script src="scripts/source-dump-core.js?v=3"></script>
   <script src="scripts/mm-tree-core.js?v=2"></script>
   <script src="scripts/files-core.js?v=4"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/calendar-core.js?v=14"></script>
-  <script src="scripts/note-to-self-core.js?v=2"></script>
+  <script src="scripts/note-to-self-core.js?v=3"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -27,7 +27,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
-  <link rel="stylesheet" href="styles/styles.css?v=27">
+  <link rel="stylesheet" href="styles/styles.css?v=28">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -1498,7 +1498,7 @@
     // on, ARE in the <head>, here and in sir-ks02.html: a text block's file
     // chip needs a file's name on any tab. Keep these ?v= values identical to
     // docs/ARCHITECTURE.md.
-    const FILES_SCRIPTS=['scripts/file-store.js?v=2','scripts/files-view.js?v=4'];
+    const FILES_SCRIPTS=['scripts/file-store.js?v=3','scripts/files-view.js?v=5'];
     const filesLoaded=new Set();
     let filesLoad=null;
     function loadFilesScripts(){
@@ -1514,7 +1514,7 @@
       return filesLoad;
     }
 
-    function FilesHost({files,slotId,mutate,onUploaded,openRequest,usesOf,onOpenUse}){
+    function FilesHost({files,slotId,mutate,onUploaded,openRequest,usesOf,onOpenUse,linkTargets,onLinkUse}){
       const [state,setState]=useState(()=>window.TrackFilesView?'ready':'loading');
       const [attempt,setAttempt]=useState(0);
       const [error,setError]=useState(null);
@@ -1535,7 +1535,7 @@
         </div>
       );
       if (state!=='ready') return <div className="p-6 text-xs text-gray-500" data-files-loading="true">Loading FILES…</div>;
-      return React.createElement(window.TrackFilesView.FilesView,{files,slotId,mutate:fn=>mutate(fn,slotId),openRequest,usesOf,onOpenUse});
+      return React.createElement(window.TrackFilesView.FilesView,{files,slotId,mutate:fn=>mutate(fn,slotId),openRequest,usesOf,onOpenUse,linkTargets,onLinkUse});
     }
 
     function App() {
@@ -1930,17 +1930,37 @@
       }
       // Every text block naming a file, as the FILES viewer lists them: the
       // title's trail and the MM, then the block's title or its first line.
-      const usesOf=useCallback(fileId=>SD.blocksForFile(dumps,fileId).map(({dump,section,block})=>{
+      // How a text block is worded in both lists below — one spelling.
+      const blockWords=useCallback((dump,section,block)=>{
         const mm=mms.find(m=>m.id===section.mmId);
         const trail=SD.pathTo(dump.id,dumps).map(id=>{const d=dumps.find(x=>x.id===id);return d?d.title:"?";});
         const first=String(block.explanation||"").split("\n").map(x=>x.trim()).find(Boolean)||"";
+        return {where:`${trail.join(" › ")} › ${mm?mm.name:"unknown MM"}`, label:block.title||first||"text"};
+      },[dumps,mms]);
+      const usesOf=useCallback(fileId=>SD.blocksForFile(dumps,fileId).map(({dump,section,block})=>({
+        key:`${dump.id}:${section.id}:${block.id}`,
+        dumpId:dump.id, mmId:section.mmId,
+        ...blockWords(dump,section,block)
+      })),[dumps,blockWords]);
+      // The same link, STARTED from the file (the user's 2026-11-16 request).
+      // The FILES viewer's picker lists every text block — TrackSourceDump's
+      // linkTargets, worded exactly as a "Used in" row — and a block that
+      // already names a file says which, because one block holds one file. A
+      // pick is the ONE link writer, withBlockFile, over a fresh read through
+      // editDumps: nothing is written to `files`, and a block another tab
+      // linked meanwhile is refused there, not by a second test here.
+      const linkTargets=useCallback(()=>SD.linkTargets(dumps).map(({dump,section,block,fileId})=>{
+        const rec=fileId==null?null:TrackFiles.recordOf(files,fileId);
         return {
           key:`${dump.id}:${section.id}:${block.id}`,
-          dumpId:dump.id, mmId:section.mmId,
-          where:`${trail.join(" › ")} › ${mm?mm.name:"unknown MM"}`,
-          label:block.title||first||"text"
+          dumpId:dump.id, sectionId:section.id, blockId:block.id,
+          ...blockWords(dump,section,block),
+          taken:fileId==null?null:(rec?rec.name:"a removed file")
         };
-      }),[dumps,mms]);
+      }),[dumps,files,blockWords]);
+      function linkFileToBlock(fileId,target){
+        return !!editDumps(d=>SD.withBlockFile(d,target.dumpId,target.sectionId,target.blockId,fileId));
+      }
 
       if (!slotReady) {
         return (
@@ -2031,7 +2051,8 @@
               {activeSlotId
                 ? <FilesHost key={activeSlotId} files={files} slotId={activeSlotId}
                     mutate={mutateFiles} onUploaded={onFilesUploaded}
-                    openRequest={fileRequest} usesOf={usesOf} onOpenUse={openUse}/>
+                    openRequest={fileRequest} usesOf={usesOf} onOpenUse={openUse}
+                    linkTargets={linkTargets} onLinkUse={linkFileToBlock}/>
                 : <div className="p-6 text-xs text-gray-500">No workspace yet.</div>}
             </div>
           ):(
@@ -2077,6 +2098,6 @@
   <script src="scripts/journey-core.js?v=2"></script>
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
-  <script src="scripts/note-to-self.js?v=3"></script>
+  <script src="scripts/note-to-self.js?v=4"></script>
 </body>
 </html>

@@ -27,15 +27,18 @@ const vm = require('node:vm');
 globalThis.window = globalThis;
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'file-store.js'), 'utf8');
 let touched = [];
-// Loading must touch nothing: trap the three things it could reach for.
+// Loading must touch nothing, including either kind of browser storage.
 const trap = name => new Proxy({}, { get(_, k) { touched.push(name + '.' + String(k)); return undefined; } });
 globalThis.indexedDB = trap('indexedDB');
 globalThis.document = trap('document');
+globalThis.sessionStorage = trap('sessionStorage');
+globalThis.localStorage = trap('localStorage');
 const realFetch = globalThis.fetch;
-globalThis.fetch = (...a) => { touched.push('fetch'); return realFetch(...a); };
+globalThis.fetch = () => { touched.push('fetch'); throw new Error('Loading must not reach the network'); };
 vm.runInThisContext(SRC, { filename: 'file-store.js' });
 const loadTouched = touched.slice();
 delete globalThis.indexedDB; delete globalThis.document; globalThis.fetch = realFetch;
+delete globalThis.sessionStorage; delete globalThis.localStorage;
 
 const FS = globalThis.TrackFileStore;
 const { makeDrive, uploadBlob, CONFIG } = FS._drive;
@@ -125,6 +128,284 @@ function bytes(n) {
 const noSleep = () => Promise.resolve();
 const META = (blob, over = {}) => Object.assign({ id: 'f-1', name: 'limbs.pdf', mime: 'application/pdf',
   size: blob.size, folderId: 'folder-x' }, over);
+
+// Each page has its own realm and memory, optionally sharing this tab's
+// session map across a reload. No fake ever falls through to a live API.
+const TOKEN_KEY = 'track_drive_token_v1';
+const NOW = 1800000000000;
+const settle = () => new Promise(resolve => setImmediate(resolve));
+function authPage({ session = new Map(), clientId = 'synthetic-client', ready = true, storageDenied = false,
+  fetch = async () => { throw new Error('Unexpected fake network request'); } } = {}) {
+  const a = { session, storage: [], scripts: [], requests: [], network: [], idbWrites: [], timers: [], clock: NOW };
+  const stores = { blobs: new Map(), queue: new Map(), meta: new Map() };
+  const db = { transaction(name) {
+    const t = {}, pending = [];
+    t.objectStore = () => {
+      const req = result => { const r = { result, onsuccess: null }; pending.push(r); return r; };
+      return {
+        get: key => req(stores[name].get(key)), getAll: () => req([...stores[name].values()]),
+        getAllKeys: () => req([...stores[name].keys()]),
+        put(value, key) { a.idbWrites.push({ name, value }); stores[name].set(key ?? value.key, value); return req(key); },
+        delete(key) { stores[name].delete(key); return req(undefined); }
+      };
+    };
+    queueMicrotask(() => { pending.forEach(r => r.onsuccess?.()); t.oncomplete?.(); });
+    return t;
+  } };
+  // Timers are recorded, never run: a case fires one by hand.
+  const ctx = { Promise, Map, Set, Blob, Response, Date: { now: () => a.clock },
+    setTimeout: (fn, ms) => { a.timers.push({ fn, ms, cleared: false }); return a.timers.length; },
+    clearTimeout: id => { if (a.timers[id - 1]) a.timers[id - 1].cleared = true; },
+    sessionStorage: {
+      getItem(key) { a.storage.push(['get', key]); if (storageDenied) throw new Error('denied'); return session.get(key) ?? null; },
+      setItem(key, value) { a.storage.push(['set', key, value]); if (storageDenied) throw new Error('denied'); session.set(key, value); },
+      removeItem(key) { a.storage.push(['remove', key]); if (storageDenied) throw new Error('denied'); session.delete(key); }
+    },
+    localStorage: new Proxy({}, { get() { throw new Error('localStorage must never be touched'); } }),
+    document: { createElement: () => ({}), head: { appendChild: script => a.scripts.push(script) } },
+    indexedDB: { open() { const r = {}; queueMicrotask(() => { r.result = db; r.onsuccess(); }); return r; } },
+    fetch: (...args) => { a.network.push(args); return fetch(...args); }
+  };
+  ctx.window = ctx;
+  a.ready = () => { ctx.google = { accounts: { oauth2: { initTokenClient(options) {
+    return { requestAccessToken(args) { a.requests.push({ options, args }); if (a.requestThrows) throw new Error('popup blocked'); } };
+  } } } }; };
+  if (ready) a.ready();
+  vm.runInNewContext(SRC, ctx, { filename: 'file-store.js' });
+  a.FS = ctx.TrackFileStore;
+  a.FS.configure({ clientId });
+  a.reply = (index, data = { access_token: 'synthetic-token', expires_in: 3600 }) => a.requests[index].options.callback(data);
+  a.error = (index, type) => a.requests[index].options.error_callback({ type });
+  return a;
+}
+
+test('AUTH: no client id means no storage read, script, OAuth request or network', async () => {
+  const a = authPage({ clientId: '', ready: false, session: new Map([[TOKEN_KEY, '{"token":"kept","expiresAt":9999999999999}']]) });
+  await a.FS.autoConnect();
+  await a.FS.preloadGis();
+  assert.equal(a.FS.overview().connected, false);
+  assert.equal(a.FS.overview().autoTap, false);
+  await assert.rejects(a.FS.connect(), e => e.code === 'setup');
+  await settle();
+  assert.deepEqual(a.storage, []);
+  assert.deepEqual(a.scripts, []);
+  assert.deepEqual(a.requests, []);
+  assert.deepEqual(a.network, []);
+});
+
+test('AUTH: a successful click keeps one session token with its actual expiry and reload restores its last minute', async () => {
+  const a = authPage();
+  const connected = a.FS.connect();
+  a.reply(0, { access_token: 'synthetic-token', expires_in: 30 });
+  await connected; await settle();
+  assert.deepEqual([...a.session.keys()], [TOKEN_KEY]);
+  assert.deepEqual(JSON.parse(a.session.get(TOKEN_KEY)), { token: 'synthetic-token', expiresAt: NOW + 30000 });
+  const b = authPage({ session: a.session, ready: false });
+  b.clock += 29000;
+  assert.equal(b.FS.overview().connected, true, 'an unexpired token stays valid even in its last minute');
+  const preloaded = b.FS.preloadGis();
+  assert.deepEqual(b.scripts, [], 'preloading skips Google too when the token is kept');
+  await preloaded; await b.FS.autoConnect(); await b.FS.connect(); await settle();
+  assert.deepEqual(b.scripts, [], 'no sign-in script for a kept token');
+  assert.deepEqual(b.requests, []);
+  assert.deepEqual(b.network, []);
+  assert.equal(b.FS.overview().autoTap, false);
+  assert.equal(JSON.stringify(a.idbWrites).includes('synthetic-token'), false);
+});
+
+test('AUTH: expired or malformed session copies are removed and ignored', async () => {
+  const invalid = ['{', 'null', '42', '[]', '{}', JSON.stringify({ token: 'old', expiresAt: NOW }),
+    JSON.stringify({ token: 'old', expiresAt: NOW - 1 }), JSON.stringify({ token: 'x', expiresAt: String(NOW + 1000) }),
+    JSON.stringify({ token: 42, expiresAt: NOW + 1000 }), JSON.stringify({ token: '  ', expiresAt: NOW + 1000 })];
+  for (const raw of invalid) {
+    const a = authPage({ session: new Map([[TOKEN_KEY, raw], ['unrelated', 'kept']]) });
+    assert.equal(a.FS.overview().connected, false, raw);
+    assert.equal(a.session.has(TOKEN_KEY), false, 'bad copy removed: ' + raw);
+    assert.equal(a.session.get('unrelated'), 'kept');
+    await a.FS.autoConnect(); await settle();
+    assert.equal(a.requests.length, 1, 'bad copy does not suppress automatic connection');
+  }
+});
+
+test('AUTH: a token expiring in memory removes its kept copy too', async () => {
+  const a = authPage();
+  const p = a.FS.connect(); a.reply(0, { access_token: 'short-lived', expires_in: 1 }); await p;
+  a.clock += 1000;
+  assert.equal(a.FS.overview().connected, false);
+  assert.equal(a.session.has(TOKEN_KEY), false);
+  await settle();
+});
+
+test('AUTH: a pass running out tells the listeners at that moment — a new one and a kept one; forgetting it cancels the notice', async () => {
+  const a = authPage();
+  const p = a.FS.connect(); a.reply(0, { access_token: 'short-lived', expires_in: 30 }); await p; await settle();
+  const live = a.timers.filter(t => !t.cleared);
+  assert.deepEqual(live.map(t => t.ms), [30050], 'one notice, just past the expiry');
+  let told = 0; a.FS.on(() => { told++; });
+  a.clock += 30000; live[0].fn(); await settle();
+  assert.equal(told, 1, 'the listeners are told, so the Drive line can stop saying connected');
+  assert.equal(a.FS.overview().connected, false);
+  assert.equal(a.session.has(TOKEN_KEY), false);
+
+  const b = authPage({ session: new Map([[TOKEN_KEY, JSON.stringify({ token: 'kept', expiresAt: NOW + 5000 })]]) });
+  assert.equal(b.FS.overview().connected, true);
+  assert.deepEqual(b.timers.filter(t => !t.cleared).map(t => t.ms), [5050], 'a kept pass is watched from the moment it is read');
+  b.FS.disconnect();
+  assert.deepEqual(b.timers.filter(t => !t.cleared), [], 'and a forgotten pass leaves no notice behind');
+});
+
+test('AUTH: denied session storage still permits an in-memory connection', async () => {
+  const a = authPage({ storageDenied: true });
+  const p = a.FS.connect(); a.reply(0); await p; await settle();
+  assert.equal(a.FS.overview().connected, true);
+  a.FS.disconnect();
+  assert.equal(a.FS.overview().connected, false);
+});
+
+test('AUTO: waits for the script, starts only once without a hint, and does not wait for an OAuth callback', async () => {
+  const a = authPage({ ready: false });
+  await a.FS.autoConnect(); await a.FS.autoConnect();
+  assert.equal(a.scripts.length, 1);
+  assert.equal(a.requests.length, 0);
+  assert.equal(a.FS.overview().autoTap, false, 'not until a request starts');
+  a.ready(); a.scripts[0].onload(); await settle();
+  assert.equal(a.requests.length, 1);
+  assert.equal(a.requests[0].options.client_id, 'synthetic-client');
+  assert.equal(a.requests[0].options.scope, 'https://www.googleapis.com/auth/drive.file');
+  assert.deepEqual({ ...a.requests[0].args }, { prompt: '' });
+  assert.equal('login_hint' in a.requests[0].options, false);
+  assert.equal(a.FS.overview().autoTap, true, 'callback deliberately never invoked');
+  await a.FS.autoConnect(); await settle();
+  assert.equal(a.requests.length, 1);
+});
+
+test('AUTO: success connects and keeps the token without a tap', async () => {
+  const a = authPage();
+  await a.FS.autoConnect(); await settle(); a.reply(0); await settle();
+  assert.equal(a.FS.overview().connected, true);
+  assert.equal(a.FS.overview().autoTap, false);
+  assert.equal(JSON.parse(a.session.get(TOKEN_KEY)).token, 'synthetic-token');
+});
+
+test('AUTO: blocked or unknown popup errors retain one tap fallback; a failed tap consumes it permanently', async () => {
+  for (const type of ['popup_failed_to_open', 'unknown']) {
+    const a = authPage();
+    await a.FS.autoConnect(); await settle(); a.error(0, type);
+    assert.equal(a.FS.overview().autoTap, true, type);
+    const p = a.FS.connect();
+    assert.equal(a.requests.length, 2);
+    assert.equal(a.FS.overview().autoTap, false, 'consumed as soon as the tap starts');
+    a.error(1, type); await assert.rejects(p, e => e.code === 'auth');
+    await a.FS.autoConnect(); await settle();
+    assert.equal(a.FS.overview().autoTap, false);
+    assert.equal(a.requests.length, 2, 'no repeated automatic popups');
+    const retry = a.FS.connect(); a.reply(2); await retry;
+    assert.equal(a.FS.overview().connected, true, 'an explicit Connect can retry');
+    await settle();
+  }
+});
+
+test('AUTO: closing the chooser stops the tap fallback for this load', async () => {
+  const a = authPage();
+  await a.FS.autoConnect(); await settle(); a.error(0, 'popup_closed');
+  assert.equal(a.FS.overview().autoTap, false);
+  await a.FS.autoConnect(); await settle();
+  assert.equal(a.requests.length, 1);
+  assert.match(a.FS.overview().error, /closed/);
+  const p = a.FS.connect(); a.reply(1); await p; await settle();
+  assert.equal(a.FS.overview().connected, true, 'explicit Connect remains available');
+});
+
+test('AUTO: a click works when the automatic callback never arrives; stale callbacks cannot settle it', async () => {
+  const a = authPage();
+  await a.FS.autoConnect(); await settle();
+  let resolved = false;
+  const p = a.FS.connect().then(() => { resolved = true; });
+  assert.equal(a.requests.length, 2, 'the click makes its own request immediately');
+  a.reply(0, { access_token: 'stale-auto', expires_in: 3600 }); await settle();
+  assert.equal(a.FS.overview().connected, false, 'superseded automatic success is ignored');
+  assert.equal(resolved, false);
+  a.reply(1); await p; await settle();
+  assert.equal(a.FS.overview().connected, true);
+  assert.equal(JSON.parse(a.session.get(TOKEN_KEY)).token, 'synthetic-token');
+});
+
+test('AUTO: a click while the script loads prevents a later automatic popup', async () => {
+  const a = authPage({ ready: false });
+  await a.FS.autoConnect();
+  await assert.rejects(a.FS.connect(), e => e.code === 'net');
+  a.ready(); a.scripts[0].onload(); await settle();
+  assert.equal(a.requests.length, 0);
+  assert.equal(a.FS.overview().autoTap, false);
+  const p = a.FS.connect(); a.reply(0); await p; await settle();
+});
+
+test('AUTO: script failure and synchronous popup errors settle without unhandled rejection', async () => {
+  const a = authPage({ ready: false });
+  await a.FS.autoConnect(); a.scripts[0].onerror(); await settle();
+  assert.match(a.FS.overview().error, /Could not load/);
+  assert.equal(a.FS.overview().autoTap, false);
+  const b = authPage(); b.requestThrows = true;
+  await b.FS.autoConnect(); await settle();
+  assert.equal(b.FS.overview().autoTap, true);
+  await assert.rejects(b.FS.connect(), e => e.code === 'auth');
+  assert.equal(b.FS.overview().autoTap, false);
+});
+
+test('AUTH: disconnect removes the kept token and stops automatic attempts, including pending script loads', async () => {
+  const a = authPage();
+  const p = a.FS.connect(); a.reply(0); await p; await settle();
+  a.FS.disconnect();
+  assert.equal(a.session.has(TOKEN_KEY), false);
+  assert.equal(a.FS.overview().connected, false);
+  await a.FS.autoConnect(); await settle();
+  assert.equal(a.requests.length, 1);
+  assert.equal(a.FS.overview().autoTap, false);
+  const b = authPage({ ready: false });
+  await b.FS.autoConnect(); b.FS.disconnect(); b.ready(); b.scripts[0].onload(); await settle();
+  assert.equal(b.requests.length, 0);
+});
+
+test('AUTH: disconnect invalidates in-flight callbacks and rejects a pending click', async () => {
+  const a = authPage();
+  await a.FS.autoConnect(); await settle(); a.FS.disconnect(); a.reply(0); await settle();
+  assert.equal(a.FS.overview().connected, false);
+  assert.equal(a.session.has(TOKEN_KEY), false);
+  const p = a.FS.connect(); a.FS.disconnect();
+  await assert.rejects(p, e => e.code === 'cancelled');
+  a.reply(1); await settle();
+  assert.equal(a.FS.overview().connected, false);
+});
+
+test('AUTH: a second click cancels its predecessor and stale error callbacks cannot reject it', async () => {
+  const a = authPage();
+  const first = a.FS.connect();
+  const second = a.FS.connect();
+  assert.equal(a.requests.length, 2, 'the second click starts a separate request');
+  await assert.rejects(first, e => e.code === 'cancelled');
+  a.error(0, 'popup_closed');
+  assert.equal(a.FS.overview().error, null, 'old error ignored');
+  a.reply(1); await second; await settle();
+  assert.equal(a.FS.overview().connected, true);
+});
+
+test('AUTH: a download 401 forgets both token copies and a reload cannot restore it', async () => {
+  const a = authPage({ fetch: async () => new Response(null, { status: 401 }) });
+  const p = a.FS.connect(); a.reply(0); await p; await settle();
+  await assert.rejects(a.FS.fetchBlob({ id: 'file', driveId: 'remote' }), e => e.code === 'auth');
+  assert.equal(a.session.has(TOKEN_KEY), false);
+  assert.equal(a.FS.overview().connected, false);
+  assert.equal(authPage({ session: a.session }).FS.overview().connected, false);
+});
+
+test('AUTH: a queued Drive operation returning 401 removes the kept token too', async () => {
+  const a = authPage({ fetch: async () => new Response(null, { status: 401 }) });
+  const p = a.FS.connect(); a.reply(0); await p; await settle();
+  await a.FS.renamed({ id: 'file', driveId: 'remote' }, 'renamed.pdf'); await settle();
+  assert.equal(a.session.has(TOKEN_KEY), false);
+  assert.equal(a.FS.overview().connected, false);
+  assert.match(a.FS.overview().error, /connect again/);
+});
 
 // ── cases ──────────────────────────────────────────────────────────────────
 

@@ -1183,6 +1183,21 @@ Built on 2026-11-08 (README, "Note to self"). None of these is authorized.
   a core module both call would remove the twin; it touches the Knowledge Record's own code.
 - **The IN PRO flag has no core reader the Knowledge Record uses.** `sir-ks02.html` still reads
   and writes `mm.unclear` inline at six sites; `inProMms` is the reader for everything else.
+- **Late milestones are not in the pop-up.** The Milestones section lists the milestones whose
+  dates cover today and nothing else — the user's answer on 2026-11-16 ("no also late
+  milestones"), read as *no late ones*. If the opposite was meant, it is one line:
+  `activeMilestones` adding `TrackMilestone.lateList`, with a late block worded by `label`.
+  The user's call, not a default to flip.
+- **A milestone block opens the goal's page, not the milestone.** The link is
+  `documentations.html?goal=<owner>`; the Projects page then shows the whole goal. Landing on
+  the one milestone (scrolled to, ringed) would need a second parameter that page reads at
+  mount, as `?goal=` is read today.
+- **A goal with no Projects page.** `?goal=` selects the goal in the Projects tab whether or not
+  a page has been written for it; the block does not say which. Nothing is created by the click.
+- **`progress.html` spells "its dates cover this day" four times.** `coversDay`,
+  `activeMilestoneForMM`, the Milestones tab's `isActive` and `activeMilestoneSchedules` each
+  compare `startDate` / `endDate` inline; `TrackMilestone.coveringOn` is now the module's one
+  definition. Delegating them touches the Schedule's highlight and has its own browser cases.
 
 ## Proposal 21: STRAT Spread-From Follow-ups
 
@@ -1209,6 +1224,21 @@ these is authorized.
   test user — was set up by hand in `track-sync-2ee32`, where no agent can see it. No real
   sign-in, upload, download or trash has been run from here; the suite stubs Drive throughout.
   The first real use on the iPad and the laptop is the check.
+- **Connecting by itself has never met the real Google window.** What the suite cannot show:
+  whether Chrome on the laptop and Safari on the iPad let the load-time window open (Safari
+  usually blocks a window no tap asked for, so the iPad is expected to connect on the first
+  tap); whether Google's blocked-window error arrives at all (its documentation does not say);
+  and how the window looks when it flashes open and shut. If the load-time attempt turns out
+  to be only a nuisance on a device, dropping it leaves the first-tap path untouched.
+- **The pass still lasts an hour.** Kept for the tab, it survives a reload, not the hour.
+  Longer needs Google's code flow with a refresh token, which needs a server holding the
+  client secret — a new external system, and the secret must never enter this repository.
+- **No `login_hint`.** With two Google accounts signed in, Google shows its chooser each hour.
+  Passing the Firebase account's address would skip it, but would connect that account's
+  Drive even when the files live in another; storing which account Drive last used is the
+  safer hint, and is a new browser key.
+- **A pass made in one tab is not shared.** A second Storages tab asks again. Sharing would
+  mean `localStorage`, which the contract rules out.
 - **Two tabs of FILES on one device both pump the same queue.** Each tab's `file-store.js` reads
   the shared IndexedDB queue, so both can upload the same file at once. The second copy is sent
   to Drive's trash (`onFilesUploaded` never overwrites a Drive id), so nothing is lost, but the
@@ -1253,9 +1283,11 @@ these is authorized.
 - **A `.md` over 256 KB is read-only.** It is kept as a file; editing it would mean re-uploading
   its bytes on every save.
 - **Text ↔ file, what was left out** (the link itself was built 2026-11-14; README, "A text
-  block's file"). Linking starts only from the text: the viewer's **Used in** list shows and
-  follows links but cannot make one, so linking from a file would need a picker of titles, MMs
-  and blocks there. The link names the file, not a page ("just the file"); a page or a `📌` pin
+  block's file"). A link started from the file (2026-11-16) can be made there but not
+  undone there: a **Used in** row has no `×`, so unlinking is done at the text block, and the
+  picker cannot create a text block — a mind map with none offers nothing to pick. Its list is
+  flat, one row per block with a search; on a workspace with hundreds of blocks a tree of
+  titles and mind maps may read better. The link names the file, not a page ("just the file"); a page or a `📌` pin
   would be one more key on the block. The storage editor's expanded tag rows show text blocks
   read-only and draw no file chip. FILES's delete prompt does not say how many text blocks name
   the file (they keep the link and read *file removed*). And the source-dump-only importer

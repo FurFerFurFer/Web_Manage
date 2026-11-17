@@ -14,9 +14,10 @@
    Drive is reached with the `drive.file` permission only: Track sees the
    files it created and nothing else in the user's Drive. The access token
    comes from Google Identity Services, lasts about an hour, and is held in
-   MEMORY ONLY — never written anywhere. Asking for it opens Google's popup,
-   which a browser allows only inside a tap, so `connect()` must be called
-   from a click handler; everything else waits for it.
+   this tab's sessionStorage until its expiry. An automatic popup is tried
+   once when FILES opens; it may never call back if the browser blocks it.
+   Nothing waits on that attempt. `connect()` starts a fresh request inside
+   a click, and autoTap offers at most one such fallback on a viewer tap.
 
    An upload is RESUMABLE, in CHUNK-sized pieces (a multiple of 256 KiB, as
    Drive requires): the session URL and the offset reached are kept in the
@@ -255,17 +256,61 @@
     return attempt();
   }
 
-  // ── the token (Google Identity Services, memory only) ────────────────────
+  // ── the token (Google Identity Services, this tab only) ──────────────────
 
-  var token = null, tokenExp = 0, gisLoad = null, tokenClient = null, waiting = null, lastError = null;
+  var TOKEN_KEY = 'track_drive_token_v1';
+  var token = null, tokenExp = 0, tokenRead = false, gisLoad = null, request = null, lastError = null;
+  var autoScheduled = false, autoStarted = false, autoStopped = false, tapAttempted = false;
 
-  function getToken() { return token && Date.now() < tokenExp - 60000 ? token : null; }
+  function validToken(value, expiry) {
+    return typeof value === 'string' && !!value.trim() && typeof expiry === 'number' &&
+      isFinite(expiry) && Date.now() < expiry;
+  }
+
+  // Nothing else redraws at the moment a pass runs out, so the Drive line
+  // would go on saying "connected". One timer tells the listeners then.
+  var expiryTimer = null;
+  function watchExpiry() {
+    if (typeof global.setTimeout !== 'function') return;
+    if (expiryTimer !== null) { global.clearTimeout(expiryTimer); expiryTimer = null; }
+    if (!token) return;
+    expiryTimer = global.setTimeout(function () {
+      expiryTimer = null; getToken(); emit();
+    }, Math.max(0, tokenExp - Date.now()) + 50);
+  }
+
+  function forgetToken() {
+    token = null; tokenExp = 0; tokenRead = true;
+    watchExpiry();
+    try { global.sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* storage may be denied */ }
+  }
+
+  // Lazy, including the storage read: a blank client id disables connection,
+  // and evaluating this script still touches nothing.
+  function getToken() {
+    if (!CONFIG.clientId) return null;
+    if (!tokenRead) {
+      tokenRead = true;
+      try {
+        var raw = global.sessionStorage.getItem(TOKEN_KEY);
+        if (raw !== null) {
+          var kept = JSON.parse(raw);
+          if (kept && !Array.isArray(kept) && validToken(kept.token, kept.expiresAt)) {
+            token = kept.token; tokenExp = kept.expiresAt;
+            watchExpiry();
+          } else forgetToken();
+        }
+      } catch (e) { forgetToken(); }
+    }
+    if (token && !validToken(token, tokenExp)) forgetToken();
+    return token;
+  }
 
   function gisReady() { return !!(global.google && global.google.accounts && global.google.accounts.oauth2); }
 
   // Fetched ahead of the tap, so the popup can open INSIDE it.
   function preloadGis() {
-    if (!CONFIG.clientId || gisReady()) return Promise.resolve();
+    if (!CONFIG.clientId || getToken() || gisReady()) return Promise.resolve();
     if (!gisLoad) {
       gisLoad = new Promise(function (resolve, reject) {
         var s = document.createElement('script');
@@ -278,47 +323,91 @@
     return gisLoad;
   }
 
-  // Call from a click. Resolves when Drive is reachable.
-  function connect() {
-    if (!CONFIG.clientId) return Promise.reject(new DriveError('setup', 0, 'Google Drive is not set up yet'));
-    if (getToken()) return Promise.resolve();
-    if (!gisReady()) {
-      preloadGis();
-      return Promise.reject(new DriveError('net', 0, 'Google sign-in is still loading — tap again in a moment'));
+  function cancelRequest() {
+    var old = request; request = null;
+    if (old && old.reject) old.reject(new DriveError('cancelled', 0, 'Connection attempt cancelled'));
+  }
+
+  // Each request owns its callbacks. A blocked automatic popup may never
+  // settle, so a click supersedes it; a late callback cannot connect after
+  // disconnect or settle a different click's promise.
+  function requestToken(resolve, reject) {
+    cancelRequest();
+    var current = { resolve: resolve, reject: reject };
+    request = current;
+    function failed(message, type) {
+      if (request !== current) return;
+      request = null;
+      if (type === 'popup_closed') autoStopped = true;
+      lastError = message;
+      if (reject) reject(new DriveError('auth', 0, lastError));
+      emit();
     }
-    if (!tokenClient) {
-      tokenClient = global.google.accounts.oauth2.initTokenClient({
+    try {
+      var tokenClient = global.google.accounts.oauth2.initTokenClient({
         client_id: CONFIG.clientId,
         scope: CONFIG.scope,
         callback: function (r) {
-          var w = waiting; waiting = null;
-          if (r && r.access_token) {
+          if (request !== current) return;
+          var expiry = Date.now() + (r && r.expires_in != null ? Number(r.expires_in) : 3600) * 1000;
+          if (r && !r.error && validToken(r.access_token, expiry)) {
+            request = null;
             token = r.access_token;
-            tokenExp = Date.now() + (Number(r.expires_in) || 3600) * 1000;
+            tokenExp = expiry; tokenRead = true;
+            watchExpiry();
+            try { global.sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ token: token, expiresAt: tokenExp })); }
+            catch (e) { /* keep working in memory when storage is denied */ }
             lastError = null;
-            if (w) w.resolve();
+            if (resolve) resolve();
             emit(); pump();
           } else {
-            lastError = (r && (r.error_description || r.error)) || 'Google did not connect';
-            if (w) w.reject(new DriveError('auth', 0, lastError));
-            emit();
+            failed((r && (r.error_description || r.error)) || 'Google did not connect');
           }
         },
         error_callback: function (e) {
-          var w = waiting; waiting = null;
-          lastError = (e && e.type === 'popup_closed') ? 'The Google window was closed' : 'Google did not connect';
-          if (w) w.reject(new DriveError('auth', 0, lastError));
-          emit();
+          failed((e && e.type === 'popup_closed') ? 'The Google window was closed' : 'Google did not connect', e && e.type);
         }
       });
-    }
-    return new Promise(function (resolve, reject) {
-      waiting = { resolve: resolve, reject: reject };
       tokenClient.requestAccessToken({ prompt: '' });
+    } catch (e) { failed((e && e.message) || 'Google did not connect'); }
+  }
+
+  // Fire and forget: neither script loading nor Google's optional callbacks
+  // can hold up FILES or a later click. No login_hint, no silent refresh.
+  function autoConnect() {
+    if (!CONFIG.clientId || autoStopped) return;
+    if (getToken()) { emit(); return; }
+    if (autoScheduled || tapAttempted) return;
+    autoScheduled = true;
+    preloadGis().then(function () {
+      if (!CONFIG.clientId || autoStopped || tapAttempted || getToken()) return;
+      autoStarted = true;
+      requestToken();
+      emit();
+    }, function (e) {
+      lastError = (e && e.message) || 'Could not load Google sign-in'; emit();
     });
   }
 
-  function forgetToken() { token = null; tokenExp = 0; }
+  // Call from a click. Resolves when Drive is reachable. A failed click
+  // consumes the automatic tap fallback too; an explicit Connect still works.
+  function connect() {
+    tapAttempted = true; emit();
+    if (!CONFIG.clientId) return Promise.reject(new DriveError('setup', 0, 'Google Drive is not set up yet'));
+    if (getToken()) return Promise.resolve();
+    if (!gisReady()) {
+      preloadGis().then(null, function () {});
+      return Promise.reject(new DriveError('net', 0, 'Google sign-in is still loading — tap again in a moment'));
+    }
+    return new Promise(function (resolve, reject) {
+      requestToken(resolve, reject);
+    });
+  }
+
+  function disconnect() {
+    autoStopped = true;
+    cancelRequest(); forgetToken(); emit();
+  }
 
   // ── IndexedDB: this device's copies, the queue, a little metadata ────────
 
@@ -633,9 +722,11 @@
   }
 
   function overview() {
+    var connected = !!getToken();
     return {
       setUp: !!CONFIG.clientId,
-      connected: !!getToken(),
+      connected: connected,
+      autoTap: !!CONFIG.clientId && autoStarted && !connected && !autoStopped && !tapAttempted,
       gisReady: gisReady(),
       pending: pendingUploads.size,
       error: lastError,
@@ -645,7 +736,6 @@
 
   function configure(o) {
     Object.keys(o || {}).forEach(function (k) { if (k in CONFIG) CONFIG[k] = o[k]; });
-    if ('clientId' in (o || {})) { tokenClient = null; }
     emit();
   }
 
@@ -658,7 +748,9 @@
     overview: overview,
     statusOf: statusOf,
     preloadGis: preloadGis,
+    autoConnect: autoConnect,
     connect: connect,
+    disconnect: disconnect,
     refreshLocal: refreshLocal,
     localUsage: localUsage,
     addUpload: addUpload,

@@ -7,9 +7,11 @@
    The panel holds everything in Quest, and every ★ Forced day note and
    deadline that is in caution or due — today's, plus deadlines past due that
    nobody ticked. On top of both sits ONE block, IN PRO (the user's 2026-11-11
-   request): the mind maps in progress, shut until it is clicked. WHAT the
-   panel holds is decided in note-to-self-core.js (window.TrackNoteToSelf);
-   this file only draws it.
+   request): the mind maps in progress, shut until it is clicked. Under it
+   (the user's 2026-11-16 request) every milestone whose dates cover today is
+   ONE block of its own, always shown, linking to its goal's page in
+   Documentations → Projects. WHAT the panel holds is decided in
+   note-to-self-core.js (window.TrackNoteToSelf); this file only draws it.
 
    Five rules, and the first two are the load-bearing ones:
 
@@ -101,6 +103,15 @@
       var slot = read.slot;
       html += '<section class="nts-section" data-nts-section="inpro">' +
         M.inProHtml(M.inProMms(slot), inProOpen) + '</section>';
+
+      // Every milestone whose dates cover today, each as ONE block, always
+      // shown, linking to its goal's page in Documentations → Projects. Which
+      // ones, and how a block reads, are note-to-self-core.js's.
+      var ms = M.milestonesHtml(M.activeMilestones(slot, ds), ds);
+      html += '<section class="nts-section" data-nts-section="milestones">' +
+        '<div class="nts-label">⚑ Milestones — active today</div>' +
+        (ms ? '<div class="nts-ms-list">' + ms + '</div>'
+          : '<p class="nts-empty" data-nts-ms-empty="1">No active milestone.</p>') + '</section>';
 
       var forced = M.forcedHtml(M.forcedFor(slot, ds), ds, { dayLabel: dayLabel });
       html += '<section class="nts-section" data-nts-section="forced">' +

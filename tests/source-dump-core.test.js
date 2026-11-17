@@ -92,7 +92,7 @@ test('the module exports exactly the documented surface', () => {
   // Written out by hand on purpose: if an export is added or renamed, this is
   // the case that notices.
   assert.deepEqual(Object.keys(SD).sort(), [
-    'blocksForFile', 'canLinkMM', 'fileIdOf', 'inheritsLinks', 'isLeafMM', 'isLegacyBlock', 'pathTo',
+    'blocksForFile', 'canLinkMM', 'fileIdOf', 'inheritsLinks', 'isLeafMM', 'isLegacyBlock', 'linkTargets', 'pathTo',
     'textBlocksOf', 'transferTextBlock', 'transferURLLink', 'withBlockFile', 'withoutBlockFile',
     'withEntry', 'withMMLink', 'withTextBlock', 'withTitle', 'withURLLink',
     'withoutEntry', 'withoutMMLink', 'withoutTextBlock', 'withoutURLLink'
@@ -473,6 +473,41 @@ test('a write that lands is a NEW list; the input is never mutated', () => {
 // One file per block, the link stored on the block as `fileId`, and the
 // reverse direction (which blocks name a file) a read. README, "The SOURCE
 // DUMP tab"; docs/contracts/storages-source-dumps.md.
+
+test('linkTargets lists every real block in stored order, with original records and typed file ids', () => {
+  const L = freeze([
+    dump(7, { mmLinks: [link(8, 10, { textBlocks: [block(9), block('9', { fileId: 'f' })] }),
+      link('s2', 11, { textBlocks: [block('b2', { fileId: 0 })] })] }),
+    dump('7', { mmLinks: [link('8', 12, { textBlocks: [block('b3', { fileId: '0' }), block('b4', { fileId: {} })] })] })
+  ]);
+  const before = JSON.stringify(L), out = SD.linkTargets(L);
+  assert.deepEqual(out.map(u => [u.dump.id, u.section.id, u.block.id, u.fileId]),
+    [[7, 8, 9, null], [7, 8, '9', 'f'], [7, 's2', 'b2', 0], ['7', '8', 'b3', '0'], ['7', '8', 'b4', null]]);
+  assert.equal(out[0].dump, L[0]);
+  assert.equal(out[0].section, L[0].mmLinks[0]);
+  assert.equal(out[0].block, L[0].mmLinks[0].textBlocks[0]);
+  assert.equal(JSON.stringify(L), before);
+  const u = out[0], linked = SD.withBlockFile(L, u.dump.id, u.section.id, u.block.id, 'chosen');
+  assert.equal(SD.linkTargets(linked)[0].fileId, 'chosen', 'picker rows feed the existing writer unchanged');
+  assert.deepEqual(SD.blocksForFile(linked, 'chosen'), [{ dump: linked[0], section: linked[0].mmLinks[0], block: linked[0].mmLinks[0].textBlocks[0] }]);
+});
+
+test('linkTargets excludes synthesised legacy blocks, but keeps a stored block with a legacy-shaped id', () => {
+  const L = freeze([dump('d', { mmLinks: [link('old', 10, { text: 'Legacy prose' }),
+    link('real', 11, { text: 'Older prose', textBlocks: [block('real_m')] })] })]);
+  assert.deepEqual(SD.linkTargets(L).map(u => u.block.id), ['real_m']);
+});
+
+test('linkTargets is total across malformed nested lists and never repairs them', () => {
+  for (const v of [null, undefined, 42, 'x', {}, [null, 7, [], {}, { mmLinks: 'x' },
+    { mmLinks: [null, 7, [], {}, { textBlocks: 'x' }, { textBlocks: [null, 7, []] }] }]]) {
+    assert.deepEqual(SD.linkTargets(v), []);
+  }
+  const L = freeze([dump('d', { parentId: 'd', mmLinks: [null, link('s', 10, {
+    textBlocks: [null, block('kept', { fileId: NaN }), []]
+  })] })]);
+  assert.deepEqual(SD.linkTargets(L).map(u => [u.block.id, u.fileId]), [['kept', null]]);
+});
 
 test('withBlockFile links ONE file to one block, spreading it and nothing else', () => {
   const L = LIST();

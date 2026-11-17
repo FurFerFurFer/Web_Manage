@@ -41,7 +41,7 @@ const vm = require('node:vm');
 // Page order, as every page loads them. runInThisContext so arrays built here
 // pass the modules' Array.isArray (see quest-core.test.js).
 globalThis.window = globalThis;
-for (const file of ['milestone-core.js', 'calendar-core.js', 'quest-core.js', 'note-to-self-core.js']) {
+for (const file of ['schema.js', 'milestone-core.js', 'calendar-core.js', 'quest-core.js', 'note-to-self-core.js']) {
   vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'scripts', file), 'utf8'), { filename: file });
 }
 const M = globalThis.TrackNoteToSelf;
@@ -148,7 +148,7 @@ function homeOld(slot, ticks) {
 test('module surface', () => {
   assert.ok(M, 'note-to-self-core.js published window.TrackNoteToSelf under TZ=' + TZ);
   assert.deepEqual(Object.keys(M).sort(), [
-    'QUEST_HREF', 'dayHref', 'dlHref', 'esc', 'forcedCount', 'forcedFor', 'forcedHtml',
+    'QUEST_HREF', 'activeMilestones', 'milestoneHref', 'milestonesHtml', 'dayHref', 'dlHref', 'esc', 'forcedCount', 'forcedFor', 'forcedHtml',
     'inProHtml', 'inProMms', 'mmHref', 'mmKindLabel', 'overdueDeadlines', 'questHtml', 'shortDay'
   ].sort());
   assert.equal(M.QUEST_HREF, 'progress.html#quest');
@@ -334,6 +334,96 @@ test('shortDay shows the year only when it is not today\'s', () => {
   assert.equal(M.shortDay('2026-11-12', '2026-11-08'), '12/11');
   assert.equal(M.shortDay('2025-12-30', '2026-01-02'), '30/12/2025');
   assert.equal(M.shortDay('nope', '2026-11-08'), 'nope');
+});
+
+// ── milestones whose period covers today ───────────────────────────────────
+
+function milestoneSlot() {
+  const ms = (id, startDate, endDate) => ({ id, title: id, startDate, endDate });
+  return slotWith({ goals: [node('g &/"', { title: 'Goal', milestones: [
+    ms('open', '2026-11-01', '2026-11-30'), ms('done', '2026-11-01', '2026-11-08'),
+    ms('empty', '2026-11-08', '2026-11-08'), ms('late', '2026-11-01', '2026-11-07'),
+    ms('next', '2026-11-09', '2026-11-10')
+  ], children: ['open', 'done', 'late', 'next'].map(id => node('b-' + id, {
+    taskType: 'milestone', milestoneId: id, children: [node('t-' + id, { completed: id === 'done' })]
+  })) })] });
+}
+
+test('activeMilestones reads covering periods, including done and empty; no overdue or upcoming rows', () => {
+  const slot = milestoneSlot(), before = JSON.stringify(slot);
+  assert.deepEqual(M.activeMilestones(slot, '2026-11-08').map(st => st.milestoneId), ['done', 'empty', 'open']);
+  assert.equal(JSON.stringify(slot), before, 'the slot stays byte-identical');
+});
+
+test('activeMilestones uses live sessions and the shared report and covering reader', () => {
+  const shared = globalThis.TrackMilestone, slot = milestoneSlot();
+  slot.mms = [{ id: 10, type: '1', ksStage: 'sir' }, { id: 11, type: '2', ksStage: 'sir' }];
+  slot.sessions = [{ mmId: 10, done: true }, { mmId: 11, done: true }];
+  slot.goals[0].toLearn = [10, 11];
+  slot.goals[0].mmTargets = { 10: { milestones: [{ milestoneId: 'empty', stage: 'sir1' }] },
+    11: { milestones: [{ milestoneId: 'empty', level: 5 }] } };
+  const calls = [];
+  let countedSessions;
+  globalThis.TrackMilestone = { ...shared,
+    liveSessions(sessions, mms) { calls.push('live'); return shared.liveSessions(sessions, mms); },
+    sirDoneMap(sessions) { countedSessions = sessions; calls.push('sir'); return shared.sirDoneMap(sessions); },
+    report(goals, mms, sir, today) { calls.push('report'); return shared.report(goals, mms, sir, today); },
+    coveringOn(rep, today) { calls.push('cover'); return shared.coveringOn(rep, today); }
+  };
+  try {
+    const out = M.activeMilestones(slot, '2026-11-08');
+    assert.deepEqual(countedSessions, [slot.sessions[0]], 'only live sessions reach the counter');
+    assert.deepEqual(calls, ['live', 'sir', 'report', 'cover']);
+    assert.equal(out[1].learn.met, 1, 'Declarative SIR waypoint reached');
+    assert.deepEqual(out[1].learn.open, [11], 'Procedural level still owed');
+  } finally { globalThis.TrackMilestone = shared; }
+});
+
+test('activeMilestones is total on wrong slots, non-days and a missing dependency', () => {
+  for (const v of [null, undefined, 42, 'x', [], {}, { goals: 42, sessions: 'x', mms: {} },
+    { goals: [null, 2, [], { milestones: [null, []], children: 'x' }] }]) {
+    assert.deepEqual(M.activeMilestones(v, '2026-11-08'), []);
+  }
+  for (const day of [null, undefined, 42, [], {}, '', '2026-02-30', '2026-11-8']) {
+    assert.deepEqual(M.activeMilestones(milestoneSlot(), day), []);
+  }
+  const shared = globalThis.TrackMilestone;
+  try {
+    globalThis.TrackMilestone = null;
+    assert.deepEqual(M.activeMilestones(milestoneSlot(), '2026-11-08'), []);
+    globalThis.TrackMilestone = {};
+    assert.deepEqual(M.activeMilestones(milestoneSlot(), '2026-11-08'), []);
+  } finally { globalThis.TrackMilestone = shared; }
+});
+
+test('milestonesHtml links each supplied status to its owner, with private hooks, dates and shared work wording', () => {
+  const list = M.activeMilestones(milestoneSlot(), '2026-11-08');
+  list[1].title = '  '; list[1].ownerTitle = '  ';
+  const html = M.milestonesHtml(list, '2026-11-08');
+  assert.deepEqual(html.match(/data-nts-ms="[^"]*"/g), list.map(st => 'data-nts-ms="' + M.esc(st.key) + '"'));
+  assert.equal(M.milestoneHref(list[0]), 'documentations.html?goal=g%20%26%2F%22');
+  assert.equal((html.match(/href="documentations.html\?goal=g%20%26%2F%22"/g) || []).length, 3);
+  assert.match(html, /^<a class="nts-ms is-done"/);
+  assert.equal((html.match(/is-done/g) || []).length, 1);
+  assert.match(html, /<span class="nts-ms-meta">ends today · done<\/span>/);
+  assert.match(html, /<span class="nts-ms-title">Milestone<\/span><span class="nts-ms-meta">ends today · no work attached<\/span>/);
+  assert.match(html, /<span class="nts-ms-goal">Goal<\/span><span class="nts-ms-meta">ends 30\/11 · 1 task left<\/span>/);
+  assert.deepEqual([...html.matchAll(/\s(data-[\w-]+)=/g)].map(m => m[1]), ['data-nts-ms', 'data-nts-ms', 'data-nts-ms']);
+  assert.doesNotMatch(html, /<button|<input|data-quest|data-milestone/);
+  assert.match(M.milestonesHtml([{ ...list[2], endDate: '2027-01-01' }], '2026-11-08'), /ends 01\/01\/2027/);
+});
+
+test('milestonesHtml escapes titles, goal names, keys, tooltips and meta; blank input draws nothing', () => {
+  const st = M.activeMilestones(milestoneSlot(), '2026-11-08')[0];
+  const evil = '<img src=x onerror="bad"> &';
+  const html = M.milestonesHtml([{ ...st, title: evil, ownerTitle: evil, key: evil, ownerId: evil, endDate: evil }], '2026-11-08');
+  assert.doesNotMatch(html, /<img|onerror="bad"/);
+  for (const cls of ['title', 'goal']) assert.ok(html.includes('<span class="nts-ms-' + cls + '">' + M.esc(evil) + '</span>'));
+  assert.ok(html.includes('data-nts-ms="' + M.esc(evil) + '"'));
+  assert.ok(html.includes('href="' + M.esc(M.milestoneHref({ ownerId: evil })) + '"'));
+  assert.ok(html.includes('title="ends ' + M.esc(evil)));
+  assert.ok(html.includes('<span class="nts-ms-meta">ends ' + M.esc(evil)));
+  for (const list of [[], null, undefined, 42, {}, [null, 42, []]]) assert.equal(M.milestonesHtml(list, '2026-11-08'), '');
 });
 
 // ── 5. IN PRO: one block, shut until asked ──────────────────────────────────

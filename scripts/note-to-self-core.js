@@ -27,6 +27,10 @@
      one definition of that outside sir-ks02.html; inProHtml draws the block,
      which is CLOSED until it is clicked and, closed, holds no row at all.
 
+   - MILESTONES whose dates cover today, regardless of progress. Membership
+     and work wording are TrackMilestone's; each block links to its owner's
+     page in Documentations. Late and upcoming periods are left out.
+
    Four rules, the same ones every read-only surface here lives under:
 
    - It is a READER. Nothing here writes anything, anywhere.
@@ -42,8 +46,9 @@
    Every row is a LINK into progress.html (the user's choice, D2): a deadline
    to its own popup in the Schedule, always on its DUE day — the link Home's
    strip already uses — a day note to its day, and a quest to the Quest tab.
-   An IN PRO row is the one link that goes elsewhere: to its mind map in the
-   Knowledge Record, by the ?mm= link Progress and Documentations already use.
+   An IN PRO row goes to its mind map in the Knowledge Record, by the ?mm=
+   link Progress and Documentations already use; a milestone goes to its
+   owner's Documentations page by ?goal=.
 */
 (function (global) {
   'use strict';
@@ -69,6 +74,38 @@
     return 'progress.html?date=' + d.date + '&dl=' + encodeURIComponent(d.id) + '#schedule';
   }
   function dayHref(ds) { return 'progress.html?date=' + ds + '#schedule'; }
+
+  function milestoneHref(st) { return 'documentations.html?goal=' + encodeURIComponent(st.ownerId); }
+
+  // ── milestones covering today ───────────────────────────────────────────
+
+  function activeMilestones(slot, today) {
+    var M = global.TrackMilestone;
+    if (!M || !isRecord(slot)) return [];
+    try {
+      var sessions = M.liveSessions(slot.sessions, slot.mms);
+      return M.coveringOn(M.report(slot.goals, slot.mms, M.sirDoneMap(sessions), today), today);
+    } catch (e) { return []; }
+  }
+
+  // Keep the supplied order and the pop-up's own hooks. No work or date
+  // membership rule is repeated here: these are report() status records.
+  function milestonesHtml(list, today) {
+    var M = global.TrackMilestone;
+    if (!M || !isList(list)) return '';
+    return list.filter(isRecord).map(function (st) {
+      var title = String(st.title == null ? '' : st.title);
+      var goal = String(st.ownerTitle == null ? '' : st.ownerTitle);
+      var end = st.endDate === today ? 'ends today' : 'ends ' + shortDay(st.endDate, today);
+      var work = M.workLabel(st);
+      var meta = end + (work ? ' · ' + work : '');
+      return '<a class="nts-ms' + (st.complete ? ' is-done' : '') + '" href="' + esc(milestoneHref(st)) +
+        '" data-nts-ms="' + esc(st.key) + '" title="' + esc(meta + '\nOpen in Documentations') + '">' +
+        '<span class="nts-ms-title">' + esc(title.trim() ? title : 'Milestone') + '</span>' +
+        (goal.trim() ? '<span class="nts-ms-goal">' + esc(goal) + '</span>' : '') +
+        '<span class="nts-ms-meta">' + esc(meta) + '</span></a>';
+    }).join('');
+  }
 
   // ── IN PRO ───────────────────────────────────────────────────────────────
 
@@ -303,6 +340,7 @@
     esc: esc, dlHref: dlHref, dayHref: dayHref, shortDay: shortDay,
     overdueDeadlines: overdueDeadlines, forcedFor: forcedFor, forcedCount: forcedCount,
     forcedHtml: forcedHtml, questHtml: questHtml,
+    activeMilestones: activeMilestones, milestoneHref: milestoneHref, milestonesHtml: milestonesHtml,
     inProMms: inProMms, mmHref: mmHref, mmKindLabel: mmKindLabel, inProHtml: inProHtml
   };
 })(window);

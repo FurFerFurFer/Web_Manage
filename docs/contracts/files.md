@@ -19,13 +19,20 @@ Pen strokes, text highlights, bookmarks, pin ranges and ink on a note: 2026-11-1
 | A PDF's or an image's marks, page pins and bookmarks, and a note's marks (≤ 256 KB together a record, `MARKS_MAX_BYTES`) | the record, `highlights`, `pins` and `bookmarks` | yes |
 | A file's bytes | Google Drive ("Track Files" folder), and a copy per device in IndexedDB `track_files_v1` | Drive only |
 | The upload queue, the Drive folder id | `track_files_v1` (`queue`, `meta` stores) | never — per device |
-| The Google access token | memory only | never |
+| The Google access token | memory, and this tab's `sessionStorage` (`track_drive_token_v1`) until its expiry | never |
 
 - **A file's bytes never go into `track_db` or `localStorage`.** Not as base64, not as a
   data URL, not "just for small files". The ~5 MB quota and every sync upload depend on it,
   and a browser case asserts it.
-- **The access token is never stored**, in any key or database. It lives about an hour in
-  `file-store.js`'s memory; after that the next Drive action shows **Connect Drive**.
+- **The access token is kept for ONE TAB, until its own expiry, and nowhere else.** Until
+  2026-11-16 it was never stored at all; the user's request that Drive connect by itself
+  ("make the drive autoconnect when loading in") is what changed that, and only this far:
+  `sessionStorage`, key `track_drive_token_v1`, `{token, expiresAt}`. **Never `track_db`,
+  never `localStorage`, never IndexedDB** — nothing that syncs, exports, outlives the tab or
+  reaches another tab. An expired or malformed copy is removed and ignored; whatever forgets
+  the token (a 401, Disconnect, its expiry) removes the copy in the same step
+  (`forgetToken`). Widening this — `localStorage`, a refresh token, a server — is a decision
+  for the user, not a fix.
 - `track_files_v1` is a device cache plus a queue. Nothing in it is the only record of
   anything **except** a file whose upload has not finished, which is why "Free up" keeps those.
 
@@ -163,6 +170,9 @@ in `docs/contracts/storages-source-dumps.md`, "A text block's file". For this fi
 - **The viewer's "Used in N text blocks"** (`UsedIn` in `files-view.js`) is drawn from the
   page's `usesOf` prop: `files-view.js` never reads `sourceDumps` itself. A row calls
   `onOpenUse`, which opens SOURCE DUMP on that title with the MM's card ringed.
+- **A link started from the file** (`+ link to a text block`, 2026-11-16) is drawn from the
+  page's `linkTargets` prop, read only while the picker is open, and made by its `onLinkUse`
+  prop: `files-view.js` neither reads `sourceDumps` nor decides whether a block is free.
 - **Opening on request:** `FilesView`'s `openRequest` (`{id, n}`) opens one record; `n`
   changes per request. True Storage sets it from a chip and from `?file=<id>` (an id naming
   nothing opens FILES at the top) and clears it when a tab is tapped, so FILES then opens on
@@ -184,6 +194,26 @@ in `docs/contracts/storages-source-dumps.md`, "A text block's file". For this fi
   401 drops the token and waits for **Connect Drive**; an expired session restarts once.
 - `connect()` must run inside a tap (popups are blocked otherwise), which is why
   `preloadGis()` fetches Google's script ahead of it.
+- **Connecting by itself (2026-11-16) is ONE automatic attempt and ONE tap attempt a page
+  load, never a loop.** Google's token flow is a popup, has no silent renewal, and may never
+  call back when the popup is blocked (its docs, read 2026-11-16), so nothing waits on an
+  attempt. `autoConnect()`, called by the viewer when FILES opens, uses a kept token with no
+  request at all — not even Google's script — and otherwise calls `requestAccessToken`
+  once, with `prompt: ''` and **no `login_hint`** (a hint taken from the Firebase account
+  could connect a different Google account's Drive, and uploads would land there).
+  `overview().autoTap` is true from that attempt until the first of: connected, a
+  `popup_closed`, any `connect()` call, `disconnect()`. The viewer's capture-phase click
+  handler calls `connect()` once while it is true — never on `[data-files-connect]`, whose
+  own handler connects. Each request owns its callbacks: a later one supersedes an earlier
+  one, and a superseded or disconnected request's late answer is ignored.
+- **A blank client id makes every one of those inert**: no storage read, no script, no
+  request. That is what keeps "no test reaches Google" true now that opening FILES asks.
+- **The store tells its listeners when the pass runs out** (`watchExpiry`, one timer), so the
+  Drive line stops saying *connected* by itself, and the viewer fetches Google's sign-in
+  whenever Drive is set up and not connected.
+- **Disconnect asks nothing.** It forgets the pass and its kept copy and stops automatic
+  attempts for the page load; no `track_db` key, no file and no queued upload changes, so
+  there is nothing for a prompt to guard. A browser case asserts the bytes and the dialogs.
 
 ## Deliberate exclusions from "confirm before deleting"
 

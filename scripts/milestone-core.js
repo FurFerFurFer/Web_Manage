@@ -468,6 +468,22 @@
     return isMap(rep) ? Object.keys(rep).map(function (k) { return rep[k]; }) : [];
   }
 
+  // Date membership is independent of progress: done and empty periods
+  // still cover their days. Shared with unreachedOn; neither extends a
+  // period to drawEnd (the overdue tail).
+  function coversDay(st, day) {
+    return isMap(st) && !!st.dated && st.startDate <= day && day <= st.endDate;
+  }
+
+  function coveringOn(rep, day) {
+    if (!isDay(day)) return [];
+    return entries(rep).filter(function (st) { return coversDay(st, day); })
+      .sort(function (a, b) {
+        if (a.endDate !== b.endDate) return a.endDate < b.endDate ? -1 : 1;
+        return a.order - b.order;
+      });
+  }
+
   // Late milestones, most days late first, then in tab order.
   function lateList(rep) {
     return entries(rep)
@@ -520,7 +536,7 @@
     var relevant = entries(rep).filter(function (st) {
       if (!isMap(st) || !isMap(st.learn)) return false;
       if (st.state === 'overdue') return true;
-      return !!st.dated && st.startDate <= day && day <= st.endDate;
+      return coversDay(st, day);
     });
     relevant.sort(function (a, b) {
       var al = a.state === 'overdue', bl = b.state === 'overdue';
@@ -555,22 +571,28 @@
     return out;
   }
 
-  // The one wording every surface uses:
-  //   'OVERDUE · 5 days · 3 tasks, 1 to-learn left'
-  // with zero parts omitted. 'done' and 'no work attached' for the two
-  // finished states, '' for the rest.
-  function label(st) {
+  // The work still owed, at any date. Both the overdue label and the
+  // Note to self milestone blocks use this wording.
+  function workLabel(st) {
     if (!isMap(st)) return '';
     if (st.state === 'empty') return 'no work attached';
     if (st.state === 'done') return 'done';
-    if (st.state !== 'overdue') return '';
     var parts = [];
-    var tasksLeft = st.tasks.total - st.tasks.done;
-    var learnLeft = st.learn.total - st.learn.met;
+    var tasksLeft = isMap(st.tasks) ? st.tasks.total - st.tasks.done : 0;
+    var learnLeft = isMap(st.learn) ? st.learn.total - st.learn.met : 0;
     if (tasksLeft > 0) parts.push(plural(tasksLeft, 'task', 'tasks'));
     if (learnLeft > 0) parts.push(learnLeft + ' to-learn');
+    return parts.length ? parts.join(', ') + ' left' : '';
+  }
+
+  // Existing surfaces keep their wording, including '' for on-time work.
+  function label(st) {
+    if (!isMap(st)) return '';
+    if (st.state === 'empty' || st.state === 'done') return workLabel(st);
+    if (st.state !== 'overdue') return '';
+    var work = workLabel(st);
     return 'OVERDUE · ' + plural(st.daysLate, 'day', 'days')
-      + (parts.length ? ' · ' + parts.join(', ') + ' left' : '');
+      + (work ? ' · ' + work : '');
   }
 
   // ── the slip record ──────────────────────────────────────────────────────
@@ -675,10 +697,12 @@
     keyOf: keyOf,
     statusOf: statusOf,
     report: report,
+    coveringOn: coveringOn,
     lateList: lateList,
     lateById: lateById,
     unreachedOn: unreachedOn,
     label: label,
+    workLabel: workLabel,
     baselineOf: baselineOf,
     withSlip: withSlip,
     slipsOf: slipsOf,
