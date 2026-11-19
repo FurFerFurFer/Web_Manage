@@ -1807,20 +1807,39 @@ library and laid out like SRCH → DIRECTORY. Reached from the header, the phone
   - **Bookmarks** — pages you bookmarked. Bookmark a page with the ribbon on its thumbnail or
     `🔖` in the toolbar (the page you are on); the same tap takes it off, without asking.
   - **Notes** — pages you highlighted or wrote on.
-  - **Outline** — your pins, by page.
-  - `⤢ Full screen` shows the same list as a grid over the whole window; choosing a page there
-    closes it. `⤡ Side panel` goes back.
+  - **Outline** — your pins, by page. **Tap a pin's block to turn it on: it glows, and the
+    viewer shows only that pin's pages.** Tap more pins to add theirs (each page once, in
+    page order, with its real number); tap a glowing pin again to turn it off. **With none
+    on, every page shows.** While any is on, the rail's `▲` / `▼` step only through the shown
+    pages, the page counter reads `Page 40 · 14 of 120 shown`, the pad refuses a page that is
+    not shown ("Page 6 is not shown"), and every list in the panel and Find cover only the
+    shown pages. The page you are reading stays in view when it is still shown; otherwise a
+    pin turned on opens at its first page and one turned off at the nearest page still
+    shown. **Nothing is saved:** which pins are on lasts while the file is open, and the
+    file opens with none on. A pin deleted (here or on the other device) is simply no longer on.
+  - `⤢ Grid` shows the same list as a grid over the viewer; choosing a page there closes
+    it. `⤡ Side panel` goes back.
+- **The page you chose stays the page you are on** when anything changes the width or the
+  set of pages: closing or opening `▦ Pages`, zooming, full screen, turning pins on or off,
+  and a page of another size being drawn above it.
 - **Find** (the box at the top of the panel) searches the PDF's typed text and **only the
-  pages the list shows**: all of them, the bookmarked ones, the pinned ones, or one pin's
-  range. The list narrows to the pages that match, each with its count ("6 results on 4
+  pages the list shows**: all of them, the bookmarked ones, the pinned ones, or only the
+  pins turned on. The list narrows to the pages that match, each with its count ("6 results on 4
   pages"), and every match is boxed in orange on the page. Case and repeated spaces do not
   matter.
 - **Pin pages under a name:** `📌 Pin` asks for a name and **pages From … To** (the page you
   are on is filled in; "Pages 3–9" is suggested as the name). One page or a range, typed as
   page numbers; a range that ends before it starts, or a page the PDF does not have, cannot
-  be saved. Pins are the panel's **Outline**: tap a row to jump to its first page, `▤` to show
-  only that pin's pages (Find then searches only them), `✎` to change its name or pages, `🗑`
-  to delete (this asks). The pin's first page shows a small `📌 name · p. 3–9` flag at its top.
+  be saved. Pins are the panel's **Outline**: tap a pin's block to turn it on or off (above),
+  `✎` to change its name or pages, `🗑` to delete (this asks). The pin's first page shows a small `📌 name · p. 3–9` flag at its top.
+- **`⤢ Full screen`** (in the toolbar of an open PDF or image, and of a note in Preview) lays
+  the file over the whole window, and asks the browser for its own full screen where it
+  allows one. The page, the zoom and an open `▦ Pages` panel carry over both ways. The tools
+  move into a **strip on the side**: drag it anywhere by its grip `⠿` (mouse, finger or
+  Pencil — dragging it never draws), and it opens in the same place next time on this device
+  (`track_files_tools_pos`, kept in the browser, not in Track's data). `✕` at the bottom of
+  the strip or **Escape** leaves; an open pad or dialog takes Escape first. The eraser's
+  **Undo** still shows above it.
 - **Marks, pins and bookmarks exist only in the viewer.** The file itself is never changed: the
   copy in Drive and on the device stays byte-identical, and Download and Share give the
   original. They are kept in Track, on the file's or note's record, so they sync to both devices

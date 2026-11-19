@@ -65,7 +65,8 @@ test('module surface', () => {
   for (const k of ['records', 'kindOf', 'typeOf', 'typeOfRecord', 'cleanName', 'renamedName', 'uniqueName',
     'isNoteUpload', 'textBytes', 'textFits', 'formatSize', 'folderOf', 'childrenOf', 'pathTo',
     'newFolder', 'newNote', 'newFile', 'withAdded', 'withRenamed', 'withText', 'withDriveId',
-    'withRemoved', 'moveRefusal', 'withMoved', 'withArranged']) {
+    'withRemoved', 'moveRefusal', 'withMoved', 'withArranged',
+    'chosenPins', 'shownPages', 'scopePages', 'stepPage', 'nearestPage']) {
     assert.equal(typeof TF[k], 'function', k);
   }
   assert.equal(TF.NOTE_MAX_BYTES, 256 * 1024);
@@ -622,6 +623,192 @@ test('markedPages and scopePages: what each of the panel\'s lists — and so the
   }
   assert.deepEqual(TF.scopePages(rec, { kind: 'all' }, 0), [], 'no pages yet');
   assert.deepEqual(TF.scopePages(rec, { kind: 'all' }, 'x'), []);
+});
+
+/* ── Outline as a viewer-only filter: zero chosen shows all ─────────────── */
+
+test('chosenPins: stored pins in page order, ties in stored order, regardless of selection order', () => {
+  const rec = deepFreeze(file('f', 'a.pdf', null, { pins: [
+    pin('late', 8, 'Late'), pin('first', 2, 'First'), pin('second', 2, 'Second'), pin('off', 4, 'Off')
+  ] }));
+  const chosen = deepFreeze(['second', 'late', 'gone', 'first', 'first']);
+  const got = TF.chosenPins(rec, chosen);
+  assert.deepEqual(ids(got), ['first', 'second', 'late'], 'selection order and repeated ids do not reorder or duplicate pins');
+  assert.equal(got[0], rec.pins[1], 'the stored pin itself');
+  assert.equal(got[1], rec.pins[2]);
+  assert.equal(got[2], rec.pins[0]);
+  assert.deepEqual(ids(rec.pins), ['late', 'first', 'second', 'off'], 'the stored list was not sorted in place');
+  assert.deepEqual(chosen, ['second', 'late', 'gone', 'first', 'first']);
+});
+
+test('chosenPins and shownPages skip malformed pins and ids, and use pinEnd for an unreadable range end', () => {
+  const rec = deepFreeze(file('f', 'a.pdf', null, { pins: [
+    null, 'junk', [], {}, pin('', 1, 'No id'), pin('bad-page', '2', 'Text page'), pin('blank', 3, ''),
+    pin('one', 2, 'One', { pageEnd: '4' }), pin('backward', 4, 'Backward', { pageEnd: 1 })
+  ] }));
+  const chosen = deepFreeze([null, {}, [], true, NaN, Symbol('id'), '', 'bad-page', 'blank', 'one', 'backward']);
+  assert.deepEqual(ids(TF.chosenPins(rec, chosen)), ['one', 'backward']);
+  assert.deepEqual(TF.shownPages(rec, chosen, 5), [2, 4], 'bad ends are one page, exactly as pinEnd reads them');
+  assert.deepEqual(TF.shownPages(rec, ['bad-page', 'blank', ''], 3), [1, 2, 3], 'no readable chosen pin means all');
+  const typed = deepFreeze({ pins: [pin(5, 1, 'Number'), pin('5', 2, 'String')] });
+  assert.deepEqual(TF.shownPages(typed, [5], 3), [1], 'stored ids are compared without coercion');
+  assert.deepEqual(TF.shownPages(typed, ['5'], 3), [2]);
+});
+
+test('shownPages: zero chosen, malformed ids, or no readable pins shows every page', () => {
+  const rec = deepFreeze(file('f', 'a.pdf', null, { pins: [pin('p', 2, 'Only')] }));
+  for (const chosen of [[], undefined, null, 'p', 2, {}, new Set(['p']), Symbol('ids')]) {
+    assert.deepEqual(TF.chosenPins(rec, chosen), []);
+    assert.deepEqual(TF.shownPages(rec, chosen, 4), [1, 2, 3, 4]);
+  }
+  for (const junk of [undefined, null, 3, 'junk', [], {}, { pins: null }, { pins: 'p' }, { pins: [null, {}] }]) {
+    assert.deepEqual(TF.chosenPins(junk, ['p']), []);
+    assert.deepEqual(TF.shownPages(junk, ['p'], 3), [1, 2, 3]);
+  }
+  assert.deepEqual(TF.shownPages(rec, [], 1), [1], 'a one-page PDF');
+});
+
+test('shownPages: one chosen pin shows its one page or its inclusive range', () => {
+  const rec = deepFreeze(file('f', 'a.pdf', null, { pins: [
+    pin('one', 2, 'One'), pin('range', 4, 'Range', { pageEnd: 7 })
+  ] }));
+  assert.deepEqual(TF.shownPages(rec, ['one'], 9), [2]);
+  assert.deepEqual(TF.shownPages(rec, ['range'], 9), [4, 5, 6, 7]);
+});
+
+test('shownPages: overlapping ranges give each page once, ascending, with gaps kept', () => {
+  const rec = deepFreeze(file('f', 'a.pdf', null, { pins: [
+    pin('later', 4, 'Later', { pageEnd: 7 }), pin('earlier', 2, 'Earlier', { pageEnd: 5 }), pin('island', 10, 'Island')
+  ] }));
+  assert.deepEqual(TF.shownPages(rec, ['later', 'earlier', 'earlier'], 12), [2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(TF.shownPages(rec, ['island', 'later', 'earlier'], 12), [2, 3, 4, 5, 6, 7, 10]);
+});
+
+test('shownPages: a chosen pin deleted elsewhere falls back to all only when no chosen pin remains', () => {
+  const rec = deepFreeze(file('f', 'a.pdf', null, { pins: [pin('gone', 2, 'Gone'), pin('kept', 4, 'Kept')] }));
+  const chosen = deepFreeze(['gone']);
+  assert.deepEqual(TF.shownPages(rec, chosen, 5), [2]);
+  const after = byId(TF.withoutPin([rec], 'f', 'gone'), 'f');
+  assert.deepEqual(TF.chosenPins(after, chosen), []);
+  assert.deepEqual(TF.shownPages(after, chosen, 5), [1, 2, 3, 4, 5]);
+  assert.deepEqual(TF.shownPages(after, ['gone', 'kept'], 5), [4], 'a stale id does not cancel another chosen pin');
+});
+
+test('shownPages: ranges clip to total; a chosen pin entirely past total shows no pages', () => {
+  const rec = deepFreeze(file('f', 'a.pdf', null, { pins: [
+    pin('range', 3, 'Range', { pageEnd: 30 }), pin('past', 8, 'Past', { pageEnd: 10 })
+  ] }));
+  assert.deepEqual(TF.shownPages(rec, ['range'], 5), [3, 4, 5]);
+  assert.deepEqual(TF.shownPages(rec, ['range', 'past'], 5), [3, 4, 5]);
+  assert.deepEqual(TF.shownPages(rec, ['past'], 5), [], 'a stored pin is chosen even when none of its pages fits');
+});
+
+test('shownPages: a total that is not a page gives no pages with or without chosen pins', () => {
+  const rec = deepFreeze({ pins: [pin('p', 1, 'One')] });
+  for (const total of [undefined, null, 0, -1, 1.5, '3', NaN, Infinity, {}, [], true, Symbol('total'), 3n]) {
+    assert.deepEqual(TF.shownPages(rec, [], total), []);
+    assert.deepEqual(TF.shownPages(rec, ['p'], total), []);
+    assert.deepEqual(TF.scopePages(rec, 'all', total, ['p']), []);
+  }
+});
+
+const FILTERED = () => file('f', 'a.pdf', null, {
+  pins: [pin('first', 2, 'First', { pageEnd: 4 }), pin('second', 7, 'Second', { pageEnd: 9 }), pin('off', 11, 'Off')],
+  bookmarks: [11, 8, 6, 3, 1, 30],
+  highlights: [stroke('a', 1), pen('b', 2), textMark('c', 4), stroke('d', 6), pen('e', 9), stroke('f', 30)]
+});
+
+test('scopePages: omitted ids or no stored pin chosen preserves every existing scope', () => {
+  const rec = deepFreeze(FILTERED());
+  for (const [kind, expected] of [
+    ['all', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]],
+    ['bookmarks', [1, 3, 6, 8, 11]], ['notes', [1, 2, 4, 6, 9]], ['outline', [2, 3, 4, 7, 8, 9, 11]]
+  ]) {
+    for (const scope of [kind, { kind }]) {
+      assert.deepEqual(TF.scopePages(rec, scope, 12), expected, kind + ': three arguments');
+      for (const chosen of [undefined, [], ['deleted'], [null, {}], null, 'first', {}, new Set(['first'])]) {
+        assert.deepEqual(TF.scopePages(rec, scope, 12, chosen), expected, kind + ': no stored pin chosen');
+      }
+    }
+  }
+});
+
+test('scopePages: all, bookmarks, notes and outline intersect the chosen pins for lists and Find', () => {
+  const rec = deepFreeze(FILTERED()), chosen = deepFreeze(['second', 'first']);
+  for (const [kind, expected] of [
+    ['all', [2, 3, 4, 7, 8, 9]], ['bookmarks', [3, 8]], ['notes', [2, 4, 9]], ['outline', [2, 3, 4, 7, 8, 9]]
+  ]) {
+    for (const scope of [kind, deepFreeze({ kind })]) assert.deepEqual(TF.scopePages(rec, scope, 12, chosen), expected, kind);
+  }
+  assert.deepEqual(TF.scopePages(rec, 'bookmarks', 12, ['first']), [3], 'bookmarks outside the chosen pin disappear');
+  assert.deepEqual(TF.scopePages(rec, 'notes', 12, ['off']), [], 'no marked page in the chosen pin');
+  assert.deepEqual(TF.scopePages(rec, { kind: 'future' }, 12, chosen), [2, 3, 4, 7, 8, 9], 'an unknown kind still means all shown pages');
+  for (const kind of ['all', 'bookmarks', 'notes', 'outline']) {
+    assert.deepEqual(TF.scopePages(rec, kind, 5, ['off']), [], kind + ': a chosen pin wholly past total');
+  }
+});
+
+test('scopePages: outline pinId keeps its own range before intersecting the viewer filter', () => {
+  const rec = deepFreeze({ pins: [
+    pin('a', 2, 'A', { pageEnd: 5 }), pin('b', 4, 'B', { pageEnd: 8 }), pin('c', 10, 'C')
+  ] });
+  const scope = deepFreeze({ kind: 'outline', pinId: 'a' });
+  assert.deepEqual(TF.scopePages(rec, scope, 12), [2, 3, 4, 5]);
+  assert.deepEqual(TF.scopePages(rec, scope, 12, ['deleted']), [2, 3, 4, 5]);
+  assert.deepEqual(TF.scopePages(rec, scope, 12, ['a']), [2, 3, 4, 5]);
+  assert.deepEqual(TF.scopePages(rec, scope, 12, ['b']), [4, 5], 'the scoped pin need not be chosen: its overlapping pages still show');
+  assert.deepEqual(TF.scopePages(rec, scope, 12, ['c']), [], 'a disjoint range shows nothing');
+  assert.deepEqual(TF.scopePages(rec, { kind: 'outline', pinId: 'gone' }, 12, ['a']), []);
+  assert.deepEqual(TF.scopePages(rec, { kind: 'outline', pinId: null }, 12, ['b']), [4, 5, 6, 7, 8]);
+});
+
+test('stepPage: strictly next or previous, from a shown page, a gap and both ends', () => {
+  const list = deepFreeze([2, 3, 7, 8]);
+  for (const [page, next, prev] of [[2, 3, null], [3, 7, 2], [5, 7, 3], [7, 8, 3], [8, null, 7], [1, 2, null], [10, null, 8]]) {
+    assert.equal(TF.stepPage(list, page, 1), next, 'next from ' + page);
+    assert.equal(TF.stepPage(list, page, -1), prev, 'previous from ' + page);
+  }
+  assert.equal(TF.stepPage(list, 3, 7), 7, 'the direction is its sign, not a page count');
+  assert.equal(TF.stepPage(list, 7, -20), 3);
+  assert.equal(TF.stepPage(list, 3, Infinity), 7);
+  assert.equal(TF.stepPage(list, 7, -Infinity), 3);
+  assert.equal(TF.stepPage([3], 3, 1), null);
+  assert.equal(TF.stepPage([3], 3, -1), null);
+});
+
+test('nearestPage: keeps a shown page, otherwise prefers the first after it, then the last before it', () => {
+  const list = deepFreeze([2, 3, 7, 8]);
+  for (const page of list) assert.equal(TF.nearestPage(list, page), page, 'a shown page stays');
+  assert.equal(TF.nearestPage(list, 1), 2, 'before the list');
+  assert.equal(TF.nearestPage(list, 4), 7, 'prefer after even when the previous page is closer');
+  assert.equal(TF.nearestPage(list, 6), 7, 'between ranges');
+  assert.equal(TF.nearestPage(list, 10), 8, 'no later page: the last one before it');
+  assert.equal(TF.nearestPage([3], 3), 3);
+  assert.equal(TF.nearestPage([3], 1), 3);
+  assert.equal(TF.nearestPage([3], 5), 3);
+});
+
+test('page navigation: empty or malformed inputs are total, and unreadable list entries are skipped', () => {
+  for (const list of [[], undefined, null, {}, '2,3', 3, new Set([2, 3]), Symbol('list')]) {
+    assert.equal(TF.stepPage(list, 2, 1), null);
+    assert.equal(TF.stepPage(list, 2, -1), null);
+    assert.equal(TF.nearestPage(list, 2), null);
+  }
+  const list = deepFreeze([2, 3, 7, 8]);
+  for (const dir of [0, -0, NaN, undefined, null, '1', '-1', {}, [], true, Symbol('dir'), 1n]) {
+    assert.equal(TF.stepPage(list, 3, dir), null, 'no numeric direction');
+  }
+  for (const page of [0, -1, 1.5, NaN, Infinity, undefined, null, '3', {}, [], true, Symbol('page'), 3n]) {
+    assert.equal(TF.stepPage(list, page, 1), null);
+    assert.equal(TF.stepPage(list, page, -1), null);
+    assert.equal(TF.nearestPage(list, page), null);
+  }
+  const junky = deepFreeze([null, '1', 0, 2, {}, 3, Symbol('entry'), 1.5, 7, NaN, Infinity, 8]);
+  assert.equal(TF.stepPage(junky, 3, 1), 7);
+  assert.equal(TF.stepPage(junky, 7, -1), 3);
+  assert.equal(TF.nearestPage(junky, 4), 7);
+  assert.equal(TF.nearestPage(junky, 10), 8);
+  assert.equal(TF.nearestPage([null, '3', {}], 3), null, 'no readable entry');
 });
 
 test('pageFromText: digits naming a page of this PDF, or null', () => {

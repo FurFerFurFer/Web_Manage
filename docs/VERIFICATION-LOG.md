@@ -6047,3 +6047,85 @@ load-time window open, whether Safari on the iPad reports the blocked one, how i
 real hour's expiry (the case uses a four-second pass). Two Google accounts. Real touch
 hardware for the picker and the first-tap path. The live Firebase project. NOTES, Proposals
 20 and 22, list what was left out on purpose.
+
+## 2026-11-19 — FILES: the page you chose stays put; pins turned on in the Outline; full screen with a movable tool strip
+
+**What the user asked (2026-11-18).** "when I chooses the page by outline and click x - it
+came back to a random page which shouldn't happen. It should always be on the same page";
+the Outline's pins on and off — "I click on the block of the pin the block will glow as on
+and unglow as off … when I choose zero i show all but when I choose any pin to be on it only
+shows them"; and "full screen view the file with tools on the side(movable)". The details
+the user left open were Claude's to settle (the user: "that is not my decision"), stated in
+the plan, which the user approved with "go". Astra (GPT-6 Astra, Codex CLI) reviewed the
+plan read-only, built the five pure `files-core.js` helpers and their offline cases, and
+reviewed the finished diff read-only (below); Claude built the viewer, the browser cases and
+the docs.
+
+**The cause, measured first.** On the pre-change viewer, a thumbnail chosen in `▦ Pages`
+(page 10) and then `✕`: the pane widened, every page grew, `scrollTop` stayed, and page 10
+ended **2,982 px below the pane's top** while the rail still read 10 (no scroll event fired
+to correct it). The "random" page was whichever page that old `scrollTop` now landed in.
+
+**Fail-first and doctored baselines** (all in scratch trees under the session scratchpad,
+`scripts/` and `tests/` copied for real, the rest symlinked; nothing doctored in the
+repository). The jump case failed on the pre-change `files-view.js` with that 2,982 px gap,
+then passed on the fix. On the finished tree, an undoctored control ran the 11 new and
+changed FILES cases: **11 of 11** passed. Seven doctored copies, one at a time, each failed
+the claim it targets:
+
+| Doctoring | Failed |
+| --- | --- |
+| the anchor restore removed | 5 cases, each on its own "still the page at the top" (gap 2,982; −553; −282; 6,837; 1,308) |
+| a page's own shape left out of `geom` | the mixed-size case only (gap −553) |
+| pins turned on filter nothing | the 6 cases that turn a pin on |
+| Escape's two guards removed | "…and only the pad" |
+| full screen above the toast (z 51) | "Undo is on top, where a finger can reach it" |
+| the note's scale hold removed | the note keeps its place (sheet y 1,200 → 900) |
+| the strip's save removed | "its place is kept on this device (null)" |
+
+**One case that Chrome hid.** The mixed-page-size case (page 9 landscape, drawn after the
+jump to 10) passed on the pre-change code: Chrome's own scroll anchoring corrected it. Other
+engines need not, so the PDF scroller now sets `overflow-anchor: none` and the viewer's own
+restore carries it; the `geom` doctoring above is what proves the case.
+
+**Astra's final review, cut short.** Codex hit its usage limit before writing its answer
+(161k tokens in); its progress notes named three defects, each confirmed in the code, fixed,
+and given a case seen failing on a doctored copy of the FIXED file behind a 5-of-5 control:
+
+| Defect | Doctoring | Failed |
+| --- | --- | --- |
+| At the very end of a PDF the rail names the last page but the anchor held the page at the top, so `✕` left page 12 half out of view with the rail on 11 — the user's own bug, on the last page | no end-of-scroll anchor | `{"rail":"11","whole":false}` |
+| Escape with Note to self open over full screen closed both: the viewer listened on `document`, which hears a key before Note to self's `window` listener | listener back on `document` | "Escape closed Note to self" timed out |
+| A browser full screen granted after `✕`, or after the file closed, stayed on | the late grant kept | `"browserFull":true` after `✕` |
+
+A fourth note — a chosen pin wholly outside the PDF's pages — was checked and left: the
+viewer then shows every page, and no writer can make such a pin today (the pin dialog
+refuses a page the PDF does not have, and no writer replaces a file's bytes).
+
+The first full run (11:22) was stopped at 11:33 for these fixes and counts for nothing. A
+narrowed run of every FILES case after them caught one more thing a full run would have:
+the loading case pins `files-core.js?v=4` in `sir-ks02.html`, bumped to 5 with the file.
+
+**Offline.** `tests/files-core.test.js` 41 → 55 cases (Astra's), all passing.
+
+**Full suite.** `node tests/run.js` in the repository, 11:34:56 → 12:31:08 on 2026-11-19
+(56 min 12 s), started after Astra's three fixes and the `?v=5` pin: **all 38 suites passed,
+671 of 671 browser subtests** (plan `1..671`, no `not ok` line in the log, no timeout or
+`CDP connection closed` line). One MD5 over every page, script, stylesheet and test file
+was `1c90df76…` before and after; HEAD `aa5d140` at both ends; `suspend_stats/success` 0 and
+the charger in (`ACAD/online` 1) at both ends. The 15-minute load was ~1.8 at its end. The
+19th is outside the month-end window, so the six timetable cases of NOTES Proposal 7 were
+expected to pass and did. `node --check` passes on every script and `git diff --check` is
+clean. This entry, `docs/TESTING-LESSONS.md` and the `AGENTS.md` totals were written after
+the run; no test reads them.
+
+**Looked at, not asserted.** Headless Chrome screenshots: two pins glowing with the counter
+`Page 3 · 4 of 12 shown`; full screen at 1280×900 with `▦ Pages` open beside the page and
+the strip on the left; the strip dragged to the right edge over a highlighted page; an image
+full screen on the iPad viewport. They showed the panel's own footer button also read
+`⤢ Full screen` (it opens the thumbnail grid), the same words as the new viewer button; it
+now reads `⤢ Grid`. No case reads that label.
+
+**Not covered.** A real iPad: iPadOS Safari's own full screen, the grip under a real finger
+and Pencil (CDP sends a pen as a mouse event), the glow on its screen. A real long PDF. The
+pin-edit budget bypass Astra found is recorded in NOTES, Proposal 22, not fixed.

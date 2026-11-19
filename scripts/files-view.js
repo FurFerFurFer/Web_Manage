@@ -203,7 +203,26 @@
     '.fdir .fdir-paper-body{padding:28px 36px}',
     '.fdir .fdir-paper-page{position:absolute;left:0;width:100%;pointer-events:none}',
     '.fdir .fdir-paper-page+.fdir-paper-page{border-top:1px dashed #d1d5db}',
-    '.fdir .fdir-sheet{position:fixed;left:0;right:0;bottom:0;z-index:45;max-height:70vh;overflow-y:auto;border-radius:12px 12px 0 0;padding-bottom:calc(8px + var(--phone-tabbar-h, 0px))}'
+    '.fdir .fdir-sheet{position:fixed;left:0;right:0;bottom:0;z-index:45;max-height:70vh;overflow-y:auto;border-radius:12px 12px 0 0;padding-bottom:calc(8px + var(--phone-tabbar-h, 0px))}',
+    // the PDF view keeps its own place when pages change size (PdfView), so
+    // the browser's scroll anchoring must not move it as well
+    '.fdir .fdir-pdf-scroll{overflow-anchor:none}',
+    // an Outline pin that is on glows
+    '.fdir .fdir-pin-row{transition:box-shadow var(--motion-fast) var(--ease-ui),background-color var(--motion-fast) var(--ease-ui)}',
+    '.fdir .fdir-pin-row[data-on="true"]{background-color:var(--color-primary-soft);box-shadow:0 0 0 1px var(--color-primary-border),0 0 10px 1px var(--color-primary-border)}',
+    // full screen: the viewer over the whole window (over the phone tab bar,
+    // 46; under the toast and dialogs, 50), and its tools in a strip
+    '.fdir .fdir-full{position:fixed;left:0;top:0;right:0;bottom:0;z-index:47;background-color:var(--color-app-bg)}',
+    '.fdir .fdir-full .fdir-pages[data-files-pages="full"]{bottom:0}',
+    '.fdir .fdir-strip{position:fixed;z-index:35;display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px 5px 6px;max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);',
+    'border-radius:14px;background-color:var(--color-surface);border:1px solid var(--color-border);box-shadow:var(--shadow-float);color:var(--color-text);font-size:11px}',
+    '.fdir .fdir-strip-tools{display:flex;flex-direction:column;align-items:center;gap:4px;min-height:0;overflow-y:auto;overscroll-behavior:contain}',
+    '.fdir .fdir-strip-tools [role="group"]{flex-direction:column}',
+    '.fdir .fdir-strip [data-files-pdf-at]{display:none}',
+    '.fdir .fdir-strip .fdir-tool,.fdir .fdir-strip-tools>button{min-width:34px;min-height:32px}',
+    '.fdir .fdir-grip{cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;padding:2px 10px 4px;font-size:16px;line-height:1;color:var(--color-text-muted)}',
+    '.fdir .fdir-grip:active{cursor:grabbing}',
+    '.fdir .fdir-strip-exit{min-width:34px;min-height:30px;border-radius:8px;border:1px solid var(--color-border);font-size:13px;color:var(--color-text)}'
   ].join('\n');
   function injectStyles() {
     if (document.querySelector('style[data-files-css]')) return;
@@ -1183,6 +1202,9 @@
     // A phone reads a note as flowing text; it becomes the fixed-width paper
     // (scaled to fit) only once there is ink to keep in place, or a tool is on.
     var paper = !p.phone || inked || !!m.mode;
+    // Full screen is the Preview's: Edit has no tools to put in a strip.
+    var full = useFullView();
+    var isFull = full.on && mode === 'preview';
 
     return h('div', { className: 'flex-1 min-h-0 flex flex-col', 'data-files-viewer': String(rec.id), 'data-files-viewer-type': 'md' },
       h(PageHead, { phone: p.phone, onDrawer: p.onDrawer, onBack: p.onBack, trail: p.trail, nameOf: p.nameOf, onCrumb: p.onCrumb,
@@ -1196,18 +1218,19 @@
         btn('🗑', { 'data-files-delete': true, onClick: p.onDelete, title: 'Delete this note' }),
         h('span', { 'data-files-save': saveState, className: cls('text-[11px]', saveState === 'saved' || saveState === 'saving' ? 'text-gray-500' : 'text-red-400') }, stateText)),
       h(UsedIn, { uses: p.uses, onUse: p.onUse, targets: p.linkTargets, onLink: p.onLink, say: p.say }),
-      mode === 'preview' ? h('div', { className: 'px-3 py-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 border-b border-gray-800', 'data-files-tools': true },
-        markTools(m)) : null,
-      mode === 'edit'
-        ? h('textarea', {
-          'data-files-editor': true, value: draft, autoFocus: !!p.fresh, spellCheck: true,
-          onChange: function (e) { change(e.target.value); }, onBlur: flush,
-          placeholder: '# Title\n\nWrite in Markdown…',
-          className: 'fdir-editor flex-1 min-h-0 w-full resize-none bg-gray-950 p-4 text-gray-100 outline-none'
-        })
-        : paper ? h(NotePaper, { text: draft, rec: rec, marks: m })
-          : h('div', { className: 'flex-1 min-h-0 overflow-y-auto p-4', 'data-files-scroll': true },
-            h(MarkdownPreview, { text: draft })));
+      // the tools and the sheet share one stage, which is what full screen lays over the window
+      h('div', { className: cls('flex-1 min-h-0 flex flex-col', isFull ? 'fdir-full' : ''), 'data-files-stage': true, 'data-files-full': isFull ? 'true' : undefined },
+        mode === 'preview' ? toolBar({ on: isFull, exit: full.exit }, markTools(m).concat(isFull ? [] : [fullButton(full)])) : null,
+        mode === 'edit'
+          ? h('textarea', {
+            'data-files-editor': true, value: draft, autoFocus: !!p.fresh, spellCheck: true,
+            onChange: function (e) { change(e.target.value); }, onBlur: flush,
+            placeholder: '# Title\n\nWrite in Markdown…',
+            className: 'fdir-editor flex-1 min-h-0 w-full resize-none bg-gray-950 p-4 text-gray-100 outline-none'
+          })
+          : paper ? h(NotePaper, { text: draft, rec: rec, marks: m })
+            : h('div', { className: 'flex-1 min-h-0 overflow-y-auto p-4', 'data-files-scroll': true },
+              h(MarkdownPreview, { text: draft }))));
   }
 
   // A note's Preview as a sheet of PAPER the marks layer can lie on. The text
@@ -1223,10 +1246,21 @@
     var s1 = useState(0), paneW = s1[0], setPaneW = s1[1];
     var s2 = useState(0), bodyH = s2[0], setBodyH = s2[1];
     var m = p.marks;
+    // The sheet is scaled to the pane, so a wider or narrower pane (full
+    // screen, a turned iPad) would leave the same scrollTop over another part
+    // of the note: keep the place in the sheet's own units instead.
+    var scaleRef = useRef(1), holdRef = useRef(null), lastW = useRef(0);
     useEffect(function () {
       var pane = paneRef.current, body = bodyRef.current;
       if (!pane || !body) return;
-      function measure() { setPaneW(pane.clientWidth); setBodyH(body.offsetHeight); }
+      function measure() {
+        var cw = pane.clientWidth;
+        if (cw !== lastW.current) {
+          if (lastW.current) holdRef.current = pane.scrollTop / scaleRef.current;
+          lastW.current = cw;
+        }
+        setPaneW(cw); setBodyH(body.offsetHeight);
+      }
       measure();
       if (global.ResizeObserver) {
         var ro = new ResizeObserver(measure); ro.observe(pane); ro.observe(body);
@@ -1244,6 +1278,12 @@
     var last = Object.keys(by).reduce(function (a, k) { return Math.max(a, Number(k)); }, 0);
     var pages = Math.max(1, Math.ceil(bodyH / pageH), last);
     var scale = paneW ? Math.min(1, Math.max(0.2, (paneW - 24) / PAPER_W)) : 1;
+    useLayoutEffect(function () {
+      var pane = paneRef.current, at = holdRef.current;
+      holdRef.current = null;
+      if (pane && at !== null && scale !== scaleRef.current) pane.scrollTop = at * scale;
+      scaleRef.current = scale;
+    }, [paneW]);
     var H = pages * pageH, tool = { mode: m.mode, kind: m.kind, color: m.color };
     var layers = [];
     for (var k = 1; k <= pages; k++) {
@@ -1671,6 +1711,7 @@
     var s3 = useState(null), pane = s3[0], setPane = s3[1];
     var paneRef = useRef(null);
     var m = p.marks;
+    var full = useFullView();
     useEffect(function () {
       var el = paneRef.current;
       if (!el) return;
@@ -1687,11 +1728,10 @@
       var s = fit ? Math.min(1, Math.max(1, pane.w - 16) / nat.w, Math.max(1, pane.h - 16) / nat.h) : 1;
       size = { w: Math.max(1, Math.round(nat.w * s)), h: Math.max(1, Math.round(nat.h * s)) };
     }
-    return h('div', { className: 'flex-1 min-h-0 flex flex-col' },
-      h('div', { className: 'px-3 py-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 border-b border-gray-800', 'data-files-tools': true },
-        btn(fit ? '100%' : 'Fit', { 'data-files-zoom': true, onClick: function () { setFit(!fit); } }),
-        markTools(m),
-        h('span', { className: 'self-center' }, 'Double-tap to zoom; pinch works too.')),
+    var tools = [btn(fit ? '100%' : 'Fit', { key: 'zoom', 'data-files-zoom': true, onClick: function () { setFit(!fit); } })].concat(markTools(m),
+      full.on ? [] : [fullButton(full), h('span', { key: 'tip', className: 'self-center' }, 'Double-tap to zoom; pinch works too.')]);
+    return h('div', { className: cls('flex-1 min-h-0 flex flex-col', full.on ? 'fdir-full' : ''), 'data-files-full': full.on ? 'true' : undefined },
+      toolBar(full, tools),
       h('div', { ref: paneRef, className: cls('fdir-img flex-1 min-h-0 overflow-auto', fit ? 'flex items-center justify-center p-2' : ''), 'data-files-scroll': true },
         h('div', { className: 'fdir-img-frame', 'data-files-image-frame': true,
           style: size ? { width: size.w + 'px', height: size.h + 'px' } : undefined,
@@ -1715,6 +1755,159 @@
     return h('div', { className: 'flex-1 min-h-0 overflow-y-auto p-4', 'data-files-scroll': true },
       p.md ? h(MarkdownPreview, { text: text })
         : h('pre', { className: 'fdir-editor whitespace-pre-wrap text-gray-200', 'data-files-text': true }, text));
+  }
+
+  // ── full screen: the file over the whole window, its tools in a strip ────
+  //
+  // The viewer's own root is laid over the window (`.fdir-full`), so the very
+  // same component goes on — its page, zoom, Find, marks tool and pages panel
+  // are not rebuilt — and the browser's own full screen is asked for on the
+  // whole document as well where it allows it (an iPad does, an iPhone does
+  // not). The document, not the viewer: the floating notes and Note to self
+  // live outside the viewer and would otherwise vanish. Leaving: ✕ on the
+  // strip, Escape (after any open dialog or pad has had it), or the browser
+  // leaving its full screen.
+  var STRIP_KEY = 'track_files_tools_pos';   // this device's place for the strip: {x, y}, each 0–1
+  var STRIP_M = 8;                            // the strip keeps this far inside the window
+
+  function fullElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  function leaveNative() {
+    var x = document.exitFullscreen || document.webkitExitFullscreen;
+    if (!x || !fullElement()) return;
+    try { var r = x.call(document); if (r && r.then) r.then(null, function () {}); } catch (e) { /* already left */ }
+  }
+  function useFullView() {
+    var s1 = useState(false), on = s1[0], setOn = s1[1];
+    var native = useRef(false);
+    // Still wanted: false once left or unmounted. The browser's own full
+    // screen arrives LATER than the request (a promise, or an event in older
+    // Safari); one that arrives after the viewer left is left again at once.
+    var want = useRef(false);
+    function settled() { if (!want.current) leaveNative(); }
+    function enter() {
+      want.current = true;
+      setOn(true);
+      var root = document.documentElement, req = root.requestFullscreen || root.webkitRequestFullscreen;
+      if (!req || fullElement()) return;
+      try {
+        native.current = true;
+        var r = req.call(root);
+        if (r && r.then) r.then(settled, function () { native.current = false; });
+        else {
+          var once = function () { document.removeEventListener('webkitfullscreenchange', once); settled(); };
+          document.addEventListener('webkitfullscreenchange', once);
+        }
+      } catch (e) { native.current = false; }
+    }
+    function exit() {
+      want.current = false;
+      setOn(false);
+      if (native.current) leaveNative();
+      native.current = false;
+    }
+    useEffect(function () {
+      if (!on) return;
+      function changed() { if (native.current && !fullElement()) { native.current = false; want.current = false; setOn(false); } }
+      // On WINDOW, like Note to self's: a keydown reaches window after every
+      // document listener, and Note to self's window listener was added at
+      // page load, before this one. So whatever sits above the viewer — Note
+      // to self, the notes widget's calendar, the Journey book — closes on
+      // Escape first and marks the key handled, and full screen waits for the
+      // next one.
+      function key(e) {
+        if (e.key !== 'Escape' || e.defaultPrevented) return;
+        if (document.querySelector('.fdir [data-files-dialog], .fdir [data-files-pad], .fdir [data-files-scope-menu]')) return;
+        e.preventDefault();
+        exit();
+      }
+      document.addEventListener('fullscreenchange', changed);
+      document.addEventListener('webkitfullscreenchange', changed);
+      window.addEventListener('keydown', key);
+      return function () {
+        document.removeEventListener('fullscreenchange', changed);
+        document.removeEventListener('webkitfullscreenchange', changed);
+        window.removeEventListener('keydown', key);
+      };
+    }, [on]);
+    // the file closed while full screen: the browser's full screen goes with it
+    useEffect(function () { return function () { want.current = false; if (native.current) leaveNative(); }; }, []);
+    return { on: on, enter: enter, exit: exit };
+  }
+  function fullButton(full) {
+    return btn('⤢ Full screen', { key: 'full', 'data-files-full-enter': true, title: 'Show the file over the whole window, with its tools in a strip you can move',
+      onClick: full.enter });
+  }
+  // The toolbar row, or — full screen — the strip holding the same tools.
+  function toolBar(full, tools) {
+    if (full.on) return h(ToolStrip, { key: 'strip', onExit: full.exit }, tools);
+    return h('div', { key: 'row', className: 'px-3 py-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 border-b border-gray-800', 'data-files-tools': true }, tools);
+  }
+
+  function readStripPos() {
+    try {
+      var v = JSON.parse(global.localStorage.getItem(STRIP_KEY) || 'null');
+      if (v && typeof v.x === 'number' && typeof v.y === 'number' && isFinite(v.x) && isFinite(v.y)) {
+        return { x: Math.min(1, Math.max(0, v.x)), y: Math.min(1, Math.max(0, v.y)) };
+      }
+    } catch (e) { /* no storage, or not ours */ }
+    return { x: 0, y: 0.5 };   // the left edge, half way down: clear of the rail, the notes button and Note to self
+  }
+  // A vertical strip of the viewer's tools that its grip drags anywhere in
+  // the window — with a mouse, a finger or a Pencil. Its place is kept on
+  // this device, as fractions of the room it has, so it stays inside the
+  // window when that turns or shrinks. It lies over the page, never in it:
+  // the marks layer's listeners are on the page, so no drag here can draw.
+  function ToolStrip(p) {
+    var ref = useRef(null), gripRef = useRef(null), drag = useRef(null);
+    var s1 = useState(readStripPos), pos = s1[0], setPos = s1[1];
+    var s2 = useState(null), size = s2[0], setSize = s2[1];
+    var s3 = useState(0), setTick = s3[1];
+    var posRef = useRef(pos); posRef.current = pos;
+    useLayoutEffect(function () {
+      var el = ref.current;
+      if (el && (!size || size.w !== el.offsetWidth || size.h !== el.offsetHeight)) setSize({ w: el.offsetWidth, h: el.offsetHeight });
+    });
+    useEffect(function () {
+      function again() { setTick(function (t) { return t + 1; }); }
+      global.addEventListener('resize', again);
+      // iPad Safari scrolls the page under a finger on the grip unless the touch is cancelled (React's are passive)
+      var g = gripRef.current;
+      function hold(e) { e.preventDefault(); }
+      if (g) g.addEventListener('touchmove', hold, { passive: false });
+      return function () { global.removeEventListener('resize', again); if (g) g.removeEventListener('touchmove', hold); };
+    }, []);
+    var vw = global.innerWidth || 800, vh = global.innerHeight || 600;
+    var w = size ? size.w : 0, ht = size ? size.h : 0;
+    var roomX = Math.max(0, vw - w - 2 * STRIP_M), roomY = Math.max(0, vh - ht - 2 * STRIP_M);
+    function save() { try { global.localStorage.setItem(STRIP_KEY, JSON.stringify(posRef.current)); } catch (e) { /* a private window */ } }
+    function down(e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      var b = ref.current.getBoundingClientRect();
+      drag.current = { id: e.pointerId, dx: e.clientX - b.left, dy: e.clientY - b.top };
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) { /* a synthetic pointer */ }
+    }
+    function move(e) {
+      var d = drag.current;
+      if (!d || e.pointerId !== d.id) return;
+      e.preventDefault();
+      setPos({ x: roomX ? Math.min(1, Math.max(0, (e.clientX - d.dx - STRIP_M) / roomX)) : 0,
+        y: roomY ? Math.min(1, Math.max(0, (e.clientY - d.dy - STRIP_M) / roomY)) : 0 });
+    }
+    function up(e) {
+      var d = drag.current;
+      if (!d || e.pointerId !== d.id) return;
+      drag.current = null;
+      save();
+    }
+    return h('div', { ref: ref, className: 'fdir-strip', 'data-files-tools': true, 'data-files-strip': true, role: 'toolbar', 'aria-label': 'Tools',
+      style: { left: Math.round(STRIP_M + pos.x * roomX) + 'px', top: Math.round(STRIP_M + pos.y * roomY) + 'px', visibility: size ? undefined : 'hidden' } },
+      h('div', { ref: gripRef, className: 'fdir-grip', 'data-files-strip-grip': true, role: 'button', tabIndex: -1,
+        'aria-label': 'Move the tools', title: 'Drag to move the tools',
+        onPointerDown: down, onPointerMove: move, onPointerUp: up, onPointerCancel: up, onLostPointerCapture: up }, '⠿'),
+      h('div', { className: 'fdir-strip-tools' }, p.children),
+      h('button', { type: 'button', className: 'fdir-strip-exit', 'data-files-full-exit': true, 'aria-label': 'Leave full screen', title: 'Leave full screen (Esc)',
+        onClick: p.onExit }, '✕'));
   }
 
   // ── PDF: pages drawn only as they scroll into view ───────────────────────
@@ -1862,18 +2055,45 @@
 
     var selPoke = useRef(null);
     // The page under the top third of the pane; scrolled to the very end,
-    // the last page (which may never reach the top third).
-    function onScroll() {
+    // the last page drawn (which may never reach the top third). Pages are
+    // read by their number: while pins are chosen, not every page is drawn.
+    function atEnd(el) { return el.scrollTop > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 2; }
+    function pageNum(e) { return Number(e.getAttribute('data-files-pdf-page')); }
+    function readPageNow() {
       var el = scrollRef.current;
-      if (!el || st.phase !== 'ready') return;
-      if (selPoke.current) selPoke.current();
+      if (!el) return;
       var pagesEl = el.querySelectorAll('[data-files-pdf-page]');
-      if (el.scrollTop > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 2) { setPageNow(pagesEl.length); return; }
+      if (!pagesEl.length) return;
+      if (atEnd(el)) { setPageNow(pageNum(pagesEl[pagesEl.length - 1])); return; }
       var mid = el.getBoundingClientRect().top + el.clientHeight / 3;
       for (var i = 0; i < pagesEl.length; i++) {
         var r = pagesEl[i].getBoundingClientRect();
-        if (r.bottom >= mid) { setPageNow(i + 1); return; }
+        if (r.bottom >= mid) { setPageNow(pageNum(pagesEl[i])); return; }
       }
+    }
+    function onScroll() {
+      if (st.phase !== 'ready') return;
+      if (selPoke.current) selPoke.current();
+      readPageNow();
+    }
+    // What is at the top of the pane: the first page reaching below its top
+    // edge, and how far down that page the edge is — or, when the edge is in
+    // the gap above a page, that gap in pixels. Scrolled to the very end, the
+    // page the rail names there instead (`end`): the page at the top is then
+    // NOT the one being read, and holding it would push the last page out.
+    function readAnchor() {
+      var el = scrollRef.current;
+      if (!el) return null;
+      var top = el.getBoundingClientRect().top, pagesEl = el.querySelectorAll('[data-files-pdf-page]');
+      if (pagesEl.length && atEnd(el)) return { page: pageNum(pagesEl[pagesEl.length - 1]), end: true };
+      for (var i = 0; i < pagesEl.length; i++) {
+        var r = pagesEl[i].getBoundingClientRect();
+        if (r.bottom > top && r.height) {
+          var n = Number(pagesEl[i].getAttribute('data-files-pdf-page'));
+          return r.top >= top ? { page: n, gap: r.top - top } : { page: n, frac: (top - r.top) / r.height };
+        }
+      }
+      return null;
     }
     // Every page is already a placeholder of its full size, so the target's
     // place is exact before it is drawn.
@@ -1899,12 +2119,75 @@
     var s9 = useState(''), needle = s9[0], setNeedle = s9[1];
     var s10 = useState(null), found = s10[0], setFound = s10[1];
     var s11 = useState(null), sel = s11[0], setSel = s11[1];
+    // The pins tapped on in the Outline (they glow). None: every page is
+    // shown. Any: only their pages — in the viewer, on the rail, in the
+    // panel's lists and to the finder. The viewer's own state: never stored.
+    var s12 = useState(NONE), chosen = s12[0], setChosen = s12[1];
+    // each page's own height/width, once it has been read (page 1's until then)
+    var s13 = useState({ m: {}, v: 0 }), ratios = s13[0], setRatios = s13[1];
+    var full = useFullView();
     var textCache = useRef({});
     var total = st.phase === 'ready' ? st.pages : 0;
+    var shownOnly = useMemo(function () { return TF.shownPages(p.rec, chosen, total); }, [p.rec.pins, chosen, total]);
+    // a chosen pin whose pages this PDF does not have shows nothing: show all
+    var filtering = shownOnly.length > 0 && TF.chosenPins(p.rec, chosen).length > 0;
+    var shown = filtering ? shownOnly : TF.shownPages(p.rec, NONE, total);
+    var shownKey = filtering ? shown.join(',') : 'all:' + total;
     // the pages the panel's list — and so the finder — covers
-    var scopeList = useMemo(function () { return TF.scopePages(p.rec, scope, total); },
-      [p.rec.highlights, p.rec.pins, p.rec.bookmarks, scope.kind, scope.pinId, total]);
-    var scopeKey = scope.kind === 'all' ? 'all:' + total : scopeList.join(',');
+    var scopeList = useMemo(function () { return TF.scopePages(p.rec, scope, total, filtering ? chosen : NONE); },
+      [p.rec.highlights, p.rec.pins, p.rec.bookmarks, scope.kind, total, shownKey]);
+    var scopeKey = scope.kind === 'all' && !filtering ? 'all:' + total : scopeList.join(',');
+
+    // The view stays on what it was showing whenever the pages change size or
+    // which pages are drawn: ✕ or ▦ giving or taking the pane's room, zoom,
+    // full screen, a page found to be another shape, pins chosen. Read here,
+    // in render — the DOM is still the last commit's layout — and put back
+    // in the layout effect below, before the browser paints. A jump asked for
+    // (`jumpTo`) goes there instead.
+    var w = Math.round(width * zoom);
+    var geom = w + '|' + shownKey + '|' + ratios.v;
+    var geomRef = useRef(''), anchorRef = useRef(null), jumpTo = useRef(null);
+    if (geom !== geomRef.current) {
+      if (geomRef.current && !anchorRef.current) anchorRef.current = readAnchor();
+      geomRef.current = geom;
+    }
+    useLayoutEffect(function () {
+      var el = scrollRef.current, a = anchorRef.current, to = jumpTo.current;
+      anchorRef.current = null; jumpTo.current = null;
+      if (!el) return;
+      if (to !== null) { scrollToPage(to); return; }
+      if (!a) return;
+      var pg = el.querySelector('[data-files-pdf-page="' + a.page + '"]');
+      if (!pg) { var n = TF.nearestPage(shown, a.page); if (n !== null) scrollToPage(n); return; }
+      if (a.end) {
+        // still the last page shown: stay at the end; pages added after it: it goes to the top
+        if (shown[shown.length - 1] === a.page) { el.scrollTop = el.scrollHeight; readPageNow(); } else scrollToPage(a.page);
+        return;
+      }
+      var r = pg.getBoundingClientRect(), top = el.getBoundingClientRect().top;
+      el.scrollTop += r.top - (a.gap !== undefined ? top + a.gap : top - a.frac * r.height);
+      readPageNow();
+    }, [geom]);
+    function onRatio(n, r) {
+      setRatios(function (o) {
+        if (o.m[n] && Math.abs(o.m[n] - r) < 0.001) return o;
+        var m2 = Object.assign({}, o.m); m2[n] = r;
+        return { m: m2, v: o.v + 1 };
+      });
+    }
+    // An Outline row tapped: on, or off again. Where the page being read is
+    // still shown, the view stays on it; otherwise a pin turned on opens at
+    // its first page, and one turned off at the nearest page still shown.
+    function togglePin(pin) {
+      var on = chosen.indexOf(pin.id) >= 0;
+      var next = on ? chosen.filter(function (id) { return id !== pin.id; }) : chosen.concat([pin.id]);
+      var nextShown = TF.shownPages(p.rec, next, total);
+      if (!nextShown.length) nextShown = TF.shownPages(p.rec, NONE, total);
+      // (the page being read is always one that is shown, so a page not in
+      // the next set means the set changes, and the layout effect runs)
+      if (nextShown.indexOf(pageNow) < 0 && nextShown.join(',') !== shown.join(',')) jumpTo.current = TF.nearestPage(nextShown, on ? pageNow : pin.page);
+      setChosen(next);
+    }
 
     // the query, settled and made comparable
     useEffect(function () {
@@ -1939,11 +2222,11 @@
       return function () { alive = false; };
     }, [st.phase, needle, scopeKey]);
 
-    // a pin deleted (here or on the other device) while its range is the list
+    // a chosen pin deleted (here or on the other device) is no longer chosen
     useEffect(function () {
-      if (scope.kind === 'outline' && scope.pinId !== undefined && scope.pinId !== null &&
-        !pins.some(function (x) { return x.id === scope.pinId; })) setScope({ kind: 'outline' });
-    }, [pins, scope]);
+      var keep = chosen.filter(function (id) { return pins.some(function (x) { return x.id === id; }); });
+      if (keep.length !== chosen.length) setChosen(keep);
+    }, [pins]);
 
     // A selection of the PDF's typed text offers Copy and Highlight. It is
     // read a moment after it settles; what it covered is kept, so the offer
@@ -1968,20 +2251,19 @@
 
     if (st.phase === 'loading') return h('div', { className: 'p-6 text-xs text-gray-500', 'data-files-pdf-loading': true }, 'Opening the PDF…');
     if (st.phase === 'error') return h('div', { className: 'p-6 text-sm text-red-400', 'data-files-pdf-error': true }, st.message);
-    var w = Math.round(width * zoom);
     var tool = { mode: m.mode, kind: m.kind, color: m.color };
-    var pageEls = [];
-    for (var n = 1; n <= st.pages; n++) {
-      pageEls.push(h(PdfPage, { key: n, n: n, doc: docRef.current, width: w, ratio: st.ratio, root: scrollRef,
+    var pageEls = shown.map(function (n) {
+      return h(PdfPage, { key: n, n: n, doc: docRef.current, width: w, ratio: ratios.m[n] || st.ratio, onRatio: onRatio, root: scrollRef,
         hls: hlBy[n] || NONE, pins: pins.filter(function (x) { return x.page === n; }), tool: tool, onStroke: m.addStroke, onErase: m.erase,
-        find: needle }));
-    }
+        find: needle });
+    });
     var zi = ZOOMS.indexOf(zoom);
     var mode = panel ? (p.phone ? 'full' : panel) : null;   // a phone has no room for a side panel
 
+    // a page that is not shown goes to the nearest one that is
     function jump(n) {
-      var to = n < 1 ? 1 : n > st.pages ? st.pages : n;
-      scrollToPage(to);
+      var to = TF.nearestPage(shown, n < 1 ? 1 : n > st.pages ? st.pages : n);
+      if (to !== null) scrollToPage(to);
     }
     function saveDlg(v) {
       if (!dlg) return;
@@ -2004,32 +2286,40 @@
       if (global.navigator && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, old); else old();
     }
     var marked = booked.indexOf(pageNow) >= 0;
+    var f = full.on;   // the strip has room for icons, not words
+    var tools = [
+      btn('−', { key: 'zo', 'data-files-zoom-out': true, 'aria-label': 'Zoom out', disabled: zi <= 0, onClick: function () { setZoom(ZOOMS[Math.max(0, zi - 1)]); } }),
+      h('span', { key: 'zl', 'data-files-zoom-level': true }, Math.round(zoom * 100) + '%'),
+      btn('+', { key: 'zi', 'data-files-zoom-in': true, 'aria-label': 'Zoom in', disabled: zi >= ZOOMS.length - 1, onClick: function () { setZoom(ZOOMS[Math.min(ZOOMS.length - 1, zi + 1)]); } }),
+      btn('Fit', { key: 'fit', 'data-files-zoom-fit': true, onClick: function () { setZoom(1); } })
+    ].concat(markTools(m), [
+      btn('🔖', { key: 'bm', 'data-files-bookmark-now': true, 'aria-pressed': marked ? 'true' : 'false',
+        'aria-label': (marked ? 'Remove the bookmark from page ' : 'Bookmark page ') + pageNow,
+        title: marked ? 'Page ' + pageNow + ' is bookmarked. Tap to remove the bookmark.' : 'Bookmark page ' + pageNow,
+        onClick: function () { m.toggleBookmark(pageNow); } }, 'fdir-tool'),
+      btn(f ? '📌' : '📌 Pin', { key: 'pin', 'data-files-pin-add': true, 'aria-label': 'Pin pages', title: 'Pin this page, or a range of pages, under a name',
+        onClick: function () { setDlg({ kind: 'pin', from: pageNow, to: pageNow, total: st.pages, title: 'Pin pages', action: 'Pin' }); } }),
+      btn(f ? '▦' : '▦ Pages', { key: 'pages', 'data-files-pages-toggle': true, 'aria-expanded': panel ? 'true' : 'false', 'aria-label': 'Pages',
+        title: 'Thumbnails of every page, your bookmarks, the pages you wrote on, your pins, and Find',
+        onClick: function () { setPanel(panel ? null : 'side'); } }, 'fdir-tool'),
+      f ? null : fullButton(full),
+      h('span', { key: 'at', className: 'ml-auto', 'data-files-pdf-at': true },
+        'Page ' + pageNow + (filtering ? ' · ' + shown.length + ' of ' + st.pages + ' shown' : ' of ' + st.pages))
+    ]);
 
-    return h('div', { className: 'flex-1 min-h-0 flex flex-col', 'data-files-pdf': true, 'data-files-pdf-pages': st.pages },
-      h('div', { className: 'px-3 py-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 border-b border-gray-800', 'data-files-tools': true },
-        btn('−', { 'data-files-zoom-out': true, disabled: zi <= 0, onClick: function () { setZoom(ZOOMS[Math.max(0, zi - 1)]); } }),
-        h('span', { 'data-files-zoom-level': true }, Math.round(zoom * 100) + '%'),
-        btn('+', { 'data-files-zoom-in': true, disabled: zi >= ZOOMS.length - 1, onClick: function () { setZoom(ZOOMS[Math.min(ZOOMS.length - 1, zi + 1)]); } }),
-        btn('Fit', { onClick: function () { setZoom(1); } }),
-        markTools(m),
-        btn('🔖', { 'data-files-bookmark-now': true, 'aria-pressed': marked ? 'true' : 'false',
-          'aria-label': (marked ? 'Remove the bookmark from page ' : 'Bookmark page ') + pageNow,
-          title: marked ? 'Page ' + pageNow + ' is bookmarked. Tap to remove the bookmark.' : 'Bookmark page ' + pageNow,
-          onClick: function () { m.toggleBookmark(pageNow); } }, 'fdir-tool'),
-        btn('📌 Pin', { 'data-files-pin-add': true, title: 'Pin this page, or a range of pages, under a name',
-          onClick: function () { setDlg({ kind: 'pin', from: pageNow, to: pageNow, total: st.pages, title: 'Pin pages', action: 'Pin' }); } }),
-        btn('▦ Pages', { 'data-files-pages-toggle': true, 'aria-expanded': panel ? 'true' : 'false',
-          title: 'Thumbnails of every page, your bookmarks, the pages you wrote on, your pins, and Find',
-          onClick: function () { setPanel(panel ? null : 'side'); } }, 'fdir-tool'),
-        h('span', { className: 'ml-auto', 'data-files-pdf-at': true }, 'Page ' + pageNow + ' of ' + st.pages)),
+    return h('div', { className: cls('flex-1 min-h-0 flex flex-col', f ? 'fdir-full' : ''), 'data-files-pdf': true, 'data-files-pdf-pages': st.pages,
+      'data-files-full': f ? 'true' : undefined },
+      toolBar(full, tools),
       h('div', { className: 'flex-1 min-h-0 flex' },
         h('div', { className: 'flex-1 min-w-0 min-h-0 relative flex flex-col' },
-          h('div', { ref: scrollRef, onScroll: onScroll, className: 'flex-1 min-h-0 overflow-auto py-3', 'data-files-scroll': true },
+          h('div', { ref: scrollRef, onScroll: onScroll, className: 'fdir-pdf-scroll flex-1 min-h-0 overflow-auto py-3', 'data-files-scroll': true },
             width ? pageEls : null),
-          h(PageRail, { page: pageNow, total: st.pages, onJump: jump })),
+          h(PageRail, { page: pageNow, total: st.pages, onJump: jump,
+            prev: TF.stepPage(shown, pageNow, -1), next: TF.stepPage(shown, pageNow, 1),
+            shown: filtering ? shown : null })),
         mode ? h(PagesPanel, { mode: mode, phone: p.phone, rec: p.rec, doc: docRef.current, total: st.pages, ratio: st.ratio, pageNow: pageNow,
           scope: scope, setScope: setScope, scopeList: scopeList, query: query, setQuery: setQuery, needle: needle, found: found,
-          pins: pins, hlBy: hlBy, booked: booked, marks: m,
+          pins: pins, hlBy: hlBy, booked: booked, marks: m, chosen: chosen, filtering: filtering, shownCount: shown.length, onTogglePin: togglePin,
           onJump: function (n2) { jump(n2); if (mode === 'full') setPanel(null); },
           onEditPin: function (pin) { setDlg({ kind: 'pin-rename', pinId: pin.id, from: pin.page, to: TF.pinEnd(pin), total: st.pages, initial: pin.name, title: 'Edit pin' }); },
           onAddPin: function () { setDlg({ kind: 'pin', from: pageNow, to: pageNow, total: st.pages, title: 'Pin pages', action: 'Pin' }); },
@@ -2055,12 +2345,16 @@
   // on, the total, ▼. The page number opens a pad to type one into — its own
   // keys on a touch screen (the system keyboard would cover half an iPad),
   // the keyboard on a laptop.
+  //   While pins are chosen (`shown`, the pages drawn), ▲ / ▼ step to the
+  //   next page shown (`prev`, `next`) and the pad goes only to one of them.
   function PageRail(p) {
     var s1 = useState(false), open = s1[0], setOpen = s1[1];
     var s2 = useState(''), text = s2[0], setText = s2[1];
     var inputRef = useRef(null);
     var touch = !!(global.TrackViewport && global.TrackViewport.isTouchPrimary && global.TrackViewport.isTouchPrimary());
-    var target = TF.pageFromText(text, p.total);
+    var typed = TF.pageFromText(text, p.total);
+    var hidden = typed !== null && !!p.shown && p.shown.indexOf(typed) < 0;
+    var target = hidden ? null : typed;
     useEffect(function () { if (open && !touch && inputRef.current) inputRef.current.focus(); }, [open]);
     function close() { setOpen(false); setText(''); }
     function go() { if (target === null) return; p.onJump(target); close(); }
@@ -2078,15 +2372,15 @@
             onClick: function () { key(d); } }, d === 'back' ? '⌫' : d);
         })),
         h('button', { type: 'button', className: 'fdir-pad-go', 'data-files-pad-go': true, disabled: target === null, onClick: go },
-          target === null ? (text ? 'No page ' + text : 'Go') : 'Go to page ' + target)) : null,
-      h('button', { type: 'button', 'data-files-rail-prev': true, 'aria-label': 'Previous page', disabled: p.page <= 1,
-        onClick: function () { p.onJump(p.page - 1); } }, '▲'),
+          hidden ? 'Page ' + typed + ' is not shown' : target === null ? (text ? 'No page ' + text : 'Go') : 'Go to page ' + target)) : null,
+      h('button', { type: 'button', 'data-files-rail-prev': true, 'aria-label': 'Previous page', disabled: p.prev === null,
+        onClick: function () { if (p.prev !== null) p.onJump(p.prev); } }, '▲'),
       h('button', { type: 'button', 'data-files-rail-page': true, 'aria-expanded': open ? 'true' : 'false',
         'aria-label': 'Page ' + p.page + ' of ' + p.total + '. Go to a page', title: 'Go to a page',
         onClick: function () { if (open) close(); else setOpen(true); } }, String(p.page)),
       h('span', { 'data-files-rail-total': true }, String(p.total)),
-      h('button', { type: 'button', 'data-files-rail-next': true, 'aria-label': 'Next page', disabled: p.page >= p.total,
-        onClick: function () { p.onJump(p.page + 1); } }, '▼'));
+      h('button', { type: 'button', 'data-files-rail-next': true, 'aria-label': 'Next page', disabled: p.next === null,
+        onClick: function () { if (p.next !== null) p.onJump(p.next); } }, '▼'));
   }
 
   // The pages panel (▦), after Notability's: a finder, one of four lists —
@@ -2094,20 +2388,21 @@
   // thumbnails, and ⤢ for the same thing as a full-screen grid. The finder
   // searches only the pages the list covers. State lives in PdfView, so a
   // query and its hits on the pages outlast the panel being closed.
+  //   The Outline's rows are switches: a pin tapped on glows, and while any
+  //   glows only the chosen pins' pages are shown (PdfView's `chosen`).
   function PagesPanel(p) {
     var full = p.mode === 'full', scope = p.scope, m = p.marks;
     var s1 = useState(false), menu = s1[0], setMenu = s1[1];
     var listRef = useRef(null);
-    var onePin = scope.kind === 'outline' && scope.pinId !== undefined && scope.pinId !== null
-      ? (p.pins.filter(function (x) { return x.id === scope.pinId; })[0] || null) : null;
     var searching = !!p.needle;
-    var showPins = scope.kind === 'outline' && !onePin && !searching;
+    var showPins = scope.kind === 'outline' && !searching;
     var f = p.found && p.found.needle === p.needle ? p.found : null;
     var counts = (f && f.counts) || {};
     var shown = searching ? p.scopeList.filter(function (n) { return counts[n]; }) : p.scopeList;
     var hits = 0;
     shown.forEach(function (n) { hits += counts[n] || 0; });
-    var label = SCOPES.filter(function (sc) { return sc[0] === scope.kind; })[0][1] + (onePin ? ' › ' + onePin.name : '');
+    var label = SCOPES.filter(function (sc) { return sc[0] === scope.kind; })[0][1];
+    var onCount = p.pins.filter(function (x) { return p.chosen.indexOf(x.id) >= 0; }).length;
 
     // on opening, and when the list changes, the page being read comes into view
     useEffect(function () {
@@ -2115,23 +2410,24 @@
       if (!el) return;
       var a = el.getBoundingClientRect(), b = list.getBoundingClientRect();
       list.scrollTop += a.top - b.top - Math.max(0, (b.height - a.height) / 2);
-    }, [scope.kind, scope.pinId, p.mode]);
+    }, [scope.kind, p.mode]);
 
     var countText;
     if (searching) {
       countText = !f || !f.done ? 'Searching… ' + (f ? f.scanned : 0) + ' / ' + p.scopeList.length
         : hits ? hits + (hits === 1 ? ' result' : ' results') + ' on ' + shown.length + (shown.length === 1 ? ' page' : ' pages') : 'No results';
-    } else if (showPins) countText = p.pins.length + (p.pins.length === 1 ? ' pin' : ' pins');
-    else countText = shown.length + (shown.length === 1 ? ' page' : ' pages');
+    } else if (showPins) {
+      countText = p.pins.length + (p.pins.length === 1 ? ' pin' : ' pins') +
+        (onCount ? ' · ' + onCount + ' on, showing ' + p.shownCount + (p.shownCount === 1 ? ' page' : ' pages') : '');
+    } else countText = shown.length + (shown.length === 1 ? ' page' : ' pages');
 
     var empty = null;
     if (searching && f && f.done && !shown.length) {
       empty = scope.kind === 'all' && !f.chars ? 'This PDF has no typed text to search — it is probably a scan.'
-        : 'Nothing in ' + label + ' matches.';
+        : 'Nothing in ' + label + (p.filtering ? ' on the pins you chose' : '') + ' matches.';
     } else if (!searching && !showPins && !shown.length) {
-      empty = scope.kind === 'bookmarks' ? 'No bookmarks yet. Tap the ribbon on a page here, or 🔖 above the page, to bookmark it.'
-        : scope.kind === 'notes' ? 'No pages written or highlighted on yet.'
-          : scope.kind === 'outline' ? 'This pin\'s pages are not in this PDF.' : 'No pages.';
+      empty = scope.kind === 'bookmarks' ? (p.filtering ? 'No bookmarks on the pins you chose.' : 'No bookmarks yet. Tap the ribbon on a page here, or 🔖 above the page, to bookmark it.')
+        : scope.kind === 'notes' ? (p.filtering ? 'Nothing written or highlighted on the pins you chose.' : 'No pages written or highlighted on yet.') : 'No pages.';
     }
 
     var findBox = h('label', { className: cls('fdir-find-box', full ? 'flex-1 max-w-xl mx-auto' : '') },
@@ -2147,9 +2443,9 @@
         h('span', { className: 'truncate', 'data-files-scope-label': true }, label), h('span', { 'aria-hidden': 'true' }, '▾')),
       menu ? h('div', { className: 'fdir-scope-menu', 'data-files-scope-menu': true, role: 'menu' },
         SCOPES.map(function (sc) {
-          return h('button', { key: sc[0], type: 'button', role: 'menuitemradio', 'aria-checked': scope.kind === sc[0] && !onePin ? 'true' : 'false',
+          return h('button', { key: sc[0], type: 'button', role: 'menuitemradio', 'aria-checked': scope.kind === sc[0] ? 'true' : 'false',
             'data-files-scope-item': sc[0], onClick: function () { setMenu(false); p.setScope({ kind: sc[0] }); } },
-            h('span', { className: 'w-4 text-center', 'aria-hidden': 'true' }, scope.kind === sc[0] && !onePin ? '✓' : ''),
+            h('span', { className: 'w-4 text-center', 'aria-hidden': 'true' }, scope.kind === sc[0] ? '✓' : ''),
             h('span', { className: 'w-5 text-center', 'aria-hidden': 'true' }, sc[2]),
             h('span', null, sc[1]));
         })) : null);
@@ -2160,22 +2456,26 @@
     if (showPins) {
       body = h('div', { 'data-files-pin-list': true, className: cls('p-1', full ? 'max-w-xl mx-auto' : '') },
         p.pins.length ? p.pins.map(function (pin, i) {
-          var end = TF.pinEnd(pin);
-          return h('div', { key: i + ':' + String(pin.id), 'data-files-pin-row': String(pin.id), className: 'flex items-center gap-1 rounded hover:bg-gray-800' },
-            h('button', { type: 'button', 'data-files-pin-jump': String(pin.id), className: 'flex-1 min-w-0 flex items-center gap-2 px-2 py-2 text-left text-xs text-gray-200',
-              onClick: function () { p.onJump(pin.page); } },
+          var end = TF.pinEnd(pin), on = p.chosen.indexOf(pin.id) >= 0, pages = 'p. ' + pin.page + (end > pin.page ? '–' + end : '');
+          return h('div', { key: i + ':' + String(pin.id), 'data-files-pin-row': String(pin.id), 'data-on': on ? 'true' : undefined,
+            className: 'fdir-pin-row flex items-center gap-1 rounded hover:bg-gray-800' },
+            h('button', { type: 'button', 'data-files-pin-jump': String(pin.id), 'aria-pressed': on ? 'true' : 'false',
+              'aria-label': pin.name + ', ' + pages + (on ? ': shown. Tap to stop showing only it' : '. Tap to show only its pages'),
+              title: on ? 'On: only the pins that glow are shown. Tap to turn it off.' : 'Tap to show only this pin\'s pages (and any other pin that glows)',
+              className: 'flex-1 min-w-0 flex items-center gap-2 px-2 py-2 text-left text-xs text-gray-200',
+              onClick: function () { p.onTogglePin(pin); } },
               h('span', { 'aria-hidden': 'true' }, '📌'),
               h('span', { className: 'flex-1 min-w-0 truncate', 'data-files-pin-name': true }, pin.name),
-              h('span', { className: 'text-[10px] text-gray-500 shrink-0', 'data-files-pin-range': true }, 'p. ' + pin.page + (end > pin.page ? '–' + end : ''))),
-            h('button', { type: 'button', 'data-files-pin-open': String(pin.id), 'aria-label': 'Show the pages of ' + pin.name,
-              title: 'Show only these pages — Find then searches only them', className: 'px-2 py-2 text-xs text-gray-400',
-              onClick: function () { p.setScope({ kind: 'outline', pinId: pin.id }); } }, '▤'),
+              h('span', { className: 'text-[10px] text-gray-500 shrink-0', 'data-files-pin-range': true }, pages)),
             h('button', { type: 'button', 'data-files-pin-rename': String(pin.id), 'aria-label': 'Edit ' + pin.name, className: 'px-2 py-2 text-xs text-gray-400',
               onClick: function () { p.onEditPin(pin); } }, '✎'),
             h('button', { type: 'button', 'data-files-pin-delete': String(pin.id), 'aria-label': 'Delete ' + pin.name, className: 'px-2 py-2 text-xs text-gray-400',
               onClick: function () { m.deletePin(pin.id); } }, '🗑'));
         }) : h('div', { className: 'px-2 py-3 text-[11px] text-gray-500', 'data-files-pin-empty': true },
-          'No pins yet. 📌 Pin names the page you are on, or a range of pages, and lists it here.'));
+          'No pins yet. 📌 Pin names the page you are on, or a range of pages, and lists it here.'),
+        p.pins.length ? h('div', { className: 'px-2 pt-2 text-[10px] text-gray-500', 'data-files-pin-hint': true },
+          onCount ? 'Only the pins that glow are shown. Tap one to turn it off; with none on, every page shows.'
+            : 'Tap a pin to show only its pages. Tap more to add theirs.') : null);
     } else if (empty) {
       body = h('div', { className: 'p-4 text-xs text-gray-500', 'data-files-pages-empty': true }, empty);
     } else {
@@ -2194,16 +2494,15 @@
         : h('div', { className: 'p-2 space-y-2 border-b border-gray-800' }, findBox,
           h('div', { className: 'flex items-center justify-between gap-2' }, scopeBtn, closeBtn)),
       h('div', { className: 'flex items-center gap-2 px-3 py-1.5 text-[11px] text-gray-500' },
-        onePin ? h('button', { type: 'button', 'data-files-outline-back': true, className: 'underline',
-          onClick: function () { p.setScope({ kind: 'outline' }); } }, '‹ All pins') : null,
         h('span', { 'data-files-find-count': true, 'data-done': !searching || (f && f.done) ? 'true' : 'false' }, countText)),
       h('div', { ref: listRef, className: 'flex-1 min-h-0 overflow-y-auto', 'data-files-pages-scroll': true }, body),
       // both on the LEFT: the floating notes button sits over the right corner
       h('div', { className: 'flex items-center gap-2 px-3 py-2 border-t border-gray-800' },
         p.phone ? null : h('button', { type: 'button', 'data-files-pages-expand': true,
           className: 'rounded border border-gray-700 px-2 py-1 text-xs text-gray-300',
-          'aria-label': full ? 'Back to the side panel' : 'Full screen', title: full ? 'Back to the side panel' : 'Full screen',
-          onClick: p.onExpand }, full ? '⤡ Side panel' : '⤢ Full screen'),
+          // "Grid", not "Full screen": that name is the viewer's ⤢, which lays the FILE over the window
+          'aria-label': full ? 'Back to the side panel' : 'Pages as a grid over the viewer', title: full ? 'Back to the side panel' : 'Pages as a grid over the viewer',
+          onClick: p.onExpand }, full ? '⤡ Side panel' : '⤢ Grid'),
         scope.kind === 'outline' ? btn('📌 Pin pages', { 'data-files-pages-pin': true, onClick: p.onAddPin }) : null));
   }
 
@@ -2258,9 +2557,11 @@
   // typed words can be selected and the finder can show where it hit); let
   // go again when it is far away, so a 300-page PDF holds only the pages
   // around the reader in memory.
+  //   A page's own shape is reported up (`onRatio`) rather than kept here, so
+  //   PdfView can keep the view where it was when the page changes height.
   function PdfPage(p) {
     var ref = useRef(null), textRef = useRef(null), s1 = useState(false), near = s1[0], setNear = s1[1];
-    var s2 = useState(p.ratio), ratio = s2[0], setRatio = s2[1];
+    var ratio = p.ratio;
     var s3 = useState(false), drawn = s3[0], setDrawn = s3[1];
     var s4 = useState(0), textV = s4[0], setTextV = s4[1];
     var s5 = useState(NONE), hits = s5[0], setHits = s5[1];
@@ -2279,7 +2580,7 @@
         if (!alive) return;
         var base = pg.getViewport({ scale: 1 });
         var r = base.height / base.width;
-        if (Math.abs(r - ratio) > 0.001) setRatio(r);
+        if (Math.abs(r - ratio) > 0.001 && p.onRatio) p.onRatio(p.n, r);
         var dpr = Math.min(2, global.devicePixelRatio || 1);
         var scale = (p.width / base.width) * dpr;
         // iOS Safari draws nothing on a canvas past ~16.7M pixels, which a page

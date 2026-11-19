@@ -713,9 +713,9 @@ it describes. **Read it when you need it**: to audit what was verified and when,
 work in an area whose entry records a defect or a known gap, or to check whether something
 is covered by a test or only by code reading. A new entry is appended there, not here.
 
-What a passing run looks like, as of 2026-11-17: `node tests/run.js`, **38 suites** —
+What a passing run looks like, as of 2026-11-19: `node tests/run.js`, **38 suites** —
 `calendar-core`, `schema`, `notes-core` and `note-to-self-core` swept under five timezones
-with identical results, seventeen more offline suites once each, then **662 browser
+with identical results, seventeen more offline suites once each, then **671 browser
 subtests** in headless Chrome. **In the last one to six days of a month, six timetable
 cases fail on a date bug in the suite itself** (NOTES, Proposal 7): the Home and
 Documentations twins of three cases, each timing out on its class layer while its Progress

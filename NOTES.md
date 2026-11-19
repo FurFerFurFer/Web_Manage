@@ -1261,6 +1261,21 @@ these is authorized.
   stable id per block, which notes do not have.
 - **Notability's `Select` in the pages panel** (tick thumbnails, then act on them) is not
   built, and neither is ink on a plain-text file.
+- **Pins on and full screen (2026-11-18) have not met a real iPad.** Tested in headless
+  Chrome only: whether iPadOS Safari grants the browser's own full screen to the page (the
+  overlay works either way, but Safari's address bar then stays), the strip's grip under a
+  real finger and Pencil (CDP sends a pen as a mouse event), and the glow in the light and
+  dark appearances on the iPad's screen.
+- **Which pins are on is forgotten when the file closes** (a stated choice, contract rule 21).
+  Keeping it per file would be a new key: on the record it would sync and count against the
+  256 KB budget; in `localStorage` it would stay on one device.
+- **A pin edit can pass the 256 KB budget, and a refused edit can look saved** (found by
+  Astra's review, 2026-11-18, not fixed: outside the request). `withPinEdited` and
+  `withPinRenamed` (`files-core.js`) replace a pin without `marksFit`; an in-memory probe grew
+  a record from 262,126 to 262,223 bytes, past the 262,144 limit. The check must weigh the
+  whole record with the replacement pin, not `marksFit(rec, pin)`, which counts both
+  versions. Separately, the pin dialog closes as if saved when the writer refused the edit,
+  so a refusal needs its own answer from `mutate`.
 - **Export a copy with the highlights burned in.** The marks live only in Track; Download and
   Share give the original. A burned-in PDF would need a PDF writer (a new dependency) and must
   never replace the stored bytes.

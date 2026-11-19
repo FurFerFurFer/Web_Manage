@@ -416,6 +416,31 @@
     return isPin(pin) && isPage(pin.pageEnd) && pin.pageEnd >= pin.page ? pin.pageEnd : (isPin(pin) ? pin.page : 0);
   }
 
+  // A viewer's chosen pins, still in pinsOf order. Stale ids (a pin deleted
+  // elsewhere) and unreadable pins do not count as chosen. Nothing is stored.
+  function chosenPins(rec, ids) {
+    if (!isList(ids) || !ids.length) return [];
+    var want = new Set(ids.filter(isId));
+    return pinsOf(rec).filter(function (pin) { return want.has(pin.id); });
+  }
+
+  // Zero stored pins chosen means every page. Otherwise the union of their
+  // ranges, clipped to this PDF, ascending and each once.
+  function shownPages(rec, ids, total) {
+    if (!isPage(total)) return [];
+    var pins = chosenPins(rec, ids), out = [], seen = {};
+    if (!pins.length) {
+      for (var k = 1; k <= total; k++) out.push(k);
+      return out;
+    }
+    pins.forEach(function (pin) {
+      for (var pg = pin.page, end = Math.min(pinEnd(pin), total); pg <= end; pg++) {
+        if (!seen[pg]) { seen[pg] = true; out.push(pg); }
+      }
+    });
+    return out.sort(function (a, b) { return a - b; });
+  }
+
   // The bookmarked pages, ascending, each once.
   function bookmarksOf(rec) {
     var all = isMap(rec) && isList(rec.bookmarks) ? rec.bookmarks.filter(isPage) : [];
@@ -433,8 +458,9 @@
   // The pages a panel list — and the finder — covers, ascending, each once,
   // inside 1…total. `scope` is {kind, pinId?}: 'bookmarks', 'notes' (marked
   // pages), 'outline' (every pin's range, or the one pin `pinId` names), and
-  // anything else is every page.
-  function scopePages(rec, scope, total) {
+  // anything else is every page. Optional chosen pin ids restrict each list
+  // to the viewer's shown pages; zero stored pins chosen leaves it unchanged.
+  function scopePages(rec, scope, total, ids) {
     var n = isPage(total) ? total : 0, kind = isMap(scope) ? scope.kind : scope, out = [], seen = {};
     function add(pg) { if (pg >= 1 && pg <= n && !seen[pg]) { seen[pg] = true; out.push(pg); } }
     if (kind === 'bookmarks') bookmarksOf(rec).forEach(add);
@@ -444,8 +470,33 @@
         if (isMap(scope) && scope.pinId !== undefined && scope.pinId !== null && pin.id !== scope.pinId) return;
         for (var pg = pin.page, end = Math.min(pinEnd(pin), n); pg <= end; pg++) add(pg);
       });
-    } else for (var k = 1; k <= n; k++) out.push(k);
+    } else return shownPages(rec, ids, total);
+    if (chosenPins(rec, ids).length) {
+      var shown = new Set(shownPages(rec, ids, total));
+      out = out.filter(function (pg) { return shown.has(pg); });
+    }
     return out.sort(function (a, b) { return a - b; });
+  }
+
+  // Strictly next / previous in an ascending page list, even from a gap.
+  // Unreadable entries are skipped; no page or numeric direction means none.
+  function stepPage(list, page, dir) {
+    if (!isList(list) || !isPage(page) || typeof dir !== 'number') return null;
+    if (dir > 0) {
+      for (var i = 0; i < list.length; i++) if (isPage(list[i]) && list[i] > page) return list[i];
+    } else if (dir < 0) {
+      for (var j = list.length - 1; j >= 0; j--) if (isPage(list[j]) && list[j] < page) return list[j];
+    }
+    return null;
+  }
+
+  // Keep the page when shown; otherwise prefer the first after it, falling
+  // back to the last before it. This is not a distance comparison.
+  function nearestPage(list, page) {
+    if (!isList(list) || !isPage(page)) return null;
+    if (list.indexOf(page) >= 0) return page;
+    var next = stepPage(list, page, 1);
+    return next === null ? stepPage(list, page, -1) : next;
   }
 
   // A typed page number: the page it names inside 1…total, or null. Digits
@@ -859,9 +910,13 @@
     markKind: markKind,
     pinsOf: pinsOf,
     pinEnd: pinEnd,
+    chosenPins: chosenPins,
+    shownPages: shownPages,
     bookmarksOf: bookmarksOf,
     markedPages: markedPages,
     scopePages: scopePages,
+    stepPage: stepPage,
+    nearestPage: nearestPage,
     pageFromText: pageFromText,
     searchNorm: searchNorm,
     searchHits: searchHits,

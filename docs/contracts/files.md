@@ -7,6 +7,7 @@ the `files` slot field, `scripts/files-core.js`, `scripts/file-store.js`,
 
 Added 2026-11-13 with the FILES tab on the Storages page; highlights and page pins the same day.
 Pen strokes, text highlights, bookmarks, pin ranges and ink on a note: 2026-11-15.
+Pins turned on in the Outline, the kept page, and full screen: 2026-11-18.
 
 ---
 
@@ -20,6 +21,8 @@ Pen strokes, text highlights, bookmarks, pin ranges and ink on a note: 2026-11-1
 | A file's bytes | Google Drive ("Track Files" folder), and a copy per device in IndexedDB `track_files_v1` | Drive only |
 | The upload queue, the Drive folder id | `track_files_v1` (`queue`, `meta` stores) | never — per device |
 | The Google access token | memory, and this tab's `sessionStorage` (`track_drive_token_v1`) until its expiry | never |
+| Where full screen's tool strip sits | this device's `localStorage` (`track_files_tools_pos`) | never |
+| Which pins are on in the Outline | the open viewer's memory only | never |
 
 - **A file's bytes never go into `track_db` or `localStorage`.** Not as base64, not as a
   data URL, not "just for small files". The ~5 MB quota and every sync upload depend on it,
@@ -150,15 +153,46 @@ order field. An unknown `kind` reads as a file. Ids are strings from `TrackStora
     text nodes inside a page's text layer; `lineRects` joins them into one box a line; one
     selection is ONE write, with one mark per page it covers. The words are not stored.
 19. **The finder writes nothing and searches only what the panel's list covers.**
-    `scopePages(rec, scope, total)` is the one definition of each list — all pages, the
-    bookmarks, the pages with marks, every pin's range, or one pin's — and the finder scans
-    exactly those pages. Text is compared through `searchNorm` (NFKD, lower case, runs of
+    `scopePages(rec, scope, total, ids)` is the one definition of each list — all pages, the
+    bookmarks, the pages with marks, every pin's range, or one pin's — cut down to the pins
+    turned on (`ids`) when any is, and the finder scans exactly those pages. Text is compared through `searchNorm` (NFKD, lower case, runs of
     whitespace as one space); `findRects` depends on it giving, one character at a time, what
     it gives for the whole text.
 20. **Ink on a note is positioned on a sheet of one fixed width** (`PAPER_W`, 720 CSS px,
     scaled to fit a narrower pane), so a line breaks where it broke when the ink was drawn.
     It does not follow the text: an edit above a stroke leaves the stroke where it was. That
     is a stated limit (README, NOTES), not a defect to patch by moving marks.
+21. **Which pins are on is viewer state, never stored** (2026-11-18). Not on the record, not in
+    `localStorage`: turning a pin on or off writes nothing, and a file opens with none on.
+    `shownPages(rec, ids, total)` is the one definition of the pages a PDF shows — the union of
+    the chosen pins' ranges, clipped to the PDF, each page once in ascending order, or **every
+    page when no stored pin is chosen** (an id naming no pin counts as not chosen, so a pin
+    deleted on the other device turns itself off). The viewer, the rail (`stepPage`), the pad,
+    every panel list and the finder all read that one list; `nearestPage` picks where the view
+    goes when the page being read leaves it. A browser case asserts the bytes do not change.
+22. **The page you are on survives every re-layout of a PDF.** Anything that changes the
+    pages' width, which pages are shown, or a page's own shape (`geom` in `PdfView`) re-reads
+    the page at the top of the pane BEFORE the new layout paints and puts it back after
+    (`useLayoutEffect`); an explicit jump overrides that once. **Scrolled to the very end, the
+    page held is the one the rail names there — the last — not the page at the top**, and the
+    view stays at the end while that page is still the last shown. The PDF scroller sets
+    `overflow-anchor: none` so the browser's own scroll anchoring never adds its correction to
+    this one (Chrome's anchoring had been hiding the missing restore). A note's Preview keeps
+    its place in the sheet the same way when its scale changes (`NotePaper`).
+23. **Full screen is the same viewer, laid over the window** (2026-11-18): a fixed overlay at
+    z-index 47 inside `#root` — above the phone tab bar (46) and the pages panel, **below** the
+    toast and dialogs (50), so Undo and every confirm stay reachable — plus the browser's own
+    Fullscreen API on `document.documentElement` where it is allowed (a refusal leaves the
+    overlay working). The tools move into `ToolStrip`; its place is `{x, y}` fractions 0–1 of
+    the free room in `track_files_tools_pos`, read in `try/catch`, clamped, and written only
+    when a drag ends. **Its grip draws nothing and writes nothing to `track_db`**: it captures
+    the pointer, sets `touch-action: none` and cancels its own `touchmove` natively. Escape
+    leaves full screen only when nothing else has it — not after another handler's
+    `preventDefault`, nor while a dialog, the pad or the list menu is open. Its listener is on
+    **`window`**, like Note to self's (added at page load, so heard first), so whatever floats
+    over the viewer closes on Escape before it. Leaving the viewer leaves the browser's full
+    screen too, **including one the browser grants late** — after `✕` or after the file
+    closed (`want` in `useFullView`).
 
 ## Source Dump text blocks
 

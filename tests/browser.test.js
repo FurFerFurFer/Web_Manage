@@ -19637,7 +19637,7 @@ test('browser suites', skipUnlessChrome, async t => {
       await page.evaluate(function () { location.hash = 'files'; return true; });
       await page.waitFor(HAS_SEL, { args: ['[data-files-view]'], message: 'FILES mounted' });
       const got = (await page.evaluate(LOADED)).map(n => n.split('/').pop()).sort();
-      assert.deepEqual(got, ['file-store.js?v=3', 'files-view.js?v=5'],
+      assert.deepEqual(got, ['file-store.js?v=3', 'files-view.js?v=6'],
         'exactly the two scripts, and no PDF.js, Markdown renderer or Google sign-in until one is needed');
       // FILES preloads Google's sign-in when Drive is set up, and the shipped
       // client id is real; open() blanks it, so nothing here may reach Google
@@ -19653,7 +19653,7 @@ test('browser suites', skipUnlessChrome, async t => {
     for (const p of PAGES.filter(p => p !== 'true-storage.html')) {
       const src = fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
       assert.doesNotMatch(src, /file-store\.js|files-view\.js/, p + ' never loads the FILES code');
-      if (p === 'sir-ks02.html') assert.match(src, /<script src="scripts\/files-core\.js\?v=4"><\/script>/, 'KS02 reads file names through files-core.js');
+      if (p === 'sir-ks02.html') assert.match(src, /<script src="scripts\/files-core\.js\?v=5"><\/script>/, 'KS02 reads file names through files-core.js');
       else assert.doesNotMatch(src, /files-core\.js/, p + ' never loads files-core.js');
     }
   });
@@ -20483,7 +20483,7 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
-  await t.test('FILES pins: pin page 2 as "Results", jump to it from the Outline, rename it; deleting asks, Cancel is byte-identical, the last pin deletes the key', async () => {
+  await t.test('FILES pins: pin page 2 as "Results", turn it on in the Outline (only its page shows, nothing is written), rename it; deleting asks, Cancel is byte-identical, the last pin deletes the key', async () => {
     const { page } = await openMarked();
     try {
       assert.equal(await page.evaluate(MARK_AT), 'Page 1 of 2');
@@ -20520,16 +20520,22 @@ test('browser suites', skipUnlessChrome, async t => {
 
       await page.evaluate(function () { document.querySelector('[data-files-viewer] [data-files-scroll]').scrollTop = 0; return true; });
       await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 1 of 2'; }, { message: 'back on page 1' });
+      const rawOn = await page.evaluate(FILES_RAW);
       await page.evaluate(CLICK_SEL, '[data-files-pin-jump="' + pin.id + '"]');
-      await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 of 2'; }, { message: 'the jump' });
+      await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 · 1 of 2 shown'; }, { message: 'on: only its page' });
       await sleep(200);
-      assert.equal(await page.evaluate(MARK_AT), 'Page 2 of 2', 'still page 2 once the scroll settles');
+      assert.equal(await page.evaluate(MARK_AT), 'Page 2 · 1 of 2 shown', 'still page 2 once the scroll settles');
+      assert.deepEqual(await page.evaluate(function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-files-pdf-page]'), function (e) { return Number(e.getAttribute('data-files-pdf-page')); });
+      }), [2], 'page 1 is not drawn at all');
+      assert.equal(await page.evaluate(PRESSED, '[data-files-pin-jump="' + pin.id + '"]'), 'true', 'the pin is on');
       const gap = await page.evaluate(function () {
         var sc = document.querySelector('[data-files-viewer] [data-files-scroll]');
         return document.querySelector('[data-files-pdf-page="2"]').getBoundingClientRect().top - sc.getBoundingClientRect().top;
       });
       assert.ok(gap >= 0 && gap <= 20, 'page 2 is at the top of the pane (' + gap + 'px)');
       assert.equal(await page.evaluate(HAS_SEL, '[data-files-pages="side"] [data-files-pin-list]'), true, 'beside the page, the list stays open');
+      assert.equal(await page.evaluate(FILES_RAW), rawOn, 'turning a pin on writes nothing');
 
       await page.evaluate(CLICK_SEL, '[data-files-pin-rename="' + pin.id + '"]');
       await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="pin-rename"]'], message: 'the rename dialog' });
@@ -20561,6 +20567,7 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.equal(await page.evaluate(HAS_SEL, '[data-files-pin-flag]'), false, 'the flag is gone');
       await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-empty]'], message: 'the Outline says there are no pins' });
       assert.equal(await page.evaluate(PAGES_COUNT), '0 pins');
+      await pdfAt(page, 'Page 2 of 2');   // the pin that was on is gone: every page shows, the view still on page 2
       assert.deepEqual(realErrors(page), []);
     } finally { page.rejectDialogs = false; await page.close(); }
   });
@@ -20638,7 +20645,7 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
-  await t.test('FILES marks (phone): the viewer\'s toolbar wraps rather than scrolling sideways; ▦ Pages opens full-screen, and closes on a jump and on Close', async () => {
+  await t.test('FILES marks (phone): the viewer\'s toolbar wraps rather than scrolling sideways; ▦ Pages opens full-screen; a pin tapped there glows and the panel stays; Close shows only its pages', async () => {
     const { page } = await openMarked({ viewport: PHONE,
       files: MARK_RECS({ pdf: { pins: [{ id: 'pn-1', page: 2, name: 'Results', createdAt: 5, updatedAt: 5 }] } }) });
     try {
@@ -20675,8 +20682,12 @@ test('browser suites', skipUnlessChrome, async t => {
         return !!hit && box.contains(hit);
       }), true, 'nothing covers the Find box');
       await page.evaluate(CLICK_SEL, '[data-files-pin-jump="pn-1"]');
-      await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 of 2'; }, { message: 'the jump' });
-      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pages]'), false, 'the panel closed on the jump');
+      await page.waitFor(function () { return document.querySelector('[data-files-pdf-at]').textContent === 'Page 2 · 1 of 2 shown'; }, { message: 'on: only its page' });
+      assert.equal(await page.evaluate(PRESSED, '[data-files-pin-jump="pn-1"]'), 'true', 'it glows');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pages="full"] [data-files-pin-list]'), true, 'the panel stays, so more pins can be tapped');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-pages]'); }, { message: 'Close' });
+      assert.equal(await page.evaluate(MARK_AT), 'Page 2 · 1 of 2 shown', 'its page, and only it');
       await page.evaluate(CLICK_SEL, '[data-files-pages-toggle]');
       await page.waitFor(HAS_SEL, { args: ['[data-files-pages="full"] [data-files-pin-list]'], message: 'reopened on the list it was left on' });
       await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
@@ -20822,7 +20833,7 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
-  await t.test('FILES pins: a pin covers a RANGE typed as page numbers; a range that cannot be is refused before any write; the Outline lists it and ▤ shows only its pages', async () => {
+  await t.test('FILES pins: a pin covers a RANGE typed as page numbers; a range that cannot be is refused before any write; the Outline lists it, and turned on it shows only its pages', async () => {
     const { page } = await openMarked({ bytes: FILES_PDF_TEXT });
     try {
       await pdfAt(page, 'Page 1 of 6');
@@ -20867,13 +20878,20 @@ test('browser suites', skipUnlessChrome, async t => {
       assert.equal(await page.evaluate(function () { return document.querySelectorAll('[data-files-pin-flag]').length; }), 1, 'one flag: on the page the range starts at');
 
       await pagesList(page, 'outline');
-      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-open="' + pin.id + '"]'], message: 'the Outline' });
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="' + pin.id + '"]'], message: 'the Outline' });
       assert.equal(await page.evaluate(TEXT_AT, '[data-files-pin-row="' + pin.id + '"] [data-files-pin-range]'), 'p. 2–4');
-      await page.evaluate(CLICK_SEL, '[data-files-pin-open="' + pin.id + '"]');
-      await pagesShow(page, [2, 3, 4], '3 pages', 'only the pin\'s pages');
-      assert.equal(await page.evaluate(TEXT_AT, '[data-files-scope-label]'), 'Outline › Chapter one');
-      await page.evaluate(CLICK_SEL, '[data-files-outline-back]');
-      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-delete="' + pin.id + '"]'], message: 'back to every pin' });
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-pin-open]'), false, '▤ is gone: the glow does its job');
+      await page.evaluate(CLICK_SEL, '[data-files-pin-jump="' + pin.id + '"]');
+      await pdfAt(page, 'Page 2 · 3 of 6 shown');
+      assert.deepEqual(await page.evaluate(function () {
+        return Array.prototype.map.call(document.querySelectorAll('[data-files-pdf-page]'), function (e) { return Number(e.getAttribute('data-files-pdf-page')); });
+      }), [2, 3, 4], 'the viewer draws only the pin\'s pages');
+      await pagesList(page, 'all');
+      await pagesShow(page, [2, 3, 4], '3 pages', 'All pages is the pin\'s pages while it is on');
+      await pagesList(page, 'outline');
+      await page.evaluate(CLICK_SEL, '[data-files-pin-jump="' + pin.id + '"]');
+      await pdfAt(page, 'Page 2 of 6');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-delete="' + pin.id + '"]'], message: 'off again: every page' });
 
       const raw2 = await page.evaluate(FILES_RAW);
       page.rejectDialogs = true;
@@ -20901,7 +20919,7 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { page.rejectDialogs = false; await page.close(); }
   });
 
-  await t.test('FILES find: the finder searches only the pages its list covers — all of them, the bookmarks, one pin\'s range — shows where on the page, and writes nothing', async () => {
+  await t.test('FILES find: the finder searches only the pages its list covers — all of them, the bookmarks, the pinned pages, only the pins turned on — shows where on the page, and writes nothing', async () => {
     const files = MARK_RECS({ pdf: { bookmarks: [6, 2], pins: [{ id: 'pn-1', page: 2, pageEnd: 4, name: 'Chapter one', createdAt: 5, updatedAt: 5 }] } });
     const { page } = await openMarked({ files, bytes: FILES_PDF_TEXT });
     try {
@@ -20937,19 +20955,27 @@ test('browser suites', skipUnlessChrome, async t => {
       await pagesShow(page, [2, 6], '2 results on 2 pages', 'only the bookmarked pages (2 and 6)');
       await pagesList(page, 'outline');
       await pagesShow(page, [2, 3], '3 results on 2 pages', 'only the pinned pages (2–4)');
-      // one pin's range: chosen with ▤ from the list, which shows while nothing is searched
+      // the pin turned on from the list, which shows while nothing is searched: now every list is its pages
       await page.evaluate(CLICK_SEL, '[data-files-find-clear]');
-      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-open="pn-1"]'], message: 'the pins again' });
-      await page.evaluate(CLICK_SEL, '[data-files-pin-open="pn-1"]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="pn-1"]'], message: 'the pins again' });
+      await page.evaluate(CLICK_SEL, '[data-files-pin-jump="pn-1"]');
+      await pdfAt(page, 'Page 2 · 3 of 6 shown');
+      await pagesList(page, 'all');
       await pagesShow(page, [2, 3, 4], '3 pages', 'the pin\'s pages');
       await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'unsafe');
       await pagesShow(page, [3], '2 results on 1 page', 'found inside the pin\'s range');
       await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'emergency');
       await page.waitFor(function () { var e = document.querySelector('[data-files-find-count]'); return e.textContent === 'No results' && e.getAttribute('data-done') === 'true'; },
         { message: '“emergency” is on page 6, outside the pin' });
-      assert.equal(await page.evaluate(TEXT_AT, '[data-files-pages-empty]'), 'Nothing in Outline › Chapter one matches.');
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-pages-empty]'), 'Nothing in All pages on the pins you chose matches.');
+      await pagesList(page, 'outline');
+      await page.evaluate(CLICK_SEL, '[data-files-find-clear]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="pn-1"]'], message: 'the pins, to turn it off' });
+      await page.evaluate(CLICK_SEL, '[data-files-pin-jump="pn-1"]');
+      await pdfAt(page, 'Page 2 of 6');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-find]', 'emergency');
       await pagesList(page, 'all');
-      await pagesShow(page, [6], '1 result on 1 page', 'the same word, in All pages');
+      await pagesShow(page, [6], '1 result on 1 page', 'the same word, in All pages, with no pin on');
       // a result is a way to the page; beside the page the panel stays
       await page.evaluate(CLICK_SEL, '[data-files-thumb-jump="6"]');
       await pdfAt(page, 'Page 6 of 6');
@@ -21142,7 +21168,540 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
-  const NOTE1 = '[data-files-note-page="1"] [data-files-marks="1"]';
+  /* The page you went to stays in view (2026-11-18: "when I chooses the page by
+     outline and click x - it came back to a random page"). Every page is drawn
+     the pane's width wide, so ✕ — which gives the pane the panel's room — made
+     every page taller under an unchanged scrollTop. Synthetic PDFs of `specs`,
+     [width, height, lines] a page. */
+  const FILES_PDF_OF = specs => {
+    const objs = ['<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [' + specs.map((_, i) => (4 + i * 2) + ' 0 R').join(' ') + '] /Count ' + specs.length + ' >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+    specs.forEach(([w, ht, lines], i) => {
+      const stream = 'BT /F1 14 Tf 24 ' + (ht - 50) + ' Td ' + lines.map(l => '(' + l + ') Tj 0 -22 Td').join(' ') + ' ET';
+      objs.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + w + ' ' + ht + '] /Resources << /Font << /F1 3 0 R >> >> /Contents ' + (5 + i * 2) + ' 0 R >>');
+      objs.push('<< /Length ' + stream.length + ' >>\nstream\n' + stream + '\nendstream');
+    });
+    let out = '%PDF-1.4\n';
+    const offs = [];
+    objs.forEach((o, i) => { offs.push(out.length); out += (i + 1) + ' 0 obj\n' + o + '\nendobj\n'; });
+    const xref = out.length;
+    out += 'xref\n0 ' + (objs.length + 1) + '\n0000000000 65535 f \n' +
+      offs.map(n => String(n).padStart(10, '0') + ' 00000 n \n').join('');
+    return out + 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+  };
+  const FILES_PDF_LONG = FILES_PDF_OF(Array.from({ length: 12 }, (_, i) => [300, 400, ['Page ' + (i + 1)]]));
+  // …and one whose page 9 lies on its side: until it is near the view it is
+  // laid out at page 1's shape, and then becomes much shorter
+  const FILES_PDF_MIXED = FILES_PDF_OF(Array.from({ length: 12 }, (_, i) => i === 8 ? [400, 300, ['Page 9']] : [300, 400, ['Page ' + (i + 1)]]));
+  // the page the rail names, and where page n's top is, below the pane's top
+  const RAIL_AT = function (n) {
+    var sc = document.querySelector('[data-files-viewer] [data-files-scroll]');
+    var pg = document.querySelector('[data-files-pdf-page="' + n + '"]'), r = document.querySelector('[data-files-rail-page]');
+    var b = pg ? pg.getBoundingClientRect() : null;
+    return { rail: r ? r.textContent : null, gap: b ? Math.round(b.top - sc.getBoundingClientRect().top) : null, w: b ? Math.round(b.width) : 0 };
+  };
+  // wait for page n to be drawn at another width, then for what that sets off to settle
+  const pageResized = async (page, n, w0, message) => {
+    await page.waitFor(function (k, w) {
+      var pg = document.querySelector('[data-files-pdf-page="' + k + '"]');
+      return !!pg && Math.abs(pg.getBoundingClientRect().width - w) > 20;
+    }, { args: [n, w0], message: message + ': the pages drawn at the new width' });
+    await sleep(600);
+  };
+  const stillOn = async (page, n, message) => {
+    const at = await page.evaluate(RAIL_AT, n);
+    assert.ok(at.rail === String(n) && at.gap !== null && at.gap >= 0 && at.gap <= 24,
+      message + ': page ' + n + ' is still the page at the top (' + JSON.stringify(at) + ')');
+    return at;
+  };
+
+  await t.test('FILES pages: a page chosen in ▦ Pages stays in view when ✕ closes the panel, when ▦ opens it again, and at another zoom; nothing is written', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_LONG });
+    try {
+      await pdfAt(page, 'Page 1 of 12');
+      const raw = await page.evaluate(FILES_RAW);
+      await pagesList(page, 'all');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="side"] [data-files-thumb-jump="10"]'], message: 'page 10\'s thumbnail' });
+      await page.evaluate(CLICK_SEL, '[data-files-thumb-jump="10"]');
+      await pdfAt(page, 'Page 10 of 12');
+      await sleep(600);
+      const at = await stillOn(page, 10, 'the jump');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-pages]'); }, { message: '✕ closes the panel' });
+      await pageResized(page, 10, at.w, '✕');
+      const wide = await stillOn(page, 10, '✕ closed the panel');
+      assert.ok(wide.w > at.w + 100, 'the pages did grow into the panel\'s room (' + at.w + ' → ' + wide.w + ')');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-toggle]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="side"]'], message: '▦ opens it again' });
+      await pageResized(page, 10, wide.w, '▦');
+      await stillOn(page, 10, '▦ opened the panel');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
+      await pageResized(page, 10, at.w, '✕ again');
+      await page.evaluate(CLICK_SEL, '[data-files-zoom-in]');
+      await pageResized(page, 10, wide.w, 'zoom');
+      await stillOn(page, 10, 'zoomed in');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'nothing is written');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  // Pages short enough that the end of the PDF shows more than the last page:
+  // there the rail names the LAST page while another page is at the top.
+  const FILES_PDF_WIDE = FILES_PDF_OF(Array.from({ length: 12 }, (_, i) => [400, 200, ['Page ' + (i + 1)]]));
+  const END_AT = function (n) {
+    var sc = document.querySelector('[data-files-viewer] [data-files-scroll]'), s = sc.getBoundingClientRect();
+    var b = document.querySelector('[data-files-pdf-page="' + n + '"]').getBoundingClientRect();
+    return { rail: document.querySelector('[data-files-rail-page]').textContent, end: sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2,
+      whole: b.top >= s.top - 1 && b.bottom <= s.bottom + 1, top: Math.round(b.top - s.top), w: Math.round(b.width) };
+  };
+  await t.test('FILES pages: the LAST page, chosen in ▦ Pages, is still the page you are on and whole in view after ✕ widens the pages and ▦ narrows them', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_WIDE });
+    try {
+      await pdfAt(page, 'Page 1 of 12');
+      const raw = await page.evaluate(FILES_RAW);
+      await pagesList(page, 'all');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="side"] [data-files-thumb-jump="12"]'], message: 'page 12\'s thumbnail' });
+      await page.evaluate(CLICK_SEL, '[data-files-thumb-jump="12"]');
+      await pdfAt(page, 'Page 12 of 12');
+      await sleep(600);
+      const at = await page.evaluate(END_AT, 12);
+      assert.ok(at.rail === '12' && at.end && at.whole, 'the jump: at the end, page 12 whole in view (' + JSON.stringify(at) + ')');
+      assert.ok(at.top > 50, 'what the case rests on: the page at the top of the pane is NOT page 12 (' + at.top + ')');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-pages]'); }, { message: '✕ closes the panel' });
+      await pageResized(page, 12, at.w, '✕');
+      const wide = await page.evaluate(END_AT, 12);
+      // THE CLAIM
+      assert.ok(wide.rail === '12' && wide.whole, '✕: still page 12, whole in view (' + JSON.stringify(wide) + ')');
+      assert.ok(wide.w > at.w + 100, 'the pages did grow (' + at.w + ' → ' + wide.w + ')');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-toggle]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pages="side"]'], message: '▦ opens it again' });
+      await pageResized(page, 12, wide.w, '▦');
+      const back = await page.evaluate(END_AT, 12);
+      assert.ok(back.rail === '12' && back.whole, '▦: still page 12, whole in view (' + JSON.stringify(back) + ')');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'nothing is written');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES pages: a page of another shape coming into view above the page you went to does not move you off it', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_MIXED });
+    try {
+      await pdfAt(page, 'Page 1 of 12');
+      await page.evaluate(CLICK_SEL, '[data-files-rail-page]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pad-input]'], message: 'the pad' });
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pad-input]', '10');
+      await page.waitFor(function () { var b = document.querySelector('[data-files-pad-go]'); return !!b && !b.disabled; }, { message: 'Go to page 10' });
+      await page.evaluate(CLICK_SEL, '[data-files-pad-go]');
+      // page 9, just above, is drawn — and only then learns it is on its side
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pdf-page="9"][data-rendered="true"]'], timeout: 30000, message: 'page 9 drawn' });
+      await page.waitFor(function () {
+        var a = document.querySelector('[data-files-pdf-page="9"]').getBoundingClientRect(), b = document.querySelector('[data-files-pdf-page="10"]').getBoundingClientRect();
+        return a.height < b.height * 0.7;
+      }, { message: 'page 9 is laid out on its side' });
+      await sleep(600);
+      await stillOn(page, 10, 'page 9 took its own shape');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  /* The Outline as a switchboard (2026-11-18: "I click on the block of the pin
+     the block will glow as on and unglow as off … when I choose zero i show all
+     but when I choose any pin to be on it only shows them"). */
+  const PDF_DRAWN = function () {
+    return Array.prototype.map.call(document.querySelectorAll('[data-files-pdf-page]'), function (e) { return Number(e.getAttribute('data-files-pdf-page')); });
+  };
+  const OUTLINE_PINS = () => [
+    { id: 'pn-a', page: 3, pageEnd: 4, name: 'Intro', createdAt: 5, updatedAt: 5 },
+    { id: 'pn-b', page: 8, pageEnd: 9, name: 'Method', createdAt: 6, updatedAt: 6 },
+    { id: 'pn-c', page: 11, name: 'Results', createdAt: 7, updatedAt: 7 }
+  ];
+  const pinTap = async (page, id, on) => {
+    await page.evaluate(CLICK_SEL, '[data-files-pin-jump="' + id + '"]');
+    await page.waitFor(function (k, o) {
+      var b = document.querySelector('[data-files-pin-jump="' + k + '"]'), row = document.querySelector('[data-files-pin-row="' + k + '"]');
+      return !!b && b.getAttribute('aria-pressed') === (o ? 'true' : 'false') && (row.getAttribute('data-on') === 'true') === o;
+    }, { args: [id, on], message: id + ' ' + (on ? 'on' : 'off') });
+  };
+
+  await t.test('FILES outline: a pin tapped on glows and only its pages are shown; two show both; the rail, the pad and the lists follow; with none on every page shows; nothing is written', async () => {
+    const files = MARK_RECS({ pdf: { pins: OUTLINE_PINS(), bookmarks: [2, 8] } });
+    const { page } = await openMarked({ files, bytes: FILES_PDF_LONG });
+    try {
+      await pdfAt(page, 'Page 1 of 12');
+      const raw = await page.evaluate(FILES_RAW);
+      await pagesList(page, 'outline');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="pn-a"]'], message: 'the Outline' });
+      assert.equal(await page.evaluate(PAGES_COUNT), '3 pins');
+      await pinTap(page, 'pn-a', true);
+      // THE CLAIM: only its pages, and the view on its first page
+      await pdfAt(page, 'Page 3 · 2 of 12 shown');
+      assert.deepEqual(await page.evaluate(PDF_DRAWN), [3, 4], 'only Intro\'s pages are drawn');
+      await sleep(300);
+      await stillOn(page, 3, 'turned on from page 1');
+      const glow = await page.evaluate(function () {
+        var on = getComputedStyle(document.querySelector('[data-files-pin-row="pn-a"]')), off = getComputedStyle(document.querySelector('[data-files-pin-row="pn-b"]'));
+        return { on: on.boxShadow, off: off.boxShadow, onBg: on.backgroundColor, offBg: off.backgroundColor };
+      });
+      assert.ok(glow.on !== 'none' && glow.off === 'none' && glow.onBg !== glow.offBg, 'the pin that is on glows; the others do not (' + JSON.stringify(glow) + ')');
+      assert.equal(await page.evaluate(PAGES_COUNT), '3 pins · 1 on, showing 2 pages');
+
+      await pinTap(page, 'pn-b', true);
+      await page.waitFor(function () { return JSON.stringify(Array.prototype.map.call(document.querySelectorAll('[data-files-pdf-page]'), function (e) { return e.getAttribute('data-files-pdf-page'); })) === '["3","4","8","9"]'; },
+        { message: 'both pins\' pages' });
+      await pdfAt(page, 'Page 3 · 4 of 12 shown');   // the page being read is still shown: the view stays
+      // the rail steps over what is not shown
+      assert.equal(await page.evaluate(PRESSED, '[data-files-rail-prev]'), null);
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-files-rail-prev]').disabled; }), true, 'nothing before page 3 is shown');
+      await page.evaluate(CLICK_SEL, '[data-files-rail-next]');
+      await pdfAt(page, 'Page 4 · 4 of 12 shown');
+      await page.evaluate(CLICK_SEL, '[data-files-rail-next]');
+      await pdfAt(page, 'Page 8 · 4 of 12 shown');
+      await page.evaluate(CLICK_SEL, '[data-files-rail-prev]');
+      await pdfAt(page, 'Page 4 · 4 of 12 shown');
+      // the pad goes only to a page that is shown
+      await page.evaluate(CLICK_SEL, '[data-files-rail-page]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pad-input]'], message: 'the pad' });
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pad-input]', '6');
+      await page.waitFor(function () { var b = document.querySelector('[data-files-pad-go]'); return !!b && b.disabled && b.textContent === 'Page 6 is not shown'; }, { message: 'page 6 refused' });
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pad-input]', '9');
+      await page.waitFor(function () { var b = document.querySelector('[data-files-pad-go]'); return !!b && !b.disabled; }, { message: 'Go to page 9' });
+      await page.evaluate(CLICK_SEL, '[data-files-pad-go]');
+      await pdfAt(page, 'Page 9 · 4 of 12 shown');
+      // the panel's lists cover only what is shown
+      await pagesList(page, 'all');
+      await pagesShow(page, [3, 4, 8, 9], '4 pages', 'All pages: the two pins\' pages');
+      await pagesList(page, 'bookmarks');
+      await pagesShow(page, [8], '1 page', 'Bookmarks: page 2 is not shown, page 8 is');
+
+      await pagesList(page, 'outline');
+      await pinTap(page, 'pn-a', false);
+      await page.waitFor(function () { return document.querySelectorAll('[data-files-pdf-page]').length === 2; }, { message: 'Intro off' });
+      await sleep(300);
+      await stillOn(page, 9, 'Intro turned off while reading Method');
+      await pinTap(page, 'pn-b', false);
+      await page.waitFor(function () { return document.querySelectorAll('[data-files-pdf-page]').length === 12; }, { message: 'none on: every page' });
+      await sleep(300);
+      await stillOn(page, 9, 'the last pin off');
+      await pdfAt(page, 'Page 9 of 12');
+      assert.equal(await page.evaluate(PAGES_COUNT), '3 pins');
+
+      // the user's own steps: a pin chosen in the Outline, then ✕
+      await pinTap(page, 'pn-c', true);
+      await pdfAt(page, 'Page 11 · 1 of 12 shown');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-pages]'); }, { message: '✕' });
+      await sleep(600);
+      await stillOn(page, 11, 'Results chosen, then ✕');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'choosing pins writes nothing');
+      assert.equal(page.dialogs.length, 0);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES outline: the pins chosen last while the file is open — closing it shows every page again; a chosen pin deleted on the other device is simply no longer on', async () => {
+    const files = MARK_RECS({ pdf: { pins: OUTLINE_PINS() } });
+    const { page } = await openMarked({ files, bytes: FILES_PDF_LONG });
+    try {
+      await pdfAt(page, 'Page 1 of 12');
+      await pagesList(page, 'outline');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pin-list] [data-files-pin-jump="pn-b"]'], message: 'the Outline' });
+      await pinTap(page, 'pn-b', true);
+      await pdfAt(page, 'Page 8 · 2 of 12 shown');
+      // the other device deletes Method: a storage event brings the record without it
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(function () {
+        var db = JSON.parse(localStorage.getItem('track_db'));
+        var s = db.slots.filter(function (x) { return x.id === db.activeSlotId; })[0];
+        s.files = s.files.map(function (r) { return r.id === 'm-pdf' ? Object.assign({}, r, { pins: r.pins.filter(function (x) { return x.id !== 'pn-b'; }) }) : r; });
+        var old = localStorage.getItem('track_db'), next = JSON.stringify(db);
+        localStorage.setItem('track_db', next);
+        window.dispatchEvent(new StorageEvent('storage', { key: 'track_db', oldValue: old, newValue: next, storageArea: localStorage }));
+        return true;
+      });
+      await page.waitFor(function () { return !document.querySelector('[data-files-pin-jump="pn-b"]'); }, { message: 'Method gone from the Outline' });
+      await page.waitFor(function () { return document.querySelectorAll('[data-files-pdf-page]').length === 12; }, { message: 'no pin on: every page' });
+      await sleep(300);
+      await stillOn(page, 8, 'the chosen pin went');
+      assert.equal(await page.evaluate(PAGES_COUNT), '2 pins');
+      assert.notEqual(await page.evaluate(FILES_RAW), raw);
+      // a fresh open of the file starts with none on
+      await pinTap(page, 'pn-c', true);
+      await pdfAt(page, 'Page 11 · 1 of 12 shown');
+      await page.evaluate(CLICK_SEL, '[data-files-back]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-tile="m-pdf"]'], message: 'back to the folder' });
+      await markOpen(page, 'm-pdf');
+      await pdfAt(page, 'Page 1 of 12');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  // A drag of the strip's grip, by 'mouse' or 'pen' (a CDP mouse event with pointerType pen).
+  const gripDrag = async (page, kind, to, steps = 10) => {
+    const b = await page.evaluate(MARK_BOX, '[data-files-strip-grip]');
+    assert.ok(b, 'the grip is on the page');
+    const a = { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    const send = (type, p, buttons) => page.session.send('Input.dispatchMouseEvent',
+      { type, x: p.x, y: p.y, button: 'left', buttons, clickCount: 1, pointerType: kind === 'pen' ? 'pen' : 'mouse' });
+    await send('mouseMoved', a, 0);
+    await send('mousePressed', a, 1);
+    for (let k = 1; k <= steps; k++) {
+      await send('mouseMoved', { x: a.x + (to.x - a.x) * k / steps, y: a.y + (to.y - a.y) * k / steps }, 1);
+      await sleep(16);
+    }
+    await send('mouseReleased', to, 0);
+    await sleep(100);
+  };
+  const STRIP_POS = function () { try { return JSON.parse(localStorage.getItem('track_files_tools_pos')); } catch (e) { return 'unreadable'; } };
+
+  await t.test('FILES full screen: ⤢ lays the PDF over the whole window, its tools in a strip on the side; the page, zoom and panel carry over both ways; nothing is written', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_LONG });
+    try {
+      await pdfAt(page, 'Page 1 of 12');
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-rail-page]');
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pad-input]', '5');
+      await page.waitFor(function () { var b = document.querySelector('[data-files-pad-go]'); return !!b && !b.disabled; }, { message: 'Go to page 5' });
+      await page.evaluate(CLICK_SEL, '[data-files-pad-go]');
+      await pdfAt(page, 'Page 5 of 12');
+      await page.evaluate(CLICK_SEL, '[data-files-zoom-in]');
+      await page.waitFor(function () { return document.querySelector('[data-files-zoom-level]').textContent === '125%'; }, { message: '125%' });
+      await sleep(400);
+      const before = await stillOn(page, 5, 'zoomed in');
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pdf][data-files-full="true"] [data-files-strip]'], message: 'full screen, with the strip' });
+      // THE CLAIM: the file covers the window, nothing of the page over it
+      const cover = await page.evaluate(function () {
+        var v = document.querySelector('[data-files-pdf]'), r = v.getBoundingClientRect();
+        var pts = [[innerWidth / 2, innerHeight / 2], [innerWidth - 60, innerHeight - 20], [innerWidth / 2, 30], [60, 20]];
+        return { box: [r.left, r.top, r.right, r.bottom].map(Math.round), vw: document.documentElement.clientWidth, vh: innerHeight,
+          // the floating notes button (#nw-btn) and Note to self (#nts-…) float over every page, this one included
+          inside: pts.map(function (p) { var e = document.elementFromPoint(p[0], p[1]); return !!e && (v.contains(e) || !!e.closest('#nw-btn, [id^="nts-"]')); }),
+          head: !!document.querySelector('[data-files-viewer] [data-files-rename]') && v.contains(document.querySelector('[data-files-viewer] [data-files-rename]')) };
+      });
+      assert.deepEqual(cover.box, [0, 0, cover.vw, cover.vh], 'the viewer covers the window (' + JSON.stringify(cover) + ')');
+      assert.deepEqual(cover.inside, [true, true, true, true], 'nothing of the page shows over it');
+      assert.equal(cover.head, false, 'the header with rename and delete stays under it');
+      await pageResized(page, 5, before.w, 'full screen');
+      await stillOn(page, 5, 'full screen');
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-zoom-level]'), '125%', 'the zoom carried over');
+      // the strip: on the left, half way down, every tool on screen
+      const strip = await page.evaluate(function () {
+        var s = document.querySelector('[data-files-strip]'), r = s.getBoundingClientRect();
+        var off = Array.prototype.filter.call(s.querySelectorAll('button'), function (b) { var q = b.getBoundingClientRect(); return q.top < 0 || q.bottom > innerHeight || q.left < 0 || q.right > innerWidth; });
+        var has = ['[data-files-zoom-in]', '[data-files-mark-draw]', '[data-files-mark-pen]', '[data-files-mark-erase]', '[data-files-bookmark-now]', '[data-files-pin-add]', '[data-files-pages-toggle]', '[data-files-full-exit]']
+          .filter(function (x) { return !s.querySelector(x); });
+        return { left: r.left, top: r.top, bottom: r.bottom, w: r.width, vh: innerHeight, off: off.length, missing: has, tall: r.height > r.width };
+      });
+      assert.deepEqual(strip.missing, [], 'the tools are all in the strip');
+      assert.ok(strip.left >= 4 && strip.left <= 16 && strip.tall, 'a column on the left edge (' + JSON.stringify(strip) + ')');
+      assert.ok(Math.abs((strip.top + strip.bottom) / 2 - strip.vh / 2) < 30, 'half way down');
+      assert.equal(strip.off, 0, 'every tool on screen');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-full-enter]'), false, 'no ⤢ while full screen');
+      // the pages panel opens inside it, and the page stays
+      const wide = await page.evaluate(RAIL_AT, 5);
+      await page.evaluate(CLICK_SEL, '[data-files-pages-toggle]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pdf][data-files-full="true"] [data-files-pages="side"]'], message: 'the side panel, inside' });
+      await pageResized(page, 5, wide.w, '▦ in full screen');
+      const narrow = await stillOn(page, 5, '▦ in full screen');
+      await page.evaluate(CLICK_SEL, '[data-files-pages-close]');
+      await pageResized(page, 5, narrow.w, '✕ in full screen');
+      await stillOn(page, 5, '✕ in full screen');
+      // leaving: the page, the zoom, and the toolbar back where it was
+      const inFull = await page.evaluate(RAIL_AT, 5);
+      await page.evaluate(CLICK_SEL, '[data-files-full-exit]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-strip]') && !document.querySelector('[data-files-full="true"]'); }, { message: '✕ leaves full screen' });
+      await pageResized(page, 5, inFull.w, 'left full screen');
+      await stillOn(page, 5, 'left full screen');
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-zoom-level]'), '125%');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-tools] [data-files-full-enter]'), true, 'the toolbar row is back');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'full screen writes nothing');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES full screen: the grip drags the strip — by mouse or Pencil, drawing nothing and writing no track_db — and it is there next time; Escape closes the pad first, then full screen; the eraser\'s Undo shows over it', async () => {
+    const files = MARK_RECS({ pdf: { highlights: MARK_HLS() } });
+    const { page } = await openMarked({ files });
+    try {
+      await page.waitFor(HAS_SEL, { args: [PAGE1 + ' [data-files-mark="hl-a"]'], message: 'the stored strokes drawn' });
+      const raw = await page.evaluate(FILES_RAW);
+      assert.equal(await page.evaluate(STRIP_POS), null, 'no place kept yet');
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-strip]'], message: 'the strip' });
+      await sleep(300);
+      const vw = await page.evaluate(function () { return innerWidth; });
+      // THE CLAIM: the grip moves it, and nothing else happens
+      await gripDrag(page, 'mouse', { x: vw - 120, y: 140 });
+      const moved = await page.evaluate(MARK_BOX, '[data-files-strip]');
+      assert.ok(moved.left > vw / 2 && moved.top < 200, 'the strip went where it was dragged (' + JSON.stringify(moved) + ')');
+      const pos = await page.evaluate(STRIP_POS);
+      assert.ok(pos && pos.x > 0.5 && pos.y < 0.45, 'its place is kept on this device (' + JSON.stringify(pos) + ')');
+      await gripDrag(page, 'pen', { x: vw - 60, y: 100 });
+      await gripDrag(page, 'mouse', { x: vw + 400, y: -300 });
+      const clamped = await page.evaluate(MARK_BOX, '[data-files-strip]');
+      assert.ok(clamped.left + clamped.width <= clamped.vw && clamped.top >= 0, 'dragged past the corner, it stays inside the window (' + JSON.stringify(clamped) + ')');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'dragging the strip writes nothing to track_db, and draws nothing');
+      await page.evaluate(CLICK_SEL, '[data-files-full-exit]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-strip]'); }, { message: 'left' });
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-strip]'], message: 'full screen again' });
+      await sleep(200);
+      const again = await page.evaluate(MARK_BOX, '[data-files-strip]');
+      assert.ok(Math.abs(again.left - clamped.left) < 3 && Math.abs(again.top - clamped.top) < 3, 'the strip is where it was left (' + JSON.stringify([again, clamped]) + ')');
+
+      // Escape: the open pad has it first
+      await page.evaluate(CLICK_SEL, '[data-files-rail-page]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-pad-input]'], message: 'the pad' });
+      await page.evaluate(function () { document.querySelector('[data-files-pad-input]').focus(); return true; });
+      await pressKey(page, 'Escape', 27);
+      await page.waitFor(function () { return !document.querySelector('[data-files-pad]'); }, { message: 'Escape closed the pad' });
+      await sleep(150);
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-strip]'), true, '…and only the pad');
+
+      // …and Note to self, open over it, has it before full screen too
+      await page.evaluate(function () { document.getElementById('nts-toggle').click(); return true; });
+      await page.waitFor(function () { return document.getElementById('nts-toggle').getAttribute('aria-expanded') === 'true'; }, { message: 'Note to self open' });
+      await pressKey(page, 'Escape', 27);
+      await page.waitFor(function () { return document.getElementById('nts-toggle').getAttribute('aria-expanded') === 'false'; }, { message: 'Escape closed Note to self' });
+      await sleep(150);
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-full="true"] [data-files-strip]'), true, '…and only Note to self');
+
+      // the eraser's Undo is not hidden under full screen
+      await markMode(page, 'erase');
+      await markStroke(page, 'mouse', PAGE1, [0.4, 0.15], [0.4, 0.25]);
+      await dirLanded(page, raw, 'the erase saved');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-toast-action]'], message: 'Undo offered' });
+      assert.equal(await page.evaluate(function () {
+        var b = document.querySelector('[data-files-toast-action]'), r = b.getBoundingClientRect();
+        var e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !!e && b.contains(e);
+      }), true, 'Undo is on top, where a finger can reach it');
+      const raw1 = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-toast-action]');
+      await dirLanded(page, raw1, 'Undo saved');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'Undo put it back, byte-identical');
+      await markMode(page, 'erase', false);
+
+      await pressKey(page, 'Escape', 27);
+      await page.waitFor(function () { return !document.querySelector('[data-files-strip]') && !document.querySelector('[data-files-full="true"]'); }, { message: 'Escape left full screen' });
+      assert.equal(page.dialogs.length, 0);
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES full screen: an image and a note\'s Preview go full screen too, tools in the strip; on an iPad the note keeps its place in the sheet as it scales up and back', async () => {
+    // long enough that the place scrolled to is nowhere near either end
+    const long = '# Long note\n\n' + Array.from({ length: 200 }, (_, i) => 'Paragraph ' + (i + 1) + ' of the note, long enough to wrap across the sheet.').join('\n\n');
+    const files = MARK_RECS().map(r => r.id === 'm-note' ? Object.assign({}, r, { text: long }) : r);
+    const { page } = await openMarked({ files, view: 'm-png', viewport: FILES_IPAD });
+    try {
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-full="true"] [data-files-strip] [data-files-zoom]'], message: 'the image full screen, its zoom in the strip' });
+      assert.deepEqual(await page.evaluate(function () {
+        var s = document.querySelector('[data-files-strip]');
+        return ['[data-files-mark-draw]', '[data-files-mark-pen]', '[data-files-mark-erase]', '[data-files-full-exit]'].filter(function (x) { return !s.querySelector(x); });
+      }), [], 'the image\'s tools are in the strip');
+      const img = await page.evaluate(MARK_BOX, '[data-files-full="true"]');
+      assert.deepEqual([img.left, img.top, Math.round(img.width), Math.round(img.height)], [0, 0, img.vw, img.vh], 'the image covers the window');
+      await page.evaluate(CLICK_SEL, '[data-files-full-exit]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-strip]'); }, { message: 'left' });
+
+      await page.evaluate(CLICK_SEL, '[data-files-back]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-tile="m-note"]'], message: 'the folder' });
+      await filesOpen(page, 'm-note', '[data-files-viewer="m-note"] [data-files-paper]');
+      await page.waitFor(function () { var p = document.querySelector('[data-files-preview="html"]'); return !!p && p.textContent.indexOf('Paragraph 200') >= 0; }, { message: 'the Preview drawn' });
+      const at = () => page.evaluate(function () {
+        var sc = document.querySelector('[data-files-viewer] [data-files-scroll]'), paper = sc.querySelector('[data-files-paper]');
+        var scale = paper.getBoundingClientRect().width / 720;
+        return { scale: Math.round(scale * 1000) / 1000, sheetY: Math.round(sc.scrollTop / scale) };
+      });
+      await page.evaluate(function () { var sc = document.querySelector('[data-files-viewer] [data-files-scroll]'); sc.scrollTop = 900; return true; });
+      await sleep(200);
+      const a = await at();
+      assert.ok(a.scale < 0.95, 'beside the tree the sheet is scaled down (' + a.scale + ')');
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-stage][data-files-full="true"] [data-files-strip] [data-files-mark-draw]'], message: 'the Preview full screen' });
+      await sleep(500);
+      const b = await at();
+      assert.ok(b.scale > a.scale + 0.05, 'full screen, the sheet is bigger (' + a.scale + ' → ' + b.scale + ')');
+      assert.ok(Math.abs(b.sheetY - a.sheetY) <= 4, 'the same place in the note at the top (' + JSON.stringify([a, b]) + ')');
+      await page.evaluate(CLICK_SEL, '[data-files-full-exit]');
+      await page.waitFor(function () { return !document.querySelector('[data-files-strip]'); }, { message: 'left' });
+      await sleep(500);
+      const c = await at();
+      assert.ok(Math.abs(c.scale - a.scale) < 0.01 && Math.abs(c.sheetY - a.sheetY) <= 4, 'and back (' + JSON.stringify([a, c]) + ')');
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'full screen writes nothing');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  // The browser's own full screen, stood in for so the case decides WHEN it is
+  // granted: the request answers only when `__fs.grant()` is called.
+  const FS_STANDIN = function () {
+    var el = null;
+    window.__fs = { asked: 0, left: 0, grant: null };
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: function () { return el; } });
+    document.documentElement.requestFullscreen = function () {
+      window.__fs.asked++;
+      return new Promise(function (ok) {
+        window.__fs.grant = function () { el = document.documentElement; document.dispatchEvent(new Event('fullscreenchange')); ok(); return true; };
+      });
+    };
+    document.exitFullscreen = function () { window.__fs.left++; el = null; document.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
+    return true;
+  };
+  const FS_NOW = function () {
+    return { asked: window.__fs.asked, left: window.__fs.left, browserFull: !!document.fullscreenElement, viewerFull: !!document.querySelector('[data-files-strip]') };
+  };
+
+  await t.test('FILES full screen: the browser\'s own full screen comes and goes with the viewer\'s — even when the browser grants it only after ✕, or after the file closed', async () => {
+    const { page } = await openMarked({ bytes: FILES_PDF_LONG });
+    try {
+      await pdfAt(page, 'Page 1 of 12');
+      await page.evaluate(FS_STANDIN);
+      const grant = () => page.evaluate(function () { return window.__fs.grant(); });
+      const stripGone = () => page.waitFor(function () { return !document.querySelector('[data-files-strip]'); }, { message: 'the viewer left full screen' });
+      // granted in time; ✕ leaves both
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-strip]'], message: 'full screen' });
+      await grant();
+      await sleep(100);
+      assert.deepEqual(await page.evaluate(FS_NOW), { asked: 1, left: 0, browserFull: true, viewerFull: true });
+      await page.evaluate(CLICK_SEL, '[data-files-full-exit]');
+      await stripGone();
+      assert.deepEqual(await page.evaluate(FS_NOW), { asked: 1, left: 1, browserFull: false, viewerFull: false }, '✕ left the browser\'s too');
+      // the browser leaving its own (its Escape, a swipe) takes the viewer's with it
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-strip]'], message: 'full screen again' });
+      await grant();
+      await sleep(100);
+      await page.evaluate(function () { document.exitFullscreen(); return true; });
+      await stripGone();
+      // THE CLAIM: granted only after ✕ — left again at once
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-strip]'], message: 'full screen, a third time' });
+      await page.evaluate(CLICK_SEL, '[data-files-full-exit]');
+      await stripGone();
+      await grant();
+      await sleep(150);
+      const late = await page.evaluate(FS_NOW);
+      assert.equal(late.browserFull, false, 'a full screen granted after ✕ is left again at once (' + JSON.stringify(late) + ')');
+      // …and one granted after the file closed (the back link stands in for anything that closes the viewer)
+      await page.evaluate(CLICK_SEL, '[data-files-full-enter]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-strip]'], message: 'full screen, a fourth time' });
+      await page.evaluate(CLICK_SEL, '[data-files-back]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-tile="m-pdf"]'], message: 'the file closed' });
+      await grant();
+      await sleep(150);
+      assert.equal((await page.evaluate(FS_NOW)).browserFull, false, 'a full screen granted after the file closed is left again at once');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  const NOTE1 ='[data-files-note-page="1"] [data-files-marks="1"]';
   const NOTE_TEXT = '# Lab notes\n\nA first paragraph.\n\n- one\n- two\n';
   const noteRecs = () => MARK_RECS().map(r => r.id === 'm-note' ? Object.assign({}, r, { text: NOTE_TEXT, laterKey: 'kept' }) : r);
 
