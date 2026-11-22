@@ -1600,9 +1600,14 @@ supporting actions") and **not** changed there:
 Found while making timetable classes editable on the Schedule (README "A pasted timetable") and
 **not** changed there:
 
-- **The block notes panel now exists four times** — goal task, supporting action, MM entry and
-  class — each ~70 lines differing in colour and writer. A shared component would remove three of
-  them, but it touches three surfaces with cases of their own, so it is its own change.
+- **The block notes panel now exists five times** — goal task, supporting action, MM entry, class,
+  and (since 2026-11-22) a day note's or deadline's block — each ~70 lines differing in colour and
+  writer. A shared component would remove four of them, but it touches five block kinds with cases
+  of their own, so it is its own change.
+- **Week view still has no `✎` on any block** (2026-11-22, "enable note feature for all blocks"
+  was read as every block KIND, in day view where all the others have it). A 140px week column
+  already holds `ⓘ`, `✂` and `✕`; a notes panel there would be column-wide. Offer it if the user
+  says they meant week view.
 - **Decided 2026-10-16 from the user's answers, not forgotten:** a weekly class is one class, so a
   drag or an edit changes **every week**, and its notes show on every week (a routine task's
   rule). The user said weekly edits did not matter — their timetables are dated lectures, where one
@@ -1619,9 +1624,6 @@ Found while making ★ Forced add blocks (README "Schedule blocks for day notes 
 - **The Timetable tab keeps `remove from schedule` and `＋ add back`.** The user's complaint
   (2026-10-21) named the notes-and-deadlines controls, and the class rules were set by the user on
   2026-10-15 (✕ removes one day; the tab puts it back). Ask before changing them.
-- **A note or deadline block has no `✎` notes panel**, though a goal task block has one in day view.
-  The ask was "able to become a normal task block", and a fifth copy of the notes panel is the
-  duplication listed under "Editable timetable classes" below. Offer it only if asked.
 - **Removing a block keeps the caution day its pick added.** Deliberate: a day the user picked —
   by a pick — is not ours to drop. It is un-picked in the deadline's popup like any other.
 - **An automatic block someone had moved or resized is gone from the grid**, with its `blockDate`,

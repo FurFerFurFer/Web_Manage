@@ -634,7 +634,27 @@
       return e;
     }
 
-    // A class's ✎ notes — the shape a task's notes have. The reader is total;
+    // ★ Forced's ＋ Add a block: a day note made AND put on the schedule in
+    // one action — dated on the draft's day, timed at its start, with the one
+    // part a ★ Forced pick would add. The draft is the timetable add's, and so
+    // is its refusal (refDraftError). The part carries only what it cannot
+    // inherit — its length, when that is not DEFAULT_BLOCK_MINS; its day and
+    // start are the note's own. No docPageId (authored in the Schedule), no
+    // detail when blank, never a '' time.
+    function noteNewBlock(draft, id, partId, createdAt) {
+      const s = minsOfTime(draft.start), en = minsOfTime(draft.end);
+      const n = { id, date: draft.date, title: String(draft.title).trim(), time: draft.start, createdAt };
+      const detail = String(draft.detail || '').trim();
+      if (detail) n.detail = detail;
+      const part = { id: partId, createdAt, done: false };
+      if (en - s !== DEFAULT_BLOCK_MINS) part.blockDuration = en - s;
+      n.parts = [part];
+      return n;
+    }
+
+    // A block's ✎ notes — the shape a task's notes have. Written ON the record
+    // the block is: a timetable class, or one PART of a day note or deadline
+    // (withPartNotes below), so each block keeps its own. The reader is total;
     // the writers keep every stored item, readable or not, and deleting the
     // last note DELETES the key.
     function refNotes(e) {
@@ -650,6 +670,14 @@
       const { notes, ...rest } = e;
       return left.length ? { ...rest, notes: left } : rest;
     }
+    // A note's or deadline's block is one PART, and its notes live on that
+    // part — one block, one record, as a class's do. `fn` is one of the three
+    // writers above. It maps the STORED list, not itemParts(), so a malformed
+    // entry beside the part is kept as it was, and a part that is gone
+    // matches nothing.
+    const withPartNotes = (item, partId, fn) => (item && Array.isArray(item.parts))
+      ? { ...item, parts: item.parts.map(p => (p && typeof p === 'object' && p.id === partId) ? fn(p) : p) }
+      : item;
 
     // ── chosen caution days ─────────────────────────────────────────────────
     // A deadline warns on the days the user CHOSE — `cautionDates`, a plain
@@ -5523,6 +5551,10 @@
       // The row whose ✂ name box is open ('<kind>:<id>'), and what is typed in it.
       const [dlnSplit, setDlnSplit] = useState(null);
       const [dlnSubDraft, setDlnSubDraft] = useState('');
+      // ＋ Add a block on the All and Notes tabs: a new day note, on the
+      // schedule at once. The draft is the timetable add's shape.
+      const [dlnAddOpen, setDlnAddOpen] = useState(false);
+      const [dlnAddDraft, setDlnAddDraft] = useState({ title: '', detail: '', date: '', start: '09:00', end: '10:00' });
       // Which opened-day the flat list has already been scrolled to, so the
       // scroll happens once per opening and never fights the user afterwards.
       const dlnScrollRef = useRef(null);
@@ -6171,6 +6203,7 @@
         if (kind === 'forced') {
           if (next) { setDlnTab('all'); dlnScrollRef.current = null; }
           setDlnSplit(null); setDlnSubDraft('');
+          setDlnAddOpen(false);
           // The Timetable tab opens folded the LIN way — groups open, cards
           // shut — with its add form closed and seeded to the day it adds to.
           setRefAddOpen(false); setRefEdit(null); setRefFocus(null);
@@ -7571,6 +7604,25 @@
           ...item,
           parts: itemParts(item).map(p => p.id === partId ? { ...p, ...patch } : p)
         }));
+      }
+      // ✎ on a note's or deadline's block: notes of THAT block, on its part —
+      // never on the item, and never a new day note. Through patchItem, so
+      // they reach storage on the calendarNotes / deadlines autosave. The
+      // delete's prompt is at its one call site, before the write.
+      const addPartNote    = (kind, id, partId, note)           => patchItem(kind, id, x => withPartNotes(x, partId, p => refWithNote(p, note)));
+      const editPartNote   = (kind, id, partId, noteId, fields) => patchItem(kind, id, x => withPartNotes(x, partId, p => refWithNoteEdit(p, noteId, fields)));
+      const removePartNote = (kind, id, partId, noteId)         => patchItem(kind, id, x => withPartNotes(x, partId, p => refWithoutNote(p, noteId)));
+      // ★ Forced's ＋ Add a block: the note and its block in one write. The
+      // ids are minted out here, never inside an updater. It closes the panel
+      // so the new block is seen, and a block filed on another day moves the
+      // Schedule there — it is never written out of sight.
+      function addNoteBlock(openedOn) {
+        if (refDraftError(dlnAddDraft, false)) return;
+        const n = noteNewBlock(dlnAddDraft, uid(), uid(), Date.now());
+        setCalendarNotes(prev => [...(prev || []), n]);
+        setDlnAddOpen(false);
+        setDlnPickerDay(null); setSearch('');
+        if (n.date !== openedOn) focusScheduleDay(n.date);
       }
 
       return (
@@ -9235,12 +9287,23 @@
                           openDlPopup(b.item.id);
                         }
                       };
+                      // ✎ (day view): notes of THIS block, kept on its part —
+                      // the notes every other block has. The UI state is keyed
+                      // by the block's composite id, as a class's is.
+                      const notes = refNotes(b.part);
+                      const commentOpen = timelineMode === 'day' && openComments.has(b.id);
+                      const closeNotes = () => {
+                        setOpenComments(prev => { const n = new Set(prev); n.delete(b.id); return n; });
+                        setTimelineEditingNoteIds(prev => ({ ...prev, [b.id]: null }));
+                        setNoteDrafts(prev => ({ ...prev, [b.id]: { title: '', detail: '' } }));
+                      };
                       // `data-block-day` is the COLUMN the block is drawn in. A
                       // block's day can differ from its item's, and every column
                       // is in the DOM at once in week view, so the id alone
                       // cannot tell a moved block from an unmoved one.
                       return (
-                        <div key={b.id}
+                        <React.Fragment key={b.id}>
+                        <div
                           style={{
                             top: top + 'px', height: height + 'px', left: '3px', right: '3px',
                             position: 'absolute', zIndex: isSelected ? 50 : isPickedUp ? 100 : getBlockZIndex(b.id),
@@ -9267,7 +9330,7 @@
                               onMouseDown={e => startResize(e, b.item, 'top', b.kind, b.span.time, ds, b.span.duration, b.part.id)}
                               onTouchStart={e => startResize(e, b.item, 'top', b.kind, b.span.time, ds, b.span.duration, b.part.id)} />
                           )}
-                          <div className="flex items-start gap-1 h-full">
+                          <div className={`flex items-start gap-1 h-full ${timelineMode === 'day' ? 'pr-12' : ''}`}>
                             {/* The block's OWN tick — this session done — never
                                 the deadline's, which stays in its popup and
                                 hides its `!` days. An original with sub-tasks
@@ -9293,6 +9356,29 @@
                               )}
                             </div>
                           </div>
+                          {timelineMode === 'day' && (
+                            <button data-block-notes-btn={b.id}
+                              className={`absolute top-0.5 right-8 text-base leading-none p-0.5 rounded transition-colors ${notes.length > 0 ? 'text-gray-200' : 'text-gray-500 hover:text-gray-200'}`}
+                              onClick={e => { e.stopPropagation(); setOpenComments(prev => { const n = new Set(prev); n.has(b.id) ? n.delete(b.id) : n.add(b.id); return n; }); setViewingNote(null); }}
+                              onMouseDown={e => e.stopPropagation()}
+                              title="add note"
+                            >✎</button>
+                          )}
+                          {timelineMode === 'day' && notes.length > 0 && (
+                            <div data-block-control className="absolute top-5 bottom-1 right-1.5 flex flex-col flex-wrap-reverse items-end gap-0.5 overflow-hidden"
+                              style={{ flexFlow: 'column wrap' }}
+                              onMouseDown={e => e.stopPropagation()}>
+                              {notes.map(nt => (
+                                <div key={nt.id} data-block-note-chip={nt.id}
+                                  className="bg-gray-800/90 rounded px-1.5 py-0.5 cursor-pointer transition-colors max-w-full"
+                                  style={{ border: `1px solid ${col}40` }}
+                                  onClick={e => { e.stopPropagation(); setViewingNote(prev => prev?.noteId === nt.id ? null : { taskId: b.id, noteId: nt.id }); setOpenComments(prev => { const n = new Set(prev); n.delete(b.id); return n; }); }}
+                                >
+                                  <p className="text-[10px] font-semibold whitespace-nowrap leading-tight" style={{ color: col }}>📌 {nt.title}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           <button data-block-open={b.id}
                             className="absolute top-0.5 right-4 text-[11px] leading-none p-0.5 rounded text-gray-500 hover:text-white transition-colors"
                             onClick={openItem}
@@ -9319,6 +9405,107 @@
                               onTouchStart={e => startResize(e, b.item, 'bottom', b.kind, b.span.time, ds, b.span.duration, b.part.id)} />
                           )}
                         </div>
+                        {/* The notes panel — the task block's — written to THIS
+                            block's part through addPartNote / editPartNote /
+                            removePartNote. */}
+                        {commentOpen && (
+                          <div data-block-notes={b.id}
+                            style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: col + '99' }}
+                            className="bg-gray-900 border rounded-b shadow-xl"
+                            onMouseDown={e => e.stopPropagation()}
+                            onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+                              <span className="text-[9px] uppercase tracking-widest font-semibold" style={{ color: col }}>Notes</span>
+                              <button className="text-gray-500 hover:text-white text-xs leading-none"
+                                onClick={e => { e.stopPropagation(); closeNotes(); }}
+                                onMouseDown={e => e.stopPropagation()}>×</button>
+                            </div>
+                            {notes.length > 0 && (
+                              <div className="px-2 pb-1 flex flex-col gap-1 max-h-36 overflow-y-auto">
+                                {notes.map(nt => (
+                                  <div key={nt.id} data-block-note={nt.id}
+                                    className="bg-gray-800/70 rounded px-2 py-1 relative group/note cursor-pointer"
+                                    style={{ border: `1px solid ${timelineEditingNoteIds[b.id] === nt.id ? col : col + '30'}` }}
+                                    onDoubleClick={e => { e.stopPropagation(); setNoteDrafts(prev => ({ ...prev, [b.id]: { title: nt.title || '', detail: nt.detail || '' } })); setTimelineEditingNoteIds(prev => ({ ...prev, [b.id]: nt.id })); }}>
+                                    <p className="text-[11px] font-semibold leading-tight" style={{ color: col }}>{nt.title}</p>
+                                    {nt.detail && <p className="text-[10px] text-gray-400 leading-tight mt-0.5 whitespace-pre-wrap">{nt.detail}</p>}
+                                    <button data-block-note-del={nt.id}
+                                      className="absolute top-0.5 right-0.5 text-sm text-gray-500 hover:text-red-400 leading-none p-1"
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        if (!window.confirm('Delete this note?')) return;
+                                        removePartNote(b.kind, b.item.id, b.part.id, nt.id);
+                                        if (timelineEditingNoteIds[b.id] === nt.id) {
+                                          setTimelineEditingNoteIds(prev => ({ ...prev, [b.id]: null }));
+                                          setNoteDrafts(prev => ({ ...prev, [b.id]: { title: '', detail: '' } }));
+                                        }
+                                      }}
+                                      onMouseDown={e => e.stopPropagation()}
+                                    >×</button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div className="border-t border-gray-700/50 mx-2 mt-0.5" />
+                            <input data-block-note-title={b.id}
+                              value={(noteDrafts[b.id] || {}).title || ''}
+                              onChange={e => setNoteDrafts(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), title: e.target.value } }))}
+                              placeholder="Title..."
+                              className="w-full bg-transparent text-sm font-semibold text-white px-2 pt-1.5 pb-0.5 outline-none placeholder-gray-600"
+                              onMouseDown={e => e.stopPropagation()}
+                            />
+                            <div className="border-t border-gray-700/50 mx-2" />
+                            <textarea data-block-note-detail={b.id}
+                              value={(noteDrafts[b.id] || {}).detail || ''}
+                              onChange={e => setNoteDrafts(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), detail: e.target.value } }))}
+                              placeholder="Details..."
+                              className="w-full bg-transparent text-[11px] text-gray-300 px-2 py-1.5 resize-none outline-none placeholder-gray-600"
+                              rows={3}
+                              onMouseDown={e => e.stopPropagation()}
+                            />
+                            <div className="flex justify-end px-2 pb-2">
+                              <button data-block-note-save={b.id}
+                                className="text-[11px] text-white rounded px-3 py-0.5 font-semibold transition-colors disabled:opacity-40"
+                                style={{ backgroundColor: isNote ? '#a21caf' : '#b91c1c' }}
+                                disabled={!((noteDrafts[b.id] || {}).title || '').trim()}
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  const draft = noteDrafts[b.id] || {};
+                                  if (!draft.title?.trim()) return;
+                                  const editId = timelineEditingNoteIds[b.id];
+                                  if (editId) {
+                                    editPartNote(b.kind, b.item.id, b.part.id, editId, { title: draft.title.trim(), detail: (draft.detail || '').trim() });
+                                    setTimelineEditingNoteIds(prev => ({ ...prev, [b.id]: null }));
+                                  } else {
+                                    addPartNote(b.kind, b.item.id, b.part.id, { id: uid(), title: draft.title.trim(), detail: (draft.detail || '').trim(), createdAt: Date.now() });
+                                  }
+                                  setNoteDrafts(prev => ({ ...prev, [b.id]: { title: '', detail: '' } }));
+                                }}
+                                onMouseDown={e => e.stopPropagation()}
+                              >{timelineEditingNoteIds[b.id] ? 'Save' : 'Done'}</button>
+                            </div>
+                          </div>
+                        )}
+                        {viewingNote?.taskId === b.id && !commentOpen && (() => {
+                          const nt = notes.find(n => n.id === viewingNote.noteId);
+                          if (!nt) return null;
+                          return (
+                            <div data-block-note-view={nt.id}
+                              style={{ top: (top + height) + 'px', left: '3px', right: '3px', position: 'absolute', zIndex: 30, borderColor: col + '99' }}
+                              className="bg-gray-900 border rounded-b shadow-xl"
+                              onMouseDown={e => e.stopPropagation()}
+                              onClick={e => e.stopPropagation()}>
+                              <div className="flex items-center justify-between px-2 pt-1.5 pb-1">
+                                <span className="text-[12px] font-semibold leading-tight" style={{ color: col }}>{nt.title}</span>
+                                <button className="text-gray-500 hover:text-white text-xs leading-none ml-2"
+                                  onClick={e => { e.stopPropagation(); setViewingNote(null); }}
+                                  onMouseDown={e => e.stopPropagation()}>×</button>
+                              </div>
+                              {nt.detail && <p className="text-[11px] text-gray-400 px-2 pb-2 leading-snug whitespace-pre-wrap">{nt.detail}</p>}
+                            </div>
+                          );
+                        })()}
+                        </React.Fragment>
                       );
                     })}
 
@@ -9573,7 +9760,15 @@
               setDlnPickerDay(null); setSearch('');
               setRefAddOpen(false); setRefEdit(null); setRefFocus(null);
               setDlnSplit(null); setDlnSubDraft('');
+              setDlnAddOpen(false);
             };
+            // ＋ Add a block — the All and Notes tabs only: it makes a day note,
+            // which the Deadlines tab would not list, and the Timetable tab has
+            // its own for a class.
+            const showAdd = dlnTab === 'all' || dlnTab === 'notes';
+            const addErr = refDraftError(dlnAddDraft, false);
+            const setAdd = (k, v) => setDlnAddDraft(d => ({ ...d, [k]: v }));
+            const addInputCls = 'bg-gray-800 border border-gray-700 rounded px-2 py-1 text-[11px] text-white outline-none placeholder-gray-600 focus:border-fuchsia-600';
             // T12:00:00 keeps the parse on the local calendar day.
             const dayLabel = ds => new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
             return (
@@ -9598,6 +9793,48 @@
                       placeholder="filter…"
                       className="flex-1 min-w-[8rem] bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-white outline-none placeholder-gray-600 focus:border-fuchsia-600" />
                   </div>
+                  {/* Outside the scroll area, like ▲ Chosen's and ■ Core
+                      Routine's create bars, so a long list cannot push it out
+                      of reach. */}
+                  {showAdd && (
+                    <div data-dln-add-bar className="px-3 py-2 border-b border-gray-800 flex-shrink-0 flex flex-col gap-1.5">
+                      <button type="button" data-dln-add-open
+                        onClick={() => { setDlnAddOpen(o => !o); setDlnAddDraft(refAddDefaults(openedOn)); }}
+                        aria-expanded={dlnAddOpen ? 'true' : 'false'}
+                        className="self-start text-[11px] text-gray-400 hover:text-white">＋ Add a block</button>
+                      {dlnAddOpen && (
+                        <div data-dln-add-form className="flex flex-col gap-1.5">
+                          <input data-dln-add-title autoFocus value={dlnAddDraft.title} placeholder="Title — what the block is"
+                            onChange={ev => setAdd('title', ev.target.value)}
+                            onKeyDown={ev => {
+                              if (ev.key === 'Enter' && !addErr) addNoteBlock(openedOn);
+                              else if (ev.key === 'Escape') { ev.stopPropagation(); setDlnAddOpen(false); }
+                            }}
+                            className={addInputCls} />
+                          <input data-dln-add-detail value={dlnAddDraft.detail} placeholder="Detail (optional)"
+                            onChange={ev => setAdd('detail', ev.target.value)}
+                            className={addInputCls} />
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-gray-500">
+                            <input data-dln-add-date type="date" value={dlnAddDraft.date}
+                              onChange={ev => setAdd('date', ev.target.value)} className={addInputCls} />
+                            <input data-dln-add-start type="time" value={dlnAddDraft.start}
+                              onChange={ev => setAdd('start', ev.target.value)} className={addInputCls} />
+                            <span>to</span>
+                            <input data-dln-add-end type="time" value={dlnAddDraft.end}
+                              onChange={ev => setAdd('end', ev.target.value)} className={addInputCls} />
+                          </div>
+                          <div className="text-[10px] text-gray-600">Makes a day note on that day, with its block on the schedule.</div>
+                          {addErr && dlnAddDraft.title.trim() && <div data-dln-add-error className="text-[10px] text-amber-400">{addErr}</div>}
+                          <div className="flex justify-end gap-2">
+                            <button type="button" onClick={() => setDlnAddOpen(false)}
+                              className="text-[11px] bg-gray-800 text-gray-400 hover:text-white rounded px-3 py-0.5">Cancel</button>
+                            <button type="button" data-dln-add-save onClick={() => addNoteBlock(openedOn)} disabled={!!addErr}
+                              className="text-[11px] bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded px-3 py-0.5 font-semibold disabled:opacity-40">Add</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {dlnTab === 'timetable' ? renderTimetableTab(openedOn, hit) : (
                   <div className="overflow-y-auto flex-1">
                     {/* Naming the cutoff is not decoration. Opening this panel

@@ -741,7 +741,7 @@ included:
 
 | Button | Opens | Holds |
 | --- | --- | --- |
-| ★ **Forced** | the day notes, deadlines & timetable picker (it was `☰`) | the day notes and deadlines dated on or after that day — a click adds a block for one on the day — and, on its Timetable tab, every timetable class |
+| ★ **Forced** | the day notes, deadlines & timetable picker (it was `☰`) | the day notes and deadlines dated on or after that day — a click adds a block for one on the day, and `＋ Add a block` makes a new day note already on it — and, on its Timetable tab, every timetable class |
 | ● **Learn** | every mind map and every MG (it was `◎` and `⊕`) | a pinned strip of what the day's milestone still needs, then `Mind maps` / `Marginal gains` tabs |
 | ▲ **Chosen** | the task picker (it was `+`) | the to-do: the goal tree, its routines and its milestones — no supporting actions |
 | ■ **Core Routine** | every supporting action (it was the end of the `+` picker) | each action, each routine and each of its steps |
@@ -791,7 +791,8 @@ from, in one action. ■ Core Routine has the same bar for an action, **`＋ New
 a title, an optional root action to file it under as a step, and a start time.
 
 Both bars sit outside their panel's scroll area, so a long list cannot push them out of reach — the
-case they exist for most is the workspace with nothing to scroll at all. Nothing here is a new stored
+case they exist for most is the workspace with nothing to scroll at all. ★ Forced has its own,
+`＋ Add a block`, for a day note (see "★ Forced" below). Nothing here is a new stored
 field: a Task or Routine is an ordinary node in `goals`, filed with the same
 `addChildAndTransferNotes` the Goals panel uses (so the first-child note transfer behaves
 identically) and dated through `updateSchedule`, which already writes `routineDates[day]` for a
@@ -1014,6 +1015,16 @@ never the deadline's own `done` — that stays in the deadline's popup, where it
 key, and the item is simply off the grid again. Blocks made with the old `＋` task composer keep
 their names and are drawn the same way.
 
+**`✎` notes on every block** (since 2026-11-22, "enable note feature for all blocks"). A day note's
+or deadline's block — a sub-task's too — carries the `✎` every other block has in day view: the
+same panel (title, details, `Done`; double-click a note to edit it, `Save`), the same `📌` chips
+down the block's right edge, each opening its note. Notes belong to **the block**, the timetable
+rule: they are stored on that block's part as `notes` (`{id, title, detail, createdAt}`, a task
+note's shape), so two blocks of one deadline keep separate notes, and no day note is made and the
+item itself is not touched. Deleting a note asks; deleting the last one deletes the `notes` key.
+`✕` on the block takes its notes with it, as the prompt already says the block goes. Week view has
+no `✎` on any block, as before.
+
 **Sub-tasks (`✂` in ★ Forced).** A note or a deadline can be dissected into named **sub-tasks** —
 child tasks of the original, which **is not gone**: its own blocks stay on the grid beside them (the
 user's rules, 2026-10-22). They are made in ★ Forced: a row's `✂` opens a name box under it, and each
@@ -1148,6 +1159,20 @@ refusal rules as the row, and closes the panel; its `×` deletes it.
 
 Adding a block, naming a sub-task and putting one on a day delete nothing, so they do not ask; a
 sub-task's `×` deletes it, so it does.
+
+**`＋ Add a block`** (since 2026-11-22) sits above the list on the `All` and `Notes` tabs, outside
+its scroll area. It makes a **new day note and its block in one action**, so a block no note
+exists for yet no longer means a trip to ★ CALENDAR and back. Expanded it takes a title, an
+optional detail, the day (seeded to the one the panel was opened from) and a start and end. Add
+writes an ordinary `calendarNotes` record — dated on that day, `time` at the start, no `docPageId`
+(it was authored in the Schedule), no `detail` key when the detail is blank — carrying one part,
+exactly as a pick would add one; the part stores its `blockDuration` only when the block is not
+60 minutes long, and inherits its day and start from the note. The note then behaves like any
+other: its chip and point marker, its row here, its popup. Add closes the panel so the block is in
+view, and one filed on another day moves the Schedule there. The refusal is the Timetable tab's
+`＋ Add a block`'s, word for word: a title, a start and an end, an end after the start, a real
+day. The `Deadlines` tab has no bar — it would make something that tab does not list — and the
+Timetable tab keeps its own, for a class. Nothing is deleted, so nothing asks.
 
 **The Timetable tab** is the fourth, and a different list with different rules: every timetable
 class — see "A pasted timetable" below — laid out like KS02's +LIN LOG. A class no longer opens a
@@ -2483,6 +2508,9 @@ their **absence carries meaning**:
   sub-tasks too): it carries `unscheduled: true` while it is off the schedule,
   and the key is deleted when it is put on a day, its `date` then always written.
   A `parentId` left on a few parts by a build withdrawn the same day is ignored.
+  A block may also carry `notes` — its `✎` notes, a task note's shape — absent
+  until the first one, and deleted with the last. Not validated in `schema.js`,
+  like a class's `notes`; read only through the total reader `refNotes`.
   Until 2026-10-21 an item with no parts had one block automatically; it no longer
   does, and nothing was migrated.
 

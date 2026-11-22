@@ -9925,7 +9925,8 @@ test('browser suites', skipUnlessChrome, async t => {
     saEntries: [F.saEntry('e-ctl', MONDAY, 'a-ctl', { time: '10:00', duration: 60 })],
     mmEntries: [F.mmEntry('me-ctl', MONDAY, 10, { time: '11:30', duration: 60 })],
     refSchedules: [refOneOff({ notes: [CTL_NOTE('rn-1', 'Class note')] })],
-    calendarNotes: [F.calNote('n-ctl', MONDAY, { title: 'Note block', time: '15:00', parts: [BLOCK] })],
+    calendarNotes: [F.calNote('n-ctl', MONDAY, { title: 'Note block', time: '15:00',
+      parts: [Object.assign({}, BLOCK, { notes: [CTL_NOTE('pn-1', 'Block note')] })] })],
     deadlines: [],
     docPages: [F.docPage('p-1', { title: 'Term 1', blocks: [{ id: 'b-1', type: 'schedule' }] })]
   });
@@ -10006,9 +10007,248 @@ test('browser suites', skipUnlessChrome, async t => {
     } finally { await page.close(); }
   });
 
+  await t.test('TOUCH: ✎ and a 📌 inside an armed NOTE block open what they open, and the block stays armed', async () => {
+    // Since 2026-11-22 a day note's block has ✎ notes like every other block.
+    const B = '[data-block-id="n-ctl:b"]';
+    const page = await openArmedCtl(B);
+    try {
+      const before = await page.evaluate(RAW_DB);
+      await tapKeepsArmed(page, B, '[data-block-notes-btn="n-ctl:b"]', '[data-block-note-title="n-ctl:b"]', '✎');
+      await tapKeepsArmed(page, B, '[data-block-note-chip="pn-1"]', '[data-block-note-view="pn-1"]', 'a 📌');
+      assert.equal(await page.evaluate(RAW_DB), before, 'arming and opening wrote nothing — track_db is byte-identical');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  /* ── ✎ on a ★ block: notes of THAT block, kept on its part ──────────────
+     The user's words (2026-11-22): "enable note feature for all blocks". The
+     day-note and deadline blocks were the one kind without ✎. Notes belong to
+     the BLOCK — one block, one record, the timetable rule — so they live on
+     the part, never on the item and never as a new day note. */
+  // `n` days after `ds`, a local calendar day (T12:00:00 keeps the parse local).
+  const dayAfter = (ds, n) => {
+    const d = new Date(ds + 'T12:00:00');
+    d.setDate(d.getDate() + n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
+  const DB_CHANGED = function (before) { return localStorage.getItem('track_db') !== before; };
+  const writeBlockNote = async (page, key, title, detail) => {
+    await page.waitFor(function (k) { return !!document.querySelector('[data-block-note-title="' + k + '"]'); },
+      { args: [key], message: 'the block notes panel' });
+    await page.evaluate(function (setterSrc, k, ti, de) {
+      var set = new Function('return ' + setterSrc)();
+      set(document.querySelector('[data-block-note-title="' + k + '"]'), ti);
+      set(document.querySelector('[data-block-note-detail="' + k + '"]'), de);
+      return true;
+    }, SET_REACT_INPUT, key, title, detail);
+    await page.evaluate(CLICK_SEL, '[data-block-note-save="' + key + '"]');
+  };
+
+  await t.test('✎ on a NOTE block: create, edit, delete — on that part alone, and the last delete removes the key', async () => {
+    const OTHER = dayAfter(MONDAY, 1);
+    const note = F.calNote('n-pn', MONDAY, { title: 'Ward round', time: '15:00', docPageId: 'p-1', zzLater: 7,
+      parts: [{ id: 'b', createdAt: 1, done: false }, { id: 'c', createdAt: 2, done: false, date: OTHER }] });
+    const page = await openRefDay(seedDb({ calendarNotes: [note], deadlines: [],
+      refSchedules: [refOneOff()], docPages: [F.docPage('p-1')] }));
+    try {
+      await page.waitFor(function () { return !!document.querySelector('[data-block-notes-btn="n-pn:b"]'); },
+        { message: 'the ✎ on the note block' });
+      const seeded = await page.evaluate(RAW_DB);
+      await page.evaluate(CLICK_SEL, '[data-block-notes-btn="n-pn:b"]');
+      await writeBlockNote(page, 'n-pn:b', 'Bring stethoscope', 'bay 4');
+      // wait for the write to LAND, then judge where it went
+      await page.waitFor(DB_CHANGED, { args: [seeded], message: 'the note being written' });
+      const stored = await page.evaluate(function () {
+        return ((JSON.parse(localStorage.getItem('track_db')).slots || [])[0] || {}).calendarNotes;
+      });
+      const p0 = stored[0].parts[0];
+      assert.ok(Array.isArray(p0.notes) && p0.notes.length === 1,
+        'the note is on the block\'s part: ' + JSON.stringify(stored[0]));
+      assert.equal(stored.length, 1, 'no day note was made');
+      assert.equal(p0.notes[0].title, 'Bring stethoscope');
+      assert.equal(p0.notes[0].detail, 'bay 4');
+      assert.deepEqual(stored[0].parts[1], note.parts[1], 'the item\'s OTHER block is untouched');
+      const itemRest = Object.assign({}, stored[0], { parts: note.parts });
+      assert.deepEqual(itemRest, note, 'and so is the item — docPageId and an unknown key survive');
+      const noteId = p0.notes[0].id;
+      await page.waitFor(function (id) { return !!document.querySelector('[data-block-note-chip="' + id + '"]'); },
+        { args: [noteId], message: 'the 📌 chip on the block' });
+
+      // edit: double-click the note in the panel, change its title, Save
+      await page.evaluate(function (id) {
+        document.querySelector('[data-block-note="' + id + '"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        return true;
+      }, noteId);
+      await page.waitFor(function (k) {
+        return /Save/.test((document.querySelector('[data-block-note-save="' + k + '"]') || {}).textContent || '');
+      }, { args: ['n-pn:b'], message: 'the panel in edit mode' });
+      await writeBlockNote(page, 'n-pn:b', 'Bring two stethoscopes', 'bay 4');
+      const edited = await page.waitFor(function (id) {
+        var s = ((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0]) || {};
+        var n = (((s.calendarNotes || [])[0] || {}).parts || [])[0].notes || [];
+        return n.length && n[0].title !== 'Bring stethoscope' ? n : false;
+      }, { args: [noteId], message: 'the edit landing' });
+      assert.equal(edited.length, 1, 'an edit adds nothing');
+      assert.equal(edited[0].id, noteId, 'and keeps the note\'s id');
+      assert.equal(edited[0].title, 'Bring two stethoscopes');
+
+      // delete: Cancel keeps every byte, OK deletes, and the last one deletes the key
+      const before = await page.evaluate(RAW_DB);
+      const msg = await answering(page, false, CLICK_SOON_SEL, ['[data-block-note-del="' + noteId + '"]']);
+      assert.match(msg, /Delete this note/);
+      assert.equal(await page.evaluate(RAW_DB), before, 'Cancel left track_db byte-identical');
+      await answering(page, true, CLICK_SOON_SEL, ['[data-block-note-del="' + noteId + '"]']);
+      const gone = await page.waitFor(function () {
+        var s = ((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0]) || {};
+        var p = (((s.calendarNotes || [])[0] || {}).parts || [])[0];
+        return p && !(p.notes && p.notes.length) ? p : false;
+      }, { message: 'the note leaving the part' });
+      assert.equal(Object.prototype.hasOwnProperty.call(gone, 'notes'), false, 'the last note deleted the key');
+      assert.deepEqual(gone, note.parts[0], 'and left the block exactly as it was');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('✎ on a DEADLINE block writes to that deadline\'s part, never to its own `done` or a day note', async () => {
+    const dl = F.deadline('d-pn', MONDAY, { title: 'Essay', time: '18:00', cautionDates: [], parts: [{ id: 'b', createdAt: 1, done: false }] });
+    const page = await openRefDay(seedDb({ calendarNotes: [], deadlines: [dl], refSchedules: [refOneOff()] }));
+    try {
+      await page.waitFor(function () { return !!document.querySelector('[data-block-notes-btn="d-pn:b"]'); },
+        { message: 'the ✎ on the deadline block' });
+      const seeded = await page.evaluate(RAW_DB);
+      await page.evaluate(CLICK_SEL, '[data-block-notes-btn="d-pn:b"]');
+      await writeBlockNote(page, 'd-pn:b', 'Outline first', '');
+      await page.waitFor(DB_CHANGED, { args: [seeded], message: 'the note being written' });
+      const stored = await page.evaluate(function () {
+        return ((JSON.parse(localStorage.getItem('track_db')).slots || [])[0] || {});
+      });
+      const p = stored.deadlines[0].parts[0];
+      assert.ok(Array.isArray(p.notes) && p.notes.length === 1,
+        'the note is on the deadline\'s part: ' + JSON.stringify(stored.deadlines[0]));
+      assert.equal(p.notes[0].title, 'Outline first');
+      assert.deepEqual(stored.calendarNotes, [], 'no day note was made');
+      assert.deepEqual(Object.assign({}, stored.deadlines[0], { parts: dl.parts }), dl,
+        'the deadline itself is untouched — no `done`, no caution day');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  /* ── ★ Forced: ＋ Add a block ───────────────────────────────────────────
+     "in calendar type add block in schedule" (2026-11-22): the Timetable tab
+     could add a block, the notes tabs could only pick an item that already
+     existed. The bar makes a day note AND its block in one action. */
+  const DLN_ADD = async (page, fields) => {
+    await page.evaluate(CLICK_SEL, '[data-dln-add-open]');
+    await page.waitFor(function () { return !!document.querySelector('[data-dln-add-title]'); }, { message: 'the add form' });
+    await page.evaluate(function (setterSrc, f) {
+      var set = new Function('return ' + setterSrc)();
+      Object.keys(f).forEach(function (k) { set(document.querySelector('[data-dln-add-' + k + ']'), f[k]); });
+      return true;
+    }, SET_REACT_INPUT, fields);
+    await page.evaluate(CLICK_SEL, '[data-dln-add-save]');
+  };
+
+  await t.test('★ Forced ＋ Add a block makes a day note already on the schedule, with only the keys it has', async () => {
+    const page = await openRefDay(seedDb({ calendarNotes: [], deadlines: [], refSchedules: [refOneOff()] }));
+    try {
+      await openDlnPanel(page, MONDAY);
+      await page.evaluate(CLICK_SEL, '[data-dln-add-open]');
+      await page.waitFor(function () { return !!document.querySelector('[data-dln-add-date]'); }, { message: 'the add form' });
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-dln-add-date]').value; }), MONDAY,
+        'it adds to the day the panel was opened from');
+      await page.evaluate(CLICK_SEL, '[data-dln-add-open]');   // fold it again; DLN_ADD opens it fresh
+      await page.waitFor(function () { return !document.querySelector('[data-dln-add-title]'); }, { message: 'the form folding' });
+
+      await DLN_ADD(page, { title: 'Revise renal', start: '14:00', end: '15:30' });
+      const made = await page.waitFor(function () {
+        var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).calendarNotes) || [];
+        return all.length === 1 ? all[0] : false;
+      }, { message: 'the new note reaching track_db' });
+      assert.deepEqual(Object.keys(made).sort(), ['createdAt', 'date', 'id', 'parts', 'time', 'title'],
+        'a day note with only the keys it has — no page, no blank detail');
+      assert.equal(made.date, MONDAY);
+      assert.equal(made.time, '14:00');
+      assert.equal(made.title, 'Revise renal');
+      assert.equal(made.parts.length, 1, 'with exactly one block');
+      assert.deepEqual(Object.keys(made.parts[0]).sort(), ['blockDuration', 'createdAt', 'done', 'id'],
+        'the block stores its length and nothing it inherits — no day, no time, no title');
+      assert.equal(made.parts[0].blockDuration, 90);
+      assert.equal(made.parts[0].done, false);
+      const key = made.id + ':' + made.parts[0].id;
+      await page.waitFor(function (k) { return !!document.querySelector('[data-block-id="' + k + '"]'); },
+        { args: [key], message: 'the new block on the grid' });
+      assert.equal(await page.evaluate(function (k) {
+        return document.querySelector('[data-block-id="' + k + '"]').getAttribute('data-block-day');
+      }, key), MONDAY, 'drawn on that day');
+      assert.equal(await page.evaluate(function () { return !!document.querySelector('[data-dln-panel]'); }), false,
+        'and the panel closed, so the block is in view');
+
+      // a default hour-long block stores no length, and a detail is kept
+      await openDlnPanel(page, MONDAY);
+      await DLN_ADD(page, { title: 'Call home', detail: 'after dinner' });
+      const second = await page.waitFor(function () {
+        var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).calendarNotes) || [];
+        return all.length === 2 ? all[1] : false;
+      }, { message: 'the second note reaching track_db' });
+      assert.equal(second.detail, 'after dinner');
+      assert.equal(second.time, '09:00');
+      assert.deepEqual(Object.keys(second.parts[0]).sort(), ['createdAt', 'done', 'id'],
+        'an hour-long block inherits its length too');
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
+  await t.test('★ Forced ＋ Add a block: on All and Notes only, refuses a backwards block, and follows a block filed on another day', async () => {
+    const page = await openRefDay(seedDb({ calendarNotes: [], deadlines: [], refSchedules: [refOneOff()] }));
+    try {
+      await openDlnPanel(page, MONDAY);
+      const BAR = function () { return !!document.querySelector('[data-dln-add-open]'); };
+      assert.equal(await page.evaluate(BAR), true, 'All has the bar');
+      for (const [tab, has] of [['notes', true], ['deadlines', false], ['timetable', false]]) {
+        await page.evaluate(CLICK_SEL, '[data-dln-tab="' + tab + '"]');
+        await page.waitFor(function (k) {
+          var b = document.querySelector('[data-dln-tab="' + k + '"]'); return !!b && /bg-fuchsia-600/.test(b.className);
+        }, { args: [tab], message: 'the ' + tab + ' tab' });
+        assert.equal(await page.evaluate(BAR), has, tab + (has ? ' has' : ' has no') + ' ★ notes add bar');
+      }
+      await page.evaluate(CLICK_SEL, '[data-dln-tab="notes"]');
+      await page.waitFor(BAR, { message: 'the Notes tab again' });
+
+      // an end before its start is refused, with the timetable add's words, and nothing is written
+      const before = await page.evaluate(RAW_DB);
+      await DLN_ADD(page, { title: 'Backwards', start: '15:00', end: '14:00' });
+      await page.waitFor(function () { return !!document.querySelector('[data-dln-add-error]'); }, { message: 'the refusal' });
+      assert.match(await page.evaluate(function () { return document.querySelector('[data-dln-add-error]').textContent; }),
+        /end after it starts/);
+      assert.equal(await page.evaluate(function () { return document.querySelector('[data-dln-add-save]').disabled; }), true);
+      assert.equal(await page.evaluate(RAW_DB), before, 'nothing was written');
+
+      // filed on another day: the Schedule moves there, so it is never out of sight
+      const OTHER = dayAfter(MONDAY, 2);
+      await page.evaluate(function (setterSrc, d) {
+        var set = new Function('return ' + setterSrc)();
+        set(document.querySelector('[data-dln-add-date]'), d);
+        set(document.querySelector('[data-dln-add-end]'), '16:00');
+        return true;
+      }, SET_REACT_INPUT, OTHER);
+      await page.evaluate(CLICK_SEL, '[data-dln-add-save]');
+      const made = await page.waitFor(function () {
+        var all = (((JSON.parse(localStorage.getItem('track_db') || '{}').slots || [])[0] || {}).calendarNotes) || [];
+        return all.length === 1 ? all[0] : false;
+      }, { message: 'the note reaching track_db' });
+      assert.equal(made.date, OTHER);
+      assert.equal(Object.prototype.hasOwnProperty.call(made.parts[0], 'date'), false, 'its block inherits the note\'s day');
+      const key = made.id + ':' + made.parts[0].id;
+      await page.waitFor(function (k, d) {
+        var e = document.querySelector('[data-block-id="' + k + '"]'); return !!e && e.getAttribute('data-block-day') === d;
+      }, { args: [key, OTHER], message: 'the day view following it to ' + OTHER });
+      assert.deepEqual(realErrors(page), []);
+    } finally { await page.close(); }
+  });
+
   await t.test('TOUCH: the tick inside an armed NOTE block ticks it, and the block stays armed', async () => {
-    // The day-note block has no ✎; its tick is the control. The tick WRITES,
-    // so the wait is for that write to land in track_db.
+    // Beside ✎ and its 📌s, the tick is a control too. The tick WRITES, so
+    // the wait is for that write to land in track_db.
     const B = '[data-block-id="n-ctl:b"]';
     const page = await openArmedCtl(B);
     try {
