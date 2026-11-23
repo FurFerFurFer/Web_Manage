@@ -6129,3 +6129,52 @@ now reads `⤢ Grid`. No case reads that label.
 **Not covered.** A real iPad: iPadOS Safari's own full screen, the grip under a real finger
 and Pencil (CDP sends a pen as a mouse event), the glow on its screen. A real long PDF. The
 pin-edit budget bypass Astra found is recorded in NOTES, Proposal 22, not fixed.
+
+## 2026-11-23 — The Schedule: ✎ notes on day-note and deadline blocks; ★ Forced's ＋ Add a block
+
+**What the user asked (2026-11-22).** "in calendar type add block in schedule - also enable note
+feature for all blocks", then "finish then commit and push then test run after that, if
+something change then also push them". Claude's readings, stated in the reply: the "calendar
+type" is the ★ kind (its tab is ★ CALENDAR), whose panel could only pick an existing note or
+deadline while its Timetable tab could already add a block; "all blocks" is every block KIND,
+in day view where the others have `✎` — the note and deadline blocks were the one kind
+without it (a browser case's own comment said so). Week view still has `✎` on no block; NOTES
+says so.
+
+**Fail-first and doctored baselines** (scratch trees under the session scratchpad, `tests/`
+copied for real, the rest symlinked; nothing doctored in the repository). Five new browser
+cases. Against HEAD `edbc32c`'s `progress.html` all five failed, each on its own missing
+control (`no element [data-block-notes-btn="n-ctl:b"]`, "the ✎ on the note block", "the add
+form", "All has the bar") — the weak "control absent" kind, so two doctored copies of the
+finished page followed, one at a time:
+
+| Doctoring | Failed |
+| --- | --- |
+| `noteNewBlock` always writes `blockDuration` | "…with only the keys it has" only, on "an hour-long block inherits its length too" |
+| `addPartNote` writes the note onto the ITEM | the NOTE-block and DEADLINE-block cases only, each on "the note is on the block's part", the message showing `notes` on the item |
+
+The two failure sets are disjoint. The first run of the second doctoring timed out on a wait
+for the right answer ("the note landing on the part"); both cases were rewritten to wait for
+the write to land (`track_db` changing) and then assert, re-run against the doctored copy (both
+failed on the assertion) and against the finished tree (6 of 6 passed, with the existing NOTE
+tick case). Before the commit, a narrowed run of every `✎`, `＋ Add a block` and `TOUCH:` case —
+25 subtests, plan `1..25` — passed.
+
+**Commit and push.** `65597a2`. The first `git push` hung on SSH and then failed ("Please make
+sure you have the correct access rights") although the user answered that it was done; a
+second push went through (`edbc32c..65597a2`).
+
+**Full suite.** `node tests/run.js` in the repository, 19:03:53 → 20:01:25 on 2026-11-23
+(57 min 32 s): **all 38 suites passed, 676 of 676 browser subtests** (plan `1..676`, no
+`not ok`, no timeout or `CDP connection closed` line). One MD5 over every tracked file was
+`2d256fba…` (of the list) before and after; HEAD `65597a2` at both ends;
+`suspend_stats/success` 4 at both ends. The charger was OUT when the run started and went in
+at about 19:21 (`ACAD/online` 1 at 19:21 and at the end) — the run spans no suspend. The
+15-minute load was ~2.3 at its end. The 23rd is outside the month-end window, so the six
+timetable cases of NOTES Proposal 7 were expected to pass and did. `node --check` passes on
+every script and `git diff --check` was clean. This entry, `docs/TESTING-LESSONS.md` and the
+`AGENTS.md` totals were written after the run; no test reads them.
+
+**Not covered.** A real finger on the new `✎` and its chips (synthesised touches only, the
+standing gap); the look of the `＋ Add a block` form on a phone-width panel (not
+screenshotted); week view, which has no `✎` by design.
