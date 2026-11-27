@@ -252,6 +252,7 @@ surface in the left column, read its file in full.**
 | `styles.css`, colour in a React page, `ACCENT`, the phone layout, touch reveal, `track_theme`, `track_home_cal_hidden` | `docs/contracts/appearance.md` |
 | A control that deletes or clears, a `window.confirm`, a `✕` or toggle-off | `docs/contracts/destructive-controls.md` |
 | `files`, the FILES tab, `track_files_v1`, Google Drive | `docs/contracts/files.md` |
+| Universal Search (`search.js`, `search-core.js`, `search-view.js`), or a page's `?…` link | `docs/contracts/search.md` |
 
 Five rules recur in all of those files; the contract governs where it says otherwise.
 
@@ -713,10 +714,10 @@ it describes. **Read it when you need it**: to audit what was verified and when,
 work in an area whose entry records a defect or a known gap, or to check whether something
 is covered by a test or only by code reading. A new entry is appended there, not here.
 
-What a passing run looks like, as of 2026-11-23: `node tests/run.js`, **38 suites** —
+What a passing run looks like, as of 2026-11-27: `node tests/run.js`, **40 suites** —
 `calendar-core`, `schema`, `notes-core` and `note-to-self-core` swept under five timezones
-with identical results, seventeen more offline suites once each, then **676 browser
-subtests** in headless Chrome. **In the last one to six days of a month, six timetable
+with identical results, eighteen more offline suites once each, then **676 browser
+subtests** and **18 search subtests** in headless Chrome. **In the last one to six days of a month, six timetable
 cases fail on a date bug in the suite itself** (NOTES, Proposal 7): the Home and
 Documentations twins of three cases, each timing out on its class layer while its Progress
 twin passes. Any OTHER red case is not that bug. The whole run takes 21 to 61 minutes

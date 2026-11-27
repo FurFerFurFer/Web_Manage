@@ -4522,6 +4522,423 @@ html[data-theme] :is(#fb-sync-error, #fb-sync-conflict, #track-quota-banner, #tr
   #nts-panel .nts-open { display: inline-flex; }
 }
 
+/* ── universal search: the 🔍 button and its panel ────────── */
+/* scripts/search.js draws the button on every page; scripts/search-view.js
+   draws #tsr, which exists ONLY while open (the user's 2026-11-26 request,
+   docs/contracts/search.md). Ids, (1,0,0): no Tailwind class lands here, and
+   every colour is a token, so both appearances follow with no second rule.
+
+   The button sits right above the notes button (#nw-btn: right 16, bottom 16,
+   48px), in the same column, and is lifted over the phone tab bar by the
+   `body.app-page` rule the notes button uses. Layers: the button is z 45 —
+   above page content and the z-40 overlays, below the phone tab bar (46),
+   which it never overlaps, and below every modal (z-50+), which covers it.
+   The panel is ONE stacking context at z 49, the Note to self tab's layer:
+   being later in the document it lies over that tab while open, and still
+   under every modal and the notes widget (9000+). */
+#tsr-btn {
+  position: fixed;
+  right: 16px;
+  bottom: 76px;
+  z-index: 45;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  background: var(--color-surface-strong);
+  color: var(--color-text);
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+}
+
+#tsr-btn:hover { background: var(--color-surface-hover); color: var(--color-primary); }
+#tsr-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+#tsr-btn[aria-busy="true"] { opacity: 0.6; cursor: progress; }
+#tsr-btn[data-tsr-failed] { border-color: var(--color-danger); }
+
+#tsr-btn svg,
+#tsr .tsr-bar svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+#tsr {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  font-family: var(--font-ui);
+  color: var(--color-text);
+  text-align: left;
+}
+
+#tsr-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--color-scrim);
+}
+
+#tsr-panel {
+  position: absolute;
+  top: max(16px, 6vh);
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: min(64rem, calc(100vw - 24px));
+  height: min(46rem, calc(100vh - max(16px, 6vh) - 24px));
+  height: min(46rem, calc(100dvh - max(16px, 6vh) - 24px));
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+#tsr .tsr-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.5rem 0.25rem 0.75rem;
+}
+
+#tsr .tsr-crumbs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+#tsr .tsr-crumb,
+#tsr .tsr-d-crumb {
+  margin: 0;
+  padding: 0.125rem 0.375rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#tsr .tsr-crumb:hover,
+#tsr .tsr-d-crumb:hover { background: var(--color-surface-hover); color: var(--color-text); }
+#tsr .tsr-crumb[aria-current] { color: var(--color-text); font-weight: 600; }
+#tsr .tsr-sep { color: var(--color-text-subtle); }
+
+#tsr .tsr-x {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+#tsr .tsr-x:hover { background: var(--color-surface-hover); color: var(--color-text); }
+
+#tsr .tsr-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0.75rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+#tsr .tsr-bar:focus-within { border-color: var(--color-primary-border); color: var(--color-primary); }
+
+#tsr #tsr-q {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 1rem;
+}
+
+#tsr .tsr-here {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 2.75rem;
+  margin: 0.5rem 0.75rem 0;
+  padding: 0.25rem 0.25rem 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+#tsr .tsr-here-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#tsr .tsr-here-title { font-weight: 600; overflow-wrap: anywhere; }
+#tsr .tsr-here-meta { color: var(--color-text-muted); font-size: 0.75rem; }
+
+#tsr .tsr-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+}
+
+#tsr .tsr-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.375rem 0.5rem 0.75rem;
+  border-right: 1px solid var(--color-border);
+}
+
+#tsr .tsr-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  border-radius: var(--radius-sm);
+}
+
+#tsr .tsr-row.is-hi { background: var(--color-primary-soft); }
+#tsr .tsr-row:not(.is-hi):hover { background: var(--color-surface-hover); }
+
+#tsr .tsr-pick {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin: 0;
+  padding: 0.375rem 0.5rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#tsr .tsr-ico {
+  flex-shrink: 0;
+  width: 1.25rem;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+#tsr .tsr-pick[data-tsr-folder] .tsr-ico { color: var(--color-primary); }
+#tsr .tsr-row[data-tsr-loop] .tsr-ico { color: var(--color-warning); }
+#tsr .tsr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#tsr .tsr-path { color: var(--color-text-subtle); font-size: 0.6875rem; overflow-wrap: anywhere; }
+#tsr .tsr-title { overflow-wrap: anywhere; }
+#tsr .tsr-pick[data-tsr-folder] .tsr-title { font-weight: 600; }
+#tsr .tsr-meta { color: var(--color-text-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
+#tsr .tsr-snip { color: var(--color-text-secondary); font-size: 0.75rem; overflow-wrap: anywhere; }
+#tsr .tsr-snip b { color: var(--color-text-muted); font-weight: 600; }
+#tsr .tsr-chev { flex-shrink: 0; color: var(--color-text-muted); font-size: 1.125rem; }
+
+#tsr .tsr-go {
+  flex-shrink: 0;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 0.625rem;
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+#tsr .tsr-go:hover { background: var(--color-primary-solid); border-color: var(--color-primary-solid); color: #ffffff; }
+#tsr .tsr-go:focus-visible,
+#tsr .tsr-pick:focus-visible,
+#tsr .tsr-crumb:focus-visible,
+#tsr .tsr-x:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+
+#tsr .tsr-go-big {
+  min-height: 44px;
+  padding: 0 1.125rem;
+  background: var(--color-primary-solid);
+  border-color: var(--color-primary-solid);
+  color: #ffffff;
+  font-size: 0.875rem;
+}
+
+#tsr .tsr-go-big:hover { background: var(--color-primary-hover); }
+
+#tsr .tsr-more,
+#tsr .tsr-d-open {
+  min-height: 40px;
+  margin: 0.5rem 0 0;
+  padding: 0 0.875rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+#tsr .tsr-more { width: 100%; }
+#tsr .tsr-more:hover,
+#tsr .tsr-d-open:hover { background: var(--color-surface-hover); color: var(--color-text); }
+
+#tsr .tsr-empty,
+#tsr .tsr-help { margin: 0.75rem 0.5rem; color: var(--color-text-muted); }
+#tsr .tsr-help b { color: var(--color-text); }
+#tsr .tsr-keys { font-size: 0.75rem; }
+#tsr kbd {
+  padding: 0 0.25rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.6875rem;
+}
+
+#tsr .tsr-detail {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.75rem 1rem 1rem;
+}
+
+#tsr .tsr-back { display: none; }
+#tsr .tsr-d-kind { color: var(--color-text-muted); font-size: 0.75rem; }
+#tsr .tsr-d-title { margin: 0.125rem 0 0.25rem; font-size: 1.0625rem; font-weight: 600; overflow-wrap: anywhere; }
+#tsr .tsr-d-path { margin: 0 0 0.25rem -0.375rem; font-size: 0.75rem; color: var(--color-text-subtle); }
+#tsr .tsr-d-meta { margin-bottom: 0.5rem; color: var(--color-text-secondary); font-size: 0.8125rem; }
+#tsr .tsr-d-field { margin-top: 0.625rem; }
+#tsr .tsr-d-label { color: var(--color-text-muted); font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+#tsr .tsr-d-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+#tsr .tsr-d-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 1rem; }
+#tsr .tsr-d-nowhere { margin: 0; color: var(--color-text-muted); font-size: 0.8125rem; }
+#tsr .tsr-d-hint { margin: 0.875rem 0 0; color: var(--color-text-secondary); font-size: 0.8125rem; }
+
+/* A chosen mind map, goal, page or dump, opened out to the last leaf. */
+#tsr .tsr-tree { margin-top: 1rem; }
+#tsr .tsr-tree .tsr-d-label { margin-bottom: 0.25rem; }
+#tsr .tsr-t-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 30px;
+  margin: 0;
+  padding: 0.25rem 0.5rem 0.25rem calc(0.5rem + var(--tsr-lvl, 0) * 1.125rem);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+#tsr .tsr-t-row:hover { background: var(--color-surface-hover); }
+#tsr .tsr-t-row:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+#tsr .tsr-t-row.is-top .tsr-t-title { font-weight: 600; }
+#tsr .tsr-t-row[data-tsr-loop] .tsr-ico { color: var(--color-warning); }
+/* The note beside a name drops under it when the line is too narrow,
+   rather than squeezing the name into a break mid-date. */
+#tsr .tsr-t-text { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.5rem; min-width: 0; }
+#tsr .tsr-t-title { min-width: 0; overflow-wrap: anywhere; }
+#tsr .tsr-t-meta { min-width: 0; color: var(--color-text-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
+#tsr .tsr-t-more { margin: 0.5rem 0 0; color: var(--color-text-muted); font-size: 0.75rem; }
+
+/* A sub-tab, inside its tab's list: a heading over what it shows, with its
+   own Go →. Not a row — nothing to click into. */
+#tsr .tsr-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.625rem 0 0.125rem;
+  padding: 0.375rem 0.25rem 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+#tsr .tsr-sub:first-child { margin-top: 0; }
+#tsr .tsr-sub-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#tsr .tsr-sub-title { color: var(--color-text-secondary); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; }
+#tsr .tsr-sub-meta { color: var(--color-text-subtle); font-size: 0.6875rem; overflow-wrap: anywhere; }
+#tsr .tsr-d-sec { padding: 0 0.375rem; }
+
+#tsr .tsr-status {
+  padding: 0.25rem 0.875rem 0.375rem;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-subtle);
+  font-size: 0.6875rem;
+}
+
+/* While the panel is open the notes button (#nw-btn, z 9000) would float over
+   its bottom-right corner — on a phone, over a row's Go →. It is hidden, not
+   moved, and only while #tsr exists: (2,0,1) beats the widget's own (1,0,0)
+   `#nw-btn { display: flex }`, and `visibility` lays nothing out again. An
+   OPEN notes panel is left alone: it was opened on purpose. */
+body:has(> #tsr) #nw-btn {
+  visibility: hidden;
+}
+
+/* The phone: one column. A row's details REPLACE the list, with a way back. */
+@media (max-width: 720px) {
+  #tsr-panel {
+    top: 8px;
+    width: calc(100vw - 16px);
+    height: calc(100vh - var(--phone-tabbar-h) - 16px);
+    height: calc(100dvh - var(--phone-tabbar-h) - 16px);
+  }
+  #tsr .tsr-body { grid-template-columns: minmax(0, 1fr); }
+  #tsr .tsr-list { border-right: 0; }
+  #tsr .tsr-detail { display: none; }
+  #tsr.show-detail .tsr-list { display: none; }
+  #tsr.show-detail .tsr-detail { display: block; }
+  #tsr .tsr-back {
+    display: block;
+    min-height: 44px;
+    margin: 0 0 0.5rem -0.25rem;
+    padding: 0 0.5rem;
+    border: 0;
+    background: transparent;
+    color: var(--color-primary-text);
+    font: inherit;
+    cursor: pointer;
+  }
+}
+
+/* A finger, not a phone: (pointer: coarse), as Note to self's targets. */
+@media (pointer: coarse) {
+  #tsr .tsr-go { min-height: 44px; }
+  #tsr .tsr-crumb { min-height: 36px; }
+  #tsr .tsr-t-row { min-height: 44px; align-items: center; }
+}
+
 /* ── documentations: embedded calendar block ──────────────── */
 /* The same month grid and day detail as the universal calendar, but sized for
    the editor column (max-w-3xl) and stacked instead of side-by-side. The
@@ -5856,6 +6273,11 @@ body.app-page #nw-panel {
   bottom: calc(var(--phone-tabbar-h) + 16px);
 }
 
+/* The search button keeps its 12px gap above the notes button on every page. */
+body.app-page #tsr-btn {
+  bottom: calc(var(--phone-tabbar-h) + 76px);
+}
+
 /* ── documentations print / export ────────────────────────── */
 @media print {
   /* A4 is ~794px at 96dpi so the phone block usually does not match, but a
@@ -5868,6 +6290,12 @@ body.app-page #nw-panel {
   /* Note to self never prints, from any page. #nts is the root of all three of
      its elements and nothing else sets its display, so no !important. */
   #nts {
+    display: none;
+  }
+
+  /* Neither does Universal Search: its button, nor an open panel. */
+  #tsr-btn,
+  #tsr {
     display: none;
   }
 

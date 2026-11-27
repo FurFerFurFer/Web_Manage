@@ -6178,3 +6178,109 @@ every script and `git diff --check` was clean. This entry, `docs/TESTING-LESSONS
 **Not covered.** A real finger on the new `✎` and its chips (synthesised touches only, the
 standing gap); the look of the `＋ Add a block` form on a phone-width panel (not
 screenshotted); week view, which has no `✎` by design.
+
+## 2026-11-26 — Universal Search: 🔍 on all five pages, a directory of the five pages and their tabs, only Go → leaves
+
+**What the user asked (2026-11-26).** After the council, "UNIVERSAL SEARCH - make sure it
+doesn't make the website even slower and make me able to search in directory type way", "its
+own interface of choosing (may be like directory folder) and also with a search bar", "make
+sure I can choose the specifics before it transfer me to the page… a seperate '->'", "the
+bigger parents always come first on top", and "search and click to go in that directory and
+search again… until i hit the search button". Claude's readings: only `scripts/search.js`
+loads with a page and the rest is fetched on the first open; a folder click goes IN, and only
+Go → changes the page; "bigger parents" is depth in the directory. Then, the same evening: "put
+the tabs and subtabs into the search too", "divided to 5 parts", the mind-map tree "completely
+expanded to the last leaf" whose clicks move "THE SEARCH (which is not '->')", "these also
+include DOC, source dump etc.", "if it's just sub tab I don't want to click just to show it".
+Claude began coding mid-request; the user said "YO PLAN DON'T ACT ON IMPULSE"; Claude stopped,
+posted a drafted tree with five decisions, and the user answered "approve do it". The decisions
+are rules 16–18 of `docs/contracts/search.md`; the open follow-ups are NOTES Proposal 24.
+
+**"No slower."** A scratch timing script (`perf.js`, the repository's CDP driver read-only, a
+synthetic workspace) loaded each page and took the moment it was drawn (the Note to self tab
+exists and `#root` has children). Median of 7 runs before (the repository) and 3 after (the
+first build, frozen):
+
+| Page | Before | After | Scripts |
+| --- | --- | --- | --- |
+| `index.html` | 94 ms | 62 ms | 18 → 19 |
+| `progress.html` | 7790 ms | 7383 ms | 28 → 29 |
+| `sir-ks02.html` | 2560 ms | 2470 ms | 30 → 31 |
+| `documentations.html` | 1662 ms | 1542 ms | 29 → 30 |
+| `true-storage.html` | 1037 ms | 936 ms | 30 → 31 |
+
+Every "after" is lower: that is load noise between the two runs, not a speed-up. The claim is
+no measurable cost: one more script per page (`search.js`, 4.6 KB), nothing else of search
+until 🔍 opens. The redesign changed `search.js` only in its `PARTS` versions. The index
+itself: 9,000+ synthetic entries build in 98.6–120.8 ms and one search takes 8.8–11.6 ms (three runs)
+(the `search-core` large-workspace case, bounds 4000 / 400 ms against an accidental
+quadratic).
+
+**Fail-first, the first build** (doctored copies of the frozen tree in scratch folders, served
+by `TRACK_TEST_ROOT`; nothing doctored in the repository; the browser search suite had 14
+cases then):
+
+| Doctoring | Failed, on |
+| --- | --- |
+| m1: `ensure()` at page load; no loop guard; no same-page reload | the five per-page cases ("the page loads search.js and nothing else of search"; `progress.html` on a CDP close during that eager load), the loop case, the same-page Go → case |
+| m2: writes `track_search_last`; Escape ignores `defaultPrevented`; the notes button stays over the panel | the five per-page cases ("a READER: track_db byte-identical and no browser key added"), the keys case ("an Escape something else already handled leaves it open"), the phone case ("the notes button does not float over the open panel") |
+| m3: closing hides the panel instead of removing it | the five per-page cases ("a closed panel keeps no DOM"), the keys case, the phone case |
+| m4: a leaf click navigates | the flow case ("choosing a leaf does not move the page" — its first version failed only on a missing element, so it was strengthened and re-run), the loop case ("clicking it shows its details and does not go round again"), the phone case and the five per-page cases (on a missing element once the page had moved) |
+
+**Fail-first, the approved redesign.** `tests/search-core.test.js`, 22 cases, each doctoring
+against a copy of the test (scratch `mutc-*`):
+
+| Doctoring | Failed, on |
+| --- | --- |
+| `progress.html`'s ■ ACTIONS renamed ■ TASKS | the drift guard only: "Schedule tabs — change PAGES…" |
+| `link()` keeps a sub-tab as a level | 5 cases, among them "each heading, then what it shows, in the bar's order" |
+| `walk()` follows "also" links like primary ones | 4 cases, among them "one below its mind map, not at KOLB's level" and "shown where it lives" |
+
+`tests/search-browser.test.js`, 18 cases (scratch `mutv-*`):
+
+| Doctoring | Failed, on |
+| --- | --- |
+| everything with something inside opens on a click | 6 cases: "a mind map is not drawn as a folder to go into", "Loop B's tree…" |
+| no sub-tab headings | 2 cases: "what TIMELINE shows sits under its heading…" |
+| a tree click navigates the page | 7 cases: "a leaf in the tree: the search moves to the folder it is in", "a sub-goal is gone into" |
+| a crumb found again is not shown | 1 case: "clicking the found crumb shows it" |
+| entering a hit appends its path to the crumbs | 1 case: "Loop A is climbed back to, not repeated" |
+
+**Screenshots** (headless Chrome, synthetic data, desktop and phone width): the top level, the
+MG tab's headings, a mind map's opened-out tree, and the tree on a phone, each compared with
+the approved draft. The phone shot showed a tree row's date breaking mid-word; the name and
+note now wrap as a pair (`.tsr-t-text`), re-shot.
+
+**Full suite, three runs.** Another session was editing the repository all evening (a KS02
+no-op-write fix, a Firebase banner suite, FILES pin budgets, injected clocks), so every run
+was from a frozen copy, MD5 of the copy before and after.
+
+1. The first build plus the other session's work as it then stood, 21:43:20 → 22:42:44:
+   **all 40 suites passed, 677 of 677 browser subtests, 14 of 14 search subtests**; tree
+   unchanged; `suspend_stats/success` 10 at both ends; charger in.
+2. The finished work plus the whole shared tree as it stood at 23:03, 23:03:17 → 00:03:29:
+   **3 of 41 suites failed** — `files-core` (2), the new Firebase banner suite (5) and
+   `browser` (13 of 686) — while `search-core` (22) and Universal Search (18 of 18) passed.
+   Every red case is one the other session added or rewrote in its uncommitted test files,
+   waiting on code not yet in the tree (one expects `files-view.js?v=7` while the page loads
+   `?v=6`). Not a result about search; recorded so it is not read as one.
+3. HEAD `a84797f` plus only the search changes (the two search hunks of `sir-ks02.html` and
+   of `tests/run.js`, nothing of the other session): 13:20:36 → 14:18:39 on 2026-11-27 (58 min 3 s): **all 40 suites passed, 676 of 676 browser
+   subtests and 18 of 18 Universal Search subtests** (plans `1..676` and `1..18`, no `not ok`,
+   no timeout or `CDP connection closed` line); `search-core` 22 of 22. One MD5 over every
+   file of the copy was the same before and after; HEAD `a84797f` at both ends. An earlier
+   start of this run, at 00:05, is void: the machine suspended at 00:38 on battery and the run
+   hung; it was stopped and not counted. This time `suspend_stats/success` was 12 at both ends
+   and no suspend is in the journal; the charger was out at the start and went in at 13:25
+   (`upower`). The 15-minute load was ~1.9 at the start and ~1.7 at the end. The 27th is
+   inside the month-end window, yet the six timetable cases of NOTES Proposal 7 passed.
+
+`node --check` passes on every script; `git diff --check` is clean. This entry,
+`docs/TESTING-LESSONS.md` and the `AGENTS.md` totals were written after the runs; no test
+reads them.
+
+**Not covered.** A real finger (synthesised touches only, the standing gap); the first open on
+a real iPad, which fetches up to six files; the user's real workspace (synthetic data only);
+a tab table that is not a literal in its page, which the drift guard cannot read, and the
+count of KS02's inline tab tables, which it cannot tell from its other inline tables (NOTES
+Proposal 24).

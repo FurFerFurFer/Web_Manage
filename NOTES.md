@@ -1352,6 +1352,45 @@ authorized.
   contracts written before 2026-11-15. Rewording prose is safe; renaming a file, key or view is a
   migration of every link to it.
 
+## Proposal 24: Universal Search Follow-ups
+
+Built on 2026-11-26 (README, "Universal Search"; rules in `docs/contracts/search.md`). Three
+readings were mine and stated in the plan, uncorrected: it searches the open workspace only,
+not inside PDFs, and remembers nothing. The five-page shape, sub-tab headings and the
+opened-out tree are the draft the user approved the same evening. None of these is authorized.
+
+- **Other workspaces.** Switching to a hit in another workspace means writing `activeSlotId`,
+  which makes search a writer; it would need its own rule and a `saveDB` check.
+- **Inside PDFs and images.** FILES' Find already reads a PDF's text layer, but only for an open
+  file whose bytes are on this device; searching every PDF means extracting and caching text,
+  where IndexedDB `track_files_v1` would be the place and the cost is real.
+- **Kolb drafts** (`kolbDrafts`) are not listed; they live in the notes widget's Kolbs tab.
+- **Remembering the last folder or search** would be a browser key of its own — the first thing
+  search would write. Only if asked.
+- **Some Go → buttons open the right page but not the exact item**: a supporting action opens
+  `progress.html#actions`, a FILES folder opens the tab rather than the folder, and a Sorted note
+  or Journal day has no page at all. A goal-tree link is listed only where its original lives.
+  Each would need the target page to read a new `?…` parameter.
+- **The button is a second floating circle** beside the notes button. If the bottom-right
+  corner feels crowded on a phone, folding both into one button is a choice for the user.
+- **First open cost** was measured offline only — building the index for a synthetic workspace
+  of 9,000+ entries took ~110 ms in Node — not on an iPad.
+- **Sub-tabs with no address of their own.** SOURCE DUMP, DIRECTORY, UNLINKED, +LIN LOG and
+  LEVELS on the Knowledge Record, and Documentations → Projects when there is no goal, cannot
+  be opened directly; their Go → opens the tab and says which button to press (the user chose
+  this over adding addresses, 2026-11-26). Giving `sir-ks02.html` a `#view/sub` address would
+  remove the extra press; it is a page change.
+- **Tabs listed by name only.** ● LEARN, QUEST, CAL, WHEEL, LEVELS and MULTIVERSE show what is
+  computed for the day, so search lists them with a Go → and nothing inside (approved draft,
+  decision 4). Listing the +LIN LOG entries under KS02 was the alternative offered.
+- **The drift guard's gap.** A sub-tab bar added to a Knowledge Record tab that has none (CAL,
+  say) is not caught by `tests/search-core.test.js`, because that page holds other two-label
+  tables that are not tab bars. Giving the page one named table of its sub-tab bars would close it.
+- **A dump's Go → from Storages → SOURCE DUMP** opens it in the Knowledge Record, where it
+  lives, not on the Storages page's twin tab.
+- **The opened-out tree stops at 400 rows** with "… and more"; a branch beyond that is reached
+  by going into it.
+
 ## Track World: Computer Feasibility
 
 The game project lives entirely in [`World/`](World/) and has its own

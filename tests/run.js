@@ -94,10 +94,15 @@ const OFFLINE_FILES = ['calendar-core.test.js', 'schema.test.js', 'notes-core.te
 // structural case rejects date code, id minting and storage alike.
 // file-store.js reads the clock only as milliseconds (Google's access expiry,
 // retry backoff) and never forms a calendar day, so a zone changes nothing.
+// search-core.js (Universal Search's index) only copies the day strings it is
+// given into a label or a month folder — "2026-03" is the stored day's first
+// seven characters, never a Date — and its structural case rejects date code,
+// id minting and storage.
 const UNSWEPT_FILES = ['true-storage-core.test.js', 'source-dump-core.test.js', 'graph-layout.test.js',
   'doc-table-core.test.js', 'schedule-paste-core.test.js', 'quest-core.test.js', 'milestone-core.test.js',
   'goal-core.test.js', 'project-core.test.js', 'viewport.test.js', 'journey-core.test.js', 'strat-core.test.js',
-  'mm-tree-core.test.js', 'kolb-core.test.js', 'files-core.test.js', 'file-store.test.js', 'cdp-cleanup.test.js'];
+  'mm-tree-core.test.js', 'kolb-core.test.js', 'files-core.test.js', 'file-store.test.js', 'cdp-cleanup.test.js',
+  'search-core.test.js'];
 
 for (const tz of zones)
   for (const file of OFFLINE_FILES)
@@ -116,6 +121,7 @@ if (offlineOnly) {
   results.push({ label: 'browser (not run)', ok: false });
 } else {
   run('browser (headless Chrome via CDP)', 'browser.test.js');
+  run('Universal Search (headless Chrome via CDP)', 'search-browser.test.js');
 }
 
 const failed = results.filter(r => !r.ok);
