@@ -9,21 +9,21 @@
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=11"></script>
+  <script src="scripts/schema.js?v=12"></script>
   <script src="scripts/milestone-core.js?v=4"></script>
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
-  <script src="scripts/source-dump-core.js?v=3"></script>
+  <script src="scripts/source-dump-core.js?v=4"></script>
   <script src="scripts/mm-tree-core.js?v=2"></script>
-  <script src="scripts/files-core.js?v=5"></script>
+  <script src="scripts/files-core.js?v=6"></script>
   <script src="scripts/quest-core.js?v=2"></script>
-  <script src="scripts/calendar-core.js?v=14"></script>
+  <script src="scripts/calendar-core.js?v=15"></script>
   <script src="scripts/note-to-self-core.js?v=3"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="scripts/firebase-sync.js?v=2"></script>
+  <script src="scripts/firebase-sync.js?v=3"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
@@ -133,8 +133,7 @@
 
     // ── local calendar dates (never toISOString — that is a UTC day) ─────────
 
-    function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-    const localToday = () => toDateStr(new Date());
+    const localToday = TrackSchema.localToday;
 
     // One id shape across the project — TrackStorage.newId in storage-guard.js.
     // String ids can never collide with the numeric nid() counter that mints
@@ -180,7 +179,7 @@
     // The list this page RENDERS: KS02's filter, once. A dump naming itself as
     // its parent is hidden on both pages; a write never filters (see
     // _mutateSourceDumps), so hiding it here cannot delete it.
-    const visibleDumps = list => (Array.isArray(list) ? list : []).filter(d => d && d.parentId !== d.id);
+    const visibleDumps = list => (Array.isArray(list) ? list : []).filter(TrackSourceDump.isVisibleDump);
 
     // An mmLink written before textBlocks existed carries its prose in `text`.
     // One definition, in source-dump-core.js; the name is KS02's, so the SOURCE
@@ -1498,7 +1497,7 @@
     // on, ARE in the <head>, here and in sir-ks02.html: a text block's file
     // chip needs a file's name on any tab. Keep these ?v= values identical to
     // docs/ARCHITECTURE.md.
-    const FILES_SCRIPTS=['scripts/file-store.js?v=3','scripts/files-view.js?v=6'];
+    const FILES_SCRIPTS=['scripts/file-store.js?v=3','scripts/files-view.js?v=7'];
     const filesLoaded=new Set();
     let filesLoad=null;
     function loadFilesScripts(){
@@ -2099,6 +2098,6 @@
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
   <script src="scripts/note-to-self.js?v=4"></script>
-  <script src="scripts/search.js?v=3"></script>
+  <script src="scripts/search.js?v=4"></script>
 </body>
 </html>

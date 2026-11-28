@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Synthetic Firebase conflict fixture</title>
+<script>
+// Only this page's memory stands in for the cloud. The production script below
+// mounts its own banner and performs its normal sign-in, reads and batch writes.
+const docs = new Map();
+const account = 'users/fixture';
+let signIn, deliverSnapshot;
+let batches = 0;
+const blob = bytes => ({ toUint8Array: () => bytes });
+function snapshot(path) {
+  return { id: path.split('/').pop(), exists: docs.has(path),
+    data: () => docs.get(path), metadata: { hasPendingWrites: false } };
+}
+function collection(path) {
+  return {
+    doc(id) {
+      const key = path + '/' + id;
+      return { key, get: async () => snapshot(key), collection: sub => collection(key + '/' + sub),
+        onSnapshot(fn) { deliverSnapshot = fn; } };
+    },
+    async get() {
+      return [...docs.keys()].filter(key => key.startsWith(path + '/')).map(snapshot);
+    }
+  };
+}
+const firestore = () => ({
+  collection,
+  batch() {
+    const writes = new Map();
+    return { set(ref, value) { writes.set(ref.key, value); },
+      async commit() {
+        for (const [key, value] of writes) docs.set(key, value);
+        batches++;
+      }
+    };
+  }
+});
+firestore.Blob = { fromUint8Array: blob };
+window.firebase = { initializeApp() {}, firestore,
+  auth: () => ({ onAuthStateChanged(fn) { signIn = fn; } }) };
+
+window.cloud = {
+  receive(raw, ts) {
+    const bytes = new TextEncoder().encode(raw);
+    docs.set(account, { v: 2, enc: 'raw', n: 1, len: bytes.length, ts, gen: ts });
+    docs.set(account + '/blob/0', { b: blob(bytes), gen: ts });
+    if (deliverSnapshot) deliverSnapshot(snapshot(account));
+  },
+  signIn() { signIn({ uid: 'fixture', email: 'fixture@example.invalid' }); },
+  async read() {
+    const m = docs.get(account);
+    const bytes = docs.get(account + '/blob/0').b.toUint8Array();
+    const raw = m.enc === 'gzip'
+      ? await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
+      : new TextDecoder().decode(bytes);
+    return { raw, ts: m.ts, batches };
+  }
+};
+</script>
+<script src="../../scripts/firebase-sync.js"></script>

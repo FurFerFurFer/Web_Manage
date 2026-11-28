@@ -128,9 +128,12 @@ order field. An unknown `kind` reads as a file. Ids are strings from `TrackStora
     touches a note's `text`.** Removing the last one DELETES the key; a pin made one page
     DELETES `pageEnd`.
 14. **One budget per record:** 256 KB of `highlights`, `pins` and `bookmarks` together
-    (`marksFit`). A writer past it returns the list unchanged; the viewer checks `marksFit`
-    first and says the highlights are full. Undo is not held to it: it only returns what was
-    stored.
+    (`marksFit`). A writer past it returns the list unchanged. Pin adds, edits and renames
+    check the final mark payload with the resulting pin list and the pin's new timestamp.
+    A new or edited pin is checked on the fresh stored list. `addPinResult` and `editPinResult`
+    report refusals separately from a valid unchanged edit. The dialog keeps its draft fields
+    and explains a refused save, including a browser storage refusal. Undo only returns what
+    was stored and can restore it regardless of the budget.
 15. **A stroke is stored simplified**: `simplifyStroke` (Ramer–Douglas–Peucker, both ends
     kept, distances measured with the page's height/width ratio so x and y count alike),
     clamped to 0–1, rounded to 4 decimals, thinned to 200 points. A stroke shorter than

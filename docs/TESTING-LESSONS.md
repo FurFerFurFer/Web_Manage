@@ -53,6 +53,11 @@ to a past one. Each cost this project real time at least once.
 
 ### Reading a result
 
+- When replacing a function declaration with a shared formatter alias, check startup
+  migrations that call it before the page renders. A fresh workspace can mount successfully
+  while a legacy deadline calls the alias before initialization and prevents Schedule
+  from mounting. The existing first-load and second-load migration case catches this.
+
 - **Read the failure message, never the pass/fail.** A case that dies on its own `waitFor`
   says the control is unreachable; it says nothing about the claim the case is named for. A
   case that fails for the wrong reason is worth as little as one that passes for the wrong
@@ -279,6 +284,11 @@ Step 8 of `AGENTS.md`'s Required Workflow, verbatim. Run the list for each kind 
 ---
 
 ## Baseline and run-time history
+
+On November 27 the combined local-date, pin, autosave and sync changes passed all
+41 suites in about 61 minutes, including 685 main browser cases, four synthetic
+Firebase conflict cases and 18 search cases. The source-dump core had 48 cases
+and the FILES core had 57.
 
 The paragraph `AGENTS.md` carried until 2026-11-10, verbatim. `AGENTS.md` now keeps only
 the totals; append later timings here.

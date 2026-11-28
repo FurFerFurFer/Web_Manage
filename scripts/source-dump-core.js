@@ -57,9 +57,13 @@
   function blocksOf(section) { return (isMap(section) && isList(section.textBlocks)) ? section.textBlocks : []; }
   function citationsOf(section) { return (isMap(section) && isList(section.links)) ? section.links : []; }
 
+  // Records hidden by both source-dump views must survive edits to another
+  // record, including a visible record with the same imported ID.
+  function isVisibleDump(d) { return isMap(d) && d.parentId !== d.id; }
+
   function findDump(dumps, id) {
     if (!isList(dumps)) return null;
-    for (var i = 0; i < dumps.length; i++) if (isMap(dumps[i]) && dumps[i].id === id) return dumps[i];
+    for (var i = 0; i < dumps.length; i++) if (isVisibleDump(dumps[i]) && dumps[i].id === id) return dumps[i];
     return null;
   }
 
@@ -149,7 +153,7 @@
     var at = -1;
     if (parentId) {
       for (var i = 0; i < dumps.length; i++) {
-        if (isMap(dumps[i]) && dumps[i].id === parentId) { at = i; break; }
+        if (isVisibleDump(dumps[i]) && dumps[i].id === parentId) { at = i; break; }
       }
       if (at < 0) return dumps;
     }
@@ -171,10 +175,10 @@
     for (var k = 0; k < doomed.length; k++) {
       var id = doomed[k];
       dumps.forEach(function (d) {
-        if (isMap(d) && d.parentId === id && doomed.indexOf(d.id) < 0) doomed.push(d.id);
+        if (isVisibleDump(d) && d.parentId === id && doomed.indexOf(d.id) < 0) doomed.push(d.id);
       });
     }
-    return dumps.filter(function (d) { return !(isMap(d) && doomed.indexOf(d.id) >= 0); });
+    return dumps.filter(function (d) { return !(isVisibleDump(d) && doomed.indexOf(d.id) >= 0); });
   }
 
   function withTitle(dumps, dumpId, title) {
@@ -183,7 +187,7 @@
     if (!t) return dumps;
     var changed = false;
     var next = dumps.map(function (d) {
-      if (!isMap(d) || d.id !== dumpId || d.title === t) return d;
+      if (!isVisibleDump(d) || d.id !== dumpId || d.title === t) return d;
       changed = true;
       return Object.assign({}, d, { title: t });
     });
@@ -199,7 +203,7 @@
     if (!isList(dumps)) return dumps;
     var changed = false;
     var next = dumps.map(function (d) {
-      if (!isMap(d) || d.id !== dumpId) return d;
+      if (!isVisibleDump(d) || d.id !== dumpId) return d;
       var before = sectionsOf(d);
       var after = fn(before);
       if (after === before) return d;
@@ -419,6 +423,7 @@
   }
 
   global.TrackSourceDump = {
+    isVisibleDump: isVisibleDump,
     fileIdOf: fileIdOf,
     withBlockFile: withBlockFile,
     withoutBlockFile: withoutBlockFile,

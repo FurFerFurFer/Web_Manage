@@ -23,8 +23,8 @@
   // the Documentations sidebar's own rule — so search files them the same way.
   var PARTS = [
     ['TrackMMTree', 'scripts/mm-tree-core.js?v=2'],
-    ['TrackFiles', 'scripts/files-core.js?v=5'],
-    ['TrackSourceDump', 'scripts/source-dump-core.js?v=3'],
+    ['TrackFiles', 'scripts/files-core.js?v=6'],
+    ['TrackSourceDump', 'scripts/source-dump-core.js?v=4'],
     ['TrackProject', 'scripts/project-core.js?v=2'],
     ['TrackSearch', 'scripts/search-core.js?v=3'],
     ['TrackSearchView', 'scripts/search-view.js?v=3']

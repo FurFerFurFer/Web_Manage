@@ -33,7 +33,7 @@ A written day's record may carry `tag`: `cleared` or `eternal`. Red **`unclear` 
 - **The widget writes the Knowledge Record's keys only through `TrackKolb` writers**, only the keys they changed (`changedKeys`), merged into a fresh read, and then raises `storage` in its OWN tab (`tellThisTab`): a KS02 open in the same tab hears nothing else and its autosave would put its old `kolbs` back. The widget's own listener ignores that event (`telling`), or a write made inside `render()` starts a second render. Kolb, MG and LIN ids are NUMBERS from `nextNumericId`, never `newId()`; a draft's id is a `newId()` string.
 - An emptied field DELETES its key and an unlinked draft has no `mmId` (absence is the default, nothing behind it). A Kolb's mind-map `<select>` holds indexes into `choices`, never ids.
 - `Discard` asks, except for a draft never stored with nothing typed. Deleting or duplicating a Kolb is not offered in the widget (NOTES Proposal 19).
-- The widget dates a finished Kolb by the LOCAL day; KS02 still uses its UTC `today()` (NOTES Proposal 3).
+- The widget and Knowledge Record pass the same local calendar day to the Kolb writer for the new Kolb and its associated MG and LIN records. An edit to an existing Kolb keeps its recorded day.
 
 The **Journey book** (`journey-book.js`, the user's 2026-10-22 request) binds every Eternal Journal day into a full-screen, read-only book opened from the Journal tab. Nine rules follow, and the first two are the load-bearing ones:
 

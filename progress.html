@@ -9,24 +9,21 @@
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=11"></script>
+  <script src="scripts/schema.js?v=12"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/milestone-core.js?v=4"></script>
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/goal-core.js?v=1"></script>
   <script src="scripts/project-core.js?v=2"></script>
   <script src="scripts/strat-core.js?v=2"></script>
-  <!-- calendar-core.js is here for the Note to self pop-up ONLY. This page's
-       own code never calls TrackCalendar: it keeps its documented twins
-       (noteTimed, dlDone, dlCautionDays, the block geometry, refOccupies …),
-       and every comment below saying this page "does not load" calendar-core.js
-       means its page code does not use it. Retiring the twins is NOTES work. -->
-  <script src="scripts/calendar-core.js?v=14"></script>
+  <!-- Note to self and local-day arithmetic use calendar-core.js. The Schedule
+       still has its own note, deadline, block and timetable predicates. -->
+  <script src="scripts/calendar-core.js?v=15"></script>
   <script src="scripts/note-to-self-core.js?v=3"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="scripts/firebase-sync.js?v=2"></script>
+  <script src="scripts/firebase-sync.js?v=3"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
@@ -43,6 +40,8 @@
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
+    // The legacy deadline migration formats days before the page mounts.
+    const toDateStr = TrackSchema.localToday;
 
     // ── unified DB helpers ────────────────────────────────────────────────────
 
@@ -1005,8 +1004,6 @@
     function flattenAll(goals) {
       return TrackGoals.flattenAll(goals);
     }
-
-    function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
     function getLeaves(node, allGoals = null, _path = []) {
       return TrackGoals.getLeaves(node, allGoals, _path);
@@ -11384,9 +11381,8 @@
       return days;
     }
 
-    function calcStreak(activeDays) {
-      const prev = d => { const dt = new Date(d); dt.setDate(dt.getDate()-1); return dt.toISOString().split('T')[0]; };
-      const todayStr = new Date().toISOString().split('T')[0];
+    function calcStreak(activeDays, todayStr) {
+      const prev = d => TrackCalendar.dayShift(d, -1);
       let cursor = activeDays.has(todayStr) ? todayStr : prev(todayStr);
       if (!activeDays.has(cursor)) return 0;
       let n = 0;
@@ -11943,9 +11939,10 @@
                 : mmTotal > 0            ? Math.round(toLearnFrac * 100)
                 : 0;
 
+      const streakDay = TrackSchema.localToday();
       const streak = useMemo(
-        () => calcStreak(computeLinActiveDays(linChanges)),
-        [linChanges]
+        () => calcStreak(computeLinActiveDays(linChanges), streakDay),
+        [linChanges, streakDay]
       );
 
       return (
@@ -12158,6 +12155,6 @@
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
   <script src="scripts/note-to-self.js?v=4"></script>
-  <script src="scripts/search.js?v=3"></script>
+  <script src="scripts/search.js?v=4"></script>
 </body>
 </html>

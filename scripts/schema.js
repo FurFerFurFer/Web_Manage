@@ -21,10 +21,8 @@
                      refuses on any error, so a corrupt file cannot reach
                      localStorage at all.
 
-   Dates are LOCAL calendar days. toISOString is never used: it returns the UTC
-   day, so a workspace created at 6pm in UTC-7 was stamped tomorrow. This file
-   carries its own localToday rather than calling calendar-core.js, because
-   progress.html and sir-ks02.html do not load calendar-core.js.
+   Every page loads this file before its own code. localToday formats an
+   instant as a local calendar day. localNoon parses a day for calendar arithmetic.
 
    NOTE: nothing here rewrites data already in track_db. normalizeSlot runs at
    creation and import only. Running it over stored slots is a migration, and
@@ -124,16 +122,15 @@
 
   // ── local calendar day ───────────────────────────────────────────────────
 
-  // Takes an optional Date so the local-day contract is testable at both ends
-  // of a day, the way calendar-core.js's toDateStr is. This is a fourth copy of
-  // that expression (calendar-core.js, documentations.html, progress.html are
-  // the others) because two of the four pages do not load calendar-core.js.
-  // NOTES Proposal 3 consolidates all four.
   function localToday(date) {
     var d = date || new Date();
-    return d.getFullYear() + '-' +
+    return String(d.getFullYear()).padStart(4, '0') + '-' +
       String(d.getMonth() + 1).padStart(2, '0') + '-' +
       String(d.getDate()).padStart(2, '0');
+  }
+
+  function localNoon(day) {
+    return new Date(day + 'T12:00:00');
   }
 
   // TrackStorage is read at call time, not load time, so script order between
@@ -602,6 +599,7 @@
     SLOT_FIELDS: Object.freeze(SLOT_FIELDS),
     SLOT_KEYS: Object.freeze(SLOT_KEYS),
     localToday: localToday,
+    localNoon: localNoon,
     newSlotId: newSlotId,
     createEmptySlot: createEmptySlot,
     normalizeSlot: normalizeSlot,

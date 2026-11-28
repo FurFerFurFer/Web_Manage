@@ -92,7 +92,7 @@ test('the module exports exactly the documented surface', () => {
   // Written out by hand on purpose: if an export is added or renamed, this is
   // the case that notices.
   assert.deepEqual(Object.keys(SD).sort(), [
-    'blocksForFile', 'canLinkMM', 'fileIdOf', 'inheritsLinks', 'isLeafMM', 'isLegacyBlock', 'linkTargets', 'pathTo',
+    'blocksForFile', 'canLinkMM', 'fileIdOf', 'inheritsLinks', 'isLeafMM', 'isLegacyBlock', 'isVisibleDump', 'linkTargets', 'pathTo',
     'textBlocksOf', 'transferTextBlock', 'transferURLLink', 'withBlockFile', 'withoutBlockFile',
     'withEntry', 'withMMLink', 'withTextBlock', 'withTitle', 'withURLLink',
     'withoutEntry', 'withoutMMLink', 'withoutTextBlock', 'withoutURLLink'
@@ -275,6 +275,50 @@ test('withoutEntry keeps a non-record entry it was not asked to remove', () => {
   const L = freeze([dump('x'), null, dump('y')]);
   const next = SD.withoutEntry(L, 'x');
   assert.deepEqual(next, [null, dump('y')], 'a writer never drops data it did not target');
+});
+
+// Re-import can duplicate an ID. A hidden self-parent record can precede the
+// visible target in the stored array and can even contain matching section IDs.
+const hiddenDuplicate = () => freeze([
+  dump(7, {parentId: 7, title: 'Hidden', mmLinks: [link(90, 12)]}),
+  dump('unrelated'),
+  dump(7, {title: 'Visible', mmLinks: [link(90, 10)]}),
+  dump('child', {parentId: 7})
+]);
+
+test('adding a child inherits only the visible duplicate’s sections', () => {
+  const list = hiddenDuplicate();
+  const next = SD.withEntry(list, {id: 8, title: 'New child', parentId: 7, createdAt: '2026-03-09'});
+  assert.deepEqual(next[4].mmLinks, list[2].mmLinks);
+  assert.equal(next[0], list[0]);
+  assert.equal(next[1], list[1]);
+  assert.deepEqual(next[2].mmLinks, []);
+  assert.equal(next[3], list[3]);
+  const withoutVisibleSections = [list[0], dump(7)];
+  assert.equal(SD.inheritsLinks(withoutVisibleSections, 7), false);
+  const onlyHidden = [list[0]];
+  assert.equal(SD.withEntry(onlyHidden, {id: 8, title: 'Unreachable', parentId: 7}), onlyHidden);
+});
+
+test('renaming the visible duplicate leaves the hidden dump in place', () => {
+  const list = hiddenDuplicate();
+  const next = SD.withTitle(list, 7, 'New title');
+  assert.equal(next[0], list[0]);
+  assert.equal(next[2].title, 'New title');
+});
+
+test('editing a section on the visible duplicate preserves the hidden section with the same ID', () => {
+  const list = hiddenDuplicate();
+  const next = SD.withTextBlock(list, 7, 90, {explanation: 'Visible edit'}, 100);
+  assert.equal(next[0], list[0]);
+  assert.equal(next[2].mmLinks[0].textBlocks[0].explanation, 'Visible edit');
+});
+
+test('deleting a visible duplicate and its descendants preserves the hidden dump and stored order', () => {
+  const list = hiddenDuplicate();
+  const next = SD.withoutEntry(list, 7);
+  assert.deepEqual(next, [list[0], list[1]]);
+  assert.equal(SD.withoutEntry(next, 7), next, 'a hidden id alone cannot start another delete');
 });
 
 test('withTitle renames, trims, and refuses blank or unchanged', () => {

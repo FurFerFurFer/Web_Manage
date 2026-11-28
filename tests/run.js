@@ -120,6 +120,7 @@ if (offlineOnly) {
   console.error('   Install Google Chrome or Chromium, set CHROME_PATH, or pass --offline');
   results.push({ label: 'browser (not run)', ok: false });
 } else {
+  run('Firebase conflict banner (headless Chrome, synthetic cloud)', 'firebase-sync.test.js');
   run('browser (headless Chrome via CDP)', 'browser.test.js');
   run('Universal Search (headless Chrome via CDP)', 'search-browser.test.js');
 }

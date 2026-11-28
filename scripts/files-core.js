@@ -608,44 +608,59 @@
   // `pageEnd` that is not a page at or after `page`, a repeated id, a
   // non-file, or past the budget. A `pageEnd` equal to `page` is one page,
   // and is not stored.
-  function withPin(list, fileId, pin) {
+  function addPinResult(list, fileId, pin) {
     var rec = pageMarkable(list, fileId);
-    if (!rec || !isMap(pin) || !isId(pin.id) || !isPage(pin.page) || hasItem(rec.pins, pin.id)) return list;
-    if (pin.pageEnd !== undefined && !(isPage(pin.pageEnd) && pin.pageEnd >= pin.page)) return list;
-    var name = cleanName(pin.name);
-    if (!name) return list;
+    if (!rec) return { list: list, refusal: 'file-missing' };
+    var name = isMap(pin) ? cleanName(pin.name) : '';
+    if (!name || !isId(pin.id) || !isPage(pin.page) || hasItem(rec.pins, pin.id) ||
+        (pin.pageEnd !== undefined && !(isPage(pin.pageEnd) && pin.pageEnd >= pin.page))) {
+      return { list: list, refusal: 'invalid' };
+    }
     var item = Object.assign({}, pin, { name: name });
     if (item.pageEnd === undefined || item.pageEnd === item.page) delete item.pageEnd;
-    if (!marksFit(rec, item)) return list;
-    return withPatched(list, fileId, { pins: (isList(rec.pins) ? rec.pins : []).concat([item]) });
+    var next = (isList(rec.pins) ? rec.pins : []).concat([item]);
+    return pinWriteResult(list, rec, next);
+  }
+
+  function withPin(list, fileId, pin) {
+    return addPinResult(list, fileId, pin).list;
+  }
+
+  // Weigh the entire marks payload with the final pins.
+  function pinWriteResult(list, rec, pins) {
+    var patch = { pins: pins };
+    if (!marksFit(Object.assign({}, rec, patch))) return { list: list, refusal: 'full' };
+    return { list: withPatched(list, rec.id, patch) };
   }
 
   // A pin's name and pages changed together (the Edit pin dialog). `change`
   // is {name, page, pageEnd}; each key left out keeps what is stored, except
   // that a `page` given with no `pageEnd` makes it one page. Refused for a
   // blank name or a range that is not page ≤ pageEnd; a change that changes
-  // nothing returns the input, and only a real change stamps `updatedAt`.
-  function withPinEdited(list, fileId, pinId, change, now) {
+  // nothing returns the input without a refusal, and only a real change
+  // stamps `updatedAt`.
+  function editPinResult(list, fileId, pinId, change, now) {
     var rec = pageMarkable(list, fileId);
-    if (!rec || !isList(rec.pins) || !isMap(change)) return list;
-    var found = false, changed = false, bad = false;
-    var next = rec.pins.map(function (p) {
-      if (found || !isMap(p) || p.id !== pinId) return p;
-      found = true;
-      if (!isPin(p)) { bad = true; return p; }
-      var name = change.name === undefined ? p.name : cleanName(change.name);
-      var page = change.page === undefined ? p.page : change.page;
-      var end = change.page === undefined && change.pageEnd === undefined ? pinEnd(p)
-        : (change.pageEnd === undefined ? page : change.pageEnd);
-      if (!name || !isPage(page) || !isPage(end) || end < page) { bad = true; return p; }
-      if (name === p.name && page === p.page && end === pinEnd(p)) return p;
-      changed = true;
-      var out = Object.assign({}, p, { name: name, page: page });
-      if (end > page) out.pageEnd = end; else delete out.pageEnd;
-      if (now !== undefined) out.updatedAt = now;
-      return out;
-    });
-    return changed && !bad ? withPatched(list, fileId, { pins: next }) : list;
+    if (!rec) return { list: list, refusal: 'file-missing' };
+    var at = isList(rec.pins) ? rec.pins.findIndex(function (p) { return isMap(p) && p.id === pinId; }) : -1;
+    if (at < 0 || !isPin(rec.pins[at])) return { list: list, refusal: 'pin-missing' };
+    if (!isMap(change)) return { list: list, refusal: 'invalid' };
+    var p = rec.pins[at];
+    var name = change.name === undefined ? p.name : cleanName(change.name);
+    var page = change.page === undefined ? p.page : change.page;
+    var end = change.page === undefined && change.pageEnd === undefined ? pinEnd(p)
+      : (change.pageEnd === undefined ? page : change.pageEnd);
+    if (!name || !isPage(page) || !isPage(end) || end < page) return { list: list, refusal: 'invalid' };
+    if (name === p.name && page === p.page && end === pinEnd(p)) return { list: list };
+    var next = rec.pins.slice(), out = Object.assign({}, p, { name: name, page: page });
+    if (end > page) out.pageEnd = end; else delete out.pageEnd;
+    if (now !== undefined) out.updatedAt = now;
+    next[at] = out;
+    return pinWriteResult(list, rec, next);
+  }
+
+  function withPinEdited(list, fileId, pinId, change, now) {
+    return editPinResult(list, fileId, pinId, change, now).list;
   }
 
   function withPinRenamed(list, fileId, pinId, text, now) {
@@ -662,7 +677,7 @@
       if (now !== undefined) out.updatedAt = now;
       return out;
     });
-    return changed ? withPatched(list, fileId, { pins: next }) : list;
+    return changed ? pinWriteResult(list, rec, next).list : list;
   }
 
   function withoutPin(list, fileId, pinId) {
@@ -927,6 +942,8 @@
     highlightEntries: highlightEntries,
     withoutHighlights: withoutHighlights,
     withHighlightsRestored: withHighlightsRestored,
+    addPinResult: addPinResult,
+    editPinResult: editPinResult,
     withPin: withPin,
     withPinEdited: withPinEdited,
     withPinRenamed: withPinRenamed,

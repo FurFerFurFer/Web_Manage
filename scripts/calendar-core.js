@@ -20,9 +20,7 @@
 
   // ── local calendar dates ─────────────────────────────────────────────────
 
-  function toDateStr(d) {
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  }
+  const toDateStr = global.TrackSchema.localToday;
   const dim = (y, m) => new Date(y, m + 1, 0).getDate();
   const firstDay = (y, m) => new Date(y, m, 1).getDay();
   const dStr = (y, m, d) => y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
@@ -115,7 +113,7 @@
   // same semantics as progress.html getMGsForDay: exact key, else walk back ≤30 days
   function mgsForDay(ds, mgSchedule) {
     if (Object.prototype.hasOwnProperty.call(mgSchedule, ds)) return mgSchedule[ds] || [];
-    const d = new Date(ds + 'T12:00:00');
+    const d = global.TrackSchema.localNoon(ds);
     for (let i = 1; i <= 30; i++) {
       d.setDate(d.getDate() - 1);
       const prev = toDateStr(d);
@@ -135,7 +133,7 @@
   function daysBetween(from, to) {
     const out = [];
     if (!DAY_RE.test(from || '') || !DAY_RE.test(to || '') || from > to) return out;
-    const d = new Date(from + 'T12:00:00');
+    const d = global.TrackSchema.localNoon(from);
     while (out.length < 4000) {
       const ds = toDateStr(d);
       if (ds > to) break;
@@ -150,7 +148,7 @@
   // the neighbouring day the way a UTC-midnight parse would.
   function dayShift(ds, days) {
     if (!DAY_RE.test(ds || '')) return null;
-    const t = new Date(ds + 'T12:00:00');
+    const t = global.TrackSchema.localNoon(ds);
     t.setDate(t.getDate() + days);
     return toDateStr(t);
   }

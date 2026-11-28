@@ -52,6 +52,7 @@
   var TF = global.TrackFiles, FS = global.TrackFileStore;
 
   var HOLD_MS = 400, SLOP_TOUCH = 10, SLOP_MOUSE = 6, UNFOLD_MS = 700, EDGE = 40, SPRING_X = 28, SPRING_MS = 700;
+  var WRITE_REFUSED = 'Not saved — this browser refused the write. Everything saved before is intact.';
 
   // Exact pinned versions, loaded only when a viewer first needs them.
   var LIB = {
@@ -388,9 +389,9 @@
     }
     useEffect(function () { return function () { clearTimeout(toastTimer.current); }; }, []);
 
-    function write(fn) {
+    function write(fn, reportRefusal) {
       var r = mutate(fn);
-      if (r === false) say('Not saved — this browser refused the write. Everything saved before is intact.');
+      if (r === false && reportRefusal !== false) say(WRITE_REFUSED);
       return r;
     }
     function nameOf(id) { var r = byId.get(id); return r ? r.name : '?'; }
@@ -1456,6 +1457,22 @@
     var recRef = useRef(rec); recRef.current = rec;
     function recIn(list, id) { return TF.records(list).filter(function (r) { return r.id === id; })[0] || null; }
     function what() { return TF.kindOf(recRef.current) === 'note' ? 'note' : 'file'; }
+    function writePin(change) {
+      var result, id = recRef.current.id;
+      var saved = p.write(function (list) {
+        result = change(list, id);
+        return result.list;
+      }, false);
+      if (saved === false) return WRITE_REFUSED;
+      if (!result) return 'This workspace is unavailable. Your pin draft is still here.';
+      switch (result.refusal) {
+        case 'full': return 'Highlights, pins and bookmarks share a 256 KB limit per file. Shorten the pin name or remove a mark.';
+        case 'file-missing': return 'This file is no longer available.';
+        case 'pin-missing': return 'This pin is no longer available.';
+        case 'invalid': return 'This pin could not be saved. Check its name and pages and try again.';
+        default: return null;
+      }
+    }
     return {
       mode: mode, kind: kind, color: kind === 'pen' ? penColor : hlColor,
       setMode: setMode,
@@ -1504,21 +1521,18 @@
           if (Array.isArray(back)) p.say(n === 1 ? 'The ' + one + ' is back.' : 'The ' + n + ' ' + one + 's are back.');
         } });
       },
-      // true when the dialog may close
+      // An error remains in the dialog, where the draft can be revised or retried.
       addPin: function (page, pageEnd, text) {
-        var cur = recRef.current, now = Date.now(), name = TF.cleanName(text);
-        if (!name) return false;
+        var now = Date.now(), name = TF.cleanName(text);
         var pin = { id: newId(), page: page, name: name, createdAt: now, updatedAt: now };
         if (pageEnd > page) pin.pageEnd = pageEnd;
-        if (!TF.marksFit(cur, pin)) { p.say('This file\'s highlights and pins are full (256 KB a file).'); return false; }
-        var r = p.write(function (l) { return TF.withPin(l, cur.id, pin); });
-        if (Array.isArray(r)) p.say('Pinned ' + (pageEnd > page ? 'pages ' + page + '–' + pageEnd : 'page ' + page) + ' as ' + q(name) + '.');
-        return r !== false;
+        var error = writePin(function (list, id) { return TF.addPinResult(list, id, pin); });
+        if (!error) p.say('Pinned ' + (pageEnd > page ? 'pages ' + page + '–' + pageEnd : 'page ' + page) + ' as ' + q(name) + '.');
+        return error;
       },
       // the Edit pin dialog: its name and its pages together
       editPin: function (pinId, change) {
-        if (!TF.cleanName(change.name)) return false;
-        return p.write(function (l) { return TF.withPinEdited(l, recRef.current.id, pinId, change, Date.now()); }) !== false;
+        return writePin(function (list, id) { return TF.editPinResult(list, id, pinId, change, Date.now()); });
       },
       // the prompt is here, after the no-op guard and before the write
       deletePin: function (pinId) {
@@ -2266,9 +2280,9 @@
       if (to !== null) scrollToPage(to);
     }
     function saveDlg(v) {
-      if (!dlg) return;
-      var ok = dlg.kind === 'pin' ? m.addPin(v.page, v.pageEnd, v.name) : m.editPin(dlg.pinId, v);
-      if (ok) setDlg(null);
+      var error = dlg.kind === 'pin' ? m.addPin(v.page, v.pageEnd, v.name) : m.editPin(dlg.pinId, v);
+      if (!error) setDlg(null);
+      return error;
     }
     function dropSel() {
       var s = global.getSelection ? global.getSelection() : null;
@@ -2651,6 +2665,7 @@
     var s1 = useState(dlg.initial || auto(dlg.from, dlg.to)), name = s1[0], setName = s1[1];
     var s2 = useState(String(dlg.from)), from = s2[0], setFrom = s2[1];
     var s3 = useState(String(dlg.to)), to = s3[0], setTo = s3[1];
+    var s4 = useState(null), saveError = s4[0], setSaveError = s4[1];
     // until the user types a name or a last page, both follow the first page
     var own = useRef({ name: !!dlg.initial, to: dlg.to !== dlg.from });
     var inputRef = useRef(null);
@@ -2665,16 +2680,18 @@
     function digits(v) { return String(v).replace(/[^0-9]/g, '').slice(0, 7); }
     function typedFrom(v) {
       var t = digits(v), nextTo = own.current.to ? to : t;
+      setSaveError(null);
       setFrom(t);
       if (!own.current.to) setTo(t);
       if (!own.current.name) setName(auto(TF.pageFromText(t, total), TF.pageFromText(nextTo, total)));
     }
     function typedTo(v) {
       var t = digits(v);
+      setSaveError(null);
       own.current.to = true; setTo(t);
       if (!own.current.name) setName(auto(a, TF.pageFromText(t, total)));
     }
-    function save() { if (!why) p.onSave({ name: name, page: a, pageEnd: b }); }
+    function save() { if (!why) setSaveError(p.onSave({ name: name, page: a, pageEnd: b })); }
     function keys(e) { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') { e.preventDefault(); p.onCancel(); } }
     var box = 'w-16 rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-100 outline-none text-center';
     return h('div', { className: 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4', 'data-files-dialog': dlg.kind,
@@ -2682,7 +2699,7 @@
       h('div', { className: 'w-full max-w-sm rounded-xl border border-gray-700 bg-gray-900 p-4 space-y-3 shadow-2xl' },
         h('div', { className: 'text-sm font-bold text-gray-100' }, dlg.title),
         h('input', { ref: inputRef, value: name, 'data-files-dialog-input': true, 'aria-label': 'Pin name',
-          onChange: function (e) { own.current.name = true; setName(e.target.value); }, onKeyDown: keys,
+          onChange: function (e) { own.current.name = true; setName(e.target.value); setSaveError(null); }, onKeyDown: keys,
           className: 'w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-100 outline-none' }),
         h('div', { className: 'flex items-center gap-2 text-xs text-gray-400' },
           h('span', null, 'Pages'),
@@ -2692,7 +2709,8 @@
           h('input', { value: to, inputMode: 'numeric', 'data-files-pin-to': true, 'aria-label': 'Last page', className: box,
             onChange: function (e) { typedTo(e.target.value); }, onKeyDown: keys }),
           h('span', null, 'of ' + total)),
-        why ? h('div', { className: 'text-[11px] text-gray-500', 'data-files-pin-why': true }, why) : null,
+        why || saveError ? h('div', { className: 'text-[11px] text-gray-400', 'data-files-pin-why': true,
+          role: saveError ? 'alert' : undefined }, why || saveError) : null,
         h('div', { className: 'flex justify-end gap-2' },
           btn('Cancel', { 'data-files-dialog-cancel': true, onClick: p.onCancel }),
           h('button', { type: 'button', 'data-files-dialog-save': true, disabled: !!why, onClick: save,

@@ -601,6 +601,27 @@ test('withPinEdited changes a pin\'s name and pages together, and only stamps a 
   assert.equal(TF.withPinEdited(lib, 'f', 'p1', null, LATER), lib, 'total');
 });
 
+for (const [writer, replace] of [
+  ['withPinEdited', (list, name) => TF.withPinEdited(list, 'f', 'p1', { name }, LATER)],
+  ['withPinRenamed', (list, name) => TF.withPinRenamed(list, 'f', 'p1', name, LATER)]
+]) {
+  test(writer + ' weighs the final pins in UTF-8 against the shared marks budget', () => {
+    const highlights = [stroke('h1', 1, { futureMetadata: '' })];
+    const pins = [pin('p1', 2, 'A', { pageEnd: 3, laterKey: 'kept' }), pin('p2', 3, 'B')];
+    const bookmarks = [2];
+    const occupied = Buffer.byteLength(JSON.stringify([highlights, pins])) + Buffer.byteLength(JSON.stringify(bookmarks));
+    highlights[0].futureMetadata = 'x'.repeat(TF.MARKS_MAX_BYTES - occupied - 2);
+    const lib = deepFreeze([file('f', 'a.pdf', null, { highlights, pins, bookmarks })]);
+
+    assert.ok(replace(lib, 'éxx') === lib, 'the replacement would exceed the budget by one byte');
+    const fitted = byId(replace(lib, 'éx'), 'f');
+    assert.equal(TF.marksBytes(fitted), TF.MARKS_MAX_BYTES, 'a replacement may use exactly the whole budget');
+    assert.deepEqual(fitted.pins, [{ ...pins[0], name: 'éx', updatedAt: LATER }, pins[1]]);
+    assert.equal(fitted.highlights, highlights);
+    assert.equal(fitted.bookmarks, bookmarks);
+  });
+}
+
 test('markedPages and scopePages: what each of the panel\'s lists — and so the finder — covers', () => {
   const rec = file('f', 'a.pdf', null, {
     highlights: [stroke('a', 7), pen('b', 2), textMark('c', 7), null, stroke('d', 40)],

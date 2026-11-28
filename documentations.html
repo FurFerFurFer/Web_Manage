@@ -9,20 +9,20 @@
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=11"></script>
+  <script src="scripts/schema.js?v=12"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/milestone-core.js?v=4"></script>
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/goal-core.js?v=1"></script>
   <script src="scripts/project-core.js?v=2"></script>
-  <script src="scripts/calendar-core.js?v=14"></script>
+  <script src="scripts/calendar-core.js?v=15"></script>
   <script src="scripts/doc-table-core.js?v=4"></script>
   <script src="scripts/schedule-paste-core.js?v=2"></script>
   <script src="scripts/note-to-self-core.js?v=3"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="scripts/firebase-sync.js?v=2"></script>
+  <script src="scripts/firebase-sync.js?v=3"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
@@ -99,8 +99,7 @@
 
     // ── local calendar dates (never toISOString — that is a UTC day) ─────────
 
-    function toDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-    const localToday = () => toDateStr(new Date());
+    const localToday = TrackSchema.localToday;
 
     // One id shape across the project — TrackStorage.newId in storage-guard.js,
     // shared with progress.html's uid() because both write into calendarNotes
@@ -4859,6 +4858,6 @@
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
   <script src="scripts/note-to-self.js?v=4"></script>
-  <script src="scripts/search.js?v=3"></script>
+  <script src="scripts/search.js?v=4"></script>
 </body>
 </html>

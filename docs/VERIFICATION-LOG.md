@@ -6284,3 +6284,47 @@ a real iPad, which fetches up to six files; the user's real workspace (synthetic
 a tab table that is not a literal in its page, which the drift guard cannot read, and the
 count of KS02's inline tab tables, which it cannot tell from its other inline tables (NOTES
 Proposal 24).
+
+## 2026-11-27 — Local dates, FILES pins, Knowledge Record autosave and cloud conflicts
+
+- Five Chrome cases reproduced the previous local-day errors in Kolb saves, SIR
+  dates across a daylight-saving change, the MG week at New Year, the Schedule streak
+  and both export filenames. All five passed on the changed pages. The calendar,
+  schema and Note to self suites passed in all five test timezones.
+- The pre-fix FILES writers accepted an edit and a rename one UTF-8 byte over the
+  per-file marks limit. All 57 FILES core tests passed with the replacement pin
+  counted once. Three Chrome cases reproduced the lost draft or missing inline error
+  on the old viewer. The fixed viewer retained the name and page range after an
+  over-budget edit, a missing pin and a quota refusal, and the retry cases saved.
+- With an existing workspace, Chrome counted two writes on Knowledge Record mount
+  and one on refresh before the fix. A real Kolb edit also lost a hidden source
+  dump. The fixed page passed all three cases, including preserving a missing map
+  and a newer value saved by another writer. The first edit fixture had an unlinked
+  Kolb, so its Duplicate action did nothing. The reported pre-fix and fixed runs
+  both used a Kolb linked to its mind map.
+- Four synthetic cases with duplicate source-dump IDs failed before the shared
+  writers excluded hidden self-parent records. All 48 source-dump core tests passed
+  after the fix, covering inheritance, rename, section editing and descendant deletion.
+- All four conflict tests failed against the old Firebase script and passed in Chrome
+  with an in-memory cloud fixture. Previously Cancel could replace the cloud bytes.
+  With the confirmation, Cancel preserves both copies, pending state and the upload
+  hold. Confirm uploads the latest local edits. The device time is its last confirmed
+  sync. Actual Firebase accounts and multi-device sync were outside this run.
+- A separate smoke check on `127.0.0.1:8765` used a synthetic workspace and a
+  temporary Chrome profile. Home listed the workspace, the other four pages
+  rendered, and all five mounted the notes button and dismissed the signed-out
+  Firebase overlay with Skip. The check saw no uncaught page errors and verified
+  that its server stopped and its Chrome profile was removed.
+- The first combined run caught a load-order regression on Schedule with legacy
+  `startDate` deadlines. The startup migration called the shared day formatter
+  before the page initialized its alias. The migration case failed at mount.
+  With the alias initialized at the start of the page, the same case passed its
+  first-load conversion and second-load byte equality checks in Chrome.
+- The final `node tests/run.js` passed all 41 suites, including 685 main Chrome
+  cases, four synthetic Firebase conflict cases and 18 search cases. There were
+  zero failures, skips or cancellations. It ran 21:58–22:59 Bangkok time on
+  November 27. The first subsequent kernel suspend was at 23:50. The SHA-256
+  over the runnable files in the frozen copy was
+  `2feb8365aa6f750a007e9de4b67f09e4c7ff43bb6bb20079d5ef7b54530425de`
+  before and after, and each file matched the working tree at final review.
+  All shared scripts passed syntax checks and `git diff --check` passed.

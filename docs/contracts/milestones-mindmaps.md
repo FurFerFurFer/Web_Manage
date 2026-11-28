@@ -11,6 +11,11 @@ A new rule for this area is added HERE, not to `AGENTS.md`.
 
 ---
 
+The Knowledge Record captures the device’s local calendar day when a LIN session is saved.
+SIR due dates advance by calendar days. A completion or postponement shifts only later
+open repetitions by the difference between the old due day and the newly chosen day.
+Existing historical date keys retain their recorded meaning.
+
 A milestone is **overdue** when its end has passed and its work — the tasks under its blocks, and each `toLearn` mind map's waypoint for it — is not all done. `scripts/milestone-core.js` (`window.TrackMilestone`) is the one definition, and four surfaces draw it: the Milestones tab (row and calendar), the Home and Documentations month tails through `calendar-core.js`, and the Schedule's ⚑ rows and pickers. Seven rules follow, and the first two are the load-bearing ones:
 
 - **One definition, and the six `progress.html` names are DELEGATES.** `countProgress`, `isMMTargetMet`, `buildSirDoneMap`, `STAGE_ORDER`, `collectMilestoneOwners` and `collectMilestoneBlocks` stay in the page only so their call sites do not move. Never re-inline one: Home cannot read `progress.html`, so a page-local copy is how the Milestones tab and the calendar tails would come to disagree about "done" — the deadline-caution shape again. `tests/milestone-core.test.js` pins the module against **verbatim copies** of the pre-extraction functions; the two deliberate differences (a link cycle terminates, a block reached twice counts once) have cases of their own.
@@ -43,7 +48,7 @@ A mind map may carry `strat`, its one **STRAT** (strategy): `{text, createdAt, u
 - **`originId` is absent by default and unlinking DELETES the key, never `null`** (`withoutStratOrigin`); linking writes `originId` and nothing else — not `updatedAt`, since a link is not an edit of the words — so unlink-then-link restores the record exactly. Linking deletes nothing and asks nothing; **unlinking asks** (the user's choice), in `unlinkStrat` before its `setMms`, and `removeStrat`'s prompt names the origin when there is one.
 - **Read-only outside the mind map that owns it** (the user's choice): a child draws its ancestors' STRATs with no `✎` and no `×`, the origin draws a STRAT spreading from it as `FROM <writer>` with neither, and Progress only reads — `mms` is KS02's key.
 - **Every mind-map name on a STRAT is a link** (the user's choice, 2026-11-10): in KS02 it opens that mind map in place through `onNavigate`, on INFO for an anchor and KS03 otherwise; on the Schedule it is `sir-ks02.html?mm=<id>`. That works only because **every `<MMDetail>` is keyed by mind map and opens on `selectedMMMode`**, which `openMM` sets in the same step. Never unkey one: an unkeyed panel keeps the tab it was on, and an anchor shown on KS03 draws nothing — a doctored ks03-view panel without its key fails exactly the case that opens an anchor from a STRAT link.
-- **The times are `Date.now()` passed in as `now`**, never `today()`, which is this page's UTC-day helper. That is what keeps `strat-core.js` free of date code and its suite unswept, and a structural case greps the module, comments stripped, to prove it.
+- **The times are millisecond timestamps from `Date.now()` passed in as `now`.** This keeps `strat-core.js` free of date code and its suite unswept.
 - **Not validated in `schema.js`**, like every other mind-map key: it is read only through `stratText`, which accepts any value and cannot throw.
 
 **SRCH → DIRECTORY** (`sir-ks02.html`'s `MMDirectoryView`, the user's 2026-11-03 request) draws every mind map as a tree beside a page per mind map, and moves children by a held drag — a reorder between blocks, a nest onto a tree row, a move to Top level, one block or a ticked group. It adds **no** key: a move rewrites `parentIds` and the order of `mms`, nothing else. `scripts/mm-tree-core.js` (`window.TrackMMTree`) is the one definition. Eight rules follow, and the first three are the load-bearing ones:

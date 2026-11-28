@@ -106,9 +106,20 @@ test('browser suites', skipUnlessChrome, async t => {
     });
   } + ')();';
   const open = async (file, { db = null, raw = null, hash = '', fresh = true, extra = null,
-                              viewport = null } = {}) => {
+                              viewport = null, clock = null } = {}) => {
     const page = await browser.newPage();
     await page.addInitScript(NO_DRIVE);
+    if (clock) {
+      await page.session.send('Emulation.setTimezoneOverride', { timezoneId: clock.zone });
+      await page.addInitScript('(' + function (instant) {
+        const NativeDate = Date;
+        const offset = NativeDate.parse(instant) - NativeDate.now();
+        window.Date = class extends NativeDate {
+          constructor(...args) { super(...(args.length ? args : [NativeDate.now() + offset])); }
+          static now() { return NativeDate.now() + offset; }
+        };
+      } + ')(' + JSON.stringify(clock.instant) + ')');
+    }
     if (fresh) await page.clearStorage(server.origin);
     /* BEFORE goto, and that is not cosmetic. A phone case's real subject is a
        lazy useState initializer that reads TrackViewport.isPhone() exactly once,
@@ -332,6 +343,59 @@ test('browser suites', skipUnlessChrome, async t => {
     }
     await ks02.close();
   });
+
+  for (const step of ['mount', 'refresh', 'edit']) {
+    await t.test('KS02 autosave writes only local edits on ' + step, async () => {
+      const slot = F.emptySlot({
+        mms: [F.mm(10, 'Practice', {scBlocksOrder: [], scAggBlocksOrder: [], sourceDumpActivated: false})],
+        kolbs: [F.kolb(1, '2026-03-05', {mmId: 10})],
+        sourceDumps: [F.dump(9, '2026-03-01', {parentId: 9})]});
+      delete slot.linDayTitles; // older slots can omit this optional map
+      const db = F.dbWith([slot], slot.id);
+      const page = await browser.newPage();
+      try {
+        await page.addInitScript(NO_DRIVE);
+        await page.clearStorage(server.origin);
+        await page.seed(db);
+        await page.addInitScript(`window.dbWrites = 0;
+          const put = Storage.prototype.setItem;
+          Storage.prototype.setItem = function(key, value) {
+            if (key === 'track_db') window.dbWrites++;
+            return put.call(this, key, value);
+          };`);
+        await page.goto(server.url('sir-ks02.html') + '#kolb');
+        await page.skipFirebase();
+        const dupeButtons = () => Array.from(document.querySelectorAll('button')).filter(b => b.textContent.trim() === 'dupe').length;
+        await page.waitFor(dupeButtons, {message: 'loaded the stored Kolb'});
+        if (step === 'refresh') {
+          await page.evaluate(WRITE_SLOT_KEY, 'kolbs', [...slot.kolbs, F.kolb(2, '2026-03-06')]);
+          await page.evaluate(function () {
+            window.dbWrites = 0;
+            window.dispatchEvent(new StorageEvent('storage', {key: 'track_db'}));
+          });
+          await page.waitFor(function () {
+            return Array.from(document.querySelectorAll('button')).filter(b => b.textContent.trim() === 'dupe').length === 2;
+          }, {message: 'adopted external Kolb'});
+        } else if (step === 'edit') {
+          // Another writer has saved an owned sibling field, before refresh.
+          await page.evaluate(WRITE_SLOT_KEY, 'levelTemplates', {extra: 'newer'});
+          await page.evaluate(function () {
+            window.dbWrites = 0;
+            Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'dupe').click();
+          });
+          await page.waitFor(function () {
+            return JSON.parse(localStorage.getItem('track_db')).slots[0].kolbs.length === 2;
+          }, {message: 'saved the duplicated Kolb'});
+        }
+        await sleep(200); // allow the passive autosave effect after the render
+        assert.equal(await page.evaluate(() => window.dbWrites), step === 'edit' ? 1 : 0);
+        const stored = await page.evaluate(READ_SLOT);
+        assert.deepEqual(stored.sourceDumps, slot.sourceDumps, 'hidden source dumps survive');
+        assert.equal(Object.hasOwn(stored, 'linDayTitles'), false, 'reading a missing map does not materialize it');
+        if (step === 'edit') assert.deepEqual(stored.levelTemplates, {extra: 'newer'});
+      } finally { await page.close(); }
+    });
+  }
 
   await t.test('switching the active slot in another tab keeps KS02 workspaces independent', async () => {
     const db = F.dbWith([
@@ -15833,8 +15897,8 @@ test('browser suites', skipUnlessChrome, async t => {
     return c.some(function (x) { return x.indexOf('Declarative Alpha') === 0; }) ? c : false;
   };
   // Open an MM's panel on its KS03 mode, where the phase row and +Lin live.
-  const openMMPanel = async (tc, id, db) => {
-    const page = await openHere(tc, 'sir-ks02.html', { db: db || p17Db(), hash: withQuery('?mm=' + id, '#ks03') });
+  const openMMPanel = async (tc, id, db, clock) => {
+    const page = await openHere(tc, 'sir-ks02.html', { db: db || p17Db(), hash: withQuery('?mm=' + id, '#ks03'), clock });
     await page.waitFor(function () { return !!document.querySelector('[data-mm-mode="ks03"]'); },
       { message: 'MM ' + id + "'s panel" });
     await page.evaluate(CLICK_SEL, '[data-mm-mode="ks03"]');
@@ -15842,8 +15906,8 @@ test('browser suites', skipUnlessChrome, async t => {
       { message: 'the phase row' });
     return page;
   };
-  const openLinFor = async (tc, id, db) => {
-    const page = await openMMPanel(tc, id, db);
+  const openLinFor = async (tc, id, db, clock) => {
+    const page = await openMMPanel(tc, id, db, clock);
     await page.evaluate(CLICK_SEL, '[data-mm-open-lin]');
     await page.waitFor(function () { return !!document.querySelector('[data-lin-option]'); },
       { message: "+LIN's options for MM " + id });
@@ -15977,6 +16041,34 @@ test('browser suites', skipUnlessChrome, async t => {
     await page.evaluate(CLICK_SEL, '[data-lin-option="' + option + '"]');
     await page.waitFor(function () { return !!document.querySelector('[data-lin-save]'); }, { message: '+LIN step 3' });
   };
+
+  await t.test('local dates: SIR reviews span spring daylight saving by calendar day', async tc => {
+    const page = await openLinFor(tc, 13, p17Db(), { zone: 'America/Los_Angeles', instant: '2026-03-07T20:00:00Z' });
+    await pickLin(page, 'stageAdvance:sir');
+    await page.evaluate(CLICK_SEL, '[data-lin-save]');
+    const due = await page.waitFor(function () {
+      const sessions = JSON.parse(localStorage.getItem('track_db')).slots[0].sessions.filter(s => s.mmId === 13);
+      return sessions.length === 5 && sessions.map(s => s.date);
+    }, { message: 'five new SIR reviews in storage' });
+    assert.deepEqual(due, ['2026-03-08', '2026-03-10', '2026-03-14', '2026-03-21', '2026-04-06']);
+  });
+
+  await t.test('local dates: the MG timeline groups a Monday at year end into ISO week one', async tc => {
+    const db = seedDb({ mms: [F.mm(13, 'MG map', { type: '2' })],
+      mgChanges: [F.mgChange(12, '2024-12-30', 13, 'Practice')] });
+    const page = await openHere(tc, 'sir-ks02.html', { db, hash: '#mg',
+      clock: { zone: 'Pacific/Midway', instant: '2024-12-31T10:45:00Z' } });
+    await page.waitFor(function () {
+      const week = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'WEEK');
+      if (week) week.click();
+      return !!week;
+    }, { message: 'the MG week scale' });
+    const week = await page.waitFor(function () {
+      const group = Array.from(document.querySelectorAll('div')).find(el => /^W\d+$/.test(el.textContent));
+      return group && group.textContent;
+    }, { message: 'an MG week label' });
+    assert.equal(week, 'W01');
+  });
 
   await t.test('P17 +LIN: moving a Procedural MM stored in SIR asks first, and Cancel writes nothing', async tc => {
     const page = await openLinFor(tc, 11);
@@ -16199,8 +16291,8 @@ test('browser suites', skipUnlessChrome, async t => {
     sessions: [F.session(211, TODAY, 11), F.session(212, dayFromToday(3), 11, { repIndex: 1 })]
   });
   // From an MM's panel: MG mode → + NEW KOLB → through to the last step.
-  const openKolbFor = async (tc, id) => {
-    const page = await openHere(tc, 'sir-ks02.html', { db: p17KolbDb(), hash: withQuery('?mm=' + id, '#ks03') });
+  const openKolbFor = async (tc, id, clock = null) => {
+    const page = await openHere(tc, 'sir-ks02.html', { db: p17KolbDb(), hash: withQuery('?mm=' + id, '#ks03'), clock });
     await page.waitFor(function () { return !!document.querySelector('[data-mm-mode="mg"]'); }, { message: 'MM ' + id + "'s panel" });
     await page.evaluate(CLICK_SEL, '[data-mm-mode="mg"]');
     await page.waitFor(function () { return !!document.querySelector('[data-mm-new-kolb]'); }, { message: 'the new-Kolb button' });
@@ -16218,7 +16310,7 @@ test('browser suites', skipUnlessChrome, async t => {
   };
 
   await t.test('P17 KOLB: saving a new Kolb sends a Procedural MM at S3 back to S1, logged as a reset', async tc => {
-    const page = await openKolbFor(tc, 16);
+    const page = await openKolbFor(tc, 16, { zone: 'Pacific/Kiritimati', instant: '2028-02-28T10:15:00Z' });
     const before = await page.evaluate(READ_P17_SLOT);
     await page.evaluate(CLICK_SEL, '[data-kolb-save]');
     const slot = await page.waitFor(function () {
@@ -16227,6 +16319,9 @@ test('browser suites', skipUnlessChrome, async t => {
     }, { message: 'the Kolb landing in track_db' });
     assert.equal(slot.mms.find(m => m.id === 16).ksStage, '1', 'Theta went back to S1');
     const kolb = slot.kolbs[slot.kolbs.length - 1];
+    assert.equal(kolb.date, '2028-02-29', 'after midnight in UTC+14');
+    assert.equal(slot.linChanges.at(-1).date, kolb.date, 'the reset shares the Kolb day');
+    assert.deepEqual(slot.kolbs.slice(0, -1), before.kolbs, 'historical dates survive the save');
     assert.equal(kolb.mmId, 16);
     assert.equal(slot.linChanges.length, before.linChanges.length + 1, 'one LIN record');
     assert.deepEqual(slot.linChanges[slot.linChanges.length - 1].items,
@@ -16291,16 +16386,15 @@ test('browser suites', skipUnlessChrome, async t => {
   });
 
   await t.test('P17 KOLB: the streak does not count a reset, and still counts an advance', async tc => {
-    /* LIN records carry KS02's today(), which is a UTC day — NOTES Proposal 3 —
-       and the streak reads the same UTC day, so the fixture uses one too. */
-    const utcToday = new Date().toISOString().split('T')[0];
-    const reset = { id: 901, date: utcToday, title: utcToday,
+    const localDay = '2027-01-01';
+    const clock = { zone: 'Pacific/Kiritimati', instant: '2026-12-31T10:15:00Z' };
+    const reset = { id: 901, date: localDay, title: localDay,
       items: [{ mmId: 16, change: { type: 'kolbReset', oldValue: '3', newValue: '1', kolbId: 900 } }] };
-    const advance = { id: 902, date: utcToday, title: utcToday,
+    const advance = { id: 902, date: localDay, title: localDay,
       items: [{ mmId: 17, change: { type: 'stageAdvance', oldValue: '1', newValue: '2' } }] };
     const streakOf = async lin => {
       const db = p17KolbDb(); db.slots[0].linChanges = lin;
-      const page = await openHere(tc, 'progress.html', { db });
+      const page = await openHere(tc, 'progress.html', { db, clock });
       await page.waitFor(function () { var e = document.querySelector('#root'); return !!e && e.children.length > 0; },
         { message: 'progress.html mounting' });
       await page.waitFor(function () { return !!document.querySelector('[data-app-pct]'); }, { message: 'the header' });
@@ -16310,6 +16404,20 @@ test('browser suites', skipUnlessChrome, async t => {
     };
     assert.equal(await streakOf([reset]), null, 'a day holding only a reset is no streak day');
     assert.equal(await streakOf([advance]), '1', 'the guard: an advance on the same day still counts');
+  });
+
+  await t.test('local dates: Home names both exports after the local day before midnight in UTC-11', async tc => {
+    const db = seedDb({ name: 'Study log' });
+    const page = await openHere(tc, 'index.html', { db,
+      clock: { zone: 'Pacific/Midway', instant: '2027-01-01T10:45:00Z' } });
+    const names = await page.evaluate(function (id) {
+      const out = [];
+      HTMLAnchorElement.prototype.click = function () { out.push(this.download); };
+      exportSlot(id);
+      exportDumps(id);
+      return out;
+    }, db.activeSlotId);
+    assert.deepEqual(names, ['Study_log_2026-12-31.json', 'Study_log_dumps_2026-12-31.json']);
   });
 
   /* The user's answer of 2026-10-13: an OLD Kolb moved onto a Procedural MM
@@ -19877,7 +19985,7 @@ test('browser suites', skipUnlessChrome, async t => {
       await page.evaluate(function () { location.hash = 'files'; return true; });
       await page.waitFor(HAS_SEL, { args: ['[data-files-view]'], message: 'FILES mounted' });
       const got = (await page.evaluate(LOADED)).map(n => n.split('/').pop()).sort();
-      assert.deepEqual(got, ['file-store.js?v=3', 'files-view.js?v=6'],
+      assert.deepEqual(got, ['file-store.js?v=3', 'files-view.js?v=7'],
         'exactly the two scripts, and no PDF.js, Markdown renderer or Google sign-in until one is needed');
       // FILES preloads Google's sign-in when Drive is set up, and the shipped
       // client id is real; open() blanks it, so nothing here may reach Google
@@ -19893,7 +20001,7 @@ test('browser suites', skipUnlessChrome, async t => {
     for (const p of PAGES.filter(p => p !== 'true-storage.html')) {
       const src = fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
       assert.doesNotMatch(src, /file-store\.js|files-view\.js/, p + ' never loads the FILES code');
-      if (p === 'sir-ks02.html') assert.match(src, /<script src="scripts\/files-core\.js\?v=5"><\/script>/, 'KS02 reads file names through files-core.js');
+      if (p === 'sir-ks02.html') assert.match(src, /<script src="scripts\/files-core\.js\?v=6"><\/script>/, 'KS02 reads file names through files-core.js');
       else assert.doesNotMatch(src, /files-core\.js/, p + ' never loads files-core.js');
     }
   });
@@ -20810,6 +20918,95 @@ test('browser suites', skipUnlessChrome, async t => {
       await pdfAt(page, 'Page 2 of 2');   // the pin that was on is gone: every page shows, the view still on page 2
       assert.deepEqual(realErrors(page), []);
     } finally { page.rejectDialogs = false; await page.close(); }
+  });
+
+  const PIN_DIALOG_VALUES = function () {
+    return ['[data-files-dialog-input]', '[data-files-pin-from]', '[data-files-pin-to]'].map(function (sel) {
+      var field = document.querySelector(sel);
+      return field ? field.value : null;
+    });
+  };
+  const editTestPin = async page => {
+    await pagesList(page, 'outline');
+    await page.evaluate(CLICK_SEL, '[data-files-pin-rename="edit-pin"]');
+    await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="pin-rename"]'], message: 'the Edit pin dialog' });
+  };
+
+  await t.test('FILES pin saves: a replacement past the shared budget keeps all draft fields and can be retried', async () => {
+    const pins = [{ id: 'edit-pin', page: 1, name: 'A', createdAt: 1790000000000, updatedAt: 1790000000000 }];
+    const highlights = [{ ...MARK_HLS()[0], futureMetadata: '' }];
+    const occupied = Buffer.byteLength(JSON.stringify([highlights, pins]));
+    highlights[0].futureMetadata = 'x'.repeat(256 * 1024 - occupied - 16);
+    const { page } = await openMarked({ files: MARK_RECS({ pdf: { pins, highlights } }) });
+    try {
+      await editTestPin(page);
+      const raw = await page.evaluate(FILES_RAW);
+      const oversized = 'A long pin name';
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', oversized);
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-pin-to]', '2');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      assert.deepEqual(await page.evaluate(PIN_DIALOG_VALUES), [oversized, '1', '2'], 'all draft values stay in the open dialog');
+      assert.match(await page.evaluate(TEXT_AT, '[data-files-pin-why]'), /256 KB/);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'the refused replacement leaves the stored database byte-identical');
+
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', 'AB');
+      assert.equal(await page.evaluate(TEXT_AT, '[data-files-pin-why]'), null, 'typing clears the previous refusal');
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await dirLanded(page, raw, 'the shorter pin saved');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-dialog]'), false);
+      const saved = await page.evaluate(FILES_REC, 'm-pdf');
+      assert.deepEqual(saved.pins, [{ ...pins[0], name: 'AB', pageEnd: 2, updatedAt: saved.pins[0].updatedAt }]);
+      assert.deepEqual(saved.highlights, highlights);
+
+      await editTestPin(page);
+      const same = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-dialog]'), false, 'a valid unchanged edit can close');
+      assert.equal(await page.evaluate(FILES_RAW), same, 'an unchanged edit writes nothing');
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES pin saves: a pin missing from fresh storage keeps the edit draft and explains why', async () => {
+    const files = MARK_RECS({ pdf: { pins: [{ id: 'edit-pin', page: 1, name: 'Before', createdAt: 1, updatedAt: 1 }] } });
+    const { page } = await openMarked({ files });
+    try {
+      await editTestPin(page);
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', 'My draft');
+      assert.equal(await page.evaluate(WRITE_SLOT_KEY, 'files', MARK_RECS()), true, 'the stored pin disappeared while the viewer still has its draft');
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      assert.equal(await page.evaluate(VALUE_AT, '[data-files-dialog-input]'), 'My draft', 'the refused edit stays open');
+      assert.match(await page.evaluate(TEXT_AT, '[data-files-pin-why]'), /no longer available/);
+      assert.equal(await page.evaluate(FILES_RAW), raw, 'saving the draft does not resurrect the missing pin');
+    } finally { await page.close(); }
+  });
+
+  await t.test('FILES pin saves: browser quota refusal is explained inside the open add dialog and the draft can be saved again', async () => {
+    const { page } = await openMarked();
+    try {
+      await page.evaluate(CLICK_SEL, '[data-files-pin-add]');
+      await page.waitFor(HAS_SEL, { args: ['[data-files-dialog="pin"]'], message: 'the new pin dialog' });
+      await page.evaluate(FILES_SET, SET_REACT_INPUT, '[data-files-dialog-input]', 'Retry this pin');
+      const raw = await page.evaluate(FILES_RAW);
+      await page.evaluate(function () {
+        var original = Storage.prototype.setItem;
+        window.restorePinTestStorage = function () { Storage.prototype.setItem = original; };
+        Storage.prototype.setItem = function (key, value) {
+          if (key === 'track_db') throw new DOMException('synthetic full storage', 'QuotaExceededError');
+          return original.call(this, key, value);
+        };
+      });
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      assert.match(await page.evaluate(TEXT_AT, '[data-files-pin-why]'), /browser refused the write/);
+      assert.deepEqual(await page.evaluate(PIN_DIALOG_VALUES), ['Retry this pin', '1', '1']);
+      assert.equal(await page.evaluate(FILES_RAW), raw);
+
+      await page.evaluate(function () { window.restorePinTestStorage(); });
+      await page.evaluate(CLICK_SEL, '[data-files-dialog-save]');
+      await dirLanded(page, raw, 'the same draft saved on retry');
+      assert.equal(await page.evaluate(HAS_SEL, '[data-files-dialog]'), false);
+      assert.equal((await page.evaluate(FILES_REC, 'm-pdf')).pins[0].name, 'Retry this pin');
+    } finally { await page.close(); }
   });
 
   await t.test('FILES marks: a stroke on a PNG lands inside the image, whose frame is the picture\'s own size', async () => {

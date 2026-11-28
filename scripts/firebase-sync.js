@@ -540,6 +540,11 @@
     if (el) el.remove();
   }
 
+  function _formatSyncTime(value) {
+    const time = new Date(Number(value));
+    return time.getTime() > 0 ? time.toLocaleString() : 'Unknown';
+  }
+
   // Unsent local edits plus a differing cloud copy. Auto-applying either side would
   // silently discard the other, so the choice is the user's.
   function _showConflictBanner(remoteStr, remoteTs, remoteGen) {
@@ -552,6 +557,11 @@
     const msg = document.createElement('div');
     msg.textContent = '⚠ This device has unsent changes and the cloud copy differs. Keep which one?';
     el.appendChild(msg);
+    const times = document.createElement('div');
+    times.style.whiteSpace = 'pre-line';
+    times.textContent = 'Last confirmed sync on this device: ' + _formatSyncTime(localStorage.getItem(DB_TS_KEY)) +
+      '\nCloud version saved: ' + _formatSyncTime(remoteTs);
+    el.appendChild(times);
     const row = document.createElement('div');
     row.style.cssText = 'margin-top:6px;display:flex;gap:6px;flex-wrap:wrap';
     row.appendChild(_bannerButton('Reload cloud version', '#78350f', '#fde68a', function () {
@@ -566,6 +576,8 @@
       location.reload();
     }));
     row.appendChild(_bannerButton('Keep this device — push now', '#78350f', '#fde68a', function () {
+      if (!window.confirm('Replace the cloud copy with all data from this device? Changes saved only in the cloud will be lost.\n\n' +
+        times.textContent)) return;
       _clearConflictBanner();
       _localDirty = true;
       _retryIdx = 0;

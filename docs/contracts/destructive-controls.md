@@ -65,3 +65,8 @@ on both pages — `unlinkBlockFile` in `sir-ks02.html` and in `true-storage.html
 path through it removes a link. The text is one, word for word: "Unlink this file from the text
 block? The file itself is not deleted." Linking asks nothing, and a block naming a deleted file
 keeps its `×`. Pinned by `TEXT ↔ FILE (KS02): unlink asks; Cancel keeps every byte …`.
+
+In the sync conflict banner, **Keep this device — push now** asks for native confirmation
+before releasing the upload hold. Both the banner and the confirmation show the device’s
+last confirmed cloud sync (`track_db_ts`) and the cloud version’s saved time. A missing or
+invalid timestamp displays as **Unknown**. Cancel keeps the banner open and uploads on hold.

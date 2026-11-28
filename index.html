@@ -8,17 +8,17 @@
   <link rel="apple-touch-icon" href="assets/icons/home-180.png?v=1">
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=11"></script>
+  <script src="scripts/schema.js?v=12"></script>
   <script src="scripts/milestone-core.js?v=4"></script>
   <script src="scripts/kolb-core.js?v=1"></script>
-  <script src="scripts/calendar-core.js?v=14"></script>
+  <script src="scripts/calendar-core.js?v=15"></script>
   <script src="scripts/quest-core.js?v=2"></script>
   <script src="scripts/note-to-self-core.js?v=3"></script>
   <link rel="stylesheet" href="styles/styles.css?v=31">
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="scripts/firebase-sync.js?v=2"></script>
+  <script src="scripts/firebase-sync.js?v=3"></script>
 </head>
 <body class="home">
   <main class="home-shell">
@@ -480,7 +480,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = (slot.name||'slot').replace(/\s+/g,'_') + '_' + new Date().toISOString().slice(0,10) + '.json';
+      a.download = (slot.name||'slot').replace(/\s+/g,'_') + '_' + TrackSchema.localToday() + '.json';
       a.click();
       URL.revokeObjectURL(url);
     }
@@ -509,7 +509,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = (slot.name||'slot').replace(/\s+/g,'_') + '_dumps_' + new Date().toISOString().slice(0,10) + '.json';
+      a.download = (slot.name||'slot').replace(/\s+/g,'_') + '_dumps_' + TrackSchema.localToday() + '.json';
       a.click();
       URL.revokeObjectURL(url);
     }
@@ -1217,6 +1217,6 @@
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
   <script src="scripts/note-to-self.js?v=4"></script>
-  <script src="scripts/search.js?v=3"></script>
+  <script src="scripts/search.js?v=4"></script>
 </body>
 </html>

@@ -22,8 +22,6 @@ acceptance criteria before starting a proposal.
 ```text
 Versioned migrations and recovery
         ↓
-Local-date corrections
-        ↓
 Conflict-aware persistence
         ↓
 Reproducible build and modular extraction
@@ -385,61 +383,7 @@ The migration work is complete only when all of the following are true:
   equality; exact pre-migration source bytes or key/value state remain separately
   recoverable.
 
-After this gate, the next related data-safety task is Proposal 3 (shared local calendar
-dates), followed by Proposal 4 (repository revisions and same-key conflict handling).
-
-## Proposal 3: Use Local Calendar Dates Consistently
-
-### Open problem
-
-Several active paths still use UTC-derived calendar keys such as:
-
-```js
-new Date().toISOString().split('T')[0]
-```
-
-This can select the previous or next local day near midnight. Slot creation is already
-local-day safe through `schema.js`; remaining uses affect export filenames, KS02 dates and
-SIR calculations, and Progress date logic.
-
-Kolbs now show the split side by side. A Kolb finished in the notes widget's Kolbs tab is dated
-by the local day (`TrackSchema.localToday()`); one saved on the Knowledge Record is still dated
-by KS02's UTC `today()`, and so are the MG change and LIN record each save writes. Between local
-midnight and UTC midnight the two can disagree by a day for the same moment. `kolb-core.js`
-takes the day as a parameter, so the fix is the page's `today()` alone, with no change to the
-shared writer.
-
-Parsing `new Date('YYYY-MM-DD')` is also unsafe for local calendar arithmetic because that
-form is interpreted as UTC.
-
-### Proposed direction
-
-Create shared helpers that format and parse local calendar days explicitly:
-
-```js
-function localDateKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function parseLocalDateKey(key) {
-  const [year, month, day] = key.split('-').map(Number);
-  return new Date(year, month - 1, day);
-}
-```
-
-Do not silently change fields that are true instants, such as millisecond `createdAt`
-timestamps. Classify each date before converting it.
-
-### Acceptance criteria
-
-- Test both ends of a local day in UTC+14 and UTC-11.
-- Test month, year, leap-day, and daylight-saving boundaries.
-- Test addition and subtraction of local calendar days.
-- Remove active UTC-date helpers used for user-visible calendar days.
-- Preserve stored meanings and existing date keys.
+After this gate, Proposal 4 addresses repository revisions and same-key conflict handling.
 
 ## Proposal 4: Add Revision and Conflict Handling
 
@@ -915,18 +859,11 @@ The parent-cycle crash is fixed and the layout now has one definition in `graph-
 (see README, "Parent cycles"). Three adjacent items were found while doing it and are
 deliberately **not** done.
 
-### KS02 still writes a byte-identical slot on mount and cross-tab refresh
+### Check unchanged saves on Schedule and Documentations
 
-`true-storage.html` compares before writing, so a mount or a `storage`-event refresh that
-changes nothing performs no write. `sir-ks02.html` does not: its autosave effect writes the
-same bytes back, which sets `track_db_pending` and arms a sync upload for a no-op.
-
-Harmless to the data — the write is correct, just needless — but it costs an upload per tab
-focus and makes `track_db_pending` a noisier signal than it should be. It now also fires after
-every edit on True Storage's SOURCE DUMP tab while a KS02 tab is open: KS02 adopts the edited
-`sourceDumps` on the `storage` event and its autosave writes the same bytes straight back. Apply the same
-compare-before-write there. Check `progress.html` and `documentations.html` for the same
-shape before assuming KS02 is the only one.
+Schedule's per-field save effects and Documentations' `docPages` writer can call
+`saveDB` with values already in storage. Verify mount and cross-tab refresh on each
+page before changing its writer, including Schedule's derived goal updates.
 
 ### The KS02 `+ storage` picker lists from a stale snapshot
 
@@ -1269,13 +1206,6 @@ these is authorized.
 - **Which pins are on is forgotten when the file closes** (a stated choice, contract rule 21).
   Keeping it per file would be a new key: on the record it would sync and count against the
   256 KB budget; in `localStorage` it would stay on one device.
-- **A pin edit can pass the 256 KB budget, and a refused edit can look saved** (found by
-  Astra's review, 2026-11-18, not fixed: outside the request). `withPinEdited` and
-  `withPinRenamed` (`files-core.js`) replace a pin without `marksFit`; an in-memory probe grew
-  a record from 262,126 to 262,223 bytes, past the 262,144 limit. The check must weigh the
-  whole record with the replacement pin, not `marksFit(rec, pin)`, which counts both
-  versions. Separately, the pin dialog closes as if saved when the writer refused the edit,
-  so a refusal needs its own answer from `mutate`.
 - **Export a copy with the highlights burned in.** The marks live only in Track; Download and
   Share give the original. A burned-in PDF would need a PDF writer (a new dependency) and must
   never replace the stored bytes.
@@ -1729,7 +1659,6 @@ These are separate capabilities.
 | Priority | Change | Why | Relative effort |
 | --- | --- | --- | --- |
 | P0 | `schemaVersion`, guarded migrations, recovery, and sync gates | Replaces per-page field-presence IIFEs without letting failed/future data be applied or uploaded | Medium |
-| P0 | Replace UTC calendar helpers | Fixes concrete day-boundary errors | Small–medium |
 | P0 | Add serialized repository mutations and conflict handling | A revision alone still races; locking plus post-write detection prevents silent tab/device overwrites | Medium–large |
 | P1 | Define source-dump duplicate behavior | Prevents ambiguous IDs on repeated import | Small–medium |
 | P1 | Extend browser and interaction coverage | Protects uncovered pages and high-risk gestures | Medium |
@@ -1747,7 +1676,6 @@ These are separate capabilities.
 - Add `schemaVersion`, guarded migrations, recoverable source capture, and Firebase
   apply/upload gates.
 - Define source-dump duplicate behavior and the nested-ID remapping policy.
-- Centralize local-date utilities and replace active UTC-day helpers.
 
 Outcome: local data and backups have one documented, tested contract.
 

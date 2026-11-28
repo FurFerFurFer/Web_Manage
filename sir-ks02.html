@@ -9,22 +9,22 @@
   <script src="scripts/theme.js?v=1"></script>
   <script src="scripts/viewport.js?v=2"></script>
   <script src="scripts/storage-guard.js?v=2"></script>
-  <script src="scripts/schema.js?v=11"></script>
+  <script src="scripts/schema.js?v=12"></script>
   <script src="scripts/milestone-core.js?v=4"></script>
   <script src="scripts/kolb-core.js?v=1"></script>
   <script src="scripts/graph-layout.js?v=1"></script>
   <script src="scripts/true-storage-core.js?v=3"></script>
-  <script src="scripts/source-dump-core.js?v=3"></script>
+  <script src="scripts/source-dump-core.js?v=4"></script>
   <script src="scripts/strat-core.js?v=2"></script>
   <script src="scripts/mm-tree-core.js?v=2"></script>
-  <script src="scripts/files-core.js?v=5"></script>
+  <script src="scripts/files-core.js?v=6"></script>
   <script src="scripts/quest-core.js?v=2"></script>
-  <script src="scripts/calendar-core.js?v=14"></script>
+  <script src="scripts/calendar-core.js?v=15"></script>
   <script src="scripts/note-to-self-core.js?v=3"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="scripts/firebase-sync.js?v=2"></script>
+  <script src="scripts/firebase-sync.js?v=3"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
@@ -68,18 +68,9 @@
 
     let uid = 1;
     const nid = () => uid++;
-    const today = () => new Date().toISOString().split("T")[0];
-    const addDays = (d,n) => { const x=new Date(d); x.setDate(x.getDate()+n); return x.toISOString().split("T")[0]; };
-    function getMGsForDay(ds, mgSchedule) {
-      if (Object.prototype.hasOwnProperty.call(mgSchedule, ds)) return mgSchedule[ds];
-      const d = new Date(ds + 'T12:00:00');
-      for (let i = 1; i <= 30; i++) {
-        d.setDate(d.getDate() - 1);
-        const prev = new Date(d).toISOString().split('T')[0];
-        if (Object.prototype.hasOwnProperty.call(mgSchedule, prev)) return mgSchedule[prev];
-      }
-      return [];
-    }
+    const today = TrackSchema.localToday;
+    const addDays = TrackCalendar.dayShift;
+    const getMGsForDay = TrackCalendar.mgsForDay;
     const getDIM = (y,m) => new Date(y,m+1,0).getDate();
     const getFirstDay = (y,m) => new Date(y,m,1).getDay();
     const dStr = (y,m,d) => `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
@@ -105,11 +96,14 @@
     // and documentation pages. See NOTES Proposal 2.
     // A slot id that is no longer present means it was deleted elsewhere:
     // write nothing rather than fold this workspace's data into another slot.
+    const sameSlotValue = (a,b) => a === b || JSON.stringify(a) === JSON.stringify(b);
     function _writeSlotKeys(slotId, patch) {
       const db = _getTrackDB(), slots = db.slots || [];
-      if (!slots.some(s => s.id === slotId)) return;
+      const slot = slots.find(s => s.id === slotId);
+      if (!slot) return false;
+      if (Object.keys(patch).every(k => sameSlotValue(slot[k], patch[k]))) return true;
       db.slots = slots.map(s => s.id === slotId ? {...s, ...patch} : s);
-      TrackStorage.saveDB(db);
+      return TrackStorage.saveDB(db);
     }
     // `trueStorages` is owned by true-storage.html, not by this page. This page
     // may still add or remove a source-dump tag, and AGENTS.md allows exactly
@@ -129,7 +123,9 @@
       return next;
     }
     function _setActiveSlotId(id) {
-      const db = _getTrackDB(); db.activeSlotId = id;
+      const db = _getTrackDB();
+      if (db.activeSlotId === id) return;
+      db.activeSlotId = id;
       TrackStorage.saveDB(db);
     }
     // migrate all prior states → unified {slots, activeSlotId} at top level
@@ -478,16 +474,18 @@
       function getGroup(date) {
         if (scale==="day") return date;
         if (scale==="month") return date.slice(0,7);
-        const d=new Date(date); const day=d.getDay()||7;
-        d.setDate(d.getDate()-day+4);
-        const jan4=new Date(d.getFullYear(),0,4);
-        const wk=Math.ceil(((d-jan4)/86400000+1)/7);
-        return `${d.getFullYear()}-W${String(wk).padStart(2,"0")}`;
+        if (!TrackSchema.isDay(date)) return '';
+        // Thursday determines the ISO week-year. The first Thursday is in week one.
+        const weekday = TrackSchema.localNoon(date).getDay() || 7;
+        const thursday = addDays(date, 4 - weekday);
+        const year = thursday.slice(0, 4);
+        const week = 1 + Math.floor(TrackMilestone.dayDiff(year + '-01-01', thursday) / 7);
+        return year + '-W' + String(week).padStart(2, '0');
       }
       function groupLabel(g) {
         if (scale==="day") return g.slice(5);
         if (scale==="month") return MONTH_NAMES[parseInt(g.split("-")[1],10)-1];
-        return "W"+g.split("-W")[1];
+        return g ? "W"+g.split("-W")[1] : "—";
       }
       const allGroups=[...new Set(mgChanges.map(c=>getGroup(c.date)))].sort();
       if (!type2mms.length) return <div className="text-gray-600 text-center py-20 text-xs">No MG changes yet.</div>;
@@ -3613,11 +3611,14 @@
       const [ks02SubView,setKs02SubView]=useState("wheel");
       const [expandedLinId,setExpandedLinId]=useState(null);
       const [collapsedLinDays,setCollapsedLinDays]=useState({});
-      const [activeSlotId,setActiveSlotId]=useState(null);
+      const [loadedSlot,setLoadedSlot]=useState(null);
+      const activeSlotId=loadedSlot?.id;
+      const lastSave=useRef(null);
       const [ks03SubView,setKs03SubView]=useState("multiverse");
       const [mgLevelsTab,setMgLevelsTab]=useState("theory");
       const [mgSchedule,setMgSchedule]=useState({});
-      const [sourceDumps,setSourceDumps]=useState([]);
+      const [rawDumps,setSourceDumps]=useState([]);
+      const sourceDumps=useMemo(()=>rawDumps.filter(TrackSourceDump.isVisibleDump),[rawDumps]);
       const [dumpPath,setDumpPath]=useState([]);
       // Read-only here except through _mutateSlotKey: true-storage.html owns it.
       const [trueStorages,setTrueStorages]=useState([]);
@@ -3657,7 +3658,6 @@
           saved=[def];
         }
         const active=saved.find(s=>s.id===activeId)||saved[0];
-        setActiveSlotId(active.id);
         _setActiveSlotId(active.id);
         _loadSlot(active);
       },[]);
@@ -3667,38 +3667,29 @@
       // — never a whole-slot rebuild from this page's snapshot. mgSchedule is
       // deliberately absent: it is read here but owned by progress.html.
       useEffect(()=>{
-        if (!activeSlotId) return;
-        _writeSlotKeys(activeSlotId,{sessions,mms,kolbs,mgChanges,linChanges,linDayTitles,pos:manualPos,levelTemplates,sourceDumps});
-      },[sessions,mms,kolbs,mgChanges,linChanges,linDayTitles,manualPos,levelTemplates,sourceDumps,activeSlotId]);
+        if (!loadedSlot) return;
+        // Compare with the snapshot these controls actually loaded. A fresh read
+        // alone can't distinguish a local edit from another tab's newer field.
+        const values={sessions,mms,kolbs,mgChanges,linChanges,linDayTitles,pos:manualPos,levelTemplates,sourceDumps:rawDumps};
+        const before=lastSave.current?.slot===loadedSlot ? lastSave.current.values : loadedSlot;
+        const patch={};
+        for (const [key,value] of Object.entries(values)){
+          const prior=before[key] ?? (Array.isArray(value) ? [] : {});
+          if (!sameSlotValue(prior,value)) patch[key]=value;
+        }
+        if (!Object.keys(patch).length || _writeSlotKeys(loadedSlot.id,patch)){
+          lastSave.current={slot:loadedSlot,values};
+        }
+      },[sessions,mms,kolbs,mgChanges,linChanges,linDayTitles,manualPos,levelTemplates,rawDumps,loadedSlot]);
 
       // cross-tab / remote freshness, matching index, progress and documentations.
-      // Every value is compared before it is applied, so a write from another
-      // page that touches nothing this one holds causes no re-render and, in
-      // turn, no needless save or sync upload.
+      // Adopt the stored values and their slot identity in the same render.
       useEffect(()=>{
         const refresh=()=>{
           const db=_getTrackDB(), slots=db.slots||[];
           const slot=slots.find(s=>s.id===db.activeSlotId)||slots[0];
           if (!slot) return;
-          _bumpUid(slot);
-          const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
-          const fresh=(set,val)=>set(prev=>same(prev,val)?prev:val);
-          // The state arrays below are one snapshot. Move their identity with
-          // them so the autosave effect writes B's data to B, not to the slot A
-          // that happened to be active when this tab mounted.
-          setActiveSlotId(prev=>prev===slot.id?prev:slot.id);
-          fresh(setSessions,slot.sessions||[]);
-          fresh(setMms,slot.mms||[]);
-          fresh(setKolbs,slot.kolbs||[]);
-          fresh(setMgChanges,slot.mgChanges||[]);
-          fresh(setLinChanges,slot.linChanges||[]);
-          fresh(setLinDayTitles,slot.linDayTitles||{});
-          fresh(setManualPos,slot.pos||{});
-          fresh(setLevelTemplates,slot.levelTemplates||{});
-          fresh(setMgSchedule,slot.mgSchedule||{});
-          fresh(setSourceDumps,(slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
-          fresh(setTrueStorages,slot.trueStorages||[]);
-          fresh(setFiles,Array.isArray(slot.files)?slot.files:[]);
+          _loadSlot(slot);
         };
         const onStorage=e=>{ if (!e.key||e.key==='track_db') refresh(); };
         const onVis=()=>{ if (!document.hidden) refresh(); };
@@ -3783,19 +3774,21 @@
       }
 
       function _loadSlot(slot){
-        uid=TrackKolb.nextNumericId(slot);
-        setSessions(slot.sessions||[]);
-        setMms(slot.mms||[]);
-        setKolbs(slot.kolbs||[]);
-        setMgChanges(slot.mgChanges||[]);
-        setLinChanges(slot.linChanges||[]);
-        setLinDayTitles(slot.linDayTitles||{});
-        setManualPos(slot.pos||{});
-        setLevelTemplates(slot.levelTemplates||{});
-        setMgSchedule(slot.mgSchedule||{});
-        setSourceDumps((slot.sourceDumps||[]).filter(d=>d.parentId!==d.id));
-        setTrueStorages(slot.trueStorages||[]);
-        setFiles(Array.isArray(slot.files)?slot.files:[]);
+        _bumpUid(slot);
+        setLoadedSlot(slot);
+        const fresh=(set,val)=>set(prev=>sameSlotValue(prev,val)?prev:val);
+        fresh(setSessions,slot.sessions||[]);
+        fresh(setMms,slot.mms||[]);
+        fresh(setKolbs,slot.kolbs||[]);
+        fresh(setMgChanges,slot.mgChanges||[]);
+        fresh(setLinChanges,slot.linChanges||[]);
+        fresh(setLinDayTitles,slot.linDayTitles||{});
+        fresh(setManualPos,slot.pos||{});
+        fresh(setLevelTemplates,slot.levelTemplates||{});
+        fresh(setMgSchedule,slot.mgSchedule||{});
+        fresh(setSourceDumps,slot.sourceDumps||[]);
+        fresh(setTrueStorages,slot.trueStorages||[]);
+        fresh(setFiles,Array.isArray(slot.files)?slot.files:[]);
       }
       function openMM(id,mode="ks03"){setSelectedMM(id);setSelectedMMMode(mode);}
 
@@ -3917,7 +3910,8 @@
           const d=gone.filter(s=>s.done).length;
           return `"${mm.name}" is ${mm.ksStage==="sir"?"in SIR":"FINISHED"}, with ${n} SIR session${n===1?"":"s"} (${d} done).\n\nMoving it to ${stageLabel(change.newValue)} ends its SIR run and deletes ${n===1?"that session":"those sessions"}. Moving it back to SIR later starts a new run from the first review.`;
         }).join("\n\n")+"\n\nSave anyway?")) return false;
-        const record={id:nid(),title:title||today(),date:today(),items};
+        const day=today();
+        const record={id:nid(),title:title||day,date:day,items};
         items.forEach(({mmId,change})=>{
           const mm=mmMap[mmId];
           const t=change.type;
@@ -3925,7 +3919,7 @@
             const newStage=change.newValue;
             setMms(p=>p.map(m=>m.id===mmId?{...m,ksStage:newStage}:m));
             if(newStage==="sir"&&mm?.ksStage!=="sir"&&!sessions.filter(s=>s.mmId===mmId).length)
-              setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId,date:addDays(today(),iv),repIndex:i,done:false,skipped:false}))]);
+              setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId,date:addDays(day,iv),repIndex:i,done:false,skipped:false}))]);
           } else if(t==="stageRevert"){
             const newStage=change.newValue;
             // The STORED stage decides, not the one the option was drawn from:
@@ -3943,22 +3937,22 @@
               setSessions(p=>p.map(s=>{
                 if(s.mmId!==mmId) return s;
                 if(s.repIndex<ri) return {...s,done:true,skipped:false};
-                return {...s,done:false,skipped:false,date:addDays(today(),SIR_INTERVALS[s.repIndex])};
+                return {...s,done:false,skipped:false,date:addDays(day,SIR_INTERVALS[s.repIndex])};
               }));
             } else {
               setSessions(p=>[...p.filter(s=>s.mmId!==mmId),...SIR_INTERVALS.map((iv,i)=>({
-                id:nid(),mmId,date:addDays(today(),iv),repIndex:i,
+                id:nid(),mmId,date:addDays(day,iv),repIndex:i,
                 done:i<ri,skipped:false
               }))]);
             }
           } else if(t==="sirDone"){
             const sid=change.sessionId;
-            const finishDate=today();
-            const delta=Math.round((new Date(finishDate)-new Date(change.oldValue))/(864e5));
+            const finishDate=day;
+            const delta=TrackMilestone.dayDiff(change.oldValue,finishDate);
             setSessions(prev=>{
               const upd=prev.map(s=>{
                 if(s.id===sid) return {...s,done:true,finishDate};
-                if(s.mmId===mmId&&s.repIndex>change.repIndex&&!s.done&&!s.skipped&&delta!==0)
+                if(s.mmId===mmId&&s.repIndex>change.repIndex&&!s.done&&!s.skipped&&delta&&TrackSchema.isDay(s.date))
                   return {...s,date:addDays(s.date,delta)};
                 return s;
               });
@@ -3969,21 +3963,22 @@
           } else if(t==="sirSkip"){
             setSessions(p=>p.map(s=>s.id===change.sessionId?{...s,skipped:true}:s));
           } else if(t==="sirPostpone"){
-            const delta=Math.round((new Date(change.newValue)-new Date(change.oldValue))/(864e5));
+            const delta=TrackMilestone.dayDiff(change.oldValue,change.newValue);
             setSessions(p=>p.map(s=>{
               if(s.id===change.sessionId) return {...s,date:change.newValue};
-              if(s.mmId===mmId&&s.repIndex>change.repIndex&&!s.done&&!s.skipped)
+              if(s.mmId===mmId&&s.repIndex>change.repIndex&&!s.done&&!s.skipped&&delta&&TrackSchema.isDay(s.date))
                 return {...s,date:addDays(s.date,delta)};
               return s;
             }));
           }
         });
         setLinChanges(p=>[...p,record]);
-        if(title&&title!==today())setLinDayTitles(p=>p[today()]?p:{...p,[today()]:title});
+        if(title&&title!==day)setLinDayTitles(p=>p[day]?p:{...p,[day]:title});
         return true;
       }
       function addMM(){
         if (!newMM.name.trim()) return;
+        const day=today();
         const id=nid();
         const curAuto=computeLayerLayout(mms);
         const curPos={...curAuto,...manualPos};
@@ -4007,10 +4002,10 @@
         });
         setMms(p=>{
           const updatedParents=p.map(m=>parentsToActivate.includes(m.id)?{...m,sourceDumpActivated:true}:m);
-          return [...updatedParents,{id,name:newMM.name.trim(),type:newMM.type,parentIds:[...newMM.parentIds],createdAt:today(),currentMG:"",explanation:newMM.type==="anchor"?newMM.explanation.trim():"",comments:[],links:[],ksStage:newMM.type==="anchor"?null:(newMM.ksStage||null),rating:null,scBlocksOrder:[],scAggBlocksOrder:[],sourceDumpActivated:false,unclear:false}];
+          return [...updatedParents,{id,name:newMM.name.trim(),type:newMM.type,parentIds:[...newMM.parentIds],createdAt:day,currentMG:"",explanation:newMM.type==="anchor"?newMM.explanation.trim():"",comments:[],links:[],ksStage:newMM.type==="anchor"?null:(newMM.ksStage||null),rating:null,scBlocksOrder:[],scAggBlocksOrder:[],sourceDumpActivated:false,unclear:false}];
         });
         setManualPos(p=>({...p,[id]:initPos}));
-        if (newMM.ksStage==="sir"&&newMM.type!=="anchor"&&!isProcedural(newMM)) setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId:id,date:addDays(today(),iv),repIndex:i,done:false,skipped:false}))]);
+        if (newMM.ksStage==="sir"&&newMM.type!=="anchor"&&!isProcedural(newMM)) setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId:id,date:addDays(day,iv),repIndex:i,done:false,skipped:false}))]);
         setNewMM({name:"",type:"1",parentIds:[],ksStage:"1",explanation:""});setAddMMModal(false);
         setParentSearch("");
         /* Where ADD leaves you follows where you ARE, like openAddMM's parent:
@@ -4027,14 +4022,15 @@
       }
       function duplicateMM(mmId){
         const src=mmMap[mmId];if(!src)return;
+        const day=today();
         const newId=nid();
         const m=src.name.match(/^(.*) \(copy(?: (\d+))?\)$/);
         const newName=m?`${m[1]} (copy ${m[2]?parseInt(m[2])+1:2})`:src.name+" (copy)";
-        setMms(p=>[...p,{...src,id:newId,name:newName,createdAt:today()}]);
+        setMms(p=>[...p,{...src,id:newId,name:newName,createdAt:day}]);
         // A Procedural MM has no SIR, so its copy gets no sessions — whatever
         // its stored stage says. The copy reads as S4, like its source.
         if(src.ksStage==="sir"&&src.type!=="anchor"&&!isProcedural(src))
-          setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId:newId,date:addDays(today(),iv),repIndex:i,done:false,skipped:false}))]);
+          setSessions(p=>[...p,...SIR_INTERVALS.map((iv,i)=>({id:nid(),mmId:newId,date:addDays(day,iv),repIndex:i,done:false,skipped:false}))]);
       }
       function saveParents(mmId,pids){setMms(p=>p.map(m=>m.id===mmId?{...m,parentIds:pids}:m));}
       function detachChild(childId,parentId){setMms(p=>p.map(m=>m.id===childId?{...m,parentIds:(m.parentIds||[]).filter(x=>x!==parentId)}:m));}
@@ -4141,11 +4137,12 @@
       }
       function duplicateKolb(kid,targetMMId){
         const k=kolbMap[kid],mm=mmMap[targetMMId];if (!k||!mm) return;
+        const day=today();
         const nkid=nid();
         const mgValue=(k.mgAdd||k.experiments||"").trim();
-        setKolbs(p=>[...p,{...k,id:nkid,mmId:targetMMId,date:today()}]);
+        setKolbs(p=>[...p,{...k,id:nkid,mmId:targetMMId,date:day}]);
         if (mm.type==="2"&&mgValue){
-          setMgChanges(p=>[...p,{id:nid(),mmId:targetMMId,kolbId:nkid,oldMG:mm.currentMG||"(none)",newMG:mgValue,experiment:k.experiments||"",date:today()}]);
+          setMgChanges(p=>[...p,{id:nid(),mmId:targetMMId,kolbId:nkid,oldMG:mm.currentMG||"(none)",newMG:mgValue,experiment:k.experiments||"",date:day}]);
           setMms(p=>p.map(m=>m.id===targetMMId?{...m,currentMG:mgValue}:m));
         }
       }
@@ -4746,6 +4743,6 @@
   <script src="scripts/journey-book.js?v=2"></script>
   <script src="scripts/notes-widget.js?v=8"></script>
   <script src="scripts/note-to-self.js?v=4"></script>
-  <script src="scripts/search.js?v=3"></script>
+  <script src="scripts/search.js?v=4"></script>
 </body>
 </html>
